@@ -47,8 +47,9 @@ describe("ConnectionStorage.makeCatalogStore", () => {
     }),
   );
 
-  it.effect("rewrites an upstream catalog once without its T3 Connect records", () =>
+  it.effect("reads an upstream catalog without writing to it", () =>
     Effect.gen(function* () {
+      // Until S7V-003 the catalog file is shared with an installed T3 Code.
       const writes: string[] = [];
       const upstream = JSON.stringify({
         ...emptyCatalog,
@@ -68,25 +69,16 @@ describe("ConnectionStorage.makeCatalogStore", () => {
           },
         ],
       });
-      let stored = upstream;
       const backend = {
-        read: Effect.sync(() => stored),
-        write: (raw: string) =>
-          Effect.sync(() => {
-            writes.push(raw);
-            stored = raw;
-          }),
+        read: Effect.succeed(upstream),
+        write: (raw: string) => Effect.sync(() => writes.push(raw)),
       };
 
       const store = yield* ConnectionStorage.makeCatalogStore(backend);
       expect(yield* store.read).toEqual(emptyCatalog);
-      expect(writes).toHaveLength(1);
-      expect(writes[0]).not.toContain("stale-dpop-access-token");
-      expect(writes[0]).not.toContain("RelayConnectionTarget");
-
       const restarted = yield* ConnectionStorage.makeCatalogStore(backend);
       expect(yield* restarted.read).toEqual(emptyCatalog);
-      expect(writes).toHaveLength(1);
+      expect(writes).toEqual([]);
     }),
   );
 

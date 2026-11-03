@@ -29,7 +29,6 @@ import * as DesktopServerExposure from "../backend/DesktopServerExposure.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopShellEnvironment from "../shell/DesktopShellEnvironment.ts";
 import * as DesktopStartupRecovery from "./DesktopStartupRecovery.ts";
-import { removeStaleClerkTokens } from "./DesktopStaleClerkTokens.ts";
 import * as DesktopState from "./DesktopState.ts";
 import * as DesktopRemoteUpdates from "../updates/DesktopRemoteUpdates.ts";
 import * as DesktopUpdates from "../updates/DesktopUpdates.ts";
@@ -330,7 +329,6 @@ const startup = Effect.gen(function* () {
     });
   }
   yield* appIdentity.configure;
-  yield* removeStaleClerkTokens(environment.stateDir);
   yield* applicationMenu.configure;
   yield* updates.configure;
   yield* DesktopRemoteUpdates.listen;

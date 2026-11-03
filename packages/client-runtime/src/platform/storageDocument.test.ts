@@ -276,6 +276,10 @@ describe("ConnectionCatalogDocument", () => {
           connectionId: "bearer-1",
           credential: { _tag: "BearerConnectionCredential", token: "bearer-token" },
         },
+        {
+          connectionId: "learned:environment-1:http://192.168.1.10:3773",
+          credential: { _tag: "BearerConnectionCredential", token: "stale-connect-bearer" },
+        },
       ],
       remoteDpopTokens: [
         {
@@ -314,8 +318,10 @@ describe("ConnectionCatalogDocument", () => {
       { environmentId: ENVIRONMENT_ID, connectionKey: "bearer", permission: "read" },
     ]);
     const reencoded = encodeCatalogDocumentJson(decoded);
-    expect(reencoded).not.toContain("remoteDpopTokens");
+    // An installed T3 Code shares this file until S7V-003 and requires the field.
+    expect(JSON.parse(reencoded).remoteDpopTokens).toEqual([]);
     expect(reencoded).not.toContain("stale-dpop-access-token");
+    expect(reencoded).not.toContain("stale-connect-bearer");
     expect(reencoded).not.toContain("stale-thumbprint");
     expect(reencoded).not.toContain("RelayConnectionTarget");
     expect(reencoded).not.toContain("t3-connect");

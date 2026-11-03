@@ -37,6 +37,8 @@ const ConnectionCatalogDocumentType = Schema.Struct({
 /**
  * Upstream T3 Code catalogs can hold T3 Connect routes and the `remoteDpopTokens`
  * they used. Their routes decode only to be dropped, and the tokens are never read.
+ * Until S7V-003 this file is shared with an installed T3 Code, whose schema requires
+ * `remoteDpopTokens`, so every write keeps an empty list.
  */
 const LegacyRelayConnectionTarget = Schema.TaggedStruct("RelayConnectionTarget", {
   environmentId: EnvironmentId,
@@ -51,6 +53,7 @@ const StoredConnectionCatalogDocument = Schema.Struct({
   targets: Schema.Array(Schema.Union([PersistedConnectionTarget, LegacyRelayConnectionTarget])),
   // The legacy member goes first: a plain profile would otherwise accept it and drop `authorization`.
   profiles: Schema.Array(Schema.Union([LegacyT3ConnectProfile, ConnectionProfile])),
+  remoteDpopTokens: Schema.optionalKey(Schema.Array(Schema.Unknown)),
 });
 
 type ConnectionCatalogDocumentValue = typeof ConnectionCatalogDocumentType.Type;
@@ -80,7 +83,9 @@ function dropLegacyCloudRecords(
     profiles: stored.profiles.filter(
       (profile): profile is ConnectionProfile => !("authorization" in profile),
     ),
-    credentials: stored.credentials,
+    credentials: stored.credentials.filter(
+      (credential) => !t3ConnectProfileIds.has(credential.connectionId),
+    ),
     disabledEnvironmentIds: stored.disabledEnvironmentIds.filter((id) => !orphaned.has(id)),
     ...(stored.githubRoutingPermissions === undefined
       ? {}
@@ -100,7 +105,7 @@ export const ConnectionCatalogDocument = StoredConnectionCatalogDocument.pipe(
       StoredConnectionCatalogDocumentValue
     >({
       decode: dropLegacyCloudRecords,
-      encode: (document) => document,
+      encode: (document) => ({ ...document, remoteDpopTokens: [] }),
     }),
   ),
 );

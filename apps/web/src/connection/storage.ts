@@ -377,17 +377,6 @@ const encodeCatalog = Effect.fn("web.connectionStorage.encodeCatalog")(function*
   );
 });
 
-// Upstream T3 Code catalogs always carry `remoteDpopTokens`; decoding drops the T3 Connect
-// records, and writing the result back once removes their tokens from storage.
-function holdsUpstreamCloudRecords(raw: string): boolean {
-  try {
-    const parsed: unknown = JSON.parse(raw);
-    return typeof parsed === "object" && parsed !== null && "remoteDpopTokens" in parsed;
-  } catch {
-    return false;
-  }
-}
-
 export interface CatalogBackend {
   readonly read: Effect.Effect<string | null, ConnectionTransientError>;
   readonly write: (raw: string) => Effect.Effect<void, ConnectionTransientError>;
@@ -476,15 +465,6 @@ export const makeCatalogStore = Effect.fn("web.connectionStorage.makeCatalogStor
               ),
             );
             return EMPTY_CONNECTION_CATALOG_DOCUMENT;
-          }),
-        ),
-      );
-    }
-    if (raw !== null && holdsUpstreamCloudRecords(raw)) {
-      yield* backend.write(yield* encodeCatalog(catalog)).pipe(
-        Effect.catch((cause) =>
-          Effect.logWarning("Could not drop T3 Connect records from the connection catalog.", {
-            error: cause.message,
           }),
         ),
       );
