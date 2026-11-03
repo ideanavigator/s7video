@@ -70,6 +70,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("t3 up", (it) => 
     readonly status?: Partial<BootService.BootServiceStatus>;
     readonly installFails?: boolean;
     readonly restartFails?: boolean;
+    /** Fails with a user error carrying this text. */
+    readonly failsWith?: string;
     /** Runs as if in a terminal, answering each question with this text. */
     readonly answer?: string;
     readonly prints?: string;
@@ -170,6 +172,27 @@ it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("t3 up", (it) => 
       envAfter: "T3CODE_LAN=true\n",
     },
     {
+      label: "a rerun asks from the current setup",
+      prints: "Current setup",
+      installed: true,
+      answer: "y",
+      env: "T3CODE_LAN=true\n",
+      args: [],
+      installs: 0,
+      restarts: 0,
+      envAfter: "T3CODE_LAN=true\n",
+    },
+    {
+      label: "a new machine with no terminal must choose its access",
+      installed: false,
+      failsWith: "Choose access with --lan or --no-lan",
+      env: "",
+      args: [],
+      installs: 0,
+      restarts: 0,
+      envAfter: "",
+    },
+    {
       label: "the old default is kept",
       installed: true,
       env: "",
@@ -247,7 +270,12 @@ it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("t3 up", (it) => 
       if (input.prints !== undefined) {
         expect(lines.join("\n")).toContain(input.prints);
       }
-      expect(exit._tag).toBe(input.restartFails === true ? "Failure" : "Success");
+      expect(exit._tag).toBe(
+        input.restartFails === true || input.failsWith !== undefined ? "Failure" : "Success",
+      );
+      if (input.failsWith !== undefined && exit._tag === "Failure") {
+        expect(Cause.pretty(exit.cause)).toContain(input.failsWith);
+      }
       expect({ installs, restarts }).toEqual({
         installs: input.installs,
         restarts: input.restarts,

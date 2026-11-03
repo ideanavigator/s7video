@@ -24,11 +24,24 @@ const STALE_CLOUD_SECRETS = [
   ["cloud-mint-ed25519-public-key", "stale-mint-public-key"],
   ["cloud-endpoint-runtime-config", '{"tunnelName":"stale-tunnel-0123456789abcdef"}'],
   ["cloud-endpoint-confirmed-origin", "stale-confirmed-origin"],
-  ["cloud-linked-user-id", "user_stale_clerk_id"],
+  ["cloud-linked-user-id", "user_stale_cloud_id"],
   ["cloud-publish-agent-activity", "true"],
   ["cloud-hold-webhooks-while-offline", "true"],
   ["cloud-link-ed25519-key-pair", "stale-link-key-pair"],
 ] as const;
+
+// Every secret name and name prefix T3 Connect used; a source mentioning one reads a retired secret.
+const RETIRED_SECRET_NAMES = [
+  ...STALE_CLOUD_SECRETS.map(([name]) => name),
+  "cloud-link-revoked",
+  "cloud-link-ed25519-private-key",
+  "cloud-link-ed25519-public-key",
+  "cloud-cli-oauth-token",
+  "cloud-cli-desired-link",
+  "cloud-mint-jti-",
+  "cloud-health-",
+];
+const RETIRED_SECRET_REFERENCE = new RegExp(`["'\`](${RETIRED_SECRET_NAMES.join("|")})`);
 
 const layerServerEnvironment = (baseDir: string) =>
   ServerEnvironment.layer.pipe(
@@ -279,7 +292,7 @@ it.layer(NodeServices.layer)("ServerEnvironmentLive", (it) => {
       const readers: Array<string> = [];
       for (const file of sources) {
         const text = yield* fileSystem.readFileString(path.join(srcDir, file));
-        if (STALE_CLOUD_SECRETS.some(([name]) => text.includes(`"${name}"`))) readers.push(file);
+        if (RETIRED_SECRET_REFERENCE.test(text)) readers.push(file);
       }
       expect(readers).toEqual([]);
     }),
