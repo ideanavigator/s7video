@@ -7,7 +7,6 @@ import {
   StoredOrchestrationShellSnapshot,
   StoredOrchestrationThreadSnapshot,
   decodeOrDiscardOrchestrationCache,
-  putRemoteDpopTokenInCatalog,
   registerConnectionInCatalog,
   removeCatalogValue,
   removeConnectionFromCatalog,
@@ -17,7 +16,6 @@ import {
   Persistence,
   makeStoredShellSnapshotEncoder,
 } from "@t3tools/client-runtime/platform";
-import { TokenStore } from "@t3tools/client-runtime/authorization";
 import {
   ConnectionTransientError,
   ConnectionBlockedError,
@@ -379,6 +377,17 @@ const encodeCatalog = Effect.fn("web.connectionStorage.encodeCatalog")(function*
   );
 });
 
+// Upstream T3 Code catalogs always carry `remoteDpopTokens`; decoding drops the T3 Connect
+// records, and writing the result back once removes their tokens from storage.
+function holdsUpstreamCloudRecords(raw: string): boolean {
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return typeof parsed === "object" && parsed !== null && "remoteDpopTokens" in parsed;
+  } catch {
+    return false;
+  }
+}
+
 export interface CatalogBackend {
   readonly read: Effect.Effect<string | null, ConnectionTransientError>;
   readonly write: (raw: string) => Effect.Effect<void, ConnectionTransientError>;
@@ -467,6 +476,15 @@ export const makeCatalogStore = Effect.fn("web.connectionStorage.makeCatalogStor
               ),
             );
             return EMPTY_CONNECTION_CATALOG_DOCUMENT;
+          }),
+        ),
+      );
+    }
+    if (raw !== null && holdsUpstreamCloudRecords(raw)) {
+      yield* backend.write(yield* encodeCatalog(catalog)).pipe(
+        Effect.catch((cause) =>
+          Effect.logWarning("Could not drop T3 Connect records from the connection catalog.", {
+            error: cause.message,
           }),
         ),
       );
@@ -714,26 +732,6 @@ export const layer = Layer.effectContext(
           ),
         })),
     });
-    const remoteTokenStore = TokenStore.make({
-      get: (environmentId) =>
-        catalog.read.pipe(
-          Effect.map((document) =>
-            Option.fromUndefinedOr(
-              document.remoteDpopTokens.find((token) => token.environmentId === environmentId),
-            ),
-          ),
-        ),
-      put: (token) => catalog.update((document) => putRemoteDpopTokenInCatalog(document, token)),
-      remove: (environmentId) =>
-        catalog.update((document) => ({
-          ...document,
-          remoteDpopTokens: removeCatalogValue(
-            document.remoteDpopTokens,
-            (value) => value.environmentId,
-            environmentId,
-          ),
-        })),
-    });
     const cacheStore = Persistence.EnvironmentCacheStore.of({
       loadShell: Effect.fn("Persistence.EnvironmentCacheStore.loadShell")(function (environmentId) {
         return readDatabaseValue(database, SHELL_STORE_NAME, environmentId).pipe(
@@ -966,7 +964,6 @@ export const layer = Layer.effectContext(
       Context.add(Persistence.ConnectionRegistrationStore, registrationStore),
       Context.add(ProfileStore.ConnectionProfileStore, profileStore),
       Context.add(CredentialStore.ConnectionCredentialStore, credentialStore),
-      Context.add(TokenStore.RemoteDpopAccessTokenStore, remoteTokenStore),
       Context.add(Persistence.EnvironmentCacheStore, cacheStore),
     );
   }),

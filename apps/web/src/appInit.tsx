@@ -40,6 +40,7 @@ import {
 import { syncBrowserChromeTheme } from "./hooks/useTheme";
 import { startThreadVisitedMigration } from "./hooks/useThreadVisitedMigration";
 import { installDesktopPasteAsText } from "./lib/desktopPasteAsText";
+import { clearStaleCloudStorage } from "./lib/staleCloudStorage";
 import {
   syncDocumentElectronPlatformClasses,
   syncDocumentWindowControlsOverlayClass,
@@ -177,6 +178,7 @@ export function startAppServices(): AppRouter {
   }
 
   installDesktopPasteAsText(window.desktopBridge, window);
+  clearStaleCloudStorage();
 
   startClientAppearance();
   startDocumentTitle();

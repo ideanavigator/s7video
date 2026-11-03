@@ -19,7 +19,6 @@ const emptyCatalog = {
   targets: [],
   profiles: [],
   credentials: [],
-  remoteDpopTokens: [],
   disabledEnvironmentIds: [],
 } as const;
 const decodeCatalog = Schema.decodeUnknownSync(Schema.fromJsonString(ConnectionCatalogDocument));
@@ -45,6 +44,49 @@ describe("ConnectionStorage.makeCatalogStore", () => {
       expect(quarantined).toEqual(["{not-json"]);
       expect(writes).toHaveLength(1);
       expect(decodeCatalog(writes[0]!)).toEqual(emptyCatalog);
+    }),
+  );
+
+  it.effect("rewrites an upstream catalog once without its T3 Connect records", () =>
+    Effect.gen(function* () {
+      const writes: string[] = [];
+      const upstream = JSON.stringify({
+        ...emptyCatalog,
+        targets: [{ _tag: "RelayConnectionTarget", environmentId: "environment-1", label: "Mac" }],
+        remoteDpopTokens: [
+          {
+            environmentId: "environment-1",
+            label: "Mac",
+            endpoint: {
+              httpBaseUrl: "https://environment-1.t3.codes",
+              wsBaseUrl: "wss://environment-1.t3.codes",
+              providerKind: "cloudflare_tunnel",
+            },
+            accessToken: "stale-dpop-access-token",
+            expiresAtEpochMs: 1_000_000,
+            dpopThumbprint: "stale-thumbprint",
+          },
+        ],
+      });
+      let stored = upstream;
+      const backend = {
+        read: Effect.sync(() => stored),
+        write: (raw: string) =>
+          Effect.sync(() => {
+            writes.push(raw);
+            stored = raw;
+          }),
+      };
+
+      const store = yield* ConnectionStorage.makeCatalogStore(backend);
+      expect(yield* store.read).toEqual(emptyCatalog);
+      expect(writes).toHaveLength(1);
+      expect(writes[0]).not.toContain("stale-dpop-access-token");
+      expect(writes[0]).not.toContain("RelayConnectionTarget");
+
+      const restarted = yield* ConnectionStorage.makeCatalogStore(backend);
+      expect(yield* restarted.read).toEqual(emptyCatalog);
+      expect(writes).toHaveLength(1);
     }),
   );
 

@@ -63,7 +63,7 @@ class TestQueryError extends Schema.TaggedError<TestQueryError>()("TestQueryErro
 
 const OFFLINE_QUERY_FAILURE = new ConnectionTransientError({
   reason: "transport",
-  detail: "Relay is unavailable.",
+  detail: "Host is unavailable.",
 });
 
 const BLOCKED_QUERY_FAILURE = new ConnectionBlockedError({
@@ -476,99 +476,97 @@ describe("environment query lifecycle", () => {
     }),
   );
 
-  it.effect(
-    "hides a session replacement, reports the relay backoff, and recovers on reconnect",
-    () =>
-      Effect.scoped(
-        Effect.gen(function* () {
-          const firstStarted = Latch.makeUnsafe();
-          const failFirst = Latch.makeUnsafe();
-          const firstSettled = Latch.makeUnsafe();
-          const unavailable = new EnvironmentRpcUnavailableError({
-            environmentId: QUERY_ENVIRONMENT.environmentId,
-            message: "Query environment is not connected.",
-          });
-          let executions = 0;
-          const execute = Effect.suspend(() => {
-            executions += 1;
-            if (executions > 1) {
-              return Effect.succeed("recovered");
-            }
-            firstStarted.openUnsafe();
-            return failFirst.await.pipe(
-              Effect.andThen(Effect.fail(unavailable)),
-              Effect.ensuring(
-                Effect.sync(() => {
-                  firstSettled.openUnsafe();
-                }),
-              ),
-            );
-          });
-          const harness = yield* makeEnvironmentQueryHarness(execute);
-          const registry = AtomRegistry.make();
-          const observed: Array<AsyncResult.AsyncResult<string, unknown>> = [];
-          const unsubscribe = registry.subscribe(
-            harness.atom,
-            (result) => {
-              observed.push(result);
-            },
-            { immediate: true },
+  it.effect("hides a session replacement, reports the backoff, and recovers on reconnect", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const firstStarted = Latch.makeUnsafe();
+        const failFirst = Latch.makeUnsafe();
+        const firstSettled = Latch.makeUnsafe();
+        const unavailable = new EnvironmentRpcUnavailableError({
+          environmentId: QUERY_ENVIRONMENT.environmentId,
+          message: "Query environment is not connected.",
+        });
+        let executions = 0;
+        const execute = Effect.suspend(() => {
+          executions += 1;
+          if (executions > 1) {
+            return Effect.succeed("recovered");
+          }
+          firstStarted.openUnsafe();
+          return failFirst.await.pipe(
+            Effect.andThen(Effect.fail(unavailable)),
+            Effect.ensuring(
+              Effect.sync(() => {
+                firstSettled.openUnsafe();
+              }),
+            ),
           );
-          yield* Effect.addFinalizer(() =>
-            Effect.sync(() => {
-              unsubscribe();
-              registry.dispose();
-            }),
-          );
+        });
+        const harness = yield* makeEnvironmentQueryHarness(execute);
+        const registry = AtomRegistry.make();
+        const observed: Array<AsyncResult.AsyncResult<string, unknown>> = [];
+        const unsubscribe = registry.subscribe(
+          harness.atom,
+          (result) => {
+            observed.push(result);
+          },
+          { immediate: true },
+        );
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => {
+            unsubscribe();
+            registry.dispose();
+          }),
+        );
 
-          yield* firstStarted.await;
-          yield* SubscriptionRef.set(harness.supervisorSession, Option.none());
-          yield* Effect.yieldNow;
-          failFirst.openUnsafe();
-          yield* firstSettled.await;
-          yield* Effect.yieldNow;
+        yield* firstStarted.await;
+        yield* SubscriptionRef.set(harness.supervisorSession, Option.none());
+        yield* Effect.yieldNow;
+        failFirst.openUnsafe();
+        yield* firstSettled.await;
+        yield* Effect.yieldNow;
 
-          expect(observed.some(AsyncResult.isFailure)).toBe(false);
+        expect(observed.some(AsyncResult.isFailure)).toBe(false);
 
-          yield* SubscriptionRef.set(
-            harness.supervisorState,
-            queryConnectionState({ phase: "connecting", stage: "preparing" }),
-          );
-          yield* Effect.yieldNow;
-          const relayFailure = new ConnectionTransientError({
-            reason: "transport",
-            detail: "Relay session is reconnecting.",
-          });
-          yield* SubscriptionRef.set(
-            harness.supervisorState,
-            queryConnectionState({
-              phase: "backoff",
-              stage: null,
-              lastFailure: relayFailure,
-              retryAt: 1,
-            }),
-          );
-          yield* Effect.yieldNow;
-          // The query has never answered, so it reports why the environment is retrying.
-          const backingOff = registry.get(harness.atom);
-          expect(backingOff.waiting).toBe(false);
-          expect(AsyncResult.isFailure(backingOff) && Cause.squash(backingOff.cause)).toBe(
-            relayFailure,
-          );
+        yield* SubscriptionRef.set(
+          harness.supervisorState,
+          queryConnectionState({ phase: "connecting", stage: "preparing" }),
+        );
+        yield* Effect.yieldNow;
+        const hostFailure = new ConnectionTransientError({
+          reason: "transport",
+          detail: "Session is reconnecting.",
+        });
+        yield* SubscriptionRef.set(
+          harness.supervisorState,
+          queryConnectionState({
+            phase: "backoff",
+            stage: null,
+            lastFailure: hostFailure,
+            retryAt: 1,
+          }),
+        );
+        yield* Effect.yieldNow;
+        // The query has never answered, so it reports why the environment is retrying.
+        const backingOff = registry.get(harness.atom);
+        expect(backingOff.waiting).toBe(false);
+        expect(AsyncResult.isFailure(backingOff) && Cause.squash(backingOff.cause)).toBe(
+          hostFailure,
+        );
 
-          yield* SubscriptionRef.set(harness.supervisorSession, Option.some(QUERY_RPC_SESSION));
-          yield* SubscriptionRef.set(
-            harness.supervisorState,
-            queryConnectionState({ generation: 2 }),
-          );
-          yield* Effect.yieldNow;
-          expect(
-            yield* AtomRegistry.getResult(registry, harness.atom, {
-              suspendOnWaiting: true,
-            }),
-          ).toBe("recovered");
-        }),
-      ),
+        yield* SubscriptionRef.set(harness.supervisorSession, Option.some(QUERY_RPC_SESSION));
+        yield* SubscriptionRef.set(
+          harness.supervisorState,
+          queryConnectionState({ generation: 2 }),
+        );
+        yield* Effect.yieldNow;
+        expect(
+          yield* AtomRegistry.getResult(registry, harness.atom, {
+            suspendOnWaiting: true,
+          }),
+        ).toBe("recovered");
+      }),
+    ),
   );
 
   it.effect("keeps a query pending when it loses its session before the atom sees the change", () =>
