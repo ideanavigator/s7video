@@ -2621,6 +2621,60 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     }),
   );
 
+  it.effect("creates feature branch, commits, and pushes with featureBranch option", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "README.md"), "hello\nfeature-branch\n");
+      let generatedCount = 0;
+
+      const { manager } = yield* makeManager({
+        textGeneration: {
+          generateCommitMessage: (input) =>
+            Effect.sync(() => {
+              generatedCount += 1;
+              return {
+                subject: "Implement stacked git actions",
+                body: "",
+                ...(input.includeBranch ? { branch: "feature/implement-stacked-git-actions" } : {}),
+              };
+            }),
+        },
+      });
+      const result = yield* runStackedAction(manager, {
+        cwd: repoDir,
+        action: "commit_push",
+        featureBranch: true,
+      });
+
+      expect(result.branch.status).toBe("created");
+      expect(result.branch.name).toBe("feature/implement-stacked-git-actions");
+      expect(result.commit.status).toBe("created");
+      expect(result.push.status).toBe("pushed");
+      expect(result.toast).toMatchObject({ description: "Implement stacked git actions" });
+      expect(result.toast.title).toMatch(
+        /^Pushed [0-9a-f]{7} to origin\/feature\/implement-stacked-git-actions$/,
+      );
+      expect(
+        yield* runGit(repoDir, ["rev-parse", "--abbrev-ref", "HEAD"]).pipe(
+          Effect.map((result) => result.stdout.trim()),
+        ),
+      ).toBe("feature/implement-stacked-git-actions");
+
+      const mainSha = yield* runGit(repoDir, ["rev-parse", "main"]).pipe(
+        Effect.map((r) => r.stdout.trim()),
+      );
+      const mergeBase = yield* runGit(repoDir, ["merge-base", "main", "HEAD"]).pipe(
+        Effect.map((r) => r.stdout.trim()),
+      );
+      expect(mergeBase).toBe(mainSha);
+      expect(generatedCount).toBe(1);
+    }),
+  );
+
   it.effect(
     "pushes and creates PR from a no-upstream branch when local commits are ahead of base",
     () =>

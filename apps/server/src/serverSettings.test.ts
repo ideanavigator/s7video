@@ -268,6 +268,25 @@ it.layer(NodeServices.layer)("server settings", (it) => {
     }).pipe(Effect.provide(layerServerSettings())),
   );
 
+  it.effect("sends clients no config for a secret provider kind this build does not load", () =>
+    Effect.gen(function* () {
+      // s7video ships no secret provider kinds, so stale upstream 1Password entries are unknown too.
+      const settings = yield* decodeServerSettings({
+        secretProviders: {
+          personal: { kind: "one_password", label: "Personal", config: { account: "my" } },
+          vault: { kind: "openbao", label: "Vault", config: { token: "bao-token" } },
+        },
+      });
+      assert.deepStrictEqual<unknown>(
+        ServerSettingsModule.redactServerSettingsForClient(settings).secretProviders,
+        {
+          personal: { kind: "one_password", label: "Personal" },
+          vault: { kind: "openbao", label: "Vault" },
+        },
+      );
+    }),
+  );
+
   it.effect("stores no secret provider of an unloaded kind or with a config its kind rejects", () =>
     Effect.gen(function* () {
       const service = yield* ServerSettingsModule.ServerSettingsService;

@@ -1837,4 +1837,141 @@ describe("UsageService", () => {
       );
     }).pipe(Effect.scoped),
   );
+
+  it.live(
+    "uses inherited home variables when explicit default accounts have no home settings",
+    () =>
+      Effect.gen(function* () {
+        const { transcript, settings, home } = yield* setup;
+        yield* Effect.promise(() => NodeFSP.writeFile(transcript, claudeLine(1, 5)));
+        const service = yield* UsageService.make.pipe(
+          Effect.provide(
+            layerService({
+              prefix: "usage-service-inherited-homes-test",
+              home,
+              environment: {
+                CODEX_HOME: NodePath.join(home, "inherited-codex"),
+                CLAUDE_CONFIG_DIR: NodePath.join(home, "claude"),
+              },
+              settings: {
+                ...settings,
+                providerInstances: {
+                  [ProviderInstanceId.make("codex")]: {
+                    driver: ProviderDriverKind.make("codex"),
+                    config: {},
+                  },
+                  [ProviderInstanceId.make("claudeAgent")]: {
+                    driver: ProviderDriverKind.make("claudeAgent"),
+                    config: {},
+                  },
+                },
+              },
+            }),
+          ),
+        );
+        const summary = yield* service.readSummary(WINDOW);
+        assert.strictEqual(totalOutputTokens(summary), 5);
+        assert.strictEqual(
+          summary.sources.find((source) => source.fingerprint.provider === "codex")?.fingerprint
+            .resolvedHomePath,
+          NodePath.join(home, "inherited-codex", "sessions"),
+        );
+      }).pipe(Effect.scoped),
+  );
+
+  it.live("reads configured and disabled accounts once across shared and aliased homes", () =>
+    Effect.gen(function* () {
+      const { transcript, settings, home } = yield* setup;
+      const codexHome = NodePath.join(home, "codex-account");
+      const alias = NodePath.join(home, "codex-alias");
+      const claudeHome = NodePath.join(home, "claude-account");
+      yield* Effect.promise(async () => {
+        await NodeFSP.writeFile(transcript, claudeLine(1, 5));
+        await NodeFSP.mkdir(NodePath.join(claudeHome, "projects"), { recursive: true });
+        await NodeFSP.writeFile(
+          NodePath.join(claudeHome, "projects", "session.jsonl"),
+          claudeLine(2, 7),
+        );
+        await NodeFSP.mkdir(NodePath.join(codexHome, "sessions"), { recursive: true });
+        await NodeFSP.symlink(codexHome, alias, "junction");
+        await NodeFSP.writeFile(
+          NodePath.join(codexHome, "sessions", "rollout.jsonl"),
+          [
+            { type: "session_meta", payload: { id: "codex-account-session" } },
+            { type: "turn_context", payload: { model: "gpt-5.6-sol" } },
+            ...[11, 12, 11].map((outputTokens) => ({
+              type: "event_msg",
+              timestamp: "2026-08-01T10:00:00Z",
+              payload: {
+                type: "token_count",
+                info: { last_token_usage: { input_tokens: 10, output_tokens: outputTokens } },
+              },
+            })),
+          ]
+            .map((line) => encodeUnknownJsonString(line))
+            .join("\n") + "\n",
+        );
+      });
+      const service = yield* UsageService.make.pipe(
+        Effect.provide(
+          layerService({
+            prefix: "usage-service-accounts-test",
+            home,
+            settings: {
+              ...settings,
+              providerInstances: {
+                ...settings.providerInstances,
+                [ProviderInstanceId.make("claude-work")]: {
+                  driver: ProviderDriverKind.make("claudeAgent"),
+                  enabled: false,
+                  environment: [{ name: "CLAUDE_CONFIG_DIR", value: claudeHome, sensitive: false }],
+                },
+                [ProviderInstanceId.make("codex-work")]: {
+                  driver: ProviderDriverKind.make("codex"),
+                  environment: [{ name: "CODEX_HOME", value: codexHome, sensitive: false }],
+                },
+                [ProviderInstanceId.make("codex-alias")]: {
+                  driver: ProviderDriverKind.make("codex"),
+                  config: { homePath: alias },
+                },
+                [ProviderInstanceId.make("codex-shadow")]: {
+                  driver: ProviderDriverKind.make("codex"),
+                  config: { homePath: codexHome, shadowHomePath: NodePath.join(home, "shadow") },
+                  environment: [
+                    { name: "CODEX_HOME", value: NodePath.join(home, "ignored"), sensitive: false },
+                  ],
+                },
+              },
+            },
+          }),
+        ),
+      );
+      const summary = yield* service.readSummary(WINDOW);
+      assert.strictEqual(totalOutputTokens(summary), 46);
+      yield* Effect.promise(() =>
+        NodeFSP.rename(
+          NodePath.join(codexHome, "sessions", "rollout.jsonl"),
+          NodePath.join(codexHome, "sessions", "moved.jsonl"),
+        ),
+      );
+      const moved = yield* service.readSummary(WINDOW);
+      assert.deepStrictEqual(moved.buckets, summary.buckets);
+      yield* Effect.promise(() =>
+        NodeFSP.rm(NodePath.join(codexHome, "sessions"), { recursive: true }),
+      );
+      const removed = yield* service.readSummary(WINDOW);
+      assert.deepStrictEqual(removed.buckets, summary.buckets);
+
+      const sources = summary.sources.filter((source) => source.status === "ok");
+      assert.strictEqual(sources.length, 3);
+      assert.strictEqual(
+        sources.reduce((sum, source) => sum + source.scannedFiles, 0),
+        3,
+      );
+      assert.strictEqual(
+        sources.filter((source) => source.fingerprint.provider === "codex").length,
+        1,
+      );
+    }).pipe(Effect.scoped),
+  );
 });
