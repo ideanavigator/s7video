@@ -185,7 +185,6 @@ jobs:
           toolchain: stable
           targets: ${{ inputs.rust_target }}
 
-
       - name: Align package versions to release version
         run: node scripts/update-release-package-versions.ts "${{ inputs.version }}"
 

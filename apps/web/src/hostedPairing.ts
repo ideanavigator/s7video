@@ -1,6 +1,8 @@
-import { DEFAULT_HOSTED_APP_URL } from "@t3tools/shared/connectAuth";
-
-import { getPairingTokenFromUrl, setPairingTokenOnUrl } from "@t3tools/shared/remote";
+import {
+  DEFAULT_HOSTED_APP_URL,
+  getPairingTokenFromUrl,
+  setPairingTokenOnUrl,
+} from "@t3tools/shared/remote";
 
 export interface HostedPairingRequest {
   readonly host: string;

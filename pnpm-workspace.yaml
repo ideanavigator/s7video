@@ -32,7 +32,6 @@ catalog:
   "@effect/platform-node-shared": 4.0.5
   "@effect/vitest": 4.0.5
   "@legendapp/list": 3.3.5
-  "@noble/curves": 1.9.1
   "@noble/hashes": 1.8.0
   "@pierre/diffs": 1.6.1
   "@tailwindcss/node": 4.3.3

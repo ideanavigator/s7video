@@ -359,28 +359,6 @@ export class EnvironmentAuthenticatedAuth extends HttpApiMiddleware.Service<
   error: EnvironmentAuthenticationErrors,
 }) {}
 
-/**
- * Sections of docs/user/t3-connect-troubleshooting.md. Each is the GitHub anchor of a
- * heading there; the test fails when a heading is renamed without updating this list.
- */
-export const T3_CONNECT_TROUBLESHOOTING_SECTIONS = [
-  "the-hosts-tunnel-is-offline",
-  "port-7844-is-blocked-on-the-host",
-  "the-tunnel-works-but-t3-code-does-not-answer",
-  "the-t3-connect-address-does-not-resolve-or-answer",
-  "this-device-cant-reach-t3-connect",
-  "sign-in-account-or-link-problems",
-  "the-clock-is-off",
-  "the-host-runs-an-older-t3-code",
-  "t3-connect-returned-an-error",
-] as const;
-export type T3ConnectTroubleshootingSection = (typeof T3_CONNECT_TROUBLESHOOTING_SECTIONS)[number];
-
-/** Clients, the CLI, and server logs link here as "More info". */
-export function t3ConnectTroubleshootingUrl(section: T3ConnectTroubleshootingSection): string {
-  return `https://github.com/pingdotgg/t3code/blob/main/docs/user/t3-connect-troubleshooting.md#${section}`;
-}
-
 export const AuthPairingLinkRevokeResult = Schema.Struct({
   revoked: Schema.Boolean,
 });
