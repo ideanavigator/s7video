@@ -60,8 +60,8 @@ git commit -s -m "fix(timeline): S7V-123 captions no longer drift after a trim"
 
 This adds a `Signed-off-by: Your Name <you@example.com>` line that must match the commit author.
 Sign-off is required: maintainers check it by hand now, and it is enforced automatically from
-Sprint 02 (S7V-010). To sign off commits you already made, run
-`git rebase --signoff main` and force-push your branch.
+Sprint 02 (S7V-010). To sign off commits you already made on your own pull request branch, run
+`git rebase --signoff <base branch>` and force-push that branch (never a shared one).
 
 If an AI agent helped, say so with a `Co-Authored-By:` line. You still sign off, and you are
 responsible for the change.

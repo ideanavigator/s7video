@@ -13,13 +13,13 @@ Which tests a ticket needs, where they live and how to run them. The rules for w
 
 Every ticket's Test Plan lists each tier, with `N/A - reason` where one genuinely does not apply.
 
-| Tier            | What                                                                                                                                                                                                              | Tool and location                                                                                                                             | Run with                        |
-| --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------- |
-| 1. Unit         | Pure logic: parsing, reducers, schema decoding, edit-document operations                                                                                                                                          | Vitest via Vite+ (`*.test.ts` next to the code); pytest for the engine once it exists                                                         | `vp test run <files>`           |
-| 2. Edge cases   | The failure paths the ticket names: empty, huge, odd frame rates, variable frame rate, silent or missing audio, offline, missing model, bad or revoked key, cancel mid-way, disk full, old documents and settings | Same files as Tier 1, in their own `describe`                                                                                                 | `vp test run <files>`           |
-| 3. End to end   | A full user flow in the desktop app                                                                                                                                                                               | Playwright driving Electron (`playwright-core`, already a desktop dependency). The `e2e/` harness arrives with the first ticket that needs it | `pnpm e2e -- <spec>` once added |
-| 4. Golden media | A fixed input clip through the real pipeline, compared with a stored reference                                                                                                                                    | `pnpm test:golden`, added with the first ticket marked `Touches media: yes`                                                                   | `pnpm test:golden -- <case>`    |
-| UX screenshots  | Every changed screen in dark and light themes at `1440x900` and the minimum `1180x760`                                                                                                                            | Playwright, attached to the PR (not committed)                                                                                                | per ticket                      |
+| Tier            | What                                                                                                                                                                                                              | Tool and location                                                                                                                                                            | Run with                        |
+| --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------- |
+| 1. Unit         | Pure logic: parsing, reducers, schema decoding, edit-document operations                                                                                                                                          | Vitest via Vite+ (`*.test.ts` next to the code); pytest for the engine once it exists                                                                                        | `vp test run <files>`           |
+| 2. Edge cases   | The failure paths the ticket names: empty, huge, odd frame rates, variable frame rate, silent or missing audio, offline, missing model, bad or revoked key, cancel mid-way, disk full, old documents and settings | Same files as Tier 1, in their own `describe`                                                                                                                                | `vp test run <files>`           |
+| 3. End to end   | A full user flow in the desktop app                                                                                                                                                                               | Playwright driving Electron (`playwright-core`, already a desktop dependency). The `e2e/` harness is built by the first ticket that needs it, as part of that ticket's scope | `pnpm e2e -- <spec>` once added |
+| 4. Golden media | A fixed input clip through the real pipeline, compared with a stored reference                                                                                                                                    | `pnpm test:golden`, built by the first ticket marked `Touches media: yes`, as part of its scope                                                                              | `pnpm test:golden -- <case>`    |
+| UX screenshots  | Every changed screen in dark and light themes at `1440x900` and the minimum `1180x760`                                                                                                                            | Playwright, attached to the PR (not committed)                                                                                                                               | per ticket                      |
 
 The planning repo's `tickets/test-map.json` maps each ticket to its commands per tier;
 `pnpm ticket:verify -- S7V-XXX` runs them in order: setup, unit, edge, golden, e2e, ux, smoke.
@@ -56,7 +56,7 @@ legitimately changes, the PR regenerates it, says why, and attaches before and a
 
 ## Providers and cost
 
-Real agent turns cost money. Use the free `Replay (dev)` provider that `pnpm dev` registers to stream
+Real agent turns cost money. Use the free `Replay (dev)` provider that `vp run dev` registers to stream
 recorded turns through the pipeline and UI; see the
 [test-t3-app skill](../../.agents/skills/test-t3-app/SKILL.md). Use a real provider only when the
 change depends on its behaviour, with its cheapest model.
@@ -75,4 +75,5 @@ vp test run <changed test files>
 ```
 
 `pnpm test` runs every package's suite and is slow; run it when a ticket's ACs ask for it. Failures
-that also happen on the base commit are recorded in the ticket with the base SHA, not ignored.
+that also happen on the base commit are recorded in the ticket with the base SHA, not ignored, and
+the developer decides whether they block ([AGENTS.md](../../AGENTS.md#when-to-stop-and-ask)).

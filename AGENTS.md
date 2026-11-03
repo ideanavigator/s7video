@@ -19,7 +19,8 @@ the app is T3 Code with the s7video name and without its mobile, cloud and code-
 
 1. **The ticket** you are working on: `$S7V_PLANNING_DIR/tickets/backlog/S7V-XXX-*.md`. The planning
    repo (`ideanavigator/s7video-planning`) lives beside this checkout; `S7V_PLANNING_DIR` overrides
-   the default `../s7video-planning`.
+   the default `../s7video-planning`. Tickets stay in
+   `tickets/backlog/` for their whole life; the `Status` line in the file is the state.
 2. **The sprint plan and sprint prompt** the ticket belongs to: `plans/sprints/NN-*.md` and
    `NN-*-prompt.md`. Their "Decisions" are settled; do not re-open them.
 3. **The PRD and ADRs** the ticket names: `prds/PRD-XXX-*.md`, `decisions/ADR-XXX-*.md`.
@@ -29,7 +30,8 @@ the app is T3 Code with the s7video name and without its mobile, cloud and code-
 
 ## Plan before code
 
-- **No code without a ticket in `ready`.** A new product area gets a PRD; a hard-to-reverse choice gets
+- **No code without a ticket in `ready`**, with no exceptions for agents. (The small-fix exception in
+  [CONTRIBUTING.md](CONTRIBUTING.md) is for outside contributors; a maintainer files the ticket.) A new product area gets a PRD; a hard-to-reverse choice gets
   an ADR. Create them with `pnpm ticket:new` and `pnpm doc:new`; never pick a number by hand.
 - A genuinely new problem found while working gets its own ticket, and you tell the developer. Do not
   quietly widen the ticket in front of you.
@@ -40,20 +42,20 @@ the app is T3 Code with the s7video name and without its mobile, cloud and code-
 
 ## The per-ticket process
 
-| Step             | What                                                                                                                                                                                                                                                                                                                  |
-| ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1. Branch        | From the current sprint branch (`sprint/S7V-XXX-slug`), not `main`: `feat/`, `fix/`, `docs/`, `chore/` or `spike/` + `S7V-XXX-slug`.                                                                                                                                                                                  |
-| 2. Status        | Set the ticket to `in-progress` in the planning repo and run its confidence checks.                                                                                                                                                                                                                                   |
-| 3. Build         | Code and every test tier the ticket lists ([testing.md](docs/engineering/testing.md)). Spikes never merge their code.                                                                                                                                                                                                 |
-| 4. Gates         | Run the [local gates](#run-the-gates-locally) and the ticket's Verification Commands. Paste the output in the PR.                                                                                                                                                                                                     |
-| 5. Changelog     | Write `docs/changelog/entries/S7V-XXX.md` and the `CHANGELOG.md` bullet ([docs/changelog](docs/changelog/README.md)).                                                                                                                                                                                                 |
-| 6. Commit        | [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/) with the ticket ID: `fix(timeline): S7V-123 captions no longer drift after a trim`. Always `git commit -s` (DCO). End with the attribution lines the session gives you, for example `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`. |
-| 7. Planning repo | Tick the ACs you met, set `in-review`, add a Results section (branch, SHAs, gate output, ACs open with reasons), keep `tickets/test-map.json` in sync, run `pnpm ticket:validate -- S7V-XXX --strict`, commit there with the ticket ID, `git pull --rebase`, push.                                                    |
-| 8. Pull request  | Into the sprint branch, using the [PR template](.github/PULL_REQUEST_TEMPLATE.md): ticket ID, confidence-check results, ACs met and open, gate output. Open it only when the sprint prompt or the developer asks for it.                                                                                              |
-| 9. Review        | A **separate reviewer agent with fresh context** reviews the whole diff ([code-review-standards.md](docs/engineering/code-review-standards.md), [prompts](docs/engineering/ai-code-review-prompts.md)). The author session never reviews itself.                                                                      |
-| 10. Fix          | Answer every `[blocking]` and `[non-blocking]` finding with a fixing commit or a written reason. Critical and high findings always block.                                                                                                                                                                             |
-| 11. Sign-off     | Only the reviewer posts `Review sign-off: <full head SHA>` and saves `code-reviews/S7V-XXX.md` in the planning repo. A new commit needs a new sign-off.                                                                                                                                                               |
-| 12. Merge        | Run the gates on the signed-off head, post the output, then `gh pr merge <n> --squash --match-head-commit <SHA>`. `pnpm ticket:finalize -- S7V-XXX --skip-verify` must pass, then the ticket goes to `done`.                                                                                                          |
+| Step             | What                                                                                                                                                                                                                                                                                                                                       |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 1. Branch        | From the current sprint branch (`sprint/S7V-XXX-slug`), not `main`: `feat/`, `fix/`, `docs/`, `chore/` or `spike/` + `S7V-XXX-slug`.                                                                                                                                                                                                       |
+| 2. Status        | Set the ticket to `in-progress` in the planning repo and run its confidence checks.                                                                                                                                                                                                                                                        |
+| 3. Build         | Code and every test tier the ticket lists ([testing.md](docs/engineering/testing.md)). Spikes never merge their code.                                                                                                                                                                                                                      |
+| 4. Gates         | Run the [local gates](#run-the-gates-locally) and the ticket's Verification Commands. Paste the output in the PR.                                                                                                                                                                                                                          |
+| 5. Changelog     | Write `docs/changelog/entries/S7V-XXX.md` and the `CHANGELOG.md` bullet ([docs/changelog](docs/changelog/README.md)).                                                                                                                                                                                                                      |
+| 6. Commit        | [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/) with the ticket ID: `fix(timeline): S7V-123 captions no longer drift after a trim`. Always `git commit -s` (DCO). End with the attribution lines the session gives you, for example `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`.                      |
+| 7. Planning repo | Once the branch is pushed for review (with its PR, when one is opened), tick the ACs you met, set `in-review`, add a Results section (branch, SHAs, gate output, ACs open with reasons), keep `tickets/test-map.json` in sync, run `pnpm ticket:validate -- S7V-XXX --strict`, commit there with the ticket ID, `git pull --rebase`, push. |
+| 8. Pull request  | Into the sprint branch, using the [PR template](.github/PULL_REQUEST_TEMPLATE.md): ticket ID, confidence-check results, ACs met and open, gate output. Open it only when the sprint prompt or the developer asks for it.                                                                                                                   |
+| 9. Review        | A **separate reviewer agent with fresh context** reviews the whole diff ([code-review-standards.md](docs/engineering/code-review-standards.md), [prompts](docs/engineering/ai-code-review-prompts.md)). The author session never reviews itself.                                                                                           |
+| 10. Fix          | Answer every `[blocking]` and `[non-blocking]` finding with a fixing commit or a written reason. Critical and high findings always block.                                                                                                                                                                                                  |
+| 11. Sign-off     | Only the reviewer posts `Review sign-off: <full head SHA>` and saves `code-reviews/S7V-XXX.md` in the planning repo. A new commit needs a new sign-off.                                                                                                                                                                                    |
+| 12. Merge        | Run the gates on the signed-off head, post the output, then `gh pr merge <n> --squash --match-head-commit <SHA>`. `pnpm ticket:finalize -- S7V-XXX --skip-verify` must pass, then the ticket goes to `done`.                                                                                                                               |
 
 Never mark a ticket `done` without the reviewer's sign-off on the head SHA and a changelog entry.
 Never merge a sprint branch into `main` without the developer's approval.
@@ -238,6 +240,7 @@ Stop, write down what you found, and ask the developer when:
 - a rule here conflicts with the task in front of you (say so loudly, and get sign-off before
   breaking it);
 - you would have to touch `~/.t3`, a live install, client media or a secret to continue;
-- a gate fails on the base commit too and the ticket does not say how to handle it;
+- a gate fails on the base commit too and the ticket does not say how to handle it (record the
+  failure with the base SHA in the ticket, then ask whether it blocks);
 - free disk space is under 15 GB, or something destructive (deleting data, force-pushing, rewriting
   history) looks necessary.
