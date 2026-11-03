@@ -13,12 +13,10 @@
     "@t3tools/shared": "workspace:*",
     "@t3tools/tailscale": "workspace:*",
     "effect": "catalog:",
-    "playwright-core": "1.60.0",
-    "plist": "catalog:"
+    "playwright-core": "1.60.0"
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",
-    "@types/plist": "catalog:",
     "esbuild": "0.28.2",
     "postject": "1.0.0-alpha.6",
     "typescript": "catalog:",

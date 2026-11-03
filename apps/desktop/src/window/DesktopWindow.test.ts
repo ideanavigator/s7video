@@ -49,7 +49,6 @@ import { SNAP_SHOT_EVENT_CHANNEL } from "../ipc/channels.ts";
 import * as DesktopServerExposure from "../backend/DesktopServerExposure.ts";
 import * as DesktopWindow from "./DesktopWindow.ts";
 import * as PreviewManager from "../preview/Manager.ts";
-import * as PreviewPasskeys from "../preview/Passkeys.ts";
 
 const environmentInput = {
   dirname: "/repo/apps/desktop/dist-electron",
@@ -330,11 +329,6 @@ function layerTest(input: {
         } satisfies ElectronShell.ElectronShell["Service"]),
         layerElectronTheme,
         layerElectronWindow,
-        Layer.mock(PreviewPasskeys.PreviewPasskeys)({
-          bridgeEnabled: false,
-          installSessionHandlers: () => {},
-          attachGuest: () => () => {},
-        }),
         Layer.mock(PreviewManager.PreviewManager)({
           getBrowserSession: () => Effect.succeed({} as Electron.Session),
           setMainWindow: input.setPreviewMainWindow ?? (() => Effect.void),
@@ -440,11 +434,6 @@ const makeSplashScenario = (createOutcomes: readonly (Electron.BrowserWindow | n
           } satisfies ElectronShell.ElectronShell["Service"]),
           layerElectronTheme,
           Layer.succeed(ElectronWindow.ElectronWindow, electronWindowShape),
-          Layer.mock(PreviewPasskeys.PreviewPasskeys)({
-            bridgeEnabled: false,
-            installSessionHandlers: () => {},
-            attachGuest: () => () => {},
-          }),
           Layer.mock(PreviewManager.PreviewManager)({
             getBrowserSession: () => Effect.succeed({} as Electron.Session),
             setMainWindow: () => Effect.void,
