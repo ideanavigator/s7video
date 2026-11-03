@@ -5,7 +5,7 @@ import { GuestMessageId, GuestShareId, IsoDateTime, TrimmedNonEmptyString } from
 
 /**
  * Guest shares let a browser watch a thread over T3 Connect, which s7video removed. Threads and
- * events recorded with one still decode, and the owner can still send or dismiss waiting messages.
+ * events recorded with one still decode, but nothing sends, dismisses or closes them any more.
  */
 export const GUEST_MESSAGE_MAX_LENGTH = 4_000;
 export const GUEST_NAME_MAX_LENGTH = 40;

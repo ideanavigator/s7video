@@ -83,7 +83,7 @@ const WEBHOOK_FILTERED_LOG_PER_MINUTE = 10;
 const WEBHOOK_DELIVERY_LOG_BODY_LIMIT = 64 * 1024;
 const WEBHOOK_DELIVERY_LOG_PROMPT_LIMIT = 64 * 1024;
 const WEBHOOK_MAX_QUEUED_PER_TASK = 20;
-// Enforce the relay's per-task/minute limit here too; tunnel hostnames are public.
+// Webhook URLs can be public (for example over Tailscale Funnel), so cap deliveries per task.
 const WEBHOOK_RATE_LIMIT_PER_MINUTE = 60;
 const LEGACY_DELIVERY_OUTCOMES: ReadonlySet<string> = new Set([
   "accepted",
@@ -1922,9 +1922,8 @@ export const layer = Layer.effect(
       if (schedule.type !== "webhook") return yield* notFound;
 
       const now = yield* localNow;
-      // Anyone can reach the tunnel directly and set the relay's header, so
-      // a receive time is never later than now: a future one would pin the
-      // delivery in the log and slip past the task's max age.
+      // The caller sets the receive time, so it is never later than now: a
+      // future one would pin the delivery in the log and slip past the task's max age.
       const receivedAt =
         request.receivedAt === undefined
           ? now

@@ -1202,7 +1202,10 @@ export const make = Effect.gen(function* () {
   });
 });
 
-/** Subjects of sessions and links a pairing link created, keyed by how the client paired. */
+/**
+ * Subjects of sessions and links a pairing link created, keyed by how the client paired.
+ * `cloud-connect` only marks T3 Connect pairings from upstream data; s7video issues none.
+ */
 const LINK_PAIRED_SUBJECTS = { link: "one-time-token", connect: "cloud-connect" } as const;
 
 /**
