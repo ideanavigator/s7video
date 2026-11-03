@@ -1,10 +1,9 @@
-import { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
-import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { EnvironmentId, ProjectId } from "@t3tools/contracts";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { AsyncResult, type Atom } from "effect/reactivity";
 import { expect, it, vi } from "vite-plus/test";
 
-import { act, render, stubGlobal } from "../../../test/render";
+import { render, stubGlobal } from "../../../test/render";
 
 const state = vi.hoisted(() => ({
   projects: [] as EnvironmentProject[],
@@ -100,12 +99,8 @@ vi.mock(import("../../state/use-atom-command"), async (original) => {
 
 import { AppAtomRegistryProvider, appAtomRegistry } from "../../rpc/atomRegistry";
 import { allReachableShellsLiveAtom } from "../../state/shell";
-import { selectThreadDiffPanelSelection, useDiffPanelStore } from "../../diffPanelStore";
-import {
-  selectActiveRightPanel,
-  selectActiveRightPanelSurface,
-  useRightPanelStore,
-} from "../../rightPanelStore";
+import { useDiffPanelStore } from "../../diffPanelStore";
+import { useRightPanelStore } from "../../rightPanelStore";
 import { DesktopWebLinkCoordinator } from "./DesktopWebLinkCoordinator";
 
 const discoverySettled = allReachableShellsLiveAtom as Atom.Writable<boolean>;
@@ -126,19 +121,6 @@ const project = {
     },
   },
 } as EnvironmentProject;
-const pullRequestUrl = "https://github.com/Effect-TS/effect/pull/9339";
-const pullRequestView = {
-  to: "/pull-requests",
-  search: {
-    involvement: "all",
-    state: "all",
-    repository: "effect-ts/effect",
-    number: 9339,
-    selectedHost: "github.com",
-    selectedProjectId: projectId,
-    selectedEnvironmentId: environmentId,
-  },
-};
 
 const pairingUrl = "https://vps.example.com/pair#token=ABC123";
 const pairLink = `t3code://pair?pairingUrl=${encodeURIComponent(pairingUrl)}`;
@@ -185,82 +167,7 @@ async function mount(...urls: string[]) {
   return stack.move();
 }
 
-it("holds a launch PR link until project discovery settles, then opens the PR view", async () => {
-  setup();
-  await using _coordinator = await mount(pullRequestUrl);
-  expect(state.navigate).not.toHaveBeenCalled();
-  expect(state.openScratchProject).not.toHaveBeenCalled();
-
-  state.projects = [project];
-  const navigated = new Promise<void>((resolve) => {
-    state.navigate.mockImplementationOnce(async () => resolve());
-  });
-  await act(async () => {
-    appAtomRegistry.set(discoverySettled, true);
-    await navigated;
-  });
-  expect(state.navigate).toHaveBeenCalledExactlyOnceWith(pullRequestView);
-  expect(state.openScratchProject).not.toHaveBeenCalled();
-});
-
 const sha = "a".repeat(40);
-const commitUrl = `https://github.com/Effect-TS/effect/pull/9339/commits/${sha}`;
-const threadRef = scopeThreadRef(environmentId, ThreadId.make("thread"));
-
-it.each([
-  ["github.com", "pull/9339/commits"],
-  ["code.example.com:8443", "commit"],
-])("opens a %s/%s commit in the active thread's Diff pane after discovery", async (host, path) => {
-  setup();
-  state.routeParams = { environmentId: "local", threadId: "thread" };
-  await using _coordinator = await mount(`https://${host}/Effect-TS/effect/${path}/${sha}`);
-  expect(state.preview).not.toHaveBeenCalled();
-
-  state.projects = [
-    {
-      ...project,
-      repositoryIdentity: {
-        ...project.repositoryIdentity,
-        canonicalKey: `${host}/effect-ts/effect`,
-        locator: {
-          ...project.repositoryIdentity?.locator,
-          remoteUrl: `https://${host}/Effect-TS/effect.git`,
-        },
-      },
-    } as EnvironmentProject,
-  ];
-  await act(async () => appAtomRegistry.set(discoverySettled, true));
-  await vi.waitFor(() => {
-    expect(selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, threadRef)).toBe(
-      "diff",
-    );
-  });
-  expect(
-    selectThreadDiffPanelSelection(useDiffPanelStore.getState().byThreadKey, threadRef),
-  ).toMatchObject({ kind: "commit", sha });
-  expect(state.preview).toHaveBeenCalledExactlyOnceWith({
-    environmentId,
-    input: expect.objectContaining({ cwd: "/workspace/effect", commitSha: sha }),
-  });
-  expect(state.navigate).not.toHaveBeenCalled();
-  expect(state.openLink).not.toHaveBeenCalled();
-});
-
-it("opens a PR commit the workspace lacks in the thread's PR panel", async () => {
-  setup();
-  state.routeParams = { environmentId: "local", threadId: "thread" };
-  state.projects = [project];
-  state.preview.mockResolvedValueOnce(AsyncResult.success({ sources: [] }));
-  appAtomRegistry.set(discoverySettled, true);
-  await using _coordinator = await mount(commitUrl);
-  await vi.waitFor(() =>
-    expect(
-      selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, threadRef),
-    ).toMatchObject({ kind: "pull-request", repository: "effect-ts/effect", number: 9339 }),
-  );
-  expect(useDiffPanelStore.getState().byThreadKey).toEqual({});
-  expect(state.openLink).not.toHaveBeenCalled();
-});
 
 it("opens a plain commit the workspace lacks like any other delivered link", async () => {
   setup();
@@ -327,23 +234,4 @@ it("pairs with Local environment disabled, where there is no primary environment
   await vi.waitFor(() =>
     expect(state.connectPairing).toHaveBeenCalledExactlyOnceWith({ pairingUrl }),
   );
-});
-
-it("holds a launch PR link with Local environment disabled until discovery settles", async () => {
-  setup();
-  state.localEnvironmentDisabled = true;
-  await using _coordinator = await mount(pullRequestUrl);
-  expect(state.navigate).not.toHaveBeenCalled();
-  expect(state.openScratchProject).not.toHaveBeenCalled();
-
-  state.projects = [project];
-  const navigated = new Promise<void>((resolve) => {
-    state.navigate.mockImplementationOnce(async () => resolve());
-  });
-  await act(async () => {
-    appAtomRegistry.set(discoverySettled, true);
-    await navigated;
-  });
-  expect(state.navigate).toHaveBeenCalledExactlyOnceWith(pullRequestView);
-  expect(state.openScratchProject).not.toHaveBeenCalled();
 });

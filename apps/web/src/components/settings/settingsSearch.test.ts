@@ -332,13 +332,6 @@ describe("source control host search items", () => {
     expect(items.map((item) => item.title)).toEqual(["Example accounts and token"]);
     expect(searchSettings("ex switch accounts", items)).toHaveLength(1);
   });
-
-  it("finds the built-in hosts by their own words", () => {
-    expect(searchSettings("codeberg").map((item) => item.id)).toContain("source-control");
-    expect(searchSettings("ghes").map((item) => item.id)).toContain(
-      sourceControlHostSettingsSearchId("github"),
-    );
-  });
 });
 
 describe("movedSettingsPath", () => {

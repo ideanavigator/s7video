@@ -16,12 +16,6 @@ const workspaceFiles = [
   "apps/server/package.json",
   "apps/desktop/package.json",
   "apps/web/package.json",
-  "apps/mobile/package.json",
-  "apps/mobile/modules/t3-highlights/package.json",
-  "apps/mobile/modules/t3-source-text/package.json",
-  "apps/mobile/modules/t3-review-diff/package.json",
-  "apps/mobile/modules/t3-terminal/package.json",
-  "apps/marketing/package.json",
   "infra/relay/package.json",
   "oxlint-plugin-t3code/package.json",
   "packages/client-runtime/package.json",
@@ -31,25 +25,12 @@ const workspaceFiles = [
   "packages/tailscale/package.json",
   "packages/provider-core/package.json",
   "packages/provider-testing/package.json",
-  "packages/provider-pi/package.json",
   "packages/provider-acp/package.json",
   "packages/provider-acp-registry/package.json",
-  "packages/provider-cursor/package.json",
-  "packages/provider-fx/package.json",
-  "packages/provider-grok/package.json",
-  "packages/provider-muse/package.json",
-  "packages/provider-opencode/package.json",
   "packages/secret-provider-core/package.json",
   "packages/secret-provider-definitions/package.json",
-  "packages/secret-provider-onepassword/package.json",
-  "packages/source-control-azure-devops/package.json",
-  "packages/source-control-bitbucket/package.json",
   "packages/source-control-core/package.json",
   "packages/source-control-definitions/package.json",
-  "packages/source-control-forgejo/package.json",
-  "packages/source-control-gitcafe/package.json",
-  "packages/source-control-github/package.json",
-  "packages/source-control-gitlab/package.json",
   "packages/source-control-testing/package.json",
   "packages/effect-acp/package.json",
   "packages/effect-codex-app-server/package.json",
@@ -62,13 +43,6 @@ function copyWorkspaceManifestFixture(targetRoot: string): void {
     const destinationPath = NodePath.resolve(targetRoot, relativePath);
     NodeFS.mkdirSync(NodePath.dirname(destinationPath), { recursive: true });
     NodeFS.cpSync(sourcePath, destinationPath);
-  }
-
-  const mobileDependencies = NodePath.resolve(repoRoot, "apps/mobile/deps");
-  if (NodeFS.existsSync(mobileDependencies)) {
-    NodeFS.cpSync(mobileDependencies, NodePath.resolve(targetRoot, "apps/mobile/deps"), {
-      recursive: true,
-    });
   }
 
   const patchesDirectory = NodePath.resolve(repoRoot, "patches");

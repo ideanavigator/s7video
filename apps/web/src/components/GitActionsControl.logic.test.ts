@@ -1,12 +1,9 @@
-import { SourceControlProviderKind, type VcsStatusResult } from "@t3tools/contracts";
-import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
+import { type VcsStatusResult } from "@t3tools/contracts";
 import { resolveAutoFeatureBranchName } from "@t3tools/shared/git";
 import { assert, describe, it } from "vite-plus/test";
 import {
-  buildMenuItems,
   requiresDefaultBranchConfirmation,
   resolveChangesTotals,
-  resolveDefaultBranchActionDialogCopy,
   resolveLiveThreadBranchUpdate,
   resolveQuickAction,
 } from "./GitActionsControl.logic";
@@ -48,34 +45,6 @@ describe("when: ref is clean, ahead, and has an open PR", () => {
       false,
     );
     assert.deepInclude(quick, { kind: "run_action", action: "push", label: "Push" });
-  });
-});
-
-describe("when: ref is clean, up to date, and has no open PR", () => {
-  it("enables create PR when synced with upstream but ahead of default, even with local changes", () => {
-    const syncedFeature = status({
-      aheadCount: 0,
-      behindCount: 0,
-      aheadOfDefaultCount: 1,
-      pr: null,
-    });
-
-    const quick = resolveQuickAction(syncedFeature, false);
-    assert.deepInclude(quick, {
-      label: "Create PR",
-      disabled: false,
-      kind: "run_action",
-      action: "create_pr",
-    });
-
-    const items = buildMenuItems(syncedFeature, false);
-    assert.equal(items.find((item) => item.id === "pr")?.disabled, false);
-
-    const dirtyFeature = { ...syncedFeature, hasWorkingTreeChanges: true };
-    assert.equal(
-      buildMenuItems(dirtyFeature, false).find((item) => item.id === "pr")?.disabled,
-      false,
-    );
   });
 });
 
@@ -126,23 +95,6 @@ describe("when: local changes are behind upstream", () => {
 });
 
 describe("when: ref has no upstream configured", () => {
-  it("resolveQuickAction runs push and create PR when no upstream and commits are ahead", () => {
-    const quick = resolveQuickAction(
-      status({
-        hasUpstream: false,
-        aheadCount: 2,
-        pr: null,
-      }),
-      false,
-    );
-    assert.deepInclude(quick, {
-      kind: "run_action",
-      action: "create_pr",
-      label: "Push & create PR",
-      disabled: false,
-    });
-  });
-
   it("resolveQuickAction publishes when no origin remote exists", () => {
     const quick = resolveQuickAction(
       status({
@@ -159,35 +111,6 @@ describe("when: ref has no upstream configured", () => {
       label: "Publish repository",
       disabled: false,
     });
-  });
-});
-
-describe("when: the ref is on GitLab", () => {
-  const gitLab = {
-    sourceControlProvider: {
-      kind: SourceControlProviderKind.make("gitlab"),
-      name: "GitLab",
-      baseUrl: "https://gitlab.com",
-    },
-  };
-
-  it("names merge requests in actions and the default-ref dialog", () => {
-    const ahead = status({ ...gitLab, hasUpstream: false, aheadCount: 2 });
-    assert.equal(resolveQuickAction(ahead, false).label, "Push & create MR");
-    assert.equal(
-      resolveQuickAction(status({ ...gitLab, hasWorkingTreeChanges: true }), false).label,
-      "Commit, push & MR",
-    );
-    assert.equal(buildMenuItems(ahead, false).find((item) => item.id === "pr")?.label, "Create MR");
-
-    const copy = resolveDefaultBranchActionDialogCopy({
-      action: "create_pr",
-      branchName: "main",
-      includesCommit: false,
-      terminology: sourceControlClients.get("gitlab").changeRequest,
-    });
-    assert.equal(copy.title, "Push & create MR from default ref?");
-    assert.include(copy.description, "create a merge request on");
   });
 });
 

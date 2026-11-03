@@ -268,24 +268,6 @@ it.layer(NodeServices.layer)("server settings", (it) => {
     }).pipe(Effect.provide(layerServerSettings())),
   );
 
-  it.effect("sends clients a known secret provider's config but never an unknown kind's", () =>
-    Effect.gen(function* () {
-      const settings = yield* decodeServerSettings({
-        secretProviders: {
-          personal: { kind: "one_password", label: "Personal", config: { account: "my" } },
-          vault: { kind: "openbao", label: "Vault", config: { token: "bao-token" } },
-        },
-      });
-      assert.deepStrictEqual<unknown>(
-        ServerSettingsModule.redactServerSettingsForClient(settings).secretProviders,
-        {
-          personal: { kind: "one_password", label: "Personal", config: { account: "my" } },
-          vault: { kind: "openbao", label: "Vault" },
-        },
-      );
-    }),
-  );
-
   it.effect("stores no secret provider of an unloaded kind or with a config its kind rejects", () =>
     Effect.gen(function* () {
       const service = yield* ServerSettingsModule.ServerSettingsService;
@@ -2317,7 +2299,7 @@ it.layer(NodeServices.layer)("server settings under a provider policy", (it) => 
         })
         .pipe(Effect.flip);
       assert.equal(rejected.operation, "use-disallowed-provider");
-      assert.equal(rejected.message, "Example Corp's policy does not allow the Cursor provider.");
+      assert.equal(rejected.message, "Example Corp's policy does not allow the cursor provider.");
       // Switching it on for one project is enabling it too.
       const perProject = yield* service
         .updateSettings({

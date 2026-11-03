@@ -713,12 +713,6 @@ export const SETTINGS_SEARCH_ITEMS = [
     desktopOnly: true,
   },
   {
-    id: "mobile-app",
-    title: "Mobile app",
-    to: "/settings/about",
-    searchTerms: ["phone tablet iPhone iPad iOS Android App Store Google Play QR"],
-  },
-  {
     id: "privacy-policy",
     title: "Privacy policy",
     to: "/settings/about",
@@ -1166,15 +1160,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "secret-providers",
     title: "Secret providers",
     to: "/settings/secrets",
-    searchTerms: ["1password vault credentials api key"],
-    secretsFeatureOnly: true,
-  },
-  {
-    id: "secret-providers-add",
-    title: "Add secret provider",
-    to: "/settings/secrets",
-    targetId: "secret-providers",
-    searchTerms: ["new 1password vault op cli account"],
+    searchTerms: ["vault credentials api key"],
     secretsFeatureOnly: true,
   },
   {

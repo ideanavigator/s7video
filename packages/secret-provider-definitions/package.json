@@ -12,7 +12,6 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@t3tools/secret-provider-core": "workspace:*",
-    "@t3tools/secret-provider-onepassword": "workspace:*"
+    "@t3tools/secret-provider-core": "workspace:*"
   }
 }

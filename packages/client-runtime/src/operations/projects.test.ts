@@ -5,7 +5,6 @@ import { EnvironmentId, ProjectId } from "@t3tools/contracts";
 import {
   findExistingAddProject,
   getCloneDirectoryName,
-  getDefaultCloneUrl,
   githubIncompleteOwnerRepositoryMessage,
   normalizePastedCloneUrl,
 } from "./projects.ts";
@@ -42,15 +41,6 @@ describe("add project shared logic", () => {
     ).toBeNull();
   });
 
-  it("routes owner/repository shorthand to GitHub over HTTPS", () => {
-    expect(normalizePastedCloneUrl("imputnet/helium")).toBe(
-      "https://github.com/imputnet/helium.git",
-    );
-    expect(normalizePastedCloneUrl("  pingdotgg/t3code  ")).toBe(
-      "https://github.com/pingdotgg/t3code.git",
-    );
-  });
-
   it("keeps explicit clone URLs and local paths unchanged", () => {
     expect(normalizePastedCloneUrl("https://gitlab.com/group/project.git")).toBe(
       "https://gitlab.com/group/project.git",
@@ -60,23 +50,6 @@ describe("add project shared logic", () => {
     );
     expect(normalizePastedCloneUrl("group/subgroup/project")).toBe("group/subgroup/project");
     expect(normalizePastedCloneUrl("/srv/git/repo.git")).toBe("/srv/git/repo.git");
-  });
-
-  it("uses HTTPS for repositories selected through a provider", () => {
-    expect(
-      getDefaultCloneUrl({
-        provider: SourceControlProviderKind.make("github"),
-        url: "https://github.com/imputnet/helium",
-        sshUrl: "git@github.com:imputnet/helium.git",
-      }),
-    ).toBe("https://github.com/imputnet/helium");
-    expect(
-      getDefaultCloneUrl({
-        provider: SourceControlProviderKind.make("forgejo"),
-        url: "https://forgejo.example.test:8443/owner/repo.git",
-        sshUrl: "ssh://git@forgejo.example.test:2222/owner/repo.git",
-      }),
-    ).toBe("https://forgejo.example.test:8443/owner/repo.git");
   });
 
   it("derives the clone folder name from any pasted clone URL", () => {
