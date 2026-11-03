@@ -1,16 +1,9 @@
 import { SourceControlProviderKind } from "@t3tools/contracts";
-import type {
-  EnvironmentId,
-  ProjectId,
-  PullRequestAction,
-  PullRequestListEntry,
-} from "@t3tools/contracts";
+import type { EnvironmentId, ProjectId, PullRequestListEntry } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
-  pullRequestHostActions,
   largestPullRequestReadCount,
-  pullRequestQuickActions,
   filterPullRequestsByInvolvement,
   findProjectForRepository,
   findScopedProject,
@@ -639,44 +632,6 @@ describe("pull request list override settlement", () => {
   });
 });
 
-describe("pull request quick actions", () => {
-  const summary = (host: string, kind: string, actions?: ReadonlyArray<PullRequestAction>) => ({
-    host,
-    kind: SourceControlProviderKind.make(kind),
-    searchesOnHost: true,
-    projectCount: 1,
-    configured: true,
-    detail: null,
-    ...(actions === undefined ? {} : { actions }),
-  });
-
-  it("offers what each host reports, and the host's own set when a server reports none", () => {
-    const actionsOf = pullRequestHostActions([
-      summary("bitbucket.org", "bitbucket", ["merge", "close"]),
-      summary("github.com", "github"),
-      summary("gitlab.com", "gitlab"),
-    ]);
-    const bitbucket = actionsOf({
-      host: "bitbucket.org",
-      provider: SourceControlProviderKind.make("bitbucket"),
-    });
-    expect(pullRequestQuickActions({ state: "closed", isDraft: false }, bitbucket)).toEqual([]);
-    const github = actionsOf({
-      host: "github.com",
-      provider: SourceControlProviderKind.make("github"),
-    });
-    expect(pullRequestQuickActions({ state: "open", isDraft: true }, github)).toEqual([
-      "close",
-      "ready",
-    ]);
-    const gitlab = actionsOf({
-      host: "gitlab.com",
-      provider: SourceControlProviderKind.make("gitlab"),
-    });
-    expect(pullRequestQuickActions({ state: "open", isDraft: false }, gitlab)).toEqual([]);
-  });
-});
-
 describe("refresh page size", () => {
   const twoPagesAcrossFourRepositories = (provider: "github" | "gitlab") =>
     ["a", "b", "c", "d"].flatMap((name) =>
@@ -692,50 +647,9 @@ describe("refresh page size", () => {
   it("asks each repository for its own rows where repositories are read one at a time", () => {
     expect(largestPullRequestReadCount(twoPagesAcrossFourRepositories("gitlab"))).toBe(198);
   });
-
-  // regression: #19403 refreshes were not bounded by each tracker read
-  it("asks for the whole host where one search reads every repository", () => {
-    expect(largestPullRequestReadCount(twoPagesAcrossFourRepositories("github"))).toBe(792);
-  });
 });
 
 describe("findProjectForRepository", () => {
-  it("resolves Azure bare names using matching project and environment scope", () => {
-    const azure = (id: string, environmentId: string, path: string) => ({
-      id,
-      environmentId,
-      repositoryIdentity: {
-        canonicalKey: `dev.azure.com/${path}`,
-        locator: { source: "git-remote" as const, remoteName: "origin", remoteUrl: "" },
-        provider: SourceControlProviderKind.make("azure-devops"),
-        displayName: path,
-        owner: "contoso",
-        name: path.split("/").at(-1)!,
-      },
-    });
-    const payments = azure("p1", ENV_1, "contoso/payments/_git/api");
-    const billing = azure("p2", ENV_1, "contoso/billing/_git/api");
-    const remoteBilling = azure("p2", ENV_2, "contoso/billing/_git/api");
-    const unrelated = azure("p3", ENV_2, "contoso/billing/_git/web");
-    const projects = [payments, billing, remoteBilling, unrelated];
-
-    expect(findProjectForRepository(projects, { repository: "api" })).toBe(payments);
-    expect(
-      findProjectForRepository(projects, {
-        repository: "api",
-        scopedProjectId: "p2",
-        scopedEnvironmentId: ENV_2,
-      }),
-    ).toBe(remoteBilling);
-    expect(
-      findProjectForRepository(projects, {
-        repository: "api",
-        scopedProjectId: "p3",
-        scopedEnvironmentId: ENV_2,
-      }),
-    ).toBe(payments);
-  });
-
   it("keeps repository matches on the selected environment when project IDs overlap", () => {
     const project = (id: string, environmentId: string, repository: string) => ({
       id,

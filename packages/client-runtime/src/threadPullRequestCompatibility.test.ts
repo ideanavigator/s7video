@@ -20,24 +20,6 @@ const input = {
 const capabilities = { repositoryIdentity: true } satisfies ExecutionEnvironmentCapabilities;
 
 describe("thread pull request capability negotiation", () => {
-  it.each([true, false])(
-    "preserves Forgejo ports in a multi-link mutation: linked=%s",
-    (linked) => {
-      const mutation = planThreadPullRequestMutation({
-        ...input,
-        linked,
-        capabilities,
-        reference: {
-          host: "forge.example",
-          repository: "team/repo",
-          number: 7,
-          url: "http://forge.example:3000/team/repo/pulls/7",
-        },
-      });
-      expect(mutation).toMatchObject({ input: { host: "forge.example:3000", number: 7 } });
-    },
-  );
-
   it("does not dispatch before the server config loads", () => {
     expect(threadPullRequestLinkMode(undefined)).toBe("unsupported");
     expect(planThreadPullRequestMutation({ ...input, capabilities: undefined })).toBeNull();

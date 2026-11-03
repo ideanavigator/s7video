@@ -12,15 +12,24 @@ import { resolveSettingsSecrets } from "../secrets/settingsSecretValue.ts";
 
 import { sourceControlDefinitions } from "./sourceControlDefinitions.ts";
 
+// Hosts the fork removed (S7V-002): their saved credentials still move to the secret store and
+// never reach clients when an upstream settings.json names them.
+const RETIRED_HOST_SECRET_FIELDS = [
+  ["github", ["tokens", "signIns"]],
+  ["gitcafe", ["token"]],
+  ["bitbucket", ["accessToken", "apiToken"]],
+] as const;
+
 export const SOURCE_CONTROL_HOST_SECRET_FIELDS: ReadonlyMap<
   string,
   ReadonlyArray<string>
-> = new Map(
-  sourceControlDefinitions.definitions.flatMap((definition) => {
+> = new Map<string, ReadonlyArray<string>>([
+  ...RETIRED_HOST_SECRET_FIELDS,
+  ...sourceControlDefinitions.definitions.flatMap((definition) => {
     const fields = definition.settings ? secretSettingsFields(definition.settings) : [];
     return fields.length > 0 ? [[definition.kind, fields] as const] : [];
   }),
-);
+]);
 
 export interface SourceControlHostSecretSlot {
   readonly kind: string;

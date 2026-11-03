@@ -22,35 +22,6 @@ const git = (cwd: string, args: ReadonlyArray<string>) =>
   }).pipe(Effect.provide(ProcessRunner.layer));
 
 it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
-  it.effect("normalizes equivalent GitHub remotes into a stable repository identity", () =>
-    Effect.gen(function* () {
-      const fileSystem = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const cwd = yield* fileSystem.makeTempDirectoryScoped({
-        prefix: "t3-repository-identity-test-",
-      });
-
-      yield* git(cwd, ["init"]);
-      yield* git(cwd, ["remote", "add", "origin", "git@github.com:T3Tools/t3code.git"]);
-
-      const resolver = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
-      const identity = yield* resolver.resolve(cwd);
-      // Native realpath matches git's long paths when Windows temp dirs use 8.3 names.
-      const resolvedIdentityRoot =
-        identity?.rootPath === undefined ? "" : NodeFS.realpathSync.native(identity.rootPath);
-      const resolvedCwd = NodeFS.realpathSync.native(cwd);
-
-      expect(identity).not.toBeNull();
-      expect(identity?.canonicalKey).toBe("github.com/t3tools/t3code");
-      expect(normalizeResolvedPath(resolvedIdentityRoot)).toBe(normalizeResolvedPath(resolvedCwd));
-      expect(identity?.displayName).toBe("T3Tools/t3code");
-      expect(identity?.provider).toBe("github");
-      expect(identity?.owner).toBe("T3Tools");
-      expect(identity?.name).toBe("t3code");
-      expect(yield* resolver.resolve(path.join(cwd, ".git"))).toBeNull();
-    }).pipe(Effect.provide(RepositoryIdentityResolver.layer)),
-  );
-
   it.effect("resolves the fetch remote of a partial clone", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;

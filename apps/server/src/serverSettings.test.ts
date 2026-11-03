@@ -268,8 +268,9 @@ it.layer(NodeServices.layer)("server settings", (it) => {
     }).pipe(Effect.provide(layerServerSettings())),
   );
 
-  it.effect("sends clients a known secret provider's config but never an unknown kind's", () =>
+  it.effect("sends clients no config for a secret provider kind this build does not load", () =>
     Effect.gen(function* () {
+      // s7video ships no secret provider kinds, so stale upstream 1Password entries are unknown too.
       const settings = yield* decodeServerSettings({
         secretProviders: {
           personal: { kind: "one_password", label: "Personal", config: { account: "my" } },
@@ -279,7 +280,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       assert.deepStrictEqual<unknown>(
         ServerSettingsModule.redactServerSettingsForClient(settings).secretProviders,
         {
-          personal: { kind: "one_password", label: "Personal", config: { account: "my" } },
+          personal: { kind: "one_password", label: "Personal" },
           vault: { kind: "openbao", label: "Vault" },
         },
       );
@@ -2317,7 +2318,7 @@ it.layer(NodeServices.layer)("server settings under a provider policy", (it) => 
         })
         .pipe(Effect.flip);
       assert.equal(rejected.operation, "use-disallowed-provider");
-      assert.equal(rejected.message, "Example Corp's policy does not allow the Cursor provider.");
+      assert.equal(rejected.message, "Example Corp's policy does not allow the cursor provider.");
       // Switching it on for one project is enabling it too.
       const perProject = yield* service
         .updateSettings({

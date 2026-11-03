@@ -6,12 +6,10 @@ import {
 import { beforeEach, describe, expect, it } from "vite-plus/test";
 
 import {
-  legacyThreadPullRequestKey,
   threadPullRequestSearchTerms,
   resolveThreadCurrentPullRequest,
   resolveThreadPullRequestChains,
   resolveThreadPullRequestBadge,
-  threadPullRequestKeysEqual,
 } from "./threadPullRequests.ts";
 
 // Remove ES2023 array methods to match Hermes on mobile.
@@ -58,50 +56,6 @@ function link(
     ...input,
   };
 }
-
-describe("threadPullRequestKeysEqual", () => {
-  it("recovers Forgejo ports from old stored URLs and keeps separate servers distinct", () => {
-    const old = link(1, {
-      host: "forge.example",
-      repository: "team/repo",
-      url: "http://forge.example:3000/team/repo/pulls/1",
-    });
-    expect(threadPullRequestKeysEqual(old, { ...old, host: "forge.example:3000" })).toBe(true);
-    expect(
-      threadPullRequestKeysEqual(old, {
-        host: "forge.example:3000",
-        repository: "team/repo",
-        number: 1,
-      }),
-    ).toBe(true);
-    expect(
-      threadPullRequestKeysEqual(old, {
-        ...old,
-        url: "http://forge.example:4000/team/repo/pulls/1",
-      }),
-    ).toBe(false);
-  });
-
-  it("recovers Azure repository keys from stored URLs", () => {
-    const own = link(7, {
-      host: "dev.azure.com",
-      repository: "org-a/project/_git/web",
-      url: "https://dev.azure.com/org-a/project/_git/web/pullrequest/7",
-    });
-    expect(legacyThreadPullRequestKey({ ...own, repository: "web" })).toEqual({
-      host: "dev.azure.com",
-      repository: "org-a/project/_git/web",
-      number: 7,
-    });
-    expect(
-      threadPullRequestKeysEqual(own, {
-        host: "org-a.visualstudio.com",
-        repository: "DefaultCollection/project/_git/web",
-        number: 7,
-      }),
-    ).toBe(true);
-  });
-});
 
 describe("resolveThreadCurrentPullRequest", () => {
   it("selects the same terminal link as stable sorting across input orders", () => {

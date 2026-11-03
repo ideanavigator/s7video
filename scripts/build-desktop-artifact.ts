@@ -975,10 +975,6 @@ interface StagePackageJson {
 export const STAGE_INSTALL_ARGS = ["install", "--prod"] as const;
 export const DESKTOP_ELECTRON_LANGUAGES = ["en-US"] as const;
 export const DESKTOP_FILE_EXCLUSIONS = [
-  // Cursor walks from argv[1] to platform assets; helpers and native addons need real paths outside ASAR.
-  "!**/node_modules/@cursor/sdk-*/**/*",
-  "!apps/desktop/prod-resources/cursor-sdk",
-  "!apps/desktop/prod-resources/cursor-sdk/**/*",
   // The installed Claude CLI is supplied explicitly; exclude optional bundled executables, retaining SDK JavaScript.
   "!**/node_modules/@anthropic-ai/claude-agent-sdk-*/**/*",
   "!**/*.map",
@@ -1028,8 +1024,6 @@ export const WINDOWS_SERVER_ASAR_UNPACK_GLOBS = [
 ] as const;
 // Keep sidecar exclusions aligned with the app; .bin symlinks are unused and unsupported by ASAR extraction.
 export const WINDOWS_SERVER_ASAR_IGNORE_GLOBS = [
-  "**/node_modules/@cursor/sdk-*",
-  "**/node_modules/@cursor/sdk-*/**",
   "**/node_modules/@anthropic-ai/claude-agent-sdk-*",
   "**/node_modules/@anthropic-ai/claude-agent-sdk-*/**",
   "**/node_modules/.bin",
@@ -1081,10 +1075,6 @@ export const WSL_RUNTIME_EXTRA_RESOURCES = [
   WSL_RUNTIME_ARCHIVE_HASH_EXTRA_RESOURCE,
 ] as const;
 export const DESKTOP_EXTRA_RESOURCES = [
-  {
-    from: "apps/desktop/prod-resources/cursor-sdk",
-    to: "node_modules/@cursor",
-  },
   {
     from: "apps/desktop/prod-resources/resource-monitor",
     to: "resource-monitor",
@@ -1432,23 +1422,6 @@ export function resolveMergedStageDependencies(input: {
     ...resolveFffNativeDependencies(input.platform, input.arch, input.fffNodeVersion),
   };
 }
-
-/** Cursor's helper lookup falls through the archive to this real resources tree. */
-export const stageCursorSdkPlatformPackages = Effect.fn("stageCursorSdkPlatformPackages")(
-  function* (nodeModulesDir: string, destination: string) {
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    yield* fs.makeDirectory(destination, { recursive: true });
-    const sdkDirectory = path.join(nodeModulesDir, "@cursor/sdk");
-    if (!(yield* fs.exists(sdkDirectory))) return;
-    const cursorDirectory = path.dirname(yield* fs.realPath(sdkDirectory));
-    for (const name of yield* fs.readDirectory(cursorDirectory)) {
-      if (!name.startsWith("sdk-")) continue;
-      const source = yield* fs.realPath(path.join(cursorDirectory, name));
-      yield* fs.copy(source, path.join(destination, name));
-    }
-  },
-);
 
 export interface ClerkPasskeyNativeArtifact {
   readonly packageName: string;
@@ -3936,13 +3909,6 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
       verbose: options.verbose,
     });
   }
-  yield* stageCursorSdkPlatformPackages(
-    path.join(
-      options.platform === "win" ? path.join(stageRoot, "server") : stageAppDir,
-      "node_modules",
-    ),
-    path.join(stageProdResourcesDir, "cursor-sdk"),
-  );
   if (
     options.wslRuntime !== undefined &&
     bundlesWslRuntime({ platform: options.platform, runtimeArchivePath: options.wslRuntime })

@@ -114,10 +114,6 @@ function button(label: string) {
   return found!;
 }
 const click = (label: string) => act(async () => button(label).click());
-const radio = (label: string) =>
-  [...document.querySelectorAll<HTMLElement>('[role="radio"]')].find(
-    (element) => element.textContent?.trim() === label,
-  );
 const input = (selector: string) => {
   const found = document.querySelector<HTMLInputElement>(selector);
   expect(found, selector).not.toBeNull();
@@ -187,26 +183,6 @@ describe("AddProviderInstanceDialog environment routing", () => {
       operation: "create",
       instanceId: "acpRegistry_kilo_code",
       instance: expect.objectContaining({ accentColor: "#2563eb" }),
-    });
-  });
-
-  it("keeps fx and the ACP Registry under Show more", async () => {
-    setup();
-    await using _screen = await render(dialog());
-    expect(radio("Codex")).toBeDefined();
-    expect(radio("fx")).toBeUndefined();
-    expect(document.body.textContent).not.toContain("Use Kilo Code");
-
-    await click("Show more");
-    button("Use Kilo Code");
-    await act(async () => radio("fx")!.click());
-    await click("Next");
-    await click("Next");
-    await click("Add instance");
-    expect(settingsHooks.mutate).toHaveBeenCalledWith({
-      operation: "create",
-      instanceId: "fx",
-      instance: { driver: "fx", enabled: true, displayName: "fx" },
     });
   });
 

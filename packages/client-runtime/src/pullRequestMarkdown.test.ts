@@ -3,25 +3,6 @@ import { describe, expect, it } from "vite-plus/test";
 import { changeRequestReferenceAutolinker, splitPullRequestBody } from "./pullRequestMarkdown.ts";
 
 describe("pull request body segmentation", () => {
-  // GitHub writes a dropped image into the body as an `<img>` tag, so a bare attachment link on
-  // its own line is the shape it uses for a video — every one sampled in the wild was one.
-  it("lifts a dropped video out and keeps the prose around it", () => {
-    expect(
-      splitPullRequestBody(
-        "Before\n\nhttps://github.com/user-attachments/assets/2f8c1a90-1b2c-4d5e-8f90-abcdef123456\n\nAfter",
-      ),
-    ).toEqual([
-      { id: "markdown:0", kind: "markdown", text: "Before" },
-      {
-        id: "attachment:1",
-        kind: "attachment",
-        url: "https://github.com/user-attachments/assets/2f8c1a90-1b2c-4d5e-8f90-abcdef123456",
-        media: "video",
-      },
-      { id: "markdown:2", kind: "markdown", text: "After" },
-    ]);
-  });
-
   it("reads the source out of a video tag, including a multi-line one", () => {
     expect(
       splitPullRequestBody(
@@ -127,12 +108,6 @@ describe("media on custom hosts", () => {
 describe("change request reference autolinks", () => {
   const urls = (provider: string, url: string, text: string) =>
     changeRequestReferenceAutolinker({ provider, url })?.(text).map((link) => link.url) ?? null;
-
-  it("links references against the change request's own repository", () => {
-    expect(urls("github", "https://ghe.example.com/acme/web/pull/7", "Fixes #5")).toEqual([
-      "https://ghe.example.com/acme/web/issues/5",
-    ]);
-  });
 
   // regression: the mobile review guide linked every host's `#5` with GitHub's grammar
   it("links nothing on a host whose grammar is not applied", () => {

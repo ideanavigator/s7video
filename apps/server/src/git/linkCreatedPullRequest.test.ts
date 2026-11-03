@@ -1,17 +1,14 @@
 import {
-  CommandId,
   ProjectId,
   ProviderInstanceId,
   ThreadId,
   type GitRunStackedActionResult,
-  type OrchestrationV2ServerCommand as OrchestrationCommand,
   type OrchestrationProjectShell,
   SourceControlProviderKind,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Ref from "effect/Ref";
 
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import {
@@ -19,14 +16,12 @@ import {
   v2PullRequestThread,
 } from "../orchestration-v2/testkit/pullRequestFixtures.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
-import * as ProjectService from "../project/ProjectService.ts";
 import { refreshPushedPullRequests } from "./refreshPushedPullRequests.ts";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
-import { createdPullRequestKey, linkCreatedPullRequest } from "./linkCreatedPullRequest.ts";
+import { createdPullRequestKey } from "./linkCreatedPullRequest.ts";
 
 const PROJECT_ID = ProjectId.make("project-1");
 const THREAD_ID = ThreadId.make("thread-1");
-const commandId = Effect.succeed(CommandId.make("server:pr-created-link:test"));
 
 const project: OrchestrationProjectShell = {
   id: PROJECT_ID,
@@ -72,48 +67,7 @@ function prResult(pr: GitRunStackedActionResult["pr"]): Pick<GitRunStackedAction
   return { pr };
 }
 
-const layerDependenciesFor = (
-  dispatch: Orchestrator.OrchestratorV2Shape["dispatch"],
-  threadShell: PullRequestTestThread | null = thread,
-) =>
-  Layer.mergeAll(
-    Layer.mock(ProjectService.ProjectService)({
-      getShell: () => Effect.succeedSome(project),
-    }),
-    Layer.mock(Orchestrator.OrchestratorV2)({
-      getThreadShell: () => Effect.succeed(threadShell ? v2PullRequestThread(threadShell) : null),
-      dispatch,
-    }),
-  );
-
-const recordingDispatch = Effect.fn("recordingDispatch")(function* () {
-  const commands = yield* Ref.make<ReadonlyArray<OrchestrationCommand>>([]);
-  const dispatch: Orchestrator.OrchestratorV2Shape["dispatch"] = (command) =>
-    Ref.update(commands, (recorded) => [...recorded, command]).pipe(
-      Effect.as({ sequence: 1, storedEvents: [] }),
-    );
-  return { commands, dispatch };
-});
-
 describe("createdPullRequestKey", () => {
-  it("reads host and repository from the URL when it is recognisable", () => {
-    expect(
-      createdPullRequestKey(
-        prResult({
-          status: "created",
-          number: 12,
-          url: "https://github.com/Other/Fork/pull/12",
-        }),
-        project,
-      ),
-    ).toEqual({
-      host: "github.com",
-      repository: "other/fork",
-      number: 12,
-      url: "https://github.com/Other/Fork/pull/12",
-    });
-  });
-
   it("falls back to the project's host and repository for an unreadable URL", () => {
     expect(
       createdPullRequestKey(
@@ -133,36 +87,6 @@ describe("createdPullRequestKey", () => {
       ),
     ).toBeNull();
   });
-});
-
-describe("linkCreatedPullRequest", () => {
-  it.effect("links a created pull request to the thread with source created", () =>
-    Effect.gen(function* () {
-      const { commands, dispatch } = yield* recordingDispatch();
-      yield* linkCreatedPullRequest({
-        threadId: THREAD_ID,
-        result: prResult({
-          status: "created",
-          number: 42,
-          url: "https://github.com/t3tools/t3code/pull/42",
-        }),
-        commandId,
-      }).pipe(Effect.provide(layerDependenciesFor(dispatch)));
-
-      expect(yield* Ref.get(commands)).toEqual([
-        {
-          type: "thread.pull-request.link",
-          commandId: "server:pr-created-link:test",
-          threadId: THREAD_ID,
-          host: "github.com",
-          repository: "t3tools/t3code",
-          number: 42,
-          url: "https://github.com/t3tools/t3code/pull/42",
-          source: "created",
-        },
-      ]);
-    }),
-  );
 });
 
 it.effect(

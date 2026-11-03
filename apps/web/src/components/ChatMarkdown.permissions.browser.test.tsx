@@ -108,16 +108,6 @@ const threadRef = {
   threadId: ThreadId.make("thread"),
 };
 const projectId = ProjectId.make("project");
-const linkedPullRequest: ThreadPullRequestLink = {
-  host: "github.com",
-  repository: "example/repo",
-  number: 42,
-  url: "https://github.com/example/repo/pull/42",
-  source: "manual",
-  linkedAt: "2026-09-08T00:00:00.000Z",
-  snapshot: null,
-  stack: null,
-};
 const serverConfig = {
   availableEditors: ["vscode", "file-manager"] as readonly EditorId[],
   shellRevealInFileManager: true,
@@ -238,43 +228,3 @@ it("does not reveal a file after revocation during its workspace lookup", async 
   });
   expect(state.openEditor).not.toHaveBeenCalled();
 });
-
-it.each(["link-to-thread", "unlink-from-thread"])(
-  "rechecks %s after a native context menu returns",
-  async (action) => {
-    using _setup = setup();
-    state.pullRequests = action === "unlink-from-thread" ? [linkedPullRequest] : [];
-    const command = action === "link-to-thread" ? state.link : state.unlink;
-    let choose: (action: string) => void = () => {
-      throw new Error("Menu not opened");
-    };
-    state.choose.mockImplementationOnce(
-      () =>
-        new Promise<string>((resolve) => {
-          choose = resolve;
-        }),
-    );
-    await using screen = await renderMarkdown(`[Review](${linkedPullRequest.url})`);
-    await screen.openContextMenu();
-    expect(offeredActions()).toContain(action);
-    await act(async () => {
-      state.allowed = false;
-      choose(action);
-    });
-    expect(command).not.toHaveBeenCalled();
-
-    await setAllowed(true);
-    state.choose.mockResolvedValue(action);
-    await screen.openContextMenu();
-    await vi.waitFor(() =>
-      expect(command).toHaveBeenCalledExactlyOnceWith({
-        environmentId: threadRef.environmentId,
-        input: expect.objectContaining({
-          threadId: threadRef.threadId,
-          repository: "example/repo",
-          number: 42,
-        }),
-      }),
-    );
-  },
-);

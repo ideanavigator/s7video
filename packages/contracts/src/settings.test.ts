@@ -148,6 +148,43 @@ it("drops a hand-edited non-string hidden tag and keeps the rest of the settings
   expect(settings.hideTaggedThreads).toBe(true);
 });
 
+describe("ServerSettings from upstream T3 Code", () => {
+  // s7video removed these drivers, hosts and secret providers (S7V-002); old settings must still load.
+  const stale = {
+    worktreesDirectory: "/work",
+    providerInstances: {
+      cursor: { driver: "cursor", enabled: true, config: { binaryPath: "cursor-agent" } },
+      grok: { driver: "grok", config: {} },
+      opencode: { driver: "opencode", config: { serverUrl: "http://localhost:4096" } },
+      pi: { driver: "pi", enabled: true },
+      muse: { driver: "muse" },
+      fx: { driver: "fx" },
+    },
+    sourceControlHosts: { github: { enabled: true }, "gitlab.example.com": { enabled: false } },
+    secretProviders: { personal: { kind: "one_password", label: "Personal", config: {} } },
+    cursorKeychainUsageEnabled: true,
+  };
+
+  it("decodes settings that name removed providers and hosts without failing", () => {
+    const decoded = decodeServerSettings(stale);
+    expect(decoded.worktreesDirectory).toBe("/work");
+    expect(Object.keys(decoded.providerInstances).sort()).toEqual(
+      ["cursor", "fx", "grok", "muse", "opencode", "pi"].sort(),
+    );
+    expect(decoded.providerInstances[ProviderInstanceId.make("cursor")]?.driver).toBe("cursor");
+    expect(encodeServerSettings(decoded).sourceControlHosts).toEqual(stale.sourceControlHosts);
+    expect(encodeServerSettings(decoded).secretProviders).toEqual(stale.secretProviders);
+  });
+
+  it("keeps the kept defaults when stale settings omit them", () => {
+    const decoded = decodeServerSettings(stale);
+    for (const instanceId of ["codex", "claudeAgent"]) {
+      expect(decoded.providerInstances[ProviderInstanceId.make(instanceId)]).toBeUndefined();
+    }
+    expect(decoded.observability).toEqual(DEFAULT_SERVER_SETTINGS.observability);
+  });
+});
+
 describe("ServerSettings secret providers", () => {
   const onePassword = (account: string) => ({
     kind: "one_password",

@@ -19,7 +19,6 @@ import { serverEnvironment } from "../../state/server";
 import { DraftInput } from "../ui/draft-input";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { SecretInput } from "./SecretInput";
-import { classifySecretProvider } from "./SecretProviderDialog.logic";
 
 export interface SecretSource {
   readonly id: SecretProviderId;
@@ -40,7 +39,7 @@ export function useSecretSources(environmentId: EnvironmentId): ReadonlyArray<Se
   );
   if (!isSecretsFeatureEnabled || !supported) return NO_SECRET_SOURCES;
   return (Object.entries(providers) as Array<[SecretProviderId, SecretProviderConfig]>)
-    .filter(([, config]) => classifySecretProvider(config).kind !== "unsupported")
+    .filter(([, config]) => builtInSecretProviderDefinitions.find(config.kind) !== undefined)
     .map(([id, config]) => ({ id, kind: config.kind, label: config.label }));
 }
 

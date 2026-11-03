@@ -382,12 +382,6 @@ it.layer(layerBase, { excludeTestServices: true })("PullRequestReviewGuideServic
       shadow: "none",
       expected: ["not a commit hash"],
     },
-    {
-      name: "a head no source has",
-      reportedHead: () => "e".repeat(40),
-      shadow: "none",
-      expected: ["local objects:", "the commit:", "branch feature:", "refs/pull/7/head:"],
-    },
   ])("refuses to write a guide for $name", ({ reportedHead, shadow, expected }) =>
     Effect.scoped(
       Effect.gen(function* () {

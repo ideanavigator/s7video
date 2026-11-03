@@ -4,7 +4,6 @@ import type { OrchestrationV2TurnItem, ProviderReplayTranscript } from "@t3tools
 import type { OrchestratorV2ScenarioResult } from "../../OrchestratorScenario.ts";
 import {
   assertBaseProjection,
-  assertNoAcpClientFileOrTerminalRequests,
   assertSemanticProjectionIntegrity,
   assertUserMessagesInclude,
   assertVisibleTurnItemsMirrorLocalTurnItems,
@@ -59,31 +58,6 @@ export function assertToolCallReadOnlyOnRequestOutput(
     assert.isDefined(content, `the approved ${item.type} must carry what it wrote`);
     assert.include(content, PROBE_CONTENT, "the approved write must carry the requested content");
   }
-}
-
-export function assertToolCallReadOnlyOnRequestGrokOutput(
-  result: OrchestratorV2ScenarioResult,
-  transcript: ProviderReplayTranscript,
-) {
-  assertToolCallReadOnlyOnRequestOutput(result, transcript);
-  assertNoAcpClientFileOrTerminalRequests(transcript);
-  const permissionKinds = transcript.entries.flatMap((entry) => {
-    if (entry.type !== "emit_inbound") return [];
-    const frame = entry.frame as {
-      method?: unknown;
-      params?: { toolCall?: { kind?: unknown } };
-    };
-    return frame.method === "session/request_permission" ? [frame.params?.toolCall?.kind] : [];
-  });
-  assert.deepEqual(permissionKinds, ["edit"], "Grok must ask T3 before its own write");
-
-  const approval = projectionFor(result, transcript.scenario).turnItems.find(
-    (item) => item.type === "approval_request",
-  );
-  assert.deepEqual(
-    approval?.type === "approval_request" ? approval.options?.map((option) => option.decision) : [],
-    ["cancel", "decline", "acceptForSession", "accept"],
-  );
 }
 
 function writtenContent(item: OrchestrationV2TurnItem): string | undefined {

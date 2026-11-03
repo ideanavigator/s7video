@@ -10,11 +10,6 @@ import {
   secretSettingsFields,
 } from "@t3tools/contracts";
 import { acpRegistryClient } from "@t3tools/provider-acp-registry/client";
-import { cursorClient } from "@t3tools/provider-cursor/client";
-import { grokClient } from "@t3tools/provider-grok/client";
-import { museClient } from "@t3tools/provider-muse/client";
-import { openCodeClient } from "@t3tools/provider-opencode/client";
-import { piClient } from "@t3tools/provider-pi/client";
 import {
   readSecretFieldValues,
   SOURCE_CONTROL_HOST_SECRET_FIELDS,
@@ -28,10 +23,9 @@ const providerSecretFields = new Map([
   ["codex", secretSettingsFields(CodexSettings)],
   ["claudeAgent", secretSettingsFields(ClaudeSettings)],
   ["antigravity", secretSettingsFields(AntigravitySettings)],
-  ...[cursorClient, grokClient, museClient, openCodeClient, piClient, acpRegistryClient].map(
-    (definition) =>
-      [definition.driverKind, secretSettingsFields(definition.settingsSchema)] as const,
-  ),
+  [acpRegistryClient.driverKind, secretSettingsFields(acpRegistryClient.settingsSchema)],
+  // OpenCode was removed (S7V-002); a saved server password still stays out of settings.json.
+  ["opencode", ["serverPassword"]],
 ]);
 const usageLimitSecretFields = secretSettingsFields(UsageLimitSourceConfig);
 const easDeviceHostSecretFields = secretSettingsFields(EasDeviceHostConfig);

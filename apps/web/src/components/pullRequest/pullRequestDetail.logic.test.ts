@@ -19,8 +19,6 @@ import { buildMessageContext, reviewCommentContextReference } from "~/lib/compos
 
 import {
   buildAddSelectionToAgentHandoff,
-  buildExplainPullRequestHandoff,
-  buildResolveConflictsPrompt,
   resolveThreadPanelPullRequestAction,
   buildPullRequestReferenceContext,
   buildFixFindingHandoff,
@@ -43,36 +41,19 @@ import {
   newestPullRequestCommitAt,
   mergePullRequestThreadComments,
   orderPullRequestComments,
-  pullRequestCheckoutCommand,
   checkoutFailureDescription,
   readPullRequestDetailSnapshot,
   resolveDisplayedPullRequestDetail,
-  resolvePullRequestReferenceHost,
   resolvePullRequestPrimaryControl,
   allowsSinglePullRequestMerge,
   shouldRefreshPullRequestActivity,
   resolveBaseFreshness,
   buildPullRequestTimeline,
   writePullRequestDetailSnapshot,
-  readableFailure,
 } from "./pullRequestDetail.logic";
 import type { ReviewCommentContext } from "~/reviewCommentContext";
 
 describe("pull request checkout commands", () => {
-  it("quotes shell metacharacters in Forgejo repository URLs", () => {
-    expect(
-      pullRequestCheckoutCommand(
-        SourceControlProviderKind.make("forgejo"),
-        42,
-        "feature",
-        null,
-        "https://forgejo.local/maria/repo'$(echo nope)",
-      ),
-    ).toBe(
-      "git fetch 'https://forgejo.local/maria/repo'\\''$(echo nope)' refs/pull/42/head && git checkout -B pulls/42 FETCH_HEAD",
-    );
-  });
-
   const reference = (host?: string): PullRequestRef => ({
     projectId: ProjectId.make("project-1"),
     ...(host === undefined ? {} : { host }),
@@ -87,14 +68,6 @@ describe("pull request checkout commands", () => {
       remoteUrl: "git@github.com:acme/web.git",
     },
     provider: SourceControlProviderKind.make(provider),
-  });
-
-  it("uses a matching enterprise identity and rejects an explicit host mismatch", () => {
-    const enterprise = identity("github", "github.example.test/acme/web");
-    expect(loadingPullRequestCheckoutCommand(reference("github.example.test"), enterprise)).toBe(
-      "gh pr checkout 42",
-    );
-    expect(loadingPullRequestCheckoutCommand(reference("github.com"), enterprise)).toBeNull();
   });
 
   // regression: #12721 loading layout showed a checkout command guessed from the PR number alone
@@ -356,19 +329,6 @@ describe("pull request timeline", () => {
     });
     expect(events[0]?.id).toBe("merged");
     expect(events.some((event) => event.id === "closed")).toBe(false);
-  });
-
-  it("names the change request in its host's own term", () => {
-    const titles = (provider: string) =>
-      buildPullRequestTimeline({
-        ...TIMELINE_SOURCE,
-        provider: SourceControlProviderKind.make(provider),
-        closedAt: "2026-07-04T00:00:00Z",
-      })
-        .filter((event) => event.kind === "opened" || event.kind === "closed")
-        .map((event) => event.title);
-    expect(titles("github")).toEqual(["Pull request closed", "opened this pull request"]);
-    expect(titles("gitlab")).toEqual(["Merge request closed", "opened this merge request"]);
   });
 
   it("groups conversation sections without crossing commits or PR updates", () => {
@@ -702,20 +662,6 @@ describe("fix findings handoff", () => {
     expect(handoff.prompt).toContain("typecheck");
     expect(handoff.prompt).toContain("6 further findings were omitted");
   });
-
-  it("names a GitLab merge request as one", () => {
-    const handoff = buildFixFindingsHandoff({
-      ...base,
-      title: "Add the page",
-      url: "https://gitlab.com/pingdotgg/t3code/-/merge_requests/42",
-      reviewThreads: [],
-      checks: [],
-    });
-    expect(handoff.prompt).toContain("Fix the actionable findings on MR #42");
-    expect(handoff.prompt).toContain("The MR branch is `feat/page`");
-    expect(handoff.prompt).toContain("inspect the merge request and its failing checks");
-    expect(handoff.prompt).not.toMatch(/\bPR\b|pull request/u);
-  });
 });
 
 describe("findings that cannot be attached", () => {
@@ -896,23 +842,6 @@ describe("asking about a change rather than working on it", () => {
     ]);
     expect(handoff.reviewComments[0]?.text).not.toContain("Do not change any code");
     expect(handoff.reviewComments[1]?.text).toBe("");
-  });
-
-  it("explains a GitLab merge request in its own term", () => {
-    const handoff = buildExplainPullRequestHandoff({
-      ...base,
-      title: "Add the page",
-      url: "https://gitlab.com/pingdotgg/t3code/-/merge_requests/42",
-    });
-    expect(handoff.prompt).toBe("Explain this merge request.");
-    expect(handoff.reviewComments[0]?.text).toContain("The merge request is #42");
-    expect(handoff.reviewComments[0]?.text).not.toContain("pull request");
-    expect(
-      buildResolveConflictsPrompt({
-        ...base,
-        url: "https://gitlab.com/pingdotgg/t3code/-/merge_requests/42",
-      }),
-    ).toMatch(/^MR #42 /u);
   });
 });
 
@@ -1354,93 +1283,6 @@ describe("cached pull request detail", () => {
     expect(storage.size()).toBe(21);
   });
 
-  it("reuses a host-qualified snapshot when reopening a thread link without a host", () => {
-    const storage = makeStorage();
-    writePullRequestDetailSnapshot(
-      storage,
-      "env-1",
-      { ...reference, host: "github.com" },
-      detail(),
-    );
-    const resolved = resolvePullRequestReferenceHost(reference, {
-      canonicalKey: "github.com/acme/web",
-      locator: {
-        source: "git-remote",
-        remoteName: "origin",
-        remoteUrl: "https://github.com/acme/web.git",
-      },
-      provider: SourceControlProviderKind.make("github"),
-    });
-    expect(readPullRequestDetailSnapshot(storage, "env-1", resolved)?.title).toBe(
-      "Cache the title",
-    );
-    const explicit = { ...reference, host: "github.example.com" };
-    expect(
-      resolvePullRequestReferenceHost(explicit, {
-        canonicalKey: "github.com/acme/web",
-        locator: {
-          source: "git-remote",
-          remoteName: "origin",
-          remoteUrl: "https://github.com/acme/web.git",
-        },
-      }),
-    ).toBe(explicit);
-  });
-
-  it("hydrates legacy hostless snapshots only for the matching host", () => {
-    const storage = makeStorage();
-    writePullRequestDetailSnapshot(storage, "env-1", reference, detail());
-    expect(
-      readPullRequestDetailSnapshot(storage, "env-1", { ...reference, host: "github.com" })?.title,
-    ).toBe("Cache the title");
-    expect(
-      readPullRequestDetailSnapshot(storage, "env-1", {
-        ...reference,
-        host: "github.example.com",
-      }),
-    ).toBeNull();
-  });
-
-  it("keeps Forgejo ports isolated when recovering legacy snapshots", () => {
-    const storage = makeStorage();
-    const cached = detail({
-      provider: SourceControlProviderKind.make("forgejo"),
-      url: "https://forge.example:8443/acme/web/pulls/7",
-    });
-    writePullRequestDetailSnapshot(storage, "env-1", reference, cached);
-    const resolved = { ...reference, host: "forge.example:8443" };
-    expect(readPullRequestDetailSnapshot(storage, "env-1", resolved)?.title).toBe(cached.title);
-    expect(
-      readPullRequestDetailSnapshot(storage, "env-1", {
-        ...reference,
-        host: "forge.example:9443",
-      }),
-    ).toBeNull();
-    expect(
-      readPullRequestDetailSnapshot(storage, "env-1", {
-        ...reference,
-        host: "forge.example",
-      }),
-    ).toBeNull();
-  });
-
-  // regression: #12168 cached PR details were missed across entry points on custom ports
-  it.each(["github", "gitlab"] as const)(
-    "retains portless %s snapshot identities for custom web ports",
-    (providerName) => {
-      const provider = SourceControlProviderKind.make(providerName);
-      const storage = makeStorage();
-      const host = `${provider}.example.com`;
-      const hosted = { ...reference, host };
-      const cached = detail({
-        provider,
-        url: `https://${host}:8443/acme/web/${provider === "github" ? "pull" : "-/merge_requests"}/7`,
-      });
-      writePullRequestDetailSnapshot(storage, "env-1", hosted, cached);
-      expect(readPullRequestDetailSnapshot(storage, "env-1", hosted)?.title).toBe(cached.title);
-    },
-  );
-
   it("does not paint another change request's snapshot", () => {
     expect(
       resolveDisplayedPullRequestDetail({
@@ -1450,42 +1292,6 @@ describe("cached pull request detail", () => {
       }),
     ).toBeNull();
     expect(readPullRequestDetailSnapshot(makeStorage(), "env-2", reference)).toBeNull();
-  });
-
-  it("isolates stored and displayed details between hosts with the same repository and number", () => {
-    const storage = makeStorage();
-    const publicRef = { ...reference, host: "github.com" };
-    const enterpriseRef = { ...reference, host: "ghe.example.com" };
-    const publicDetail = detail();
-    const enterpriseDetail = detail({
-      title: "Enterprise change",
-      url: "https://ghe.example.com/acme/web/pull/7",
-    });
-    writePullRequestDetailSnapshot(storage, "env-1", publicRef, publicDetail);
-    expect(readPullRequestDetailSnapshot(storage, "env-1", enterpriseRef)).toBeNull();
-    writePullRequestDetailSnapshot(storage, "env-1", enterpriseRef, enterpriseDetail);
-    expect(readPullRequestDetailSnapshot(storage, "env-1", publicRef)?.title).toBe(
-      publicDetail.title,
-    );
-    expect(readPullRequestDetailSnapshot(storage, "env-1", enterpriseRef)?.title).toBe(
-      enterpriseDetail.title,
-    );
-    expect(
-      resolveDisplayedPullRequestDetail({
-        live: null,
-        cached: publicDetail,
-        reference: enterpriseRef,
-      }),
-    ).toBeNull();
-    expect(
-      resolveDisplayedPullRequestDetail({
-        live: null,
-        cached: enterpriseDetail,
-        reference: enterpriseRef,
-      }),
-    ).toBe(enterpriseDetail);
-    writePullRequestDetailSnapshot(storage, "env-1", enterpriseRef, publicDetail);
-    expect(readPullRequestDetailSnapshot(storage, "env-1", enterpriseRef)).toBeNull();
   });
 
   // regression: #9294 corrupt cached PR chrome broke reopening
@@ -1516,19 +1322,4 @@ describe("single-PR merge compatibility during stack discovery", () => {
       ).toBe(allowed);
     },
   );
-});
-
-describe("readableFailure", () => {
-  it("replaces a host tool's bare failure with the hint, for every host", () => {
-    for (const message of [
-      "GitHub CLI failed.",
-      "Azure DevOps API failed",
-      "Forgejo command failed",
-    ]) {
-      expect(readableFailure(new Error(message), "Try again.")).toBe("Try again.");
-    }
-    expect(readableFailure(new Error("Branch is protected."), "Try again.")).toBe(
-      "Branch is protected.",
-    );
-  });
 });
