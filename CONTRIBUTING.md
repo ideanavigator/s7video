@@ -123,6 +123,9 @@ dark and light themes for UI changes.
 
 ## How review works
 
+The full standards are in [docs/engineering/](docs/engineering/README.md); agents also follow
+[AGENTS.md](AGENTS.md).
+
 - Every pull request is reviewed by someone other than its author. For agent-written work, that is a
   separate reviewer session with fresh context, never the session that wrote the code.
 - Review comments start with `[blocking]` or `[non-blocking]`. Each one gets a fixing commit or a
