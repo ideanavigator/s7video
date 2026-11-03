@@ -76,12 +76,14 @@ Covered by `packages/contracts/src/settings.test.ts` ("ServerSettings from upstr
 
 ## Removed in S7V-015
 
-T3's cloud is gone: Clerk sign-in, T3 Connect, the managed relay and tunnel, DPoP tokens, guest share links, `t3 connect`, `infra/relay` and `infra/task-cache`.
+Clerk sign-in, T3 Connect, the managed relay and tunnel, DPoP tokens, guest share links, `t3 connect`,
+hosted-app pairing links, `infra/relay` and `infra/task-cache` are gone. Some kept code still contacts
+T3's servers; see [Still contacts T3](#still-contacts-t3).
 
 | Area             | Removed                                                                                                                                                                                                                                                                             |
 | ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Desktop          | Clerk bridge and token store, passkey stack, relay-telemetry IPC, Clerk CSP hosts, `@clerk/electron*`, `electron-webauthn`, `electron-store`, `tldts`. Signed macOS builds now use fixed hardened-runtime entitlements with no provisioning profile, team ID or associated domains. |
-| Web              | `src/cloud/`, `components/clerk/`, `components/cloud/`, `/connect` page, Connect onboarding, guest share controls, `@clerk/*`, `jose`.                                                                                                                                              |
+| Web              | `src/cloud/`, `components/clerk/`, `components/cloud/`, `/connect` page, Connect onboarding, guest share controls, the `app.t3.codes` hosted-app default (pairing and prompt links), `@clerk/*`, `jose` (the server still uses it for Codex sign-in).                               |
 | Server           | `cloud/` cloud modules, `relay/`, `guest/`, DPoP and replay markers, `t3 connect`, cloud routes and tunnel startup. `t3 up`/`t3 status` are LAN-only.                                                                                                                               |
 | client-runtime   | `relay/`, relay discovery, DPoP token store, relay routes in the connection layer.                                                                                                                                                                                                  |
 | contracts/shared | `relay.ts`, `relayClient.ts`, guest stream, connect HTTP API group, relay/DPoP/connect helpers in shared.                                                                                                                                                                           |
@@ -89,20 +91,43 @@ T3's cloud is gone: Clerk sign-in, T3 Connect, the managed relay and tunnel, DPo
 
 ### Kept, with reasons
 
-| Item                                                                                                                                                  | Why                                                                                                        |
-| ----------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
-| `apps/server/src/cloud/{bootService,pinnedRuntime,serviceProtocol,serviceLauncherClient,serviceProtection,servicePreflight,selfUpdate,npmRelease}.ts` | Local boot service, pinned runtime and self-update. None import cloud code. The folder name is historical. |
-| `DesktopClerk.ts` → `DesktopLaunchLinks.ts`                                                                                                           | Deep links, single-instance lock, early user-data path and ChatGPT sign-in handoff lived in the same file. |
-| Auth scopes `relay:*`, session method `dpop-access-token`, token type `DPoP` in contracts                                                             | They are in stored sessions. Old proof-bound sessions are now rejected.                                    |
-| Guest-share orchestration events, decider and projection; scheduled-task relay delivery fields; migration 058                                         | They are in the persisted event log and database. Inert.                                                   |
-| Machine kind `"cloud"`                                                                                                                                | Means a cloud VM, not T3's cloud.                                                                          |
+| Item                                                                                                                                                  | Why                                                                                                                                                    |
+| ----------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `apps/server/src/cloud/{bootService,pinnedRuntime,serviceProtocol,serviceLauncherClient,serviceProtection,servicePreflight,selfUpdate,npmRelease}.ts` | Local boot service, pinned runtime and self-update. None import cloud code, but they still fetch T3's releases (below). The folder name is historical. |
+| `DesktopClerk.ts` → `DesktopLaunchLinks.ts`                                                                                                           | Deep links, single-instance lock, early user-data path and ChatGPT sign-in handoff lived in the same file.                                             |
+| Auth scopes `relay:*`, session method `dpop-access-token`, token type `DPoP` in contracts                                                             | They are in stored sessions. Old proof-bound sessions are now rejected.                                                                                |
+| Guest-share orchestration events, decider and projection; scheduled-task relay delivery fields; migration 058                                         | They are in the persisted event log and database. Inert.                                                                                               |
+| Machine kind `"cloud"`                                                                                                                                | Means a cloud VM, not T3's cloud.                                                                                                                      |
+| `cloud-connect` pairing subject, `ScheduledTaskWebhookOrigin.relayHookBaseUrl`, `DESKTOP_UPDATE_RESTART_MARKER_FILE`                                  | Inert: nothing issues or reads them. Revoking old `cloud-connect` sessions would write to T3 Code's session store.                                     |
+| Pending guest messages in old threads                                                                                                                 | Nothing can dismiss them now, so such a thread stays waiting. Only possible with T3 Code's data (see Old data).                                        |
 
 ### Old data
 
-- Old catalogs drop T3 Connect routes and `remoteDpopTokens` on read and are rewritten once without them.
-- On first launch, desktop deletes old Clerk token files and web deletes the `t3code:cloud-auth` IndexedDB, `__clerk*` keys and the Connect opt-out flag.
-- Old cloud secrets in the secret store are never read. A test scans the server source for their names.
+Until S7V-003 gives s7video its own data folder, it shares `~/.t3/userdata`, the Electron profile and
+the app id with an installed T3 Code. s7video therefore never deletes or rewrites T3 Code's data:
+
+- Old catalogs drop T3 Connect routes, learned Connect profiles, their credentials and
+  `remoteDpopTokens` in memory only. The file is not rewritten on load, and every write keeps an empty
+  `remoteDpopTokens` list, which upstream's schema requires.
+- Old Clerk token files, the `t3code:cloud-auth` IndexedDB, `__clerk*` keys and the Connect opt-out flag
+  are left alone and never read.
+- Old cloud secrets in the secret store are never read. A test scans the server source for every
+  retired secret name and prefix.
 - `guestSharingEnabled` in old settings decodes and is dropped.
+
+### Still contacts T3
+
+These kept paths still reach T3's servers. They are not T3's cloud product, but s7video must not ship
+with them:
+
+| Path                                                        | Contacts                                                  | Owner   |
+| ----------------------------------------------------------- | --------------------------------------------------------- | ------- |
+| `telemetry/AnalyticsService.ts` (on by default)             | PostHog at `ingest.t3.codes`                              | S7V-013 |
+| `cloud/npmRelease.ts`, polled by clients every 5 minutes    | npm package `t3`                                          | S7V-003 |
+| `cloud/pinnedRuntime.ts`, `selfUpdate.ts`, `bootService.ts` | `t3` binaries from `github.com/pingdotgg/t3code/releases` | S7V-003 |
+| `cloud/servicePreflight.ts`                                 | tells users to run `curl https://t3.codes/install.sh`     | S7V-003 |
+| `cli/update.ts`                                             | `api.github.com/repos/pingdotgg/t3code`                   | S7V-003 |
+| `provider/ModelManifest.ts` (hourly)                        | `raw.githubusercontent.com/pingdotgg/t3code`              | S7V-003 |
 
 ### User-visible effects
 
