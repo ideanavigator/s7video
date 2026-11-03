@@ -163,6 +163,8 @@ describe("ServerSettings from upstream T3 Code", () => {
     sourceControlHosts: { github: { enabled: true }, "gitlab.example.com": { enabled: false } },
     secretProviders: { personal: { kind: "one_password", label: "Personal", config: {} } },
     cursorKeychainUsageEnabled: true,
+    // Guest links went with T3 Connect (S7V-015).
+    guestSharingEnabled: true,
   };
 
   it("decodes settings that name removed providers and hosts without failing", () => {
@@ -174,6 +176,7 @@ describe("ServerSettings from upstream T3 Code", () => {
     expect(decoded.providerInstances[ProviderInstanceId.make("cursor")]?.driver).toBe("cursor");
     expect(encodeServerSettings(decoded).sourceControlHosts).toEqual(stale.sourceControlHosts);
     expect(encodeServerSettings(decoded).secretProviders).toEqual(stale.secretProviders);
+    expect(decoded).not.toHaveProperty("guestSharingEnabled");
   });
 
   it("keeps the kept defaults when stale settings omit them", () => {
