@@ -153,23 +153,6 @@
       // reports an entire component module when nothing imports it.
       "ignoreIssues": { "src/components/ui/*.tsx": ["exports", "nsExports", "duplicates"] },
     },
-    "infra/task-cache": {
-      "ignore": ["vendor/**"],
-      // The bootstrap and Vite+ hook are loaded by shell/package configuration.
-      "entry": [
-        "alchemy.run.ts!",
-        "scripts/install.ts",
-        "scripts/install-ci.ts",
-        "src/runHook.ts",
-        "src/flush.ts",
-        "src/nativeRunHook.js",
-        "src/preload.mjs",
-      ],
-    },
-    "infra/relay": {
-      // Alchemy loads src/worker.ts as the Worker entry and reads its default export.
-      "entry": ["alchemy.run.ts!", "src/persistence/schema.ts!", "src/worker.ts!"],
-    },
     "packages/*": {
       // These workspace packages are private to this monorepo.
       "includeEntryExports": true,

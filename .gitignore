@@ -41,7 +41,6 @@ artifacts/mobile-behavior/
 .github/pr-assets/
 native/**/target/
 node_modules/
-.alchemy/
 *.log
 .env*
 !.env.example
