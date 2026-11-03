@@ -17,5 +17,7 @@ describe("provider auth return destinations", () => {
     "t3code://attacker/welcome",
     "t3code://app/welcome/../evil",
     "https://attacker.example/welcome",
+    // T3's hosted web app is not an s7video client.
+    "https://app.t3.codes/welcome",
   ])("rejects %s", (url) => expect(providerAuthReturnUrl(url)).toBeUndefined());
 });

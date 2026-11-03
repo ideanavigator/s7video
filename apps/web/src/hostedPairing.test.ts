@@ -12,7 +12,7 @@ describe("hostedPairing", () => {
   });
 
   it("reads hosted pairing host and query token parameters", () => {
-    const url = new URL("https://app.t3.codes/pair?host=100.64.1.2:3773&token=ABCD1234");
+    const url = new URL("https://hosted.example.test/pair?host=100.64.1.2:3773&token=ABCD1234");
 
     expect(readHostedPairingRequest(url)).toEqual({
       host: "100.64.1.2:3773",
@@ -23,17 +23,17 @@ describe("hostedPairing", () => {
   });
 
   it("prefers hash tokens so generated hosted links do not put credentials in search params", () => {
-    vi.stubEnv("VITE_HOSTED_APP_URL", "https://preview.t3.codes");
+    vi.stubEnv("VITE_HOSTED_APP_URL", "https://hosted.example.test");
 
-    const url = new URL(
-      buildHostedPairingUrl({
-        host: "https://backend.example.com:3773",
-        token: "pairing-token",
-        label: "Workstation",
-      }),
-    );
+    const built = buildHostedPairingUrl({
+      host: "https://backend.example.com:3773",
+      token: "pairing-token",
+      label: "Workstation",
+    });
+    expect(built).not.toBeNull();
+    const url = new URL(built!);
 
-    expect(url.origin).toBe("https://preview.t3.codes");
+    expect(url.origin).toBe("https://hosted.example.test");
     expect(url.pathname).toBe("/pair");
     expect(url.searchParams.get("host")).toBe("https://backend.example.com:3773");
     expect(url.searchParams.get("label")).toBe("Workstation");

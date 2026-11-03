@@ -1,5 +1,3 @@
-import { DEFAULT_HOSTED_APP_URL } from "./remote.ts";
-
 export const PROMPT_LINK_MAX_PROMPT_LENGTH = 8_000;
 
 export interface PromptLinkRepository {
@@ -169,9 +167,9 @@ export function buildNewThreadLink(input: {
   readonly repository?: PromptLinkRepository | null;
   readonly provider?: string | null;
   readonly model?: string | null;
-  readonly origin?: string;
+  readonly origin: string;
 }): string {
-  const url = new URL("/new", input.origin ?? DEFAULT_HOSTED_APP_URL);
+  const url = new URL("/new", input.origin);
   url.searchParams.set("prompt", input.prompt);
   if (input.repository) {
     url.searchParams.set("repo", `${input.repository.owner}/${input.repository.name}`);
@@ -186,7 +184,7 @@ const THREAD_PATH = /^\/([^/]+)\/([^/]+)\/?$/;
 
 export function promptLinkAppPath(
   value: string,
-  hostedAppUrl: string = DEFAULT_HOSTED_APP_URL,
+  hostedAppUrl: string | null = null,
 ): string | null {
   if (!URL.canParse(value)) return null;
   const url = new URL(value);
@@ -197,7 +195,12 @@ export function promptLinkAppPath(
     const thread = url.host === "threads" ? THREAD_PATH.exec(url.pathname) : null;
     return thread ? `/${thread[1]}/${thread[2]}${url.search}` : null;
   }
-  if (!URL.canParse(hostedAppUrl) || url.origin !== new URL(hostedAppUrl).origin) return null;
+  if (
+    hostedAppUrl === null ||
+    !URL.canParse(hostedAppUrl) ||
+    url.origin !== new URL(hostedAppUrl).origin
+  )
+    return null;
   if (url.pathname === "/new") return `/new${url.search}`;
   const thread = url.searchParams.has("prompt") ? THREAD_PATH.exec(url.pathname) : null;
   return thread ? `/${thread[1]}/${thread[2]}${url.search}` : null;
