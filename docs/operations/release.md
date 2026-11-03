@@ -1,6 +1,7 @@
 # Release Checklist
 
-> For maintainers. Using T3 Code? See [docs/user](../user/).
+> For maintainers. This is T3 Code's release process, kept as the starting point for s7video's
+> (S7V-011). s7video has no releases yet, and its release workflow will be Apple Silicon macOS only.
 
 This document covers the unified release workflow for stable and nightly desktop releases.
 
@@ -41,10 +42,10 @@ the version.
   - Only plain stable `X.Y.Z` releases are marked as the repository's latest release.
   - Nightly runs are always GitHub prereleases and never marked latest.
   - Automatically generated release notes are pinned to the previous tag in the same channel, so stable compares to the previous stable tag and nightly compares to the previous nightly tag.
-  - The release job's **Write release notes** step (`scripts/generate-release-notes.ts`) builds the body: a computed header line, a short summary from `gpt-6.1-terra`, and GitHub's generated list folded under `<details>`. It needs the `OPENAI_API_KEY` secret. The desktop update popover shows up to seven highlights and the number of other fixes and performance improvements. Mobile-only commits count toward release totals but cannot be highlights. The offered release's age comes from the update feed's `releaseDate`. The nightly Discord post shows the part above `<details>`. If summary generation fails, the release uses GitHub's generated notes.
+  - The release job's **Write release notes** step (`scripts/generate-release-notes.ts`) builds the body: a computed header line, a short summary from `gpt-6.1-terra`, and GitHub's generated list folded under `<details>`. It needs the `OPENAI_API_KEY` secret. The desktop update popover shows up to seven highlights and the number of other fixes and performance improvements. The offered release's age comes from the update feed's `releaseDate`. The nightly Discord post shows the part above `<details>`. If summary generation fails, the release uses GitHub's generated notes.
 - Includes Electron auto-update metadata (for example `latest*.yml`, `nightly*.yml`, and `*.blockmap`) in release assets.
 - Builds a self-contained CLI archive per platform (`t3-<version>-<platform>-<arch>.tar.gz`, `.zip` on Windows) in the same job as that target's desktop artifact and attaches them to the GitHub Release with a `SHA256SUMS` file, on every channel, for five targets: macOS arm64, Linux x64 and arm64, Windows x64 and arm64. Every archive is smoke-tested on hardware of its own architecture, and every one but the Windows archives is also built and signed there. There is no macOS x64 archive: Node single-executables are unsupported on x64 macOS (the SEA docs list macOS as arm64 only) and the binary segfaults on start; the x64 desktop app is Electron and unaffected.
-  - The archive holds the server as a Node single-executable (`scripts/build-cli-archive.ts`), so unpacking it needs neither Node, npm, nor a compiler. It is the only form in which T3 Code manages a runtime: the desktop's SSH environments, the boot service, `t3 update`, and the install scripts all download and verify this archive against `SHA256SUMS`. The `t3` npm package exists for people who run `npx t3` or `npm install -g t3` themselves, and it downloads this same archive too; nothing in the product installs from npm. The `curl | sh` installers are `scripts/install.sh` and `scripts/install.ps1`; the marketing site copies them into its `public/` at build time (`apps/marketing/scripts/stage-install-scripts.mjs`) and serves them at `t3.codes/install.sh` and `/install.ps1`.
+  - The archive holds the server as a Node single-executable (`scripts/build-cli-archive.ts`), so unpacking it needs neither Node, npm, nor a compiler. It is the only form in which T3 Code manages a runtime: the desktop's SSH environments, the boot service, `t3 update`, and the install scripts all download and verify this archive against `SHA256SUMS`. The `t3` npm package exists for people who run `npx t3` or `npm install -g t3` themselves, and it downloads this same archive too; nothing in the product installs from npm. The `curl | sh` installers are `scripts/install.sh` and `scripts/install.ps1`. Upstream served them from its marketing site, which s7video removed; s7video does not host them yet.
   - The root `package.json` pins `engines.node` to the exact Node version used by development, CI and standalone executables. Keep it exact: cross-target builds download that version, and native executable builds reject a different host Node version. TEMPORARY: Linux arm64 executables build only on a Linux arm64 host and are injected with postject, because Node's `--build-sea` output cannot load on 16 or 64 KiB page kernels. Revert when [nodejs/node#67048](https://github.com/nodejs/node/issues/67048) is fixed. Runtime changes need a new T3 release version because installed runtimes are cached by that version.
   - macOS archives are signed with the Developer ID certificate and notarized when the Apple secrets are present (ad hoc otherwise, which still runs from `curl`/`tar` installs). Windows executables use the same Azure Trusted Signing setup as the installer. Every native addon in the macOS archive is signed too, since the hardened runtime refuses unsigned libraries.
   - Each archive is extracted and executed (`scripts/smoke-cli-archive.ts`) on its build runner, or on the `verify_runner` for Windows.
@@ -60,7 +61,7 @@ the version.
 
 ## Pull request macOS previews
 
-Labeling a PR `preview:mac` publishes a signed, notarized Apple Silicon DMG with T3 Connect enabled
+Labeling a PR `preview:mac` publishes a signed, notarized Apple Silicon DMG
 to the rolling `desktop-preview` prerelease, and works for fork PRs. The label is a one-shot request
 for the commit it is applied to: the trusted workflow removes it once the build is in hand, and later
 pushes do not build until a maintainer applies it again. Every signed preview is therefore a
@@ -75,8 +76,7 @@ split so the Developer ID certificate never shares a job with PR code:
   bot, a collaborator, or listed in `.github/VOUCHED.td` (read from the default branch, so a PR cannot vouch
   for itself). It then packages and signs the bundle through `release-desktop.yml` checked out at
   `main`, so packaging, native helpers, and the Electron/desktop dependencies come from `main`, not
-  the PR. Only the version and the public T3 Connect identifiers in `.env.example` are read from the
-  PR commit, as data, so the signed app's passkey entitlement matches the bundle. A PR that changes
+  the PR. Only the version is read from the PR commit, as data. A PR that changes
   packaging must use the `channel=preview` release train above instead.
 
 Before handing the bundle to the signing runner, the trusted workflow validates its ZIP entries
@@ -98,61 +98,6 @@ credentials documented below:
 The finalize job uses them to commit and push aligned package versions to `main` as the Release App.
 GitHub Release publication uses the repository-scoped workflow token so it has a rate-limit quota
 independent from the shared Release App installation.
-
-## Marketing site deployment
-
-On nightly releases, the release workflow builds the same commit as a staged
-production deployment of the marketing site's Vercel project while the desktop
-jobs run, and promotes it with `vercel promote` after the release is published.
-Stable releases do not deploy the marketing site because they can promote an
-older nightly commit.
-
-The job looks up the `t3code-marketing` project using the existing `VERCEL_TOKEN`
-and `VERCEL_ORG_ID` secrets. It also respects the optional `VERCEL_TEAM_SLUG`
-variable. The Vercel project's root directory must be `apps/marketing`.
-Git deployments remain disabled in `apps/marketing/vercel.ts`.
-
-## Mobile TestFlight and store releases
-
-Merges to main publish compatible OTAs and build iOS prereleases with the `testflight`
-profile at version `3.0.0`. Build numbers increment automatically. The committed app
-version remains the App Store release version; Android keeps using that version.
-
-To release iOS, dispatch **Mobile EAS Production** with `mode=build`,
-`profile=production`, `platform=ios`, and the intended version, such as `2.0.1`.
-The workflow commits and pushes the version before building and uploading it.
-Select that build in App Store Connect for App Store review.
-
-To force a TestFlight rebuild, select `profile=testflight`, `platform=ios`, and
-leave the version blank. Submit the first `3.0.0` build for external beta review
-in App Store Connect. Later builds may still require review; uploads alone do
-not guarantee external approval. TestFlight builds expire after 90 days.
-
-Both release and TestFlight binaries receive compatible production-channel OTAs,
-separated by their major-version fingerprints. Manual `mode=update` uses the
-selected profile's version. Before releasing `3.0.0` to the App Store, advance
-`build.testflight.env.T3CODE_MOBILE_VERSION` in `apps/mobile/eas.json` to the next
-unreleased major and get its first beta build approved.
-
-## Android APK mirror
-
-`.github/workflows/mobile-android-apk.yml` checks the Google Play Alpha closed-testing
-track hourly. Each new beta gets one `android-beta-<build-number>` prerelease
-containing its APK. Unchanged checks publish nothing, and interrupted draft
-uploads resume on the next check.
-
-Normal Nightly releases include the newest processed internal-testing APK available
-when the release publishes. Internal builds do not create separate Android releases.
-If Play credentials or a processed APK are unavailable, the Nightly can still publish
-without an APK. Android submissions continue to go to internal testing; promote a
-build to Alpha to publish it as a beta.
-
-The APK is the universal APK Play generates and signs from the
-uploaded bundle, so no signing key lives in GitHub. The job skips itself until
-`GOOGLE_PLAY_SERVICE_ACCOUNT_JSON` holds a Play service account key with the "Release to
-production, exclude devices, and use Play App Signing" permission, which downloading generated
-APKs requires. The job reads tracks without opening a Play edit, so it can share the service
-account EAS Submit uses.
 
 ## Hosted web app release deployment
 
@@ -362,7 +307,7 @@ to validate the workflow.
 The workflow has no non-publishing `workflow_dispatch` mode. Use normal CI or local quality gates to
 validate checks and builds without shipping. To exercise the complete release graph at lower stable
 risk, manually dispatch `channel=nightly`; this still publishes a real nightly npm package, GitHub
-prerelease, desktop updater release, hosted nightly alias, and marketing site, but it does not update stable app aliases or
+prerelease, desktop updater release and hosted nightly alias, but it does not update stable app aliases or
 commit a version bump to `main`. Only run it when a real nightly release is acceptable.
 
 Manual `channel=stable` is also a real stable-channel release. Omitting signing secrets only makes
