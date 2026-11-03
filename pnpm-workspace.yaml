@@ -1,7 +1,6 @@
 packages:
   - apps/*
   - evals
-  - infra/*
   - oxlint-plugin-t3code
   - packages/*
   - scripts
@@ -21,38 +20,18 @@ allowBuilds:
   msgpackr-extract: true
   msw: false
   node-pty: true
-  # Ships N-API prebuilds; its install script only rebuilds from source.
-  objc-js: false
   sharp: true
   "@tsc-rs/typescript": true
   utf-8-validate: false
-  workerd: false
 
 catalog:
-  "@alchemy.run/axiom": 2.0.0-beta.84
-  "@alchemy.run/cloudflare": 2.0.0-beta.84
-  "@alchemy.run/drizzle": 2.0.0-beta.84
-  "@alchemy.run/planetscale": 2.0.0-beta.84
-  "@clerk/backend": 3.25.0
-  "@clerk/clerk-js": 6.40.0
-  "@clerk/electron": 0.1.3
-  "@clerk/electron-passkeys": 0.0.3
-  "@clerk/react": 6.18.0
-  "@clerk/shared": 4.41.0
-  # Must match the version alchemy depends on: the relay overrides its
-  # Cloudflare retry policy through this package's Retry service.
-  "@distilled.cloud/cloudflare": 1.0.0-rc.17
   "@effect/atom-react": 4.0.5
   "@effect/graphql-generator": 4.0.5
   "@effect/openapi-generator": 4.0.5
   "@effect/platform-node": 4.0.5
   "@effect/platform-node-shared": 4.0.5
-  "@effect/sql-pg": 4.0.5
-  "@effect/sql-sqlite-do": 4.0.5
   "@effect/vitest": 4.0.5
-  "@electron-webauthn/macos": 1.3.1
   "@legendapp/list": 3.3.5
-  "@noble/curves": 1.9.1
   "@noble/hashes": 1.8.0
   "@pierre/diffs": 1.6.1
   "@tailwindcss/node": 4.3.3
@@ -63,17 +42,13 @@ catalog:
   "@types/react": ~19.3.0
   "@types/react-dom": ~19.3.0
   "@types/ws": 8.18.2
-  alchemy: 2.0.0-beta.84
   effect: 4.0.5
-  electron-webauthn: 1.3.1
   jose: 6.2.2
   lightningcss: 1.33.0
-  objc-js: 1.5.0
   plist: 3.1.1
   react: 19.3.0
   react-dom: 19.3.0
   tailwindcss: 4.3.3
-  tldts: 7.4.2
   typescript: npm:@tsc-rs/typescript@0.8.0
   undici: 8.11.2
   vite: npm:@voidzero-dev/vite-plus-core@1.4.0
@@ -95,36 +70,12 @@ catalog:
   unified: 11.0.5
 
 minimumReleaseAgeExclude:
-  - alchemy@2.0.0-beta.84
-  - "@alchemy.run/acme@2.0.0-beta.84"
-  - "@alchemy.run/axiom@2.0.0-beta.84"
-  - "@alchemy.run/cloudflare@2.0.0-beta.84"
-  - "@alchemy.run/cloudflare-runtime@2.0.0-beta.84"
-  - "@alchemy.run/docker@2.0.0-beta.84"
-  - "@alchemy.run/drizzle@2.0.0-beta.84"
-  - "@alchemy.run/node-utils@2.0.0-beta.84"
-  - "@alchemy.run/planetscale@2.0.0-beta.84"
-  - "@alchemy.run/sql@2.0.0-beta.84"
-  - "@distilled.cloud/acme@1.0.0-rc.17"
-  - "@distilled.cloud/aws4signer@1.0.0-rc.17"
-  - "@distilled.cloud/axiom@1.0.0-rc.17"
-  - "@distilled.cloud/cloudflare@1.0.0-rc.17"
-  - "@distilled.cloud/core@1.0.0-rc.17"
-  - "@distilled.cloud/iceberg@1.0.0-rc.17"
-  - "@distilled.cloud/planetscale@1.0.0-rc.17"
   - "@tsc-rs/*"
-  - "@clerk/backend@3.25.0"
-  - "@clerk/clerk-js@6.40.0"
-  - "@clerk/electron@0.1.3"
-  - "@clerk/react@6.18.0"
-  - "@clerk/shared@4.41.0"
   - "@effect/atom-react@4.0.5"
   - "@effect/graphql-generator@4.0.5"
   - "@effect/openapi-generator@4.0.5"
   - "@effect/platform-node-shared@4.0.5"
   - "@effect/platform-node@4.0.5"
-  - "@effect/sql-pg@4.0.5"
-  - "@effect/sql-sqlite-do@4.0.5"
   - "@effect/vitest@4.0.5"
   - effect@4.0.5
   - "@legendapp/list@3.3.5"
@@ -144,7 +95,6 @@ overrides:
   micromark-extension-llm-math: 3.1.0
   micromark: 4.0.2
   mdast-util-to-hast: 13.2.1
-  alchemy: "catalog:"
   "@ff-labs/fff-node": 0.11.0
   "@legendapp/list": 3.3.5
   "@pierre/diffs": 1.6.1
@@ -165,28 +115,9 @@ overrides:
   "@anthropic-ai/claude-agent-sdk>@anthropic-ai/claude-agent-sdk-linux-x64-musl": "-"
   "@anthropic-ai/claude-agent-sdk>@anthropic-ai/claude-agent-sdk-win32-arm64": "-"
   "@anthropic-ai/claude-agent-sdk>@anthropic-ai/claude-agent-sdk-win32-x64": "-"
-  # Alchemy's Ink fork declares React as a hard dependency, but the relay only
-  # reaches its terminal-capability helpers; the TUI is never imported, so the
-  # extra React copy is pure install weight.
-  "@alchemy.run/sigil>react": "-"
-  "@alchemy.run/sigil>react-reconciler": "-"
-  "@alchemy.run/sigil>scheduler": "-"
-  "@clerk/backend": "catalog:"
-  "@clerk/clerk-js": "catalog:"
-  "@clerk/clerk-js>@base-org/account": "-"
-  "@clerk/clerk-js>@coinbase/wallet-sdk": "-"
-  "@clerk/clerk-js>@solana/wallet-adapter-base": "-"
-  "@clerk/clerk-js>@solana/wallet-adapter-react": "-"
-  "@clerk/clerk-js>@solana/wallet-standard": "-"
-  "@clerk/clerk-js>@wallet-standard/core": "-"
-  "@clerk/electron": "catalog:"
-  "@clerk/electron-passkeys": "catalog:"
-  "@clerk/react": "catalog:"
-  "@clerk/shared": "catalog:"
   "@effect/atom-react": "catalog:"
   "@effect/platform-node": "catalog:"
   "@effect/platform-node-shared": "catalog:"
-  "@effect/sql-pg": "catalog:"
   "@effect/vitest": "catalog:"
   "@effect/vitest>vitest": "-"
   "@pierre/diffs>@shikijs/transformers": ^4.2.0
@@ -201,10 +132,6 @@ overrides:
   "@types/node": "catalog:"
   effect: "catalog:"
   node-abi: 4.33.0
-  # The desktop app installs these without a lockfile when it packages them, so
-  # pin the native passkey code that runs in its main process.
-  "electron-webauthn>@electron-webauthn/macos": "catalog:"
-  "@electron-webauthn/macos>objc-js": "catalog:"
   lightningcss: "catalog:"
   tailwindcss: "catalog:"
   # Ranges from @effect/platform-node, jsdom, unifont, Expo and libsql otherwise
@@ -229,7 +156,6 @@ patchedDependencies:
   micromark-extension-gfm-table@2.1.1: patches/micromark-extension-gfm-table@2.1.1.patch
   micromark@4.0.2: patches/micromark@4.0.2.patch
   mdast-util-to-hast@13.2.1: patches/mdast-util-to-hast@13.2.1.patch
-  alchemy@2.0.0-beta.84: patches/alchemy@2.0.0-beta.84.patch
   "@effect/vitest@4.0.5": patches/@effect__vitest@4.0.5.patch
   "@ff-labs/fff-node@0.11.0": patches/@ff-labs__fff-node@0.11.0.patch
   "@legendapp/list@3.3.5": patches/@legendapp__list@3.3.5.patch

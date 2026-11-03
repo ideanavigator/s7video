@@ -14,11 +14,17 @@ describe("settings pairing URL helpers", () => {
     );
   });
 
-  it("uses hosted pairing URLs for HTTPS endpoints", () => {
-    vi.stubEnv("VITE_HOSTED_APP_URL", "https://preview.t3.codes");
+  it("never routes a pairing credential through a hosted app unless the build names one", () => {
+    expect(
+      resolveHostedPairingUrl("https://host.tailnet.example.ts.net:3773", "PAIRCODE"),
+    ).toBeNull();
+  });
+
+  it("uses hosted pairing URLs for HTTPS endpoints when the build names a hosted app", () => {
+    vi.stubEnv("VITE_HOSTED_APP_URL", "https://hosted.example.test");
 
     expect(resolveHostedPairingUrl("https://host.tailnet.example.ts.net:3773", "PAIRCODE")).toBe(
-      "https://preview.t3.codes/pair?host=https%3A%2F%2Fhost.tailnet.example.ts.net%3A3773#token=PAIRCODE",
+      "https://hosted.example.test/pair?host=https%3A%2F%2Fhost.tailnet.example.ts.net%3A3773#token=PAIRCODE",
     );
   });
 });

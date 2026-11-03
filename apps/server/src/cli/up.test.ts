@@ -17,44 +17,7 @@ import { afterEach, vi } from "vite-plus/test";
 import packageJson from "../../package.json" with { type: "json" };
 import * as BootService from "../cloud/bootService.ts";
 import { upsertServiceEnv } from "./service.ts";
-import { connectEnabled, planRoutes, upCommand } from "./up.ts";
-
-const none = Option.none<boolean>();
-
-it.each([
-  {
-    label: "a new machine starts from T3 Connect and asks",
-    setup: { installed: false, connect: false, lan: false },
-    flags: { connect: none, lan: none },
-    expected: { routes: { connect: true, lan: false }, ask: ["connect", "lan"] },
-  },
-  {
-    label: "a build without T3 Connect never offers it",
-    setup: { installed: false, connect: null, lan: false },
-    flags: { connect: none, lan: none },
-    expected: { routes: { connect: false, lan: false }, ask: ["lan"] },
-  },
-  {
-    label: "a rerun starts from the current setup",
-    setup: { installed: true, connect: false, lan: true },
-    flags: { connect: none, lan: none },
-    expected: { routes: { connect: false, lan: true }, ask: ["connect", "lan"] },
-  },
-  {
-    label: "a route flag on a new machine turns on only that route",
-    setup: { installed: false, connect: false, lan: false },
-    flags: { connect: none, lan: Option.some(true) },
-    expected: { routes: { connect: false, lan: true }, ask: [] },
-  },
-  {
-    label: "a route flag asks nothing and keeps the other route",
-    setup: { installed: true, connect: true, lan: true },
-    flags: { connect: none, lan: Option.some(false) },
-    expected: { routes: { connect: true, lan: false }, ask: [] },
-  },
-])("$label", ({ setup, flags, expected }) => {
-  expect(planRoutes(setup, flags)).toEqual(expected);
-});
+import { upCommand } from "./up.ts";
 
 const SERVICE = {
   supported: true,
@@ -63,59 +26,6 @@ const SERVICE = {
   unitPath: "/home/me/.config/systemd/user/t3code.service",
   logPath: "/home/me/.t3/userdata/logs/boot-service.log",
 } as const;
-
-it.each([
-  {
-    label: "a CLI managed link",
-    cliDesired: true,
-    cliMode: "managed",
-    managedTunnel: false,
-    revoked: false,
-    on: true,
-  },
-  {
-    label: "a link the app made",
-    cliDesired: false,
-    cliMode: "managed",
-    managedTunnel: true,
-    revoked: false,
-    on: true,
-  },
-  {
-    label: "a publish-only link",
-    cliDesired: true,
-    cliMode: "publish_only",
-    managedTunnel: false,
-    revoked: false,
-    on: false,
-  },
-  {
-    label: "a publish-only link with an old tunnel config",
-    cliDesired: true,
-    cliMode: "publish_only",
-    managedTunnel: true,
-    revoked: false,
-    on: false,
-  },
-  {
-    label: "a revoked link",
-    cliDesired: true,
-    cliMode: "managed",
-    managedTunnel: true,
-    revoked: true,
-    on: false,
-  },
-  {
-    label: "no link",
-    cliDesired: false,
-    cliMode: "managed",
-    managedTunnel: false,
-    revoked: false,
-    on: false,
-  },
-] as const)("T3 Connect is on for $label: $on", ({ label: _, on, ...link }) => {
-  expect(connectEnabled(link)).toBe(on);
-});
 
 // Prompts run only when both streams are terminals.
 const asTerminal = Effect.acquireRelease(
@@ -160,6 +70,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("t3 up", (it) => 
     readonly status?: Partial<BootService.BootServiceStatus>;
     readonly installFails?: boolean;
     readonly restartFails?: boolean;
+    /** Fails with a user error carrying this text. */
+    readonly failsWith?: string;
     /** Runs as if in a terminal, answering each question with this text. */
     readonly answer?: string;
     readonly prints?: string;
@@ -260,6 +172,27 @@ it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("t3 up", (it) => 
       envAfter: "T3CODE_LAN=true\n",
     },
     {
+      label: "a rerun asks from the current setup",
+      prints: "Current setup",
+      installed: true,
+      answer: "y",
+      env: "T3CODE_LAN=true\n",
+      args: [],
+      installs: 0,
+      restarts: 0,
+      envAfter: "T3CODE_LAN=true\n",
+    },
+    {
+      label: "a new machine with no terminal must choose its access",
+      installed: false,
+      failsWith: "Choose access with --lan or --no-lan",
+      env: "",
+      args: [],
+      installs: 0,
+      restarts: 0,
+      envAfter: "",
+    },
+    {
       label: "the old default is kept",
       installed: true,
       env: "",
@@ -337,7 +270,12 @@ it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("t3 up", (it) => 
       if (input.prints !== undefined) {
         expect(lines.join("\n")).toContain(input.prints);
       }
-      expect(exit._tag).toBe(input.restartFails === true ? "Failure" : "Success");
+      expect(exit._tag).toBe(
+        input.restartFails === true || input.failsWith !== undefined ? "Failure" : "Success",
+      );
+      if (input.failsWith !== undefined && exit._tag === "Failure") {
+        expect(Cause.pretty(exit.cause)).toContain(input.failsWith);
+      }
       expect({ installs, restarts }).toEqual({
         installs: input.installs,
         restarts: input.restarts,

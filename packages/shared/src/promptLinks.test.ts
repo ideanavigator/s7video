@@ -96,8 +96,9 @@ describe("link round trips", () => {
       repository: { owner: "pingdotgg", name: "t3code" },
       provider: "claudeAgent",
       model: "opus",
+      origin: "https://hosted.example.test",
     });
-    const path = promptLinkAppPath(link);
+    const path = promptLinkAppPath(link, "https://hosted.example.test");
     expect(path).toBe(new URL(link).pathname + new URL(link).search);
     const parsed = parseNewThreadLink(new URL(link).search);
     expect(parsed.ok && parsed.value.kind === "new" && parsed.value.prompt.text).toBe(
@@ -106,12 +107,15 @@ describe("link round trips", () => {
   });
 
   it("maps app scheme and hosted links to in-app paths, and nothing else", () => {
+    const hosted = "https://hosted.example.test";
     expect(promptLinkAppPath("t3code://new?prompt=hi")).toBe("/new?prompt=hi");
     expect(promptLinkAppPath("t3code-dev://threads/env-1/thread-1")).toBe("/env-1/thread-1");
-    expect(promptLinkAppPath("https://app.t3.codes/env-1/thread-1?prompt=go")).toBe(
+    expect(promptLinkAppPath(`${hosted}/env-1/thread-1?prompt=go`, hosted)).toBe(
       "/env-1/thread-1?prompt=go",
     );
-    expect(promptLinkAppPath("https://app.t3.codes/settings/general")).toBeNull();
+    expect(promptLinkAppPath(`${hosted}/settings/general`, hosted)).toBeNull();
+    // With no hosted app configured, T3's hosted app is just another website.
+    expect(promptLinkAppPath("https://app.t3.codes/env-1/thread-1?prompt=go")).toBeNull();
     expect(promptLinkAppPath("https://evil.test/new?prompt=hi")).toBeNull();
     expect(promptLinkAppPath("t3code://app/index.html")).toBeNull();
   });

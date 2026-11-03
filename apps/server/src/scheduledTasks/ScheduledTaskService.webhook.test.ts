@@ -313,20 +313,6 @@ it.effect("dispatches exactly the rendered prompt and logs the delivery", () =>
   ),
 );
 
-it("builds the relay hook URL from the managed tunnel's key, never the environment id", () => {
-  const relayUrl = "https://relay.example.com/";
-  assert.equal(
-    ScheduledTaskService.relayHookBaseUrl({
-      relayUrl,
-      tunnelName: "t3coderelay-managedendpoint-dev-julius-0123456789abcdef",
-    }),
-    "https://relay.example.com/v1/hooks/0123456789abcdef",
-  );
-  for (const tunnelName of [undefined, "t3coderelay-managedendpoint", "x-0123456789ABCDEF"]) {
-    assert.isNull(ScheduledTaskService.relayHookBaseUrl({ relayUrl, tunnelName }));
-  }
-});
-
 it.effect("gives webhook tasks a relay URL when the environment has a managed tunnel", () =>
   withService(
     ({ service }) =>

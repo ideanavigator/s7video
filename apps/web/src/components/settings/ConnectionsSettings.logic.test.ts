@@ -18,10 +18,10 @@ describe("togglePairingScopeSelection", () => {
     },
     {
       label: "drops terminal:operate when terminal:read is cleared",
-      current: ["terminal:read", "terminal:operate", "relay:read"],
+      current: ["terminal:read", "terminal:operate", "orchestration:read"],
       scope: "terminal:read",
       checked: false,
-      expected: ["relay:read"],
+      expected: ["orchestration:read"],
     },
     {
       label: "keeps terminal:read when terminal:operate is cleared",

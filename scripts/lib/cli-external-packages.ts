@@ -8,7 +8,6 @@ const CLI_RUNTIME_EXTERNAL_PREFIXES = [
   "@yuuang/",
   "@ff-labs/",
   "@napi-rs/keyring",
-  "@clerk/electron-passkeys",
   "node-gyp-build",
   "node-addon-api",
   "bufferutil",

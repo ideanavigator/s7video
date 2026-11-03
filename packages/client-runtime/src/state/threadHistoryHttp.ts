@@ -1,10 +1,7 @@
 import type { ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-import * as Option from "effect/Option";
 
-import type { RemoteEnvironmentAuthorization } from "../authorization/service.ts";
 import type { PreparedConnection } from "../connection/model.ts";
-import * as ManagedRelay from "../relay/managedRelay.ts";
 import {
   executeAuthenticatedEnvironmentHttpRequest,
   withOrchestrationProtocolHeader,
@@ -20,8 +17,6 @@ export const fetchEnvironmentThreadHistoryPage = Effect.fn(
   readonly cursor: string;
   readonly throughEntryId?: string | undefined;
   readonly view?: "conversation" | "activity" | "work" | undefined;
-  readonly signer: Option.Option<ManagedRelay.ManagedRelayDpopSigner["Service"]>;
-  readonly remoteAuthorization?: Option.Option<RemoteEnvironmentAuthorization["Service"]>;
   readonly timeoutMs?: number;
 }) {
   const endpoint = {
@@ -37,7 +32,6 @@ export const fetchEnvironmentThreadHistoryPage = Effect.fn(
   return yield* executeAuthenticatedEnvironmentHttpRequest({
     ...input,
     group: "orchestration",
-    method: "GET",
     url: (urls) => urls.threadHistoryPage(endpoint),
     timeoutMs: input.timeoutMs ?? DEFAULT_THREAD_HISTORY_TIMEOUT_MS,
     request: ({ client, headers }) =>

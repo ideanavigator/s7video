@@ -117,11 +117,9 @@ describe("browser API CORS", () => {
           headers: {
             origin: "https://app.t3.codes",
             "access-control-request-method": "GET",
-            "access-control-request-headers": [
-              ORCHESTRATION_PROTOCOL_HEADER,
-              "authorization",
-              "dpop",
-            ].join(", "),
+            "access-control-request-headers": [ORCHESTRATION_PROTOCOL_HEADER, "authorization"].join(
+              ", ",
+            ),
           },
         }),
       );
@@ -135,7 +133,6 @@ describe("browser API CORS", () => {
       );
       expect(allowedHeaders.has(ORCHESTRATION_PROTOCOL_HEADER)).toBe(true);
       expect(allowedHeaders.has("authorization")).toBe(true);
-      expect(allowedHeaders.has("dpop")).toBe(true);
     } finally {
       await dispose();
     }
