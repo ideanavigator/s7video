@@ -8,7 +8,8 @@ SPDX-License-Identifier: MIT
 All notable changes to s7video are listed here. The format follows
 [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/), and versions follow
 [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html). Each entry names the ticket it came
-from.
+from; the per-ticket entries and how this file is compiled are in
+[docs/changelog](docs/changelog/README.md).
 
 ## [Unreleased]
 
@@ -17,6 +18,9 @@ from.
 - Community and governance files: README, contributing guide with DCO sign-off, Code of Conduct,
   security, governance, trademark, support and privacy policies, issue and pull request templates,
   and code owners. (S7V-006)
+- Written rules for agents and contributors (`AGENTS.md`), engineering standards in
+  `docs/engineering/`, this per-ticket changelog, and `pnpm tickets` / `ticket:*` commands that run
+  the planning repo's ticket tools. (S7V-008)
 
 ### Removed
 
