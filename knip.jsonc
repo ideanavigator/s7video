@@ -68,6 +68,9 @@
         // CodeRabbit loads its configuration by filename.
         ".coderabbit.config.ts",
         ".github/scripts/thread-transfer-report.cjs",
+        // The brand config, and the example a white-label build selects with S7VIDEO_CONFIG.
+        "s7video.config.ts",
+        "configs/*.config.ts",
       ],
       "vite": { "entry": [".github/**/*.test.cjs"] },
       "vitest": { "entry": [".github/**/*.test.cjs"] },

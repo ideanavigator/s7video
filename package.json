@@ -16,6 +16,7 @@
     "start:mock-update-server": "node scripts/mock-update-server.ts",
     "icons:export": "node scripts/export-brand-icons.ts",
     "icons:check": "node scripts/export-brand-icons.ts --check",
+    "brand:check": "node scripts/brand-check.ts",
     "licenses:sync": "node scripts/sync-third-party-license-notices.ts",
     "docs:linkcheck": "node scripts/check-doc-links.ts",
     "tickets": "node scripts/planning.ts tickets",
