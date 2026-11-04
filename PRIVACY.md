@@ -11,15 +11,12 @@ account. Anything that leaves your computer goes to a service you chose, for the
 
 > [!WARNING]
 > **Current pre-alpha build (2026-11-04).** Until the Sprint 01 privacy work lands, a build from
-> `main` still behaves like T3 Code in these ways:
+> `main` differs from this page in one way:
 >
-> - **Usage data is on by default** and goes to T3 Code's analytics service (`ingest.t3.codes`).
->   Removed by S7V-013. To turn it off now, set `T3CODE_TELEMETRY_ENABLED=false` before starting the
->   app.
-> - **Data is stored in `~/.t3`**, the same folder as an installed T3 Code, not `~/.s7video`.
->   Fixed by S7V-003.
-> - **Update and model-list checks go to T3 Code's GitHub and npm** (`pingdotgg/t3code`, the `t3`
->   package). Removed by S7V-003.
+> - **Usage data collection is on by default**, but this repository's build has no analytics
+>   destination configured (`telemetry.host` in `s7video.config.ts` is empty), so nothing is sent.
+>   A build that sets a destination would send it. S7V-013 turns collection off by default. To turn
+>   it off now, set `T3CODE_TELEMETRY_ENABLED=false` before starting the app.
 >
 > The rest of this page describes s7video from the end of Sprint 01. This box is removed when
 > S7V-013 lands.

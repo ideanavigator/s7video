@@ -20,8 +20,8 @@ vp i
 vp run dev:desktop --home-dir ~/.s7video-dev --no-seed
 ```
 
-The two flags keep dev state out of `~/.t3`, the folder an installed T3 Code uses, until S7V-003
-gives s7video its own data folder.
+The two flags keep dev state in its own folder and start with an empty database. s7video never uses
+`~/.t3`, the folder an installed T3 Code uses.
 
 The [development runbook](docs/operations/development.md) has the other dev commands, where dev data
 is stored, and how to build the desktop app locally.

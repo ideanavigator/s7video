@@ -22,6 +22,12 @@ from; the per-ticket entries and how this file is compiled are in
   `docs/engineering/`, this per-ticket changelog, and `pnpm tickets` / `ticket:*` commands that run
   the planning repo's ticket tools. (S7V-008)
 
+### Changed
+
+- The app is called s7video and keeps its data in `~/.s7video`; name, theme, links and endpoints come
+  from `s7video.config.ts`, so it installs alongside T3 Code without touching its data. SSH,
+  device-host and WSL environments are turned off for now. (S7V-003)
+
 ### Removed
 
 - T3 Code's cloud features: Clerk sign-in, T3 Connect, the managed relay and tunnel, and guest share

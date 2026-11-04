@@ -28,9 +28,8 @@ Keys as defined in S7V-003's `s7video.config.ts`:
 | Upstream credit                                                                          | `credits.*`                                                                                | T3 Code, MIT                                               |
 | Which config file                                                                        | `S7VIDEO_CONFIG` environment variable                                                      | `s7video.config.ts`                                        |
 
-The config arrives with S7V-003, which also replaces the T3 Code values still in the code (for example
-`apps/web/src/branding.ts`). Until it lands, do not add new brand strings anywhere; reuse the existing
-branding module. Later settings (default models, styles, feature flags) get keys in the ticket that
+The config came with S7V-003, which replaced the T3 Code values in the code. Read brand values from
+`BRAND` (`@t3tools/shared/brand`); never add a brand string anywhere else. Later settings (default models, styles, feature flags) get keys in the ticket that
 adds them.
 
 ## Rules for code

@@ -102,7 +102,7 @@ Never merge a sprint branch into `main` without the developer's approval.
   broken, it probably did not run. While `.t3/setup-running` names a live PID, wait for it; it ends
   with `.t3/setup-done` or `.t3/setup-failed`. With no marker at all, run `vp i` yourself.
 - **Never touch `~/.t3`.** Not to read test data, not to write dev state, not to clean up.
-- **The only safe dev commands** (until S7V-003 gives s7video its own data folder), run from the repo
+- **The safe dev commands** keep dev state inside your checkout. Run them from the repo
   root of your checkout or worktree:
 
   ```bash
@@ -138,7 +138,7 @@ the reviewer on the head commit.
 | Full test suite               | `pnpm test`, required before every PR; failures that also fail on the base commit are listed in the ticket with the base SHA and output |
 | Markdown links                | `pnpm docs:linkcheck`                                                                                                                   |
 | Licence notices               | `pnpm licenses:sync`; `pnpm licenses:check` and `reuse lint` once S7V-004 adds them                                                     |
-| Brand values                  | `pnpm brand:check` once S7V-003 adds it                                                                                                 |
+| Brand values                  | `pnpm brand:check`                                                                                                                      |
 | Ticket structure              | `pnpm ticket:validate -- S7V-XXX --strict`                                                                                              |
 | Ticket behaviour              | `pnpm ticket:verify -- S7V-XXX` (runs the test map)                                                                                     |
 | Commit hygiene                | `pnpm ticket:finalize -- S7V-XXX --skip-verify`                                                                                         |

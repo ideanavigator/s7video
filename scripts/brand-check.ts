@@ -88,6 +88,10 @@ const ALLOWED_PATHS: ReadonlyArray<{ readonly pattern: RegExp; readonly reason: 
       /^(packages\/contracts\/src\/auth|apps\/server\/src\/peer\/(PeerLinks|PeerMcpClient))\.ts$/,
     reason: "upstream peer-link protocol ids, shared by both ends of a link",
   },
+  {
+    pattern: /^(CHANGELOG|GOVERNANCE|PRIVACY|TRADEMARK)\.md$/,
+    reason: "legal, credit and privacy text that must name T3 Code",
+  },
   { pattern: /^evals\//, reason: "upstream model evals; fixtures name T3 Code's MCP tools" },
   { pattern: /^pnpm-lock\.yaml$/, reason: "lockfile" },
   { pattern: /^patches\//, reason: "dependency patches" },
