@@ -1,3 +1,4 @@
+import { REMOTE_ENVIRONMENTS_ENABLED } from "@t3tools/shared/remoteEnvironments";
 import { pipe } from "effect/Function";
 import { ChevronsLeftRightEllipsisIcon, PlusIcon, TerminalIcon } from "lucide-react";
 import { useAtomValue } from "@effect/atom-react";
@@ -586,7 +587,7 @@ export function AddEnvironmentDialog({
                 description: "Enter a backend host and pairing code.",
                 icon: <ChevronsLeftRightEllipsisIcon aria-hidden className="size-4" />,
               })}
-              {desktopBridge
+              {desktopBridge && REMOTE_ENVIRONMENTS_ENABLED
                 ? renderConnectionModeCard({
                     mode: "ssh",
                     title: "SSH",

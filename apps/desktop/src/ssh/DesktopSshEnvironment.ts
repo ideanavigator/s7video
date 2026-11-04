@@ -1,3 +1,7 @@
+import {
+  REMOTE_ENVIRONMENTS_DISABLED_MESSAGE,
+  REMOTE_ENVIRONMENTS_ENABLED,
+} from "@t3tools/shared/remoteEnvironments";
 import { BRAND } from "@t3tools/shared/brand";
 import type {
   DesktopDiscoveredSshHost,
@@ -69,7 +73,14 @@ export class DesktopSshEnvironment extends Context.Service<
 
 export interface DesktopSshEnvironmentLayerOptions {
   readonly resolveCliRunner?: Effect.Effect<SshTunnel.RemoteT3RunnerOptions>;
+  /** Defaults to `REMOTE_ENVIRONMENTS_ENABLED` (off). */
+  readonly enabled?: boolean;
 }
+
+/** The remote scripts still use upstream `~/.t3` paths, so nothing may launch or stop them. */
+const refuseRemoteEnvironment = Effect.fail(
+  new SshLaunchError({ message: REMOTE_ENVIRONMENTS_DISABLED_MESSAGE, stdout: "" }),
+);
 
 function discoverDesktopSshHostsEffect(input?: { readonly homeDir?: string }) {
   return discoverSshHosts(input ?? {});
@@ -127,7 +138,9 @@ const makePasswordPrompt = (
 });
 
 /** @public */
-export const make = Effect.gen(function* () {
+export const make = Effect.fn("desktop.ssh.make")(function* (
+  enabled: boolean = REMOTE_ENVIRONMENTS_ENABLED,
+) {
   const manager = yield* SshTunnel.SshEnvironmentManager;
   const prompts = yield* DesktopSshPasswordPrompts.DesktopSshPasswordPrompts;
   const runtimeContext = yield* Effect.context<DesktopSshEnvironmentRuntimeServices>();
@@ -142,6 +155,7 @@ export const make = Effect.gen(function* () {
     }, Effect.provide(runtimeContext)),
     ensureEnvironment: Effect.fn("desktop.ssh.ensureEnvironment")(
       function* (target, ensureOptions) {
+        if (!enabled) return yield* refuseRemoteEnvironment;
         return yield* manager.ensureEnvironment(target, ensureOptions);
       },
       Effect.provideService(SshAuth.SshPasswordPrompt, passwordPrompt),
@@ -149,6 +163,7 @@ export const make = Effect.gen(function* () {
     ),
     disconnectEnvironment: Effect.fn("desktop.ssh.disconnectEnvironment")(
       function* (target) {
+        if (!enabled) return yield* refuseRemoteEnvironment;
         return yield* manager.disconnectEnvironment(target);
       },
       Effect.provideService(SshAuth.SshPasswordPrompt, passwordPrompt),
@@ -158,7 +173,7 @@ export const make = Effect.gen(function* () {
 });
 
 export const layer = (options: DesktopSshEnvironmentLayerOptions = {}) =>
-  Layer.effect(DesktopSshEnvironment, make).pipe(
+  Layer.effect(DesktopSshEnvironment, make(options.enabled)).pipe(
     Layer.provide(
       SshTunnel.SshEnvironmentManager.layer(
         options.resolveCliRunner === undefined

@@ -583,6 +583,7 @@ export class DeviceOperationError extends Schema.TaggedError<DeviceOperationErro
       "invalid_payload",
       "settings_failed",
       "hub_rejected",
+      "remote_disabled",
     ]),
     exitCode: Schema.optional(Schema.Number),
     cause: Schema.Defect(),
@@ -595,6 +596,7 @@ export class DeviceOperationError extends Schema.TaggedError<DeviceOperationErro
       invalid_payload: "The device request could not be encoded.",
       settings_failed: "Could not read or save device settings.",
       hub_rejected: "The device hub could not complete the request.",
+      remote_disabled: "SSH device hosts are turned off in this build.",
     }[this.reason];
     return `Device ${this.operation} failed: ${explanation}`;
   }

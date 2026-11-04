@@ -437,8 +437,14 @@ describe("parseResolvedPath", () => {
 // Path.layer joins with POSIX separators here, so the test windir is a POSIX path.
 const WSL_EXE = "/windows/System32/wsl.exe";
 
-const isAvailable = (policy?: Parameters<typeof DesktopManagedPolicy.layerTest>[0]) =>
-  makeIsAvailable("win32", "/windows").pipe(
+const isAvailable = (
+  policy?: Parameters<typeof DesktopManagedPolicy.layerTest>[0],
+  enabled?: boolean,
+) =>
+  (enabled === undefined
+    ? makeIsAvailable("win32", "/windows")
+    : makeIsAvailable("win32", "/windows", enabled)
+  ).pipe(
     Effect.provide(
       Layer.mergeAll(
         FileSystem.layerNoop({ exists: (path) => Effect.succeed(path === WSL_EXE) }),
@@ -449,12 +455,18 @@ const isAvailable = (policy?: Parameters<typeof DesktopManagedPolicy.layerTest>[
   );
 
 describe("makeIsAvailable", () => {
+  it.effect("keeps WSL off by default, even where wsl.exe exists (until S7V-018)", () =>
+    Effect.gen(function* () {
+      assert.isFalse(yield* isAvailable());
+    }),
+  );
+
   it.effect("turns WSL off on a machine with a managed policy, even an invalid one", () =>
     Effect.gen(function* () {
-      assert.isTrue(yield* isAvailable());
-      assert.isFalse(yield* isAvailable({ schemaVersion: 1, organization: "Example Corp" }));
+      assert.isTrue(yield* isAvailable(undefined, true));
+      assert.isFalse(yield* isAvailable({ schemaVersion: 1, organization: "Example Corp" }, true));
       assert.isFalse(
-        yield* isAvailable(new ManagedPolicyFileError({ path: "/test", reason: "bad JSON" })),
+        yield* isAvailable(new ManagedPolicyFileError({ path: "/test", reason: "bad JSON" }), true),
       );
     }),
   );

@@ -1,3 +1,4 @@
+import { REMOTE_ENVIRONMENTS_ENABLED } from "@t3tools/shared/remoteEnvironments";
 import { useAtomValue } from "@effect/atom-react";
 import { Fragment, useState, type ReactNode } from "react";
 import * as Cause from "effect/Cause";
@@ -525,17 +526,19 @@ export function DeviceSourcesSettings(props: {
         <ChevronDownIcon className="size-3.5" />
       </MenuTrigger>
       <MenuPopup align="end">
-        <MenuItem
-          onClick={() =>
-            setEditing({
-              kind: "ssh",
-              host: { kind: "ssh", id: randomUUID(), label: "", target: "" },
-              original: null,
-            })
-          }
-        >
-          Machine over SSH
-        </MenuItem>
+        {REMOTE_ENVIRONMENTS_ENABLED ? (
+          <MenuItem
+            onClick={() =>
+              setEditing({
+                kind: "ssh",
+                host: { kind: "ssh", id: randomUUID(), label: "", target: "" },
+                original: null,
+              })
+            }
+          >
+            Machine over SSH
+          </MenuItem>
+        ) : null}
         {props.supportsEas ? (
           <MenuItem
             onClick={() =>

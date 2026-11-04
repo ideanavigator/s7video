@@ -1357,7 +1357,7 @@ it.effect("reconciles SSH host settings without publishing no-op changes", () =>
       stop: Effect.void,
       stopAgent: Effect.void,
     };
-    const service = yield* DeviceService.make.pipe(
+    const service = yield* DeviceService.makeWithOptions({ sshDeviceHostsEnabled: true }).pipe(
       Effect.provideService(DeviceHost.DeviceHost, localHost),
       Effect.provideService(ServerSettings.ServerSettingsService, {
         ...settings,
@@ -1912,4 +1912,25 @@ describe("locating a device id across hosts", () => {
       }),
     ),
   );
+});
+
+describe("SSH device hosts while remote environments are off", () => {
+  const sshHost = { kind: "ssh", id: "mac", label: "My Mac", target: "localhost" } as const;
+  const easHost = { kind: "eas", id: "eas-1" } as unknown as Parameters<
+    typeof DeviceService.configuredDeviceHosts
+  >[0]["easDeviceHosts"][number];
+
+  it("never starts a saved SSH host, so its ~/.t3 script cannot run", () => {
+    const settings = {
+      deviceHosts: [sshHost],
+      easDeviceHosts: [easHost],
+      simlockDeviceHosts: [],
+      simlockDeviceHostsEnabled: false,
+    };
+    expect(DeviceService.configuredDeviceHosts(settings).map((host) => host.id)).toEqual(["eas-1"]);
+    expect(DeviceService.configuredDeviceHosts(settings, true).map((host) => host.id)).toEqual([
+      "mac",
+      "eas-1",
+    ]);
+  });
 });

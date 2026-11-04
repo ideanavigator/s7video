@@ -1,3 +1,4 @@
+import { REMOTE_ENVIRONMENTS_ENABLED } from "@t3tools/shared/remoteEnvironments";
 import { BRAND } from "@t3tools/shared/brand";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
@@ -1032,12 +1033,13 @@ const getUserHomeImpl = (
 export const makeIsAvailable = Effect.fn("DesktopWslEnvironment.makeIsAvailable")(function* (
   platform: NodeJS.Platform,
   windir: string,
+  enabled: boolean = REMOTE_ENVIRONMENTS_ENABLED,
 ): Effect.fn.Return<
   boolean,
   never,
   FileSystem.FileSystem | Path.Path | DesktopManagedPolicy.DesktopManagedPolicy
 > {
-  if (platform !== "win32") return false;
+  if (!enabled || platform !== "win32") return false;
   const path = yield* Path.Path;
   const fileSystem = yield* FileSystem.FileSystem;
   const wslExePath = path.join(windir, "System32", "wsl.exe");
