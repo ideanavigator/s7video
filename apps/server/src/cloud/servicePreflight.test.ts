@@ -27,10 +27,12 @@ it.each([1])("blocks legacy launcher protocol %i with exact recovery steps", (la
   const reason = result.status === "blocked" ? result.reason : "";
   expect(reason).toMatch(new RegExp(`\\b${launcherProtocol}\\b`));
   expect(reason).toMatch(new RegExp(`\\b${SERVICE_LAUNCHER_PROTOCOL}\\b`));
-  expect(reason).toContain("curl -fsSL https://t3.codes/install.sh | T3CODE_VERSION=9.8.7 sh");
-  expect(reason).toContain("~/.local/bin/t3 service install");
-  expect(reason).toContain("t3 --version");
-  expect(reason).toContain("which -a t3");
+  // No install script is configured, so the hint names the repository and never T3's installer.
+  expect(reason).not.toContain("t3.codes");
+  expect(reason).toContain("install s7video 9.8.7 from https://github.com/ideanavigator/s7video");
+  expect(reason).toContain("~/.local/bin/s7video service install");
+  expect(reason).toContain("s7video --version");
+  expect(reason).toContain("which -a s7video");
 });
 
 it.layer(NodeServices.layer)("service preflight database", (it) => {

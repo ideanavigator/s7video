@@ -43,7 +43,7 @@ it.effect("authenticates each release page until the requested channel is found"
     const httpClient = HttpClient.make((request) => {
       const url = new URL(request.url);
       assert.equal(url.origin, "https://api.github.com");
-      assert.equal(url.pathname, "/repos/pingdotgg/t3code/releases");
+      assert.equal(url.pathname, "/repos/example/cli/releases");
       assert.equal(request.headers.accept, "application/vnd.github+json");
       assert.equal(request.headers.authorization, "Bearer gh-token");
       const page = url.searchParams.get("page") ?? "";
@@ -51,12 +51,26 @@ it.effect("authenticates each release page until the requested channel is found"
       const tag_name = page === "1" ? "v1.2.4-preview.20260101.1" : "v1.2.3";
       return Effect.succeed(HttpClientResponse.fromWeb(request, Response.json([{ tag_name }])));
     });
-    const version = yield* resolveNewestVersion("stable").pipe(
+    const version = yield* resolveNewestVersion("stable", "example/cli").pipe(
       Effect.provideService(HostProcess.Environment, { GH_TOKEN: "gh-token" }),
       Effect.provideService(HttpClient.HttpClient, httpClient),
     );
     assert.equal(version, "1.2.3");
     assert.deepStrictEqual(pages, ["1", "2"]);
+  }),
+);
+
+it.effect("lists no releases when the brand config names no release repository", () =>
+  Effect.gen(function* () {
+    const error = yield* resolveNewestVersion("stable").pipe(
+      Effect.provideService(HostProcess.Environment, {}),
+      Effect.provideService(
+        HttpClient.HttpClient,
+        HttpClient.make(() => Effect.die("an unconfigured build must not list releases")),
+      ),
+      Effect.flip,
+    );
+    assert.match(error.message, /has no release feed/);
   }),
 );
 
@@ -96,7 +110,7 @@ it.layer(NodeServices.layer)("t3 update under a managed policy", (it) => {
   it.effect("refuses to update when updates are off", () =>
     Effect.gen(function* () {
       const error = yield* runWithPolicy({ mode: "off" });
-      assert.equal(error.message, "Example Corp manages T3 Code updates.");
+      assert.equal(error.message, "Example Corp manages updates for this app.");
     }),
   );
 
@@ -113,7 +127,7 @@ it.layer(NodeServices.layer)("t3 update under a managed policy", (it) => {
       for (const error of [byChannel, byVersion]) {
         assert.equal(
           error.message,
-          "Example Corp manages T3 Code updates. Only stable releases can be installed.",
+          "Example Corp manages updates for this app. Only stable releases can be installed.",
         );
       }
     }),

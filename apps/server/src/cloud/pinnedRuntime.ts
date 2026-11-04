@@ -179,6 +179,11 @@ const installFromArchive = Effect.fn("cloud.pinned_runtime.install_archive")(fun
   }
   const httpClient = input.httpClient;
   const baseUrl = cliReleaseDownloadBaseUrl(input.version, input.releaseBaseUrl);
+  if (baseUrl === undefined) {
+    return yield* new PinnedRuntimeInstallError({
+      step: "finding a release source: this build has no release feed (updates.githubRepository)",
+    });
+  }
   const fileName = cliArchiveFileName(input.version, platformKey);
 
   input.onProgress?.({ stage: "download", received: 0, total: undefined });

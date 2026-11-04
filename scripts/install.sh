@@ -1,25 +1,25 @@
 #!/bin/sh
-# Installs the T3 Code CLI from a GitHub Release archive. Needs only sh, tar,
+# Installs the s7video CLI from a GitHub Release archive. Needs only sh, tar,
 # sha256sum or shasum, and curl or wget; no Node, npm, or compiler.
 #
-#   curl -fsSL https://t3.codes/install.sh | sh
+#   curl -fsSL <install.sh URL> | sh  (s7video does not host an installer yet)
 #
 # Environment:
 #   T3CODE_CHANNEL           release train to follow: stable, nightly, or preview
 #                            (default: stable; preview is a maintainers' test train)
 #   T3CODE_VERSION           exact version to install (overrides T3CODE_CHANNEL)
-#   T3CODE_HOME              T3 home directory (default: ~/.t3)
+#   S7VIDEO_HOME              T3 home directory (default: ~/.t3)
 #   T3CODE_INSTALL_BIN_DIR   where the `t3` symlink goes (default: ~/.local/bin)
 #   T3CODE_RELEASE_BASE_URL  mirror for releases/download (default: GitHub)
 #
-# The archive is unpacked into $T3CODE_HOME/runtime/versions/<version>, the
+# The archive is unpacked into $S7VIDEO_HOME/runtime/versions/<version>, the
 # same layout `t3 service install` uses, so the service reuses this download
 # instead of fetching the release again.
 set -eu
 
-repo="pingdotgg/t3code"
+repo="ideanavigator/s7video"
 base_url="${T3CODE_RELEASE_BASE_URL:-https://github.com/${repo}/releases/download}"
-t3_home="${T3CODE_HOME:-$HOME/.t3}"
+t3_home="${S7VIDEO_HOME:-$HOME/.t3}"
 bin_dir="${T3CODE_INSTALL_BIN_DIR:-$HOME/.local/bin}"
 
 fail() {
@@ -41,11 +41,8 @@ step() {
 }
 if "$interactive"; then
   printf '\n%s' "$bold" >&2
-  printf '  %s\n' '██████████ ████████ ' >&2
-  printf '  %s\n' '    ███       ▄██▀       T3 Code' >&2
-  printf '  %s%s     %sCLI installer%s\n' '    ███       ████▄ ' "$reset" "$muted" "$reset$bold" >&2
-  printf '  %s\n' '    ███    ▄     ███' >&2
-  printf '  %s\n' '    ███    ███████▀ ' >&2
+  printf '  %s\n' 's7video' >&2
+  printf '  %s%sCLI installer%s\n' "$reset" "$muted" "$reset$bold" >&2
   printf '%s\n' "$reset" >&2
 fi
 step "Finding your release..."
@@ -134,7 +131,7 @@ case "$(uname -m)" in
   *) fail "unsupported architecture $(uname -m)" ;;
 esac
 if [ "${platform}-${arch}" = darwin-x64 ]; then
-  fail "there is no t3 CLI for Intel Macs. Install the desktop app from https://t3.codes/download, or run a server from source: https://github.com/${repo}/blob/main/docs/user/install.md#intel-macs"
+  fail "there is no t3 CLI for Intel Macs. Install the desktop app, or run a server from source: https://github.com/${repo}/blob/main/docs/user/install.md#intel-macs"
 fi
 command -v tar >/dev/null 2>&1 || fail "tar is required"
 if command -v sha256sum >/dev/null 2>&1; then
@@ -200,7 +197,7 @@ else
   trap 'printf "\n" >&2; exit 143' TERM
 
   if "$interactive"; then printf '\r\033[2K' >&2; fi
-  printf '  %sInstalling%s T3 Code %s%s%s\n\n' "$muted" "$reset" "$bold" "$version" "$reset" >&2
+  printf '  %sInstalling%s s7video %s%s%s\n\n' "$muted" "$reset" "$bold" "$version" "$reset" >&2
   step "Downloading..."
   fetch_status=0
   fetch "${base_url}/v${version}/SHA256SUMS" "${staging}/SHA256SUMS" || fetch_status=$?
@@ -217,7 +214,7 @@ else
   actual="$(checksum "${staging}/${archive}")"
   [ "$actual" = "$expected" ] || fail "checksum mismatch for ${archive}"
 
-  step "Extracting T3 Code..."
+  step "Extracting s7video..."
   tar -xzf "${staging}/${archive}" -C "$staging" --strip-components=1
   rm -f "${staging}/${archive}" "${staging}/SHA256SUMS"
   "${staging}/t3" --version >/dev/null || fail "the downloaded executable does not run"
@@ -236,8 +233,8 @@ launcher="$(CDPATH='' cd -P -- "$bin_dir" && pwd)/t3"
 launchers="${t3_home}/runtime/launchers"
 grep -qxF "$launcher" "$launchers" 2>/dev/null || printf '%s\n' "$launcher" >> "$launchers"
 if "$interactive"; then printf '\r\033[2K' >&2; fi
-printf '  %sInstalled T3 Code %s%s\n\n' "$green" "$version" "$reset" >&2
+printf '  %sInstalled s7video %s%s\n\n' "$green" "$version" "$reset" >&2
 case ":${PATH}:" in
-  *":${bin_dir}:"*) printf '  Run %st3%s to use T3 Code here, or %st3 up%s to use it from your other devices.\n\n' "$bold" "$reset" "$bold" "$reset" ;;
+  *":${bin_dir}:"*) printf '  Run %st3%s to use s7video here, or %st3 up%s to use it from your other devices.\n\n' "$bold" "$reset" "$bold" "$reset" ;;
   *) printf '  Add %s to your PATH, then run %st3%s.\n\n' "$bin_dir" "$bold" "$reset" ;;
 esac

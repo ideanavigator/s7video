@@ -1,8 +1,10 @@
+import { BRAND } from "@t3tools/shared/brand";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import {
   CLI_RELEASE_BASE_URL_ENV,
   CLI_RELEASE_CHANNELS,
   cliReleaseIndexPageUrl,
+  CLI_RELEASES_UNCONFIGURED_MESSAGE,
   cliReleaseChannelOf,
   newestCliReleaseVersion,
   type CliReleaseChannel,
@@ -61,12 +63,17 @@ const RELEASE_INDEX_MAX_PAGES = 10;
 
 export const resolveNewestVersion = Effect.fn("cli.update.resolve_newest")(function* (
   channel: CliReleaseChannel,
+  repository?: string,
 ) {
   const httpClient = yield* HttpClient.HttpClient;
   const environment = yield* HostProcess.Environment;
   const githubToken = environment.GH_TOKEN?.trim() || environment.GITHUB_TOKEN?.trim() || undefined;
   for (let page = 1; page <= RELEASE_INDEX_MAX_PAGES; page += 1) {
-    const request = HttpClientRequest.get(cliReleaseIndexPageUrl(page)).pipe(
+    const url = cliReleaseIndexPageUrl(page, repository);
+    if (url === undefined) {
+      return yield* new CliUpdateError({ reason: CLI_RELEASES_UNCONFIGURED_MESSAGE });
+    }
+    const request = HttpClientRequest.get(url).pipe(
       HttpClientRequest.setHeader("Accept", "application/vnd.github+json"),
     );
     const authenticatedRequest =
@@ -279,7 +286,7 @@ const belongsToBootService = Effect.fn("cli.update.belongs_to_boot_service")(fun
   const runner = yield* ProcessRunner.ProcessRunner;
   if (platform === "linux") {
     const cgroup = yield* fs.readFileString(`/proc/${pid}/cgroup`).pipe(Effect.option);
-    return Option.isSome(cgroup) && cgroup.value.includes("/t3code.service");
+    return Option.isSome(cgroup) && cgroup.value.includes(`/${BootService.BOOT_SERVICE_UNIT_FILE}`);
   }
   if (platform === "darwin") {
     const parent = yield* runner
@@ -348,10 +355,10 @@ export const runUpdate = Effect.fn("cli.update.run")(function* (input: {
   if (targetChannel === "preview" && currentChannel !== "preview") {
     yield* Console.log(
       [
-        `t3@${targetVersion} is a preview build.`,
+        `${BRAND.app.cliName}@${targetVersion} is a preview build.`,
         "  Preview builds are cut by maintainers from unreleased branches to exercise the release",
         "  pipeline. They can be broken, receive no fixes, and are never offered as updates; you",
-        `  will have to switch back to ${currentChannel} yourself with \`t3 update --channel ${currentChannel} --allow-downgrade\`.`,
+        `  will have to switch back to ${currentChannel} yourself with \`${BRAND.app.cliName} update --channel ${currentChannel} --allow-downgrade\`.`,
       ].join("\n"),
     );
     if (!(process.stdin.isTTY && process.stdout.isTTY)) {
@@ -401,7 +408,7 @@ export const runUpdate = Effect.fn("cli.update.run")(function* (input: {
   }
   if (!input.allowDowngrade && compareExactServiceVersions(targetVersion, newestInstalled) < 0) {
     return yield* new CliUpdateError({
-      reason: `t3@${targetVersion} is older than the installed ${newestInstalled}. Pass --allow-downgrade to install it anyway.`,
+      reason: `${BRAND.app.cliName}@${targetVersion} is older than the installed ${newestInstalled}. Pass --allow-downgrade to install it anyway.`,
     });
   }
 
@@ -418,8 +425,8 @@ export const runUpdate = Effect.fn("cli.update.run")(function* (input: {
       : executableCurrent
         ? `Updating the background service ${serviceVersion ?? "(unknown version)"} -> ${targetVersion} (${targetChannel}).`
         : alreadyOnDisk
-          ? "Switching T3 Code"
-          : "Updating T3 Code",
+          ? `Switching ${BRAND.app.productName}`
+          : `Updating ${BRAND.app.productName}`,
     executableCurrent
       ? ""
       : `${currentVersion} → ${targetVersion}${targetChannel === "stable" ? "" : ` (${targetChannel})`}`,
@@ -440,7 +447,7 @@ export const runUpdate = Effect.fn("cli.update.run")(function* (input: {
       ).pipe(Effect.catchTags({ QuitError: () => Effect.succeed(false) }));
     } else {
       yield* Console.log(
-        "  Not a terminal, so the service keeps running its current version. Rerun with --yes to restart it now, or run `t3 service restart` later.",
+        `  Not a terminal, so the service keeps running its current version. Rerun with --yes to restart it now, or run \`${BRAND.app.cliName} service restart\` later.`,
       );
     }
   }
@@ -489,7 +496,7 @@ export const runUpdate = Effect.fn("cli.update.run")(function* (input: {
       () =>
         Effect.fail(
           new CliUpdateError({
-            reason: `No release archive was published for t3@${targetVersion}.`,
+            reason: `No release archive was published for ${BRAND.app.cliName}@${targetVersion}.`,
           }),
         ),
     ),
@@ -525,7 +532,7 @@ export const runUpdate = Effect.fn("cli.update.run")(function* (input: {
       Effect.mapError(
         (error) =>
           new CliUpdateError({
-            reason: `t3@${targetVersion} is installed but the background service could not be ${restartService ? "updated" : "pointed at it"}: ${error.message}`,
+            reason: `${BRAND.app.cliName}@${targetVersion} is installed but the background service could not be ${restartService ? "updated" : "pointed at it"}: ${error.message}`,
           }),
       ),
     );
@@ -542,7 +549,7 @@ export const runUpdate = Effect.fn("cli.update.run")(function* (input: {
     });
   }
 
-  progress.success(`Installed T3 Code ${targetVersion}`);
+  progress.success(`Installed ${BRAND.app.productName} ${targetVersion}`);
   if (Option.isSome(repointed)) {
     yield* Console.log("  Run t3 to get started.\n");
   } else {
@@ -558,7 +565,7 @@ export const runUpdate = Effect.fn("cli.update.run")(function* (input: {
     yield* Console.log(`  Background service already on ${targetVersion}`);
   } else if (serviceInstalled) {
     yield* Console.log(
-      `  Background service still running ${serviceVersion ?? "an unknown version"}. Run \`t3 service restart\` when you are ready to switch it to ${targetVersion}.`,
+      `  Background service still running ${serviceVersion ?? "an unknown version"}. Run \`${BRAND.app.cliName} service restart\` when you are ready to switch it to ${targetVersion}.`,
     );
   } else if (status.installed && !servesThisHome) {
     yield* Console.log(

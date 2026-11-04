@@ -1,3 +1,4 @@
+import { BRAND } from "@t3tools/shared/brand";
 import {
   ServerSelfUpdateError,
   type ServerSelfUpdateCapability,
@@ -114,10 +115,10 @@ export function trackSwitchBlockReason(input: {
   if (!crossesReleaseTrack(input.serverVersion, input.targetVersion)) return null;
   const databaseMigration = input.databaseMigration();
   if (input.targetDatabaseMigration === undefined || databaseMigration === undefined) {
-    return `Cannot confirm this database works with t3@${input.targetVersion}. Switch tracks from Settings → About → Update track, which checks it first.`;
+    return `Cannot confirm this database works with ${BRAND.app.cliName}@${input.targetVersion}. Switch tracks from Settings → About → Update track, which checks it first.`;
   }
   return input.targetDatabaseMigration < databaseMigration
-    ? `This database has changes t3@${input.targetVersion} does not support yet; it stays on this release.`
+    ? `This database has changes ${BRAND.app.cliName}@${input.targetVersion} does not support yet; it stays on this release.`
     : null;
 }
 
@@ -178,12 +179,12 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
         );
       }
       return yield* failWith(
-        "This server is managed by the T3 Code desktop app on its machine; update the desktop app to update it.",
+        `This server is managed by the ${BRAND.app.productName} desktop app on its machine; update the desktop app to update it.`,
       );
     }
     if (capability === null) {
       return yield* failWith(
-        "Remote updates require the T3 Code background service. Run `t3 service install` on the server machine.",
+        `Remote updates require the ${BRAND.app.productName} background service. Run \`${BRAND.app.cliName} service install\` on the server machine.`,
       );
     }
 
@@ -282,7 +283,7 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
         Effect.mapError((error) =>
           error._tag === "PinnedRuntimePreflightBlockedError"
             ? failWith(error.reason, error)
-            : failWith(`Could not prepare t3@${targetVersion}.`, error),
+            : failWith(`Could not prepare ${BRAND.app.cliName}@${targetVersion}.`, error),
         ),
       );
 

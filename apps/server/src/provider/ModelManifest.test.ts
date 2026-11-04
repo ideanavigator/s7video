@@ -264,14 +264,37 @@ const layerService = (input: {
     Layer.provideMerge(layerHttpClient(input.response)),
   );
 
+const TEST_MANIFEST_URL = "https://manifest.example/model-manifest.json";
+
 describe("ModelManifest service", () => {
+  it.live("keeps the bundled manifest and fetches nothing when the brand config has no URL", () => {
+    let fetches = 0;
+    return Effect.gen(function* () {
+      const service = yield* ModelManifest.make;
+      assert.deepStrictEqual(yield* service.forceRefresh, ModelManifest.BUNDLED_MODEL_MANIFEST);
+      assert.deepStrictEqual(yield* service.refresh, ModelManifest.BUNDLED_MODEL_MANIFEST);
+      assert.equal(fetches, 0);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        layerService({
+          prefix: "model-manifest-unconfigured-test",
+          response: () => {
+            fetches += 1;
+            return Response.json(REMOTE_MANIFEST);
+          },
+        }),
+      ),
+    );
+  });
+
   it.live("prefers a fetched manifest over the bundle and caches it to disk", () =>
     Effect.gen(function* () {
-      const service = yield* ModelManifest.make;
+      const service = yield* ModelManifest.makeWithUrl(TEST_MANIFEST_URL);
       const refreshed = yield* service.refresh;
       assert.deepStrictEqual(refreshed, REMOTE_MANIFEST);
 
-      const rebooted = yield* ModelManifest.make;
+      const rebooted = yield* ModelManifest.makeWithUrl(TEST_MANIFEST_URL);
       assert.deepStrictEqual(yield* rebooted.current, REMOTE_MANIFEST);
     }).pipe(
       Effect.scoped,
@@ -287,7 +310,7 @@ describe("ModelManifest service", () => {
   it.live("ignores older remote edits without replacing the current manifest or disk cache", () => {
     let remote = { ...REMOTE_MANIFEST, updatedAt: "2000-01-01T00:00:00Z" };
     return Effect.gen(function* () {
-      const service = yield* ModelManifest.make;
+      const service = yield* ModelManifest.makeWithUrl(TEST_MANIFEST_URL);
       assert.deepStrictEqual(yield* service.refresh, ModelManifest.BUNDLED_MODEL_MANIFEST);
       assert.deepStrictEqual(yield* service.current, ModelManifest.BUNDLED_MODEL_MANIFEST);
 
@@ -295,7 +318,7 @@ describe("ModelManifest service", () => {
       assert.deepStrictEqual(yield* service.forceRefresh, REMOTE_MANIFEST);
       remote = { ...REMOTE_MANIFEST, updatedAt: ModelManifest.BUNDLED_MODEL_MANIFEST.updatedAt! };
       assert.deepStrictEqual(yield* service.forceRefresh, REMOTE_MANIFEST);
-      const rebooted = yield* ModelManifest.make;
+      const rebooted = yield* ModelManifest.makeWithUrl(TEST_MANIFEST_URL);
       assert.deepStrictEqual(yield* rebooted.current, REMOTE_MANIFEST);
     }).pipe(
       Effect.scoped,
@@ -313,7 +336,7 @@ describe("ModelManifest service", () => {
     const responses = [REMOTE_CLAUDE_MANIFEST, ...INVALID_REMOTE_MANIFESTS];
 
     return Effect.gen(function* () {
-      const service = yield* ModelManifest.make;
+      const service = yield* ModelManifest.makeWithUrl(TEST_MANIFEST_URL);
       assert.deepStrictEqual(yield* service.refresh, REMOTE_CLAUDE_MANIFEST);
 
       for (const _invalid of INVALID_REMOTE_MANIFESTS) {
@@ -322,7 +345,7 @@ describe("ModelManifest service", () => {
         assert.deepStrictEqual(yield* service.refresh, REMOTE_CLAUDE_MANIFEST);
       }
 
-      const rebooted = yield* ModelManifest.make;
+      const rebooted = yield* ModelManifest.makeWithUrl(TEST_MANIFEST_URL);
       assert.deepStrictEqual(yield* rebooted.current, REMOTE_CLAUDE_MANIFEST);
     }).pipe(
       Effect.scoped,
@@ -350,7 +373,7 @@ describe("ModelManifest service", () => {
           cachePath,
           yield* ModelManifest.encodeManifestCache({ fetchedAtMs: 0, manifest: stale }),
         );
-        const service = yield* ModelManifest.make;
+        const service = yield* ModelManifest.makeWithUrl(TEST_MANIFEST_URL);
         assert.deepStrictEqual(yield* service.current, ModelManifest.BUNDLED_MODEL_MANIFEST);
       }
 
@@ -358,7 +381,7 @@ describe("ModelManifest service", () => {
         cachePath,
         yield* ModelManifest.encodeManifestCache({ fetchedAtMs: 0, manifest: REMOTE_MANIFEST }),
       );
-      const later = yield* ModelManifest.make;
+      const later = yield* ModelManifest.makeWithUrl(TEST_MANIFEST_URL);
       assert.deepStrictEqual(yield* later.current, REMOTE_MANIFEST);
     }).pipe(
       Effect.scoped,

@@ -4,6 +4,7 @@ import type { ManagedPolicyDocument } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
+import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
@@ -144,10 +145,16 @@ const makeHarness = Effect.fn("test.make_self_update_harness")(function* (
     Effect.provideService(HttpClient.HttpClient, releaseHttpClient(order, options.beforeDownload)),
     Effect.provideService(HostProcess.Platform, "linux"),
     Effect.provideService(HostProcess.Architecture, "x64"),
+    // The default brand config has no release feed; the fake HTTP client serves this mirror.
     Effect.provide(
-      Layer.merge(
+      Layer.mergeAll(
         ServerConfig.layer({ ...config, mode: options.mode ?? "web" }),
         ManagedPolicy.layerTest(options.policy),
+        ConfigProvider.layer(
+          ConfigProvider.fromEnv({
+            env: { T3CODE_RELEASE_BASE_URL: "https://releases.example/download" },
+          }),
+        ),
       ),
     ),
   );
@@ -190,7 +197,7 @@ it.layer(NodeServices.layer)("server self update", (it) => {
       for (const harness of [service, desktop]) {
         expect(
           (yield* harness.selfUpdate.update({ targetVersion: "1.1.0" }).pipe(Effect.flip)).reason,
-        ).toBe("Example Corp manages T3 Code updates.");
+        ).toBe("Example Corp manages updates for this app.");
       }
       expect([...service.order, ...desktop.order]).toEqual([]);
     }),
@@ -208,7 +215,7 @@ it.layer(NodeServices.layer)("server self update", (it) => {
       expect(
         (yield* selfUpdate.update({ targetVersion: "1.2.0-nightly.20261028.1" }).pipe(Effect.flip))
           .reason,
-      ).toBe("Example Corp manages T3 Code updates. Only stable releases can be installed.");
+      ).toBe("Example Corp manages updates for this app. Only stable releases can be installed.");
       expect(order).toEqual([]);
       expect((yield* selfUpdate.update({ targetVersion: "1.1.0" })).updateId).toBe("launcher-id");
     }),
