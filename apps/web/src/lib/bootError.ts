@@ -18,6 +18,25 @@ const BRAND =
 const FALLBACK_TRIAGE_COMMAND = `${BRAND.app.cliName} triage`;
 const DOWNLOAD_URL = BRAND.urls.homepage;
 const ISSUE_URL = BRAND.urls.issues;
+
+/** The bug form (`bug.yml`) prefilled for a boot failure, or `null` when no issues URL is set. */
+export function bugReportUrl(
+  issuesUrl: string,
+  environment: {
+    readonly version: string;
+    readonly channel: string;
+    readonly surface: string;
+    readonly platform: string;
+  },
+): string | null {
+  if (issuesUrl.trim() === "") return null;
+  const issue = new URL("new", issuesUrl.replace(/\/?$/, "/"));
+  issue.searchParams.set("template", "bug.yml");
+  issue.searchParams.set("title", `${BRAND.app.productName} failed to start`);
+  issue.searchParams.set("version", `${environment.version} (${environment.channel})`);
+  issue.searchParams.set("environment", `${environment.surface}, ${environment.platform}`);
+  return issue.href;
+}
 const LAST_FAILURE_KEY = "t3code:boot-failed-at";
 const REPEAT_FAILURE_MS = 5 * 60_000;
 const MAX_CAUSES = 3;
@@ -44,7 +63,9 @@ export async function resolveTriageCommand(bridge: DesktopBridge | undefined) {
     const state = await bridge?.cliCommand.getState();
     // Windows reports onPath from its PATH entry alone; only an existing launcher proves it runs.
     if (state?.launcherPath) {
-      return state.onPath ? "t3 triage" : `${launcherCommand(state.launcherPath)} triage`;
+      return state.onPath
+        ? `${BRAND.app.cliName} triage`
+        : `${launcherCommand(state.launcherPath)} triage`;
     }
   } catch (error) {
     console.warn("Could not read the desktop CLI state.", error);
@@ -357,12 +378,7 @@ export function showBootError(error: unknown) {
     ),
   );
 
-  const issue = new URL(ISSUE_URL);
-  issue.searchParams.set("template", "bug_report.yml");
-  issue.searchParams.set("title", `${BRAND.app.productName} failed to start`);
-  issue.searchParams.set("area", "apps/web");
-  issue.searchParams.set("version", `${environment.version} (${environment.channel})`);
-  issue.searchParams.set("environment", `${environment.surface}, ${environment.platform}`);
+  const issueHref = bugReportUrl(ISSUE_URL, environment);
   const link = (href: string, textContent: string) =>
     element("a", { href, textContent, target: "_blank", rel: "noreferrer" });
   const nightly = environment.channel === "nightly";
@@ -392,7 +408,7 @@ export function showBootError(error: unknown) {
       }),
       element("div", { id: "boot-error-report" }, [
         copyDetails,
-        link(issue.href, "File a bug report on GitHub"),
+        ...(issueHref === null ? [] : [link(issueHref, "File a bug report on GitHub")]),
       ]),
     ]),
   ]);

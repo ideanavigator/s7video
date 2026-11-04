@@ -6,6 +6,7 @@ import {
   buildErrorReport,
   resolveTriageCommand,
   updateActionFor,
+  bugReportUrl,
 } from "./bootError";
 
 const desktopWith = (getState: () => Promise<DesktopCliCommandState>) =>
@@ -19,9 +20,11 @@ const notOnPath = (launcherPath: string | null): DesktopCliCommandState => ({
 });
 
 describe("resolveTriageCommand", () => {
-  it("prefers t3 on PATH, then the desktop launcher", async () => {
+  it("prefers the CLI on PATH, then the desktop launcher", async () => {
     const onPath = { ...notOnPath("/home/me/.t3/bin/t3"), onPath: true };
-    await expect(resolveTriageCommand(desktopWith(async () => onPath))).resolves.toBe("t3 triage");
+    await expect(resolveTriageCommand(desktopWith(async () => onPath))).resolves.toBe(
+      "s7video triage",
+    );
     await expect(
       resolveTriageCommand(desktopWith(async () => notOnPath("/home/me/.t3/bin/t3"))),
     ).resolves.toBe("/home/me/.t3/bin/t3 triage");
@@ -129,5 +132,32 @@ describe("updateActionFor", () => {
       expect(updateActionFor(state(status))).toBeNull();
     }
     expect(updateActionFor(undefined)).toBeNull();
+  });
+});
+
+describe("bugReportUrl", () => {
+  const environment = {
+    version: "0.1.6",
+    channel: "latest",
+    surface: "desktop",
+    platform: "macOS",
+  };
+
+  it("opens the bug form on the configured repository", () => {
+    const url = new URL(
+      bugReportUrl("https://github.com/ideanavigator/s7video/issues", environment)!,
+    );
+    expect(`${url.origin}${url.pathname}`).toBe(
+      "https://github.com/ideanavigator/s7video/issues/new",
+    );
+    expect(url.searchParams.get("template")).toBe("bug.yml");
+    expect(url.searchParams.get("version")).toBe("0.1.6 (latest)");
+    expect(bugReportUrl("https://example.com/support/", environment)).toMatch(
+      /^https:\/\/example\.com\/support\/new\?/,
+    );
+  });
+
+  it("hides the link instead of throwing when no issues URL is set", () => {
+    expect(bugReportUrl("", environment)).toBeNull();
   });
 });

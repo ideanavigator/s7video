@@ -135,8 +135,9 @@ Nothing T3 owns is contacted by default. S7V-003 moved every endpoint below into
 | Desktop auto-update feed (`build-desktop-artifact.ts`)      | CI's `GITHUB_REPOSITORY`                                  | `updates.githubRepository` (or `T3CODE_DESKTOP_UPDATE_REPOSITORY`), empty: none. |
 | Triage, About, boot error, star prompt, release links       | `pingdotgg/t3code`, `t3.codes`                            | `urls.*` (`ideanavigator/s7video`).                                              |
 
-The ssh remote runner downloads the CLI from the same release source; with none configured the remote
-install fails instead of fetching T3's (S7V-018 owns ssh).
+SSH environments, SSH device hosts and the WSL backend are turned off (`REMOTE_ENVIRONMENTS_ENABLED`
+in `@t3tools/shared/remoteEnvironments`). Their scripts still use `~/.t3` on the target, which on
+this Mac or any host with T3 Code would reach T3 Code's data and server. S7V-018 removes them.
 
 ## Brand config (S7V-003)
 
