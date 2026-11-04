@@ -1,6 +1,9 @@
+import { BRAND } from "@t3tools/shared/brand";
 import packageJson from "../../package.json" with { type: "json" };
 import { BUILD_MIGRATION_HEAD, recordedMigrations } from "../persistence/databaseMigrationHead.ts";
 import { SERVICE_LAUNCHER_PROTOCOL } from "./serviceProtocol.ts";
+
+const CLI = BRAND.app.cliName;
 
 export type ServicePreflightResult =
   | {
@@ -27,10 +30,12 @@ export function runServicePreflight(input: {
       // A stale `t3` earlier on PATH (an old npm/nvm global) makes `t3 service install`
       // reinstall itself and report success, so name the exact install and the path check.
       reason: [
-        `The installed service launcher speaks protocol ${input.launcherProtocol}, but t3@${version} requires protocol ${SERVICE_LAUNCHER_PROTOCOL}.`,
-        `On the server machine, install this exact CLI: \`curl -fsSL https://t3.codes/install.sh | T3CODE_VERSION=${version} sh\`.`,
-        `Check that \`t3 --version\` prints ${version} and that \`which -a t3\` lists no older t3 (such as an npm or nvm install) first, then run \`~/.local/bin/t3 service install\` (the installer's default path).`,
-        "Updating the desktop app does not update this CLI, and `t3 service update` only repairs the service with whichever CLI runs it.",
+        `The installed service launcher speaks protocol ${input.launcherProtocol}, but ${CLI}@${version} requires protocol ${SERVICE_LAUNCHER_PROTOCOL}.`,
+        BRAND.updates.installScriptUrl
+          ? `On the server machine, install this exact CLI: \`curl -fsSL ${BRAND.updates.installScriptUrl} | T3CODE_VERSION=${version} sh\`.`
+          : `On the server machine, install ${CLI} ${version} from ${BRAND.urls.repository}.`,
+        `Check that \`${CLI} --version\` prints ${version} and that \`which -a ${CLI}\` lists no older ${CLI} first, then run \`~/.local/bin/${CLI} service install\` (the installer's default path).`,
+        `Updating the desktop app does not update this CLI, and \`${CLI} service update\` only repairs the service with whichever CLI runs it.`,
       ].join(" "),
     };
   }
@@ -40,14 +45,14 @@ export function runServicePreflight(input: {
     return {
       status: "blocked",
       version,
-      reason: `Could not read this database to confirm t3@${version} supports it.`,
+      reason: `Could not read this database to confirm ${BRAND.app.cliName}@${version} supports it.`,
     };
   }
   if (newer.length > 0) {
     return {
       status: "blocked",
       version,
-      reason: `This database has migrations that t3@${version} does not know: ${newer.join(", ")}. A newer build wrote them, and running t3@${version} on this database is not safe. Stay on the newer release, or wait for a release that includes these migrations.`,
+      reason: `This database has migrations that ${BRAND.app.cliName}@${version} does not know: ${newer.join(", ")}. A newer build wrote them, and running ${BRAND.app.cliName}@${version} on this database is not safe. Stay on the newer release, or wait for a release that includes these migrations.`,
     };
   }
 

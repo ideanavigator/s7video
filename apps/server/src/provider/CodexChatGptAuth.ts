@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off - OAuth loopback listener and PKCE use Node APIs.
+import { BRAND } from "@t3tools/shared/brand";
 import * as NodeCrypto from "node:crypto";
 import * as NodeHttp from "node:http";
 import { createRemoteJWKSet, jwtVerify } from "jose";
@@ -528,7 +529,7 @@ export const makeCodexChatGptAuth = Effect.fn("makeCodexChatGptAuth")(function* 
               ? { prompt: "consent" }
               : {}),
           }
-        : { agent_name_hint: "T3 Code" }),
+        : { agent_name_hint: `${BRAND.app.productName}` }),
       ext_agent_host_id: hostId,
       response_type: "code",
       redirect_uri: redirectUri,

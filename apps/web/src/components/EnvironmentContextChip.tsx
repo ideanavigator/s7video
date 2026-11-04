@@ -1,3 +1,4 @@
+import { BRAND } from "@t3tools/shared/brand";
 import { type EnvironmentContextRecord, resolveEnvironmentMachineKind } from "@t3tools/contracts";
 
 import { useEnvironment } from "~/state/environments";
@@ -33,7 +34,7 @@ export function EnvironmentContextChip(props: {
         }
       />
       <TooltipPopup side="top">
-        {environment ? "T3 Code environment" : "Machine not in this app"}
+        {environment ? `${BRAND.app.productName} environment` : "Machine not in this app"}
       </TooltipPopup>
     </Tooltip>
   );

@@ -1,3 +1,4 @@
+import { BRAND } from "@t3tools/shared/brand";
 import { Link } from "@tanstack/react-router";
 import type { ReactNode } from "react";
 
@@ -33,7 +34,7 @@ export function HostedEmptyState() {
             <EmptyDescription>
               {localEnvironmentOff
                 ? "Turn it back on, or connect a different computer."
-                : "Your agents run on your computer. Start T3 Code there first."}
+                : `Your agents run on your computer. Start ${BRAND.app.productName} there first.`}
             </EmptyDescription>
           </EmptyHeader>
           <EmptyContent>
@@ -57,7 +58,7 @@ function PairingSteps() {
   return (
     <>
       <SetupStep number={1}>
-        <RunOnComputer command="npx t3 pair" />
+        <RunOnComputer command={`${BRAND.app.cliName} pair`} />
       </SetupStep>
       <SetupStep number={2}>
         <Button render={<Link to="/settings/connections" />} size="sm">

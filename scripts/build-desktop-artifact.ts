@@ -32,6 +32,7 @@ import {
   resolveWebAssetBrandForChannel,
   type WebAssetBrand,
 } from "./lib/brand-assets.ts";
+import { loadBrandConfig } from "./lib/brand-config.ts";
 import { getDefaultBuildArch } from "./lib/build-target-arch.ts";
 import {
   findInlinedExternalPackages,
@@ -58,7 +59,10 @@ import { Command, Flag } from "effect/cli";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 const LINUX_ICON_SIZES = [16, 22, 24, 32, 48, 64, 128, 256, 512] as const;
-const DESKTOP_APP_ID = "com.t3tools.t3code";
+const BRAND = (await loadBrandConfig()).config;
+const DESKTOP_APP_ID = BRAND.app.bundleId;
+const escapeXml = (value: string) =>
+  value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 
 const BuildPlatform = Schema.Literals(["mac", "linux", "win"]);
 const BuildArch = Schema.Literals(["arm64", "x64", "universal"]);
@@ -1794,7 +1798,7 @@ export const verifyPackagedBundleIsSelfContained = Effect.fn("verifyPackagedBund
     const path = yield* Path.Path;
 
     const probeRoot = yield* fs.makeTempDirectoryScoped({
-      prefix: "t3code-bundle-selfcheck-",
+      prefix: `${BRAND.app.id}-bundle-selfcheck-`,
     });
     const extractedApp = path.join(probeRoot, "extracted");
     const probeApp = path.join(probeRoot, "app");
@@ -2089,7 +2093,7 @@ const stageMacIcons = Effect.fn("build-desktop-artifact.stageMacIcons")(function
   }
 
   const tmpRoot = yield* fs.makeTempDirectoryScoped({
-    prefix: "t3code-icon-build-",
+    prefix: `${BRAND.app.id}-icon-build-`,
   });
 
   const iconPngPath = path.join(stageResourcesDir, "icon.png");
@@ -2114,6 +2118,12 @@ export const stageDesktopDmgBackground = Effect.fn("stageDesktopDmgBackground")(
   if (!(yield* fs.exists(sourcePath))) {
     return yield* new DesktopDmgBackgroundSourceMissingError({ channel, sourcePath });
   }
+  // The artwork names the app; fill it from the brand config in the staged copy.
+  const artwork = yield* fs.readFileString(sourcePath);
+  yield* fs.writeFileString(
+    sourcePath,
+    artwork.replaceAll("{{productName}}", escapeXml(BRAND.app.productName)),
+  );
 
   for (const output of [
     { suffix: "", width: 640, height: 432 },
@@ -2270,14 +2280,13 @@ export function resolveDesktopRuntimeDependencies(
 export const resolveGitHubPublishConfig = Effect.fn("resolveGitHubPublishConfig")(function* (
   updateChannel: "latest" | "nightly",
 ) {
+  // The brand config owns the feed. CI's GITHUB_REPOSITORY is not used: a build with no configured
+  // release repository ships with self-update off rather than a feed nobody publishes to.
   const env = yield* Config.all({
     updateRepository: Config.String("T3CODE_DESKTOP_UPDATE_REPOSITORY").pipe(Config.option),
-    githubRepository: Config.String("GITHUB_REPOSITORY").pipe(Config.option),
   });
   const rawRepo = (
-    Option.getOrUndefined(env.updateRepository)?.trim() ||
-    Option.getOrUndefined(env.githubRepository)?.trim() ||
-    ""
+    Option.getOrUndefined(env.updateRepository)?.trim() || BRAND.updates.githubRepository
   ).trim();
   if (!rawRepo) return undefined;
 
@@ -2338,9 +2347,49 @@ export function resolvePackageManagerUserAgent(packageManager: string): string {
 
 export function resolveDesktopProductName(version: string): string {
   return resolveDesktopUpdateChannel(version) === "nightly"
-    ? "T3 Code (Nightly)"
-    : (desktopPackageJson.productName ?? "T3 Code");
+    ? `${BRAND.app.productName} (Nightly)`
+    : `${BRAND.app.productName} (Beta)`;
 }
+
+/** AppStream metadata for the Linux package, rendered from the brand config. */
+export function renderLinuxMetainfo(brand: typeof BRAND = BRAND): string {
+  const x = (value: string) => escapeXml(value);
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>${x(brand.app.bundleId)}</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>${x(brand.credits.license)}</project_license>
+  <name>${x(brand.app.productName)}</name>
+  <summary>Desktop video editor</summary>
+  <developer id="${x(brand.app.bundleId)}">
+    <name>${x(brand.app.publisher)}</name>
+  </developer>
+  <description>
+    <p>${x(brand.app.productName)} is an open-source desktop video editor, based on ${x(brand.credits.upstreamName)}.</p>
+  </description>
+  <launchable type="desktop-id">${x(brand.app.id)}.desktop</launchable>
+  <icon type="stock">${x(brand.app.id)}</icon>
+  <provides>
+    <binary>${x(brand.app.id)}</binary>
+  </provides>
+  <categories>
+    <category>AudioVideo</category>
+  </categories>
+  <url type="homepage">${x(brand.urls.homepage)}</url>
+  <url type="bugtracker">${x(brand.urls.issues)}</url>
+  <url type="vcs-browser">${x(brand.urls.repository)}</url>
+</component>
+`;
+}
+
+const writeLinuxMetainfo = Effect.gen(function* () {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const directory = yield* fs.makeTempDirectory({ prefix: `${BRAND.app.id}-metainfo-` });
+  const file = path.join(directory, `${DESKTOP_APP_ID}.metainfo.xml`);
+  yield* fs.writeFileString(file, renderLinuxMetainfo());
+  return file;
+});
 
 export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   platform: typeof BuildPlatform.Type,
@@ -2357,7 +2406,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     afterPack: (yield* Path.Path).join(yield* RepoRoot, "scripts/prepare-server-compile-cache.cjs"),
     appId: DESKTOP_APP_ID,
     productName: resolveDesktopProductName(version),
-    artifactName: "T3-Code-${version}-${arch}.${ext}",
+    artifactName: `${BRAND.app.productName.replaceAll(/[^A-Za-z0-9]+/g, "-")}-\${version}-\${arch}.\${ext}`,
     electronLanguages: [...DESKTOP_ELECTRON_LANGUAGES],
     files: [
       ...DESKTOP_FILE_EXCLUSIONS,
@@ -2409,14 +2458,10 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       extendInfo: {
         // macOS 26 offers Messages/Mail codes in every text field unless opted out.
         NSAutoFillRequiresTextContentTypeForOneTimeCodeOnMac: true,
-        NSLocalNetworkUsageDescription:
-          "T3 Code connects to devices on your local network for remote environments and commands run by terminals and coding agents.",
-        NSScreenCaptureUsageDescription:
-          "T3 Code captures the active window when you use the window capture shortcut.",
-        NSCameraUsageDescription:
-          "T3 Code lets commands run by terminals and coding agents use the camera.",
-        NSMicrophoneUsageDescription:
-          "T3 Code lets commands run by terminals and coding agents use the microphone.",
+        NSLocalNetworkUsageDescription: `${BRAND.app.productName} connects to devices on your local network for remote environments and commands run by terminals and coding agents.`,
+        NSScreenCaptureUsageDescription: `${BRAND.app.productName} captures the active window when you use the window capture shortcut.`,
+        NSCameraUsageDescription: `${BRAND.app.productName} lets commands run by terminals and coding agents use the camera.`,
+        NSMicrophoneUsageDescription: `${BRAND.app.productName} lets commands run by terminals and coding agents use the microphone.`,
         // macOS lists an app under Default web browser only when it opens web
         // pages as documents as well as http and https links (see protocols).
         CFBundleDocumentTypes: [
@@ -2430,8 +2475,8 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       },
       protocols: [
         {
-          name: "T3 Code",
-          schemes: ["t3code", "t3code-dev"],
+          name: BRAND.app.productName,
+          schemes: [BRAND.app.protocol, `${BRAND.app.protocol}-dev`],
         },
         {
           name: "Web site URL",
@@ -2470,28 +2515,28 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     const repoRoot = yield* RepoRoot;
     buildConfig.linux = {
       target: target === "AppImage" ? [target, "deb"] : [target],
-      executableName: "t3code",
+      executableName: BRAND.app.id,
       icon: "icons",
       category: "Development",
       synopsis: "Desktop GUI for coding agents",
-      maintainer: "T3 Tools <hello@t3.codes>",
+      maintainer: BRAND.app.publisher,
       protocols: [
         {
-          name: "T3 Code",
-          schemes: ["t3code", "t3code-dev"],
+          name: BRAND.app.productName,
+          schemes: [BRAND.app.protocol, `${BRAND.app.protocol}-dev`],
         },
       ],
       desktop: {
         entry: {
-          StartupWMClass: "t3code",
+          StartupWMClass: BRAND.app.id,
         },
       },
     };
     buildConfig.deb = {
       // FPM runs outside the staged app directory, so source paths must be absolute.
       fpm: [
-        `${path.join(repoRoot, "apps/desktop/resources/linux/com.t3tools.t3code.metainfo.xml")}=/usr/share/metainfo/com.t3tools.t3code.metainfo.xml`,
-        `${path.join(repoRoot, "LICENSE")}=/usr/share/doc/t3code/copyright`,
+        `${yield* writeLinuxMetainfo}=/usr/share/metainfo/${DESKTOP_APP_ID}.metainfo.xml`,
+        `${path.join(repoRoot, "LICENSE")}=/usr/share/doc/${BRAND.app.id}/copyright`,
       ],
       // Debian 13 and Ubuntu 24.04 use 64-bit-time names; retain old-name fallbacks.
       depends: [
@@ -2676,7 +2721,7 @@ export const stageWindowsServerSidecar = Effect.fn("stageWindowsServerSidecar")(
     sidecarDependencies,
   );
   const sidecarPackageJson = {
-    name: "t3code-server",
+    name: `${BRAND.app.id}-server`,
     version: input.appVersion,
     private: true,
     packageManager: rootPackageJson.packageManager,
@@ -2795,7 +2840,7 @@ export const verifyWindowsPrimaryFffNativeLoad = Effect.fn(
   if (hostPlatform !== "win32" || hostArchitecture !== input.targetArch) return;
 
   const probeRoot = yield* fs.makeTempDirectoryScoped({
-    prefix: "t3code-windows-primary-native-probe-",
+    prefix: `${BRAND.app.id}-windows-primary-native-probe-`,
   });
   const fffEntryPath = path.join(input.asarPath, "node_modules/@ff-labs/fff-node/dist/index.js");
   const probeEnv = { ...process.env };
@@ -3217,7 +3262,7 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
   const commitHash = yield* resolveGitCommitHash(repoRoot);
   const mkdir = options.keepStage ? fs.makeTempDirectory : fs.makeTempDirectoryScoped;
   const stageRoot = yield* mkdir({
-    prefix: `t3code-desktop-${options.platform}-stage-`,
+    prefix: `${BRAND.app.id}-desktop-${options.platform}-stage-`,
   });
 
   const stageAppDir = path.join(stageRoot, "app");
@@ -3400,17 +3445,16 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
       ? path.join(stageAppDir, WINDOWS_SERVER_RESOURCE_SOURCE_DIR, WINDOWS_SERVER_ASAR_RESOURCE)
       : undefined;
   const stagePackageJson: StagePackageJson = {
-    name: "t3code",
+    name: BRAND.app.id,
     version: appVersion,
     buildVersion: appVersion,
     t3codeCommitHash: commitHash,
     private: true,
     packageManager: rootPackageJson.packageManager,
-    description:
-      "T3 Code is an open-source desktop app for coding agents. Work with your existing agent subscriptions, review code changes, and run commands in your projects. Connect from desktop, web, or mobile to continue working remotely.",
+    description: `${BRAND.app.productName} is an open-source desktop video editor. Based on ${BRAND.credits.upstreamName} (${BRAND.credits.upstreamUrl}).`,
     license: "MIT",
-    homepage: "https://t3.codes",
-    author: "T3 Tools",
+    homepage: BRAND.urls.homepage,
+    author: BRAND.app.publisher,
     main: "apps/desktop/dist-electron/boot.cjs",
     build: yield* createBuildConfig(
       options.platform,
@@ -3712,7 +3756,7 @@ const buildDesktopArtifactCli = Command.make("build-desktop-artifact", {
     Flag.optional,
   ),
 }).pipe(
-  Command.withDescription("Build a desktop artifact for T3 Code."),
+  Command.withDescription(`Build a desktop artifact for ${BRAND.app.productName}.`),
   Command.withHandler((input) => Effect.flatMap(resolveBuildOptions(input), buildDesktopArtifact)),
 );
 

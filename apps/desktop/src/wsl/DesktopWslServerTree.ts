@@ -1,3 +1,4 @@
+import { BRAND } from "@t3tools/shared/brand";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -14,7 +15,7 @@ export type WslServerTreeResult =
   | { readonly ok: true; readonly root: string }
   | { readonly ok: false; readonly reason: string; readonly fatal: boolean };
 
-const MARKER_FILE_NAME = "t3code-wsl-server-tree.json";
+const MARKER_FILE_NAME = `${BRAND.app.id}-wsl-server-tree.json`;
 const COPY_CONCURRENCY = 8;
 
 const Marker = Schema.Struct({ version: Schema.String });

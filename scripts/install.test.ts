@@ -23,10 +23,10 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("installer chan
     const server = NodeHttp.createServer((request, response) => {
       const url = new URL(request.url ?? "/", "http://fixture");
       const body =
-        url.pathname === "/pingdotgg/t3code/releases/latest" &&
+        url.pathname === "/ideanavigator/s7video/releases/latest" &&
         request.headers.accept === "application/json"
           ? { tag_name: "v1.2.3" }
-          : url.pathname === "/repos/pingdotgg/t3code/releases"
+          : url.pathname === "/repos/ideanavigator/s7video/releases"
             ? { "1": nightlies, "2": [{ tag_name: `v${version}` }, { tag_name: "v1.2.3" }] }[
                 url.searchParams.get("page") ?? ""
               ]
@@ -56,7 +56,7 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("installer chan
               ...process.env,
               T3CODE_VERSION: "",
               T3CODE_CHANNEL: channel,
-              T3CODE_HOME: NodePath.join(root, "home"),
+              S7VIDEO_HOME: NodePath.join(root, "home"),
               T3CODE_INSTALL_BIN_DIR: NodePath.join(root, "bin"),
               // A wrong version must fail here instead of downloading a real release.
               T3CODE_RELEASE_BASE_URL: origin,
@@ -71,7 +71,7 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("installer chan
         },
       );
       expect(code, output).toBe(0);
-      expect(output).toContain(`Installed T3 Code ${version}`);
+      expect(output).toContain(`Installed s7video ${version}`);
     } finally {
       server.closeAllConnections();
       await new Promise<void>((resolve) => server.close(() => resolve()));
@@ -155,7 +155,7 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("installer chec
                     ...process.env,
                     PATH: tools,
                     T3CODE_VERSION: version,
-                    T3CODE_HOME: home,
+                    S7VIDEO_HOME: home,
                     T3CODE_INSTALL_BIN_DIR: NodePath.join(root, "bin"),
                     T3CODE_RELEASE_BASE_URL: `http://127.0.0.1:${address.port}`,
                   },
@@ -183,7 +183,7 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("installer chec
           } else {
             expect(code).not.toBe(0);
             expect(output).toContain("checksum mismatch");
-            expect(output).not.toContain("Installed T3 Code");
+            expect(output).not.toContain("Installed s7video");
             expect(await NodeFSP.readdir(versions)).toEqual([]);
           }
         } finally {

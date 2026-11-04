@@ -1,3 +1,4 @@
+import { BRAND } from "@t3tools/shared/brand";
 import type { SecretProviderConfig, SecretProviderId } from "@t3tools/contracts";
 import { useState } from "react";
 
@@ -32,7 +33,7 @@ export function SecretsSettingsPanel() {
       environment.serverConfig.secretProviderSettings !== true ? (
         <SettingsSection {...searchableSetting("secret-providers")}>
           <p className="px-4 py-3 text-sm text-muted-foreground">
-            Update T3 Code on {environment.label} to manage its secret providers.
+            Update {BRAND.app.productName} on {environment.label} to manage its secret providers.
           </p>
         </SettingsSection>
       ) : connected ? (

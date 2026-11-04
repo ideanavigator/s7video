@@ -1,3 +1,5 @@
+import { REMOTE_ENVIRONMENTS_ENABLED } from "@t3tools/shared/remoteEnvironments";
+import { BRAND } from "@t3tools/shared/brand";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -324,7 +326,7 @@ export const buildWslRuntimeInstallScript = (
     "trap cleanup_runtime_install EXIT",
     `tar -xzf ${shellQuote(linuxArchivePath)} -C "$runtime_tmp" --strip-components=1`,
     'if ! runtime_entry_runs "$runtime_tmp"; then',
-    "  printf 'WSL runtime archive does not contain a working t3 executable\\n' >&2",
+    `  printf 'WSL runtime archive does not contain a working ${BRAND.app.cliName} executable\\n' >&2`,
     "  exit 1",
     "fi",
     'installed_entry_digest=$(runtime_server_entry_digest "$runtime_tmp")',
@@ -420,7 +422,7 @@ const NODE_PTY_BINARY_MISSING_EXIT_CODE = 4;
 
 const formatNodePtyProbeFailureReason = (exitCode: number): string | null =>
   exitCode === NODE_PTY_BINARY_MISSING_EXIT_CODE
-    ? "WSL support is missing from this T3 Code build: the packaged Linux node-pty binary was not included. Install a build that includes WSL support."
+    ? `WSL support is missing from this ${BRAND.app.productName} build: the packaged Linux node-pty binary was not included. Install a build that includes WSL support.`
     : null;
 
 // Capture login-shell PATH because the server launches provider CLIs by name.
@@ -1031,12 +1033,13 @@ const getUserHomeImpl = (
 export const makeIsAvailable = Effect.fn("DesktopWslEnvironment.makeIsAvailable")(function* (
   platform: NodeJS.Platform,
   windir: string,
+  enabled: boolean = REMOTE_ENVIRONMENTS_ENABLED,
 ): Effect.fn.Return<
   boolean,
   never,
   FileSystem.FileSystem | Path.Path | DesktopManagedPolicy.DesktopManagedPolicy
 > {
-  if (platform !== "win32") return false;
+  if (!enabled || platform !== "win32") return false;
   const path = yield* Path.Path;
   const fileSystem = yield* FileSystem.FileSystem;
   const wslExePath = path.join(windir, "System32", "wsl.exe");

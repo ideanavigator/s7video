@@ -1,3 +1,4 @@
+import { BRAND } from "@t3tools/shared/brand";
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
@@ -75,7 +76,7 @@ describe("BrowserSession", () => {
       const first = yield* browserSessions.getSession("scope-a");
       const second = yield* browserSessions.getSession("scope-a");
 
-      assert.strictEqual(partition, "persist:t3code-preview-f051bb2c68cb7b2fe969");
+      assert.strictEqual(partition, `persist:${BRAND.app.id}-preview-f051bb2c68cb7b2fe969`);
       assert.strictEqual(first, second);
       assert.strictEqual(fromPartition.mock.calls.length, 1);
     }).pipe(Effect.provide(layer)),
@@ -94,7 +95,7 @@ describe("BrowserSession", () => {
 
       assert.strictEqual(
         yield* browserSessions.getPartition("scope-a"),
-        "persist:t3code-preview-f051bb2c68cb7b2fe969",
+        `persist:${BRAND.app.id}-preview-f051bb2c68cb7b2fe969`,
       );
     }).pipe(Effect.provide(layer)),
   );
@@ -106,8 +107,11 @@ describe("BrowserSession", () => {
       const legacyDefault = yield* browserSessions.getPartition("a::b");
       const nondefaultProfile = yield* browserSessions.getPartition("a::b", true, "profile");
 
-      assert.strictEqual(legacyDefault, "persist:t3code-preview-78f0be89237d77f7a70e");
-      assert.strictEqual(nondefaultProfile, "persist:t3code-preview-profile-78f0be89237d77f7a70e");
+      assert.strictEqual(legacyDefault, `persist:${BRAND.app.id}-preview-78f0be89237d77f7a70e`);
+      assert.strictEqual(
+        nondefaultProfile,
+        `persist:${BRAND.app.id}-preview-profile-78f0be89237d77f7a70e`,
+      );
       assert.notStrictEqual(nondefaultProfile, legacyDefault);
       assert.isTrue(browserSessions.isPartition(legacyDefault));
       assert.isTrue(browserSessions.isPartition(nondefaultProfile));

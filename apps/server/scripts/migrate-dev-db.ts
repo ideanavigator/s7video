@@ -19,13 +19,14 @@ import * as ProjectionStore from "../src/orchestration-v2/ProjectionStore.ts";
 import { rebuildMessageSearch } from "../src/orchestration-v2/messageSearchIndex.ts";
 import { runMigrations } from "../src/persistence/Migrations.ts";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
+import { defaultDataHome, guardDataHome } from "@t3tools/shared/dataHome";
 
 export class MigrateDevDbNotInWorktreeError extends Schema.TaggedError<MigrateDevDbNotInWorktreeError>()(
   "MigrateDevDbNotInWorktreeError",
   {},
 ) {
   override get message(): string {
-    return "Not inside a linked git worktree. Pass --base-dir to target an isolated .t3 directory.";
+    return "Not inside a linked git worktree. Pass --base-dir to target an isolated data directory.";
   }
 }
 
@@ -34,7 +35,7 @@ export class MigrateDevDbSharedHomeError extends Schema.TaggedError<MigrateDevDb
   {},
 ) {
   override get message(): string {
-    return "Refusing to rebuild the shared ~/.t3 database. Use an isolated --base-dir.";
+    return "Refusing to rebuild the shared s7video database. Use an isolated --base-dir.";
   }
 }
 
@@ -112,6 +113,8 @@ export interface RunMigrateDevDbInput {
 export interface RunMigrateDevDbOptions {
   /** Test override for the directory writes must never target. */
   readonly sharedHome?: string | undefined;
+  /** Home whose `.t3` (T3 Code's data) is refused as source or target. Defaults to the user's. */
+  readonly homeDirectory?: string | undefined;
 }
 
 interface KeptProject {
@@ -414,18 +417,24 @@ export const runMigrateDevDb = Effect.fn("runMigrateDevDb")(function* (
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
 
-  const sharedHome = path.resolve(options.sharedHome ?? path.join(NodeOS.homedir(), ".t3"));
-  const sourcePath = path.resolve(
-    input.source ?? path.join(sharedHome, "userdata", "statev2.sqlite"),
+  const sharedHome = path.resolve(
+    options.sharedHome ?? defaultDataHome(NodeOS.homedir(), path.join),
+  );
+  const homeDirectory = options.homeDirectory ?? NodeOS.homedir();
+  const sourcePath = guardDataHome(
+    path.resolve(input.source ?? path.join(sharedHome, "userdata", "statev2.sqlite")),
+    homeDirectory,
   );
 
-  const baseDir =
+  const resolvedBaseDir =
     input.baseDir !== undefined
       ? path.resolve(input.baseDir)
       : yield* resolveWorktreeT3Home(process.cwd());
-  if (baseDir === undefined) {
+  if (resolvedBaseDir === undefined) {
     return yield* new MigrateDevDbNotInWorktreeError();
   }
+  // This command deletes and rebuilds the target database; T3 Code's must never be the target.
+  const baseDir = guardDataHome(resolvedBaseDir, homeDirectory);
   const stateDir = path.join(baseDir, "userdata");
   const databasePath = path.join(stateDir, "statev2.sqlite");
   const snapshotPath = `${databasePath}.migrate-dev-db-tmp`;
@@ -550,11 +559,15 @@ export const migrateDevDbCommand = Command.make(
     ),
     baseDir: Flag.String("base-dir").pipe(
       Flag.optional,
-      Flag.withDescription("Isolated .t3 directory. Defaults to the current worktree's .t3."),
+      Flag.withDescription(
+        "Isolated data directory. Defaults to the current worktree's data folder.",
+      ),
     ),
     source: Flag.String("source").pipe(
       Flag.optional,
-      Flag.withDescription("Source database. Defaults to ~/.t3/userdata/statev2.sqlite."),
+      Flag.withDescription(
+        "Source database. Defaults to ~/.s7video/userdata/statev2.sqlite; the upstream ~/.t3 folder is refused.",
+      ),
     ),
   },
   ({ projects, threadsPerProject, baseDir, source }) =>
@@ -581,7 +594,7 @@ export const migrateDevDbCommand = Command.make(
     }),
 ).pipe(
   Command.withDescription(
-    "Rebuild the worktree dev database from a pruned snapshot of the real ~/.t3 data, then run migrations.",
+    "Rebuild the worktree dev database from a pruned snapshot of the real s7video data, then run migrations.",
   ),
 );
 

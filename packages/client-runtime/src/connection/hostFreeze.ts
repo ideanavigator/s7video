@@ -1,3 +1,4 @@
+import { BRAND } from "@t3tools/shared/brand";
 import type { ServerEventLoopStall } from "@t3tools/contracts";
 
 export interface HostFreezeNotice {
@@ -20,6 +21,6 @@ export function hostFreezeNotice(
     description:
       loadAverage !== undefined && loadAverage > cpuCount
         ? `Its CPU is overloaded (load ${Math.round(loadAverage)} on ${cpuCount} cores).`
-        : `T3 Code on ${hostLabel} was too busy to answer.`,
+        : `${BRAND.app.productName} on ${hostLabel} was too busy to answer.`,
   };
 }

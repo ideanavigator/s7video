@@ -1,3 +1,4 @@
+import { BRAND } from "@t3tools/shared/brand";
 import type { Plugin, ViteDevServer } from "vite-plus";
 
 // What the first page load pulls in: the app, the chat layout and its landing
@@ -10,7 +11,7 @@ const STARTUP_LAZY_ENTRIES = [
   "src/lib/lucideIconByName.ts",
 ];
 
-const WARMUP_CLIENT_ID = "t3code-startup-warmup";
+const WARMUP_CLIENT_ID = `${BRAND.app.id}-startup-warmup`;
 
 // Bundled dev keeps these private and untyped. A Vite upgrade that moves them
 // skips the warmup or logs a warning, never breaks dev; bundledDev.test.ts
@@ -105,12 +106,12 @@ export function warmBundledDevPlugin(): Plugin {
             if (warmed.length === 0) return;
             const seconds = ((performance.now() - startedAt) / 1000).toFixed(1);
             server.config.logger.info(
-              `[t3code] pre-bundled ${String(warmed.length)} startup chunks in ${seconds}s`,
+              `[web] pre-bundled ${String(warmed.length)} startup chunks in ${seconds}s`,
               { timestamp: true },
             );
           },
           (error: unknown) => {
-            server.config.logger.warn(`[t3code] startup chunk warmup failed: ${String(error)}`, {
+            server.config.logger.warn(`[web] startup chunk warmup failed: ${String(error)}`, {
               timestamp: true,
             });
           },

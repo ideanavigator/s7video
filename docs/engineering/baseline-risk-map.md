@@ -34,7 +34,8 @@ them.
 ## Review focus right now
 
 1. Sprint 01 changes shared upstream files; check every row above that a removal or rebrand touches.
-2. Until S7V-003 and S7V-013 land, the app still shares `~/.t3` with T3 Code and still contacts T3's
-   update and analytics endpoints. Treat any change near those paths as critical-risk.
+2. s7video keeps its data in `~/.s7video` and refuses `~/.t3` (S7V-003). Until S7V-013 lands,
+   telemetry still defaults to T3's analytics endpoint. Treat any change near those paths as
+   critical-risk.
 3. The planned rows (original media, edit document, render pipeline) get their tests written with the
    first ticket that creates them, not later.

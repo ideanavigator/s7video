@@ -1,9 +1,11 @@
-/** Worktrees use isolated .t3 state; ambient T3CODE_HOME could otherwise select the live userdata database. */
+/** Worktrees use isolated state folders; ambient S7VIDEO_HOME could otherwise select the live userdata database. */
 
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+
+import { BRAND } from "./config/brand.ts";
 
 // Match worktrees/<name>; bare repos and GIT_COMMON_DIR need not use a directory named .git.
 const pointsAtLinkedWorktree = (gitFileContents: string, path: Path.Path): boolean => {
@@ -62,5 +64,5 @@ export const resolveWorktreeT3Home = Effect.fn("devHome.resolveWorktreeT3Home")(
     return undefined;
   }
   const path = yield* Path.Path;
-  return path.join(worktreePath, ".t3");
+  return path.join(worktreePath, BRAND.app.homeDir);
 });

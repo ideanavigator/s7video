@@ -1,3 +1,4 @@
+import { BRAND } from "@t3tools/shared/brand";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Config from "effect/Config";
 import * as ConfigProvider from "effect/ConfigProvider";
@@ -55,7 +56,7 @@ const formatSetup = (setup: Setup) => {
       !service.supported
         ? "unavailable"
         : service.installed
-          ? `installed · t3@${service.installedVersion ?? packageJson.version}`
+          ? `installed · ${BRAND.app.cliName}@${service.installedVersion ?? packageJson.version}`
           : "not installed",
     ],
     [
@@ -74,7 +75,7 @@ const formatSetup = (setup: Setup) => {
       ? ["Anyone on your LAN or tailnet can reach the port. A pairing code is the only lock."]
       : []),
     ...(setup.lanFromOldDefault
-      ? ["Older installs keep LAN access on. Turn it off: `t3 up --no-lan`."]
+      ? [`Older installs keep LAN access on. Turn it off: \`${BRAND.app.cliName} up --no-lan\`.`]
       : []),
   ];
   return [
@@ -85,10 +86,10 @@ const formatSetup = (setup: Setup) => {
 
 const formatNextSteps = (lan: boolean, serviceInstalled: boolean) =>
   lan
-    ? "Run `t3 pair`. Use the code on your other device."
+    ? `Run \`${BRAND.app.cliName} pair\`. Use the code on your other device.`
     : serviceInstalled
-      ? "Remote access is off. T3 Code still runs here in the background."
-      : "Remote access is off. Run `t3` to use T3 Code here.";
+      ? `Remote access is off. ${BRAND.app.productName} still runs here in the background.`
+      : `Remote access is off. Run \`${BRAND.app.cliName}\` to use ${BRAND.app.productName} here.`;
 
 const interactiveTerminal = () => Boolean(process.stdin.isTTY && process.stdout.isTTY);
 
@@ -117,8 +118,7 @@ const setUp = Effect.fn("cli.up")(function* (flags: {
   } else if (Option.isNone(flags.lan) && !flags.yes && !before.service.installed) {
     return yield* new CliError.UserError({
       cause: "routes",
-      userMessage:
-        "No terminal. Choose access with --lan or --no-lan, or use --yes for the default. See `t3 up --help`.",
+      userMessage: `No terminal. Choose access with --lan or --no-lan, or use --yes for the default. See \`${BRAND.app.cliName} up --help\`.`,
     });
   }
   if (lan && !current) {
@@ -151,7 +151,7 @@ const setUp = Effect.fn("cli.up")(function* (flags: {
     const confirmed = yield* Prompt.run(
       Prompt.Confirm({
         message: update
-          ? "Update and restart T3 Code? Running agent turns will stop."
+          ? `Update and restart ${BRAND.app.productName}? Running agent turns will stop.`
           : "Apply changes and restart? Running agent turns will stop.",
         initial: true,
       }),
@@ -197,10 +197,12 @@ const setUp = Effect.fn("cli.up")(function* (flags: {
     yield* printServeCommand("Background service unavailable.");
   } else {
     if (newer) {
-      yield* Console.log(`Keeping installed service version t3@${installedVersion}.`);
+      yield* Console.log(
+        `Keeping installed service version ${BRAND.app.cliName}@${installedVersion}.`,
+      );
     }
     if (update && !interactive) {
-      yield* Console.log("Updating T3 Code. Running agent turns will stop.");
+      yield* Console.log(`Updating ${BRAND.app.productName}. Running agent turns will stop.`);
     }
     const result = newer
       ? ({ changed: false } as const)
@@ -215,7 +217,7 @@ const setUp = Effect.fn("cli.up")(function* (flags: {
       // The old service still runs, so a foreground server would clash with it.
       yield* restoreServiceEnv;
       yield* Console.log(
-        `Service setup failed: ${result.failed} Fix that, then run \`t3 up\` again.`,
+        `Service setup failed: ${result.failed} Fix that, then run \`${BRAND.app.cliName} up\` again.`,
       );
     } else if ("failed" in result) {
       yield* printServeCommand(`Service setup failed: ${result.failed}`);
@@ -223,7 +225,7 @@ const setUp = Effect.fn("cli.up")(function* (flags: {
       yield* Console.log(CliService.formatServiceChange(result));
     } else if (restart) {
       if (!interactive && !stopped) {
-        yield* Console.log("Restarting T3 Code. Running agent turns will stop.");
+        yield* Console.log(`Restarting ${BRAND.app.productName}. Running agent turns will stop.`);
       }
       const outcome = yield* service.restart.pipe(Effect.tapError(() => rollBack));
       if (outcome === "queued") {
@@ -262,16 +264,27 @@ export const upCommand = Command.make("up", {
     Flag.withDefault(false),
   ),
 }).pipe(
-  Command.withShortDescription("Set up remote access and the T3 Code background service."),
+  Command.withShortDescription(
+    `Set up remote access and the ${BRAND.app.productName} background service.`,
+  ),
   Command.withDescription(
-    "Set up remote access and the T3 Code background service. The access flag skips the question. Without a terminal, a needed restart runs without asking and stops running agent turns.",
+    `Set up remote access and the ${BRAND.app.productName} background service. The access flag skips the question. Without a terminal, a needed restart runs without asking and stops running agent turns.`,
   ),
   Command.withExamples([
-    { command: "t3 up", description: "Choose remote access." },
-    { command: "t3 up --lan", description: "Allow LAN access with pairing codes." },
-    { command: "t3 up --no-lan", description: "Stop LAN access." },
-    { command: "t3 up --yes", description: "Take the defaults with no questions." },
-    { command: "t3 status --json", description: "Read the settings from a script." },
+    { command: `${BRAND.app.cliName} up`, description: "Choose remote access." },
+    {
+      command: `${BRAND.app.cliName} up --lan`,
+      description: "Allow LAN access with pairing codes.",
+    },
+    { command: `${BRAND.app.cliName} up --no-lan`, description: "Stop LAN access." },
+    {
+      command: `${BRAND.app.cliName} up --yes`,
+      description: "Take the defaults with no questions.",
+    },
+    {
+      command: `${BRAND.app.cliName} status --json`,
+      description: "Read the settings from a script.",
+    },
   ]),
   Command.withHandler(
     Effect.fn("cli.up.run")(function* (flags) {
@@ -318,8 +331,11 @@ export const statusCommand = Command.make("status", {
 }).pipe(
   Command.withDescription("Show service setup and remote access settings."),
   Command.withExamples([
-    { command: "t3 status", description: "Show the settings." },
-    { command: "t3 status --json", description: "Print them for scripts and agents." },
+    { command: `${BRAND.app.cliName} status`, description: "Show the settings." },
+    {
+      command: `${BRAND.app.cliName} status --json`,
+      description: "Print them for scripts and agents.",
+    },
   ]),
   Command.withHandler(
     Effect.fn("cli.status")(function* (flags) {
@@ -335,7 +351,7 @@ export const statusCommand = Command.make("status", {
       yield* Console.log(
         flags.json
           ? setupJson(setup)
-          : `This machine\n${formatSetup(setup)}\n\nChange access: \`t3 up\`.`,
+          : `This machine\n${formatSetup(setup)}\n\nChange access: \`${BRAND.app.cliName} up\`.`,
       );
     }),
   ),

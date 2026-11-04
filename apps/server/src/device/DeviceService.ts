@@ -1,4 +1,8 @@
 import {
+  REMOTE_ENVIRONMENTS_DISABLED_MESSAGE,
+  REMOTE_ENVIRONMENTS_ENABLED,
+} from "@t3tools/shared/remoteEnvironments";
+import {
   type DeviceActionInput,
   type DeviceCloseInput,
   type DeviceConfigureInput,
@@ -1213,7 +1217,33 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
 
 /** @public */
 /** @public */
-export const make = Effect.gen(function* () {
+/**
+ * Hosts the service runs, each settings list in order; an id two lists share stays the first one's.
+ * SSH hosts are dropped while remote environments are off: their script works under `~/.t3`.
+ */
+export function configuredDeviceHosts(
+  value: {
+    readonly deviceHosts: ReadonlyArray<SshDeviceHostConfig>;
+    readonly easDeviceHosts: ReadonlyArray<EasDeviceHostConfig>;
+    readonly simlockDeviceHosts: ReadonlyArray<SimlockDeviceHostConfig>;
+    readonly simlockDeviceHostsEnabled: boolean;
+  },
+  sshEnabled: boolean = REMOTE_ENVIRONMENTS_ENABLED,
+): ReadonlyArray<DeviceHostConfig> {
+  const hosts: Array<DeviceHostConfig> = sshEnabled ? [...value.deviceHosts] : [];
+  for (const host of [
+    ...value.easDeviceHosts,
+    ...(value.simlockDeviceHostsEnabled ? value.simlockDeviceHosts : []),
+  ]) {
+    if (!hosts.some((existing) => existing.id === host.id)) hosts.push(host);
+  }
+  return hosts;
+}
+
+export const makeWithOptions = Effect.fn("DeviceService.make")(function* (
+  options: { readonly sshDeviceHostsEnabled?: boolean } = {},
+) {
+  const sshDeviceHostsEnabled = options.sshDeviceHostsEnabled ?? REMOTE_ENVIRONMENTS_ENABLED;
   const localHost = yield* DeviceHost.DeviceHost;
   const config = yield* ServerConfig.ServerConfig;
   const fs = yield* FileSystem.FileSystem;
@@ -1345,21 +1375,29 @@ export const make = Effect.gen(function* () {
   const service = yield* makeWithHosts(
     hosts,
     (host) =>
-      Effect.gen(function* () {
-        if (yield* isLocalSshDeviceHost(host).pipe(Effect.provide(localTargetContext))) {
-          return yield* localHost.summary;
-        }
-        return yield* SshDeviceHost.probe(host).pipe(Effect.provide(probeContext));
-      }).pipe(
-        Effect.mapError(
-          (error) =>
+      !sshDeviceHostsEnabled
+        ? Effect.fail(
             new DeviceOperationError({
-              operation: "probe host",
-              reason: "request_failed",
-              cause: error,
+              operation: "SSH host check",
+              reason: "remote_disabled",
+              cause: REMOTE_ENVIRONMENTS_DISABLED_MESSAGE,
             }),
-        ),
-      ),
+          )
+        : Effect.gen(function* () {
+            if (yield* isLocalSshDeviceHost(host).pipe(Effect.provide(localTargetContext))) {
+              return yield* localHost.summary;
+            }
+            return yield* SshDeviceHost.probe(host).pipe(Effect.provide(probeContext));
+          }).pipe(
+            Effect.mapError(
+              (error) =>
+                new DeviceOperationError({
+                  operation: "probe host",
+                  reason: "request_failed",
+                  cause: error,
+                }),
+            ),
+          ),
     configureAgent,
     (tool) =>
       (tool === "hub" ? ensureDeviceHub(config.baseDir) : ensureAgentDevice(config.baseDir)).pipe(
@@ -1504,21 +1542,8 @@ export const make = Effect.gen(function* () {
   });
   const changes = yield* settings.subscribeChanges;
   // Each kind has its own settings list; an id two lists share stays the first one's.
-  const configuredHosts = (value: {
-    readonly deviceHosts: ReadonlyArray<SshDeviceHostConfig>;
-    readonly easDeviceHosts: ReadonlyArray<EasDeviceHostConfig>;
-    readonly simlockDeviceHosts: ReadonlyArray<SimlockDeviceHostConfig>;
-    readonly simlockDeviceHostsEnabled: boolean;
-  }): ReadonlyArray<DeviceHostConfig> => {
-    const hosts: Array<DeviceHostConfig> = [...value.deviceHosts];
-    for (const host of [
-      ...value.easDeviceHosts,
-      ...(value.simlockDeviceHostsEnabled ? value.simlockDeviceHosts : []),
-    ]) {
-      if (!hosts.some((existing) => existing.id === host.id)) hosts.push(host);
-    }
-    return hosts;
-  };
+  const configuredHosts = (value: Parameters<typeof configuredDeviceHosts>[0]) =>
+    configuredDeviceHosts(value, sshDeviceHostsEnabled);
   yield* reconcile(configuredHosts(yield* settings.getSettings));
   yield* changes.pipe(
     Stream.runForEach((value) => reconcile(configuredHosts(value))),
@@ -1617,6 +1642,8 @@ export const make = Effect.gen(function* () {
     simlockIdentity,
   };
 });
+
+export const make = makeWithOptions();
 
 export const layer = Layer.effect(DeviceService, make).pipe(Layer.provide(LocalDeviceHost.layer));
 

@@ -1,34 +1,39 @@
+import { loadBrandConfig } from "./brand-config.ts";
+
+/** Icon sets live under the brand config's `icons.directory` (`prod`, `nightly`, `dev`). */
+const ICONS = (await loadBrandConfig()).config.icons.directory;
+
 export const BRAND_ASSET_PATHS = {
-  developmentIconComposerProject: "assets/dev/app-icon.icon",
-  developmentIosIconPng: "assets/dev/blueprint-ios-1024.png",
-  developmentUniversalIconPng: "assets/dev/blueprint-universal-1024.png",
+  developmentIconComposerProject: `${ICONS}/dev/app-icon.icon`,
+  developmentIosIconPng: `${ICONS}/dev/blueprint-ios-1024.png`,
+  developmentUniversalIconPng: `${ICONS}/dev/blueprint-universal-1024.png`,
 
-  productionIconComposerProject: "assets/prod/app-icon.icon",
-  productionIosIconPng: "assets/prod/black-ios-1024.png",
-  productionMacIconPng: "assets/prod/black-macos-1024.png",
-  productionLinuxIconPng: "assets/prod/black-universal-1024.png",
-  productionWindowsIconIco: "assets/prod/t3-black-windows.ico",
-  productionWebFaviconIco: "assets/prod/t3-black-web-favicon.ico",
-  productionWebFavicon16Png: "assets/prod/t3-black-web-favicon-16x16.png",
-  productionWebFavicon32Png: "assets/prod/t3-black-web-favicon-32x32.png",
-  productionWebAppleTouchIconPng: "assets/prod/t3-black-web-apple-touch-180.png",
+  productionIconComposerProject: `${ICONS}/prod/app-icon.icon`,
+  productionIosIconPng: `${ICONS}/prod/black-ios-1024.png`,
+  productionMacIconPng: `${ICONS}/prod/black-macos-1024.png`,
+  productionLinuxIconPng: `${ICONS}/prod/black-universal-1024.png`,
+  productionWindowsIconIco: `${ICONS}/prod/t3-black-windows.ico`,
+  productionWebFaviconIco: `${ICONS}/prod/t3-black-web-favicon.ico`,
+  productionWebFavicon16Png: `${ICONS}/prod/t3-black-web-favicon-16x16.png`,
+  productionWebFavicon32Png: `${ICONS}/prod/t3-black-web-favicon-32x32.png`,
+  productionWebAppleTouchIconPng: `${ICONS}/prod/t3-black-web-apple-touch-180.png`,
 
-  nightlyIconComposerProject: "assets/nightly/app-icon.icon",
-  nightlyIosIconPng: "assets/nightly/nightly-ios-1024.png",
-  nightlyMacIconPng: "assets/nightly/nightly-macos-1024.png",
-  nightlyLinuxIconPng: "assets/nightly/nightly-universal-1024.png",
-  nightlyWindowsIconIco: "assets/nightly/nightly-windows.ico",
-  nightlyWebFaviconIco: "assets/nightly/nightly-web-favicon.ico",
-  nightlyWebFavicon16Png: "assets/nightly/nightly-web-favicon-16x16.png",
-  nightlyWebFavicon32Png: "assets/nightly/nightly-web-favicon-32x32.png",
-  nightlyWebAppleTouchIconPng: "assets/nightly/nightly-web-apple-touch-180.png",
+  nightlyIconComposerProject: `${ICONS}/nightly/app-icon.icon`,
+  nightlyIosIconPng: `${ICONS}/nightly/nightly-ios-1024.png`,
+  nightlyMacIconPng: `${ICONS}/nightly/nightly-macos-1024.png`,
+  nightlyLinuxIconPng: `${ICONS}/nightly/nightly-universal-1024.png`,
+  nightlyWindowsIconIco: `${ICONS}/nightly/nightly-windows.ico`,
+  nightlyWebFaviconIco: `${ICONS}/nightly/nightly-web-favicon.ico`,
+  nightlyWebFavicon16Png: `${ICONS}/nightly/nightly-web-favicon-16x16.png`,
+  nightlyWebFavicon32Png: `${ICONS}/nightly/nightly-web-favicon-32x32.png`,
+  nightlyWebAppleTouchIconPng: `${ICONS}/nightly/nightly-web-apple-touch-180.png`,
 
-  developmentDesktopIconPng: "assets/dev/blueprint-macos-1024.png",
-  developmentWindowsIconIco: "assets/dev/blueprint-windows.ico",
-  developmentWebFaviconIco: "assets/dev/blueprint-web-favicon.ico",
-  developmentWebFavicon16Png: "assets/dev/blueprint-web-favicon-16x16.png",
-  developmentWebFavicon32Png: "assets/dev/blueprint-web-favicon-32x32.png",
-  developmentWebAppleTouchIconPng: "assets/dev/blueprint-web-apple-touch-180.png",
+  developmentDesktopIconPng: `${ICONS}/dev/blueprint-macos-1024.png`,
+  developmentWindowsIconIco: `${ICONS}/dev/blueprint-windows.ico`,
+  developmentWebFaviconIco: `${ICONS}/dev/blueprint-web-favicon.ico`,
+  developmentWebFavicon16Png: `${ICONS}/dev/blueprint-web-favicon-16x16.png`,
+  developmentWebFavicon32Png: `${ICONS}/dev/blueprint-web-favicon-32x32.png`,
+  developmentWebAppleTouchIconPng: `${ICONS}/dev/blueprint-web-apple-touch-180.png`,
 } as const;
 
 export type WebAssetBrand = "development" | "nightly" | "production";

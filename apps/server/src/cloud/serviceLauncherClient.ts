@@ -1,3 +1,4 @@
+import { BRAND } from "@t3tools/shared/brand";
 import type { ServerSelfUpdateOutcome } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Context from "effect/Context";
@@ -33,7 +34,7 @@ export class ServiceLauncherClientError extends Schema.TaggedError<ServiceLaunch
       case "decode-context":
         return "The service launcher supplied invalid startup context.";
       case "version-mismatch":
-        return "The service launcher started a different t3 version.";
+        return `The service launcher started a different ${BRAND.app.cliName} version.`;
       case "unmanaged":
         return "This server is not managed by the launcher.";
       case "send":

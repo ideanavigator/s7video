@@ -25,16 +25,15 @@ Add `--browser` to open a browser automatically.
 
 ### State and ports
 
-Linked worktrees default to their own `.t3/userdata`, even when `T3CODE_HOME` is set.
-The main checkout defaults to `~/.t3/dev`, inside T3 Code's folder, so always pass
-`--home-dir "$PWD/.t3"` there until S7V-003 changes the default. An explicit `--home-dir` wins in
-both cases. The safe commands are `vp run dev --no-seed --home-dir "$PWD/.t3"` and the same for
-`dev:desktop`.
-Upstream seeds a worktree's empty database from a read-only copy of
-`~/.t3/userdata/statev2.sqlite`, and `vp run migrate-dev-db` rebuilds it from there. That is
-T3 Code's data, which s7video must not read, so start dev with `--no-seed` (or
-`T3CODE_DEV_SEED=0`) and do not run `migrate-dev-db` until S7V-003 gives s7video its own
-data folder. Never run a development server against a live install's data. See
+Linked worktrees default to their own `.t3/userdata`, even when `S7VIDEO_HOME` is set.
+The main checkout defaults to `~/.s7video/dev`. An explicit `--home-dir` wins in both cases.
+The safe commands are `vp run dev --no-seed --home-dir "$PWD/.t3"` and the same for `dev:desktop`.
+The first start in a worktree seeds its empty database from a read-only copy of s7video's own
+`~/.s7video/userdata/statev2.sqlite` if the source is at most 500 MiB. Larger sources warn and dev
+starts with an empty database. `--no-seed` or `T3CODE_DEV_SEED=0` skips seeding. To copy a larger
+source, run `vp run migrate-dev-db` with dev stopped; it may use substantial disk space before
+pruning. Dev tooling refuses T3 Code's `~/.t3` as a source or target. Never run a development server
+against a live install's data. See
 [Toolchain and dev servers](../../AGENTS.md#toolchain-and-dev-servers).
 
 Read ports from the `[dev-runner]` output. Worktrees derive stable preferences from their paths,

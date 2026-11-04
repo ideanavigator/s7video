@@ -3,6 +3,7 @@ import {
   ServerNpmReleaseInput,
   type ServerNpmRelease,
 } from "@t3tools/contracts";
+import { BRAND } from "@t3tools/shared/brand";
 import { npmReleaseDatabaseMigration } from "@t3tools/shared/cliRelease";
 import { resolveCommandPath } from "@t3tools/shared/shell";
 import * as Cache from "effect/Cache";
@@ -55,7 +56,10 @@ function toRelease(spec: string, json: string) {
   });
 }
 
-export const make = Effect.fn("NpmRelease.make")(function* () {
+/** `packageName` defaults to the brand config's `updates.npmPackage`; empty turns the check off. */
+export const make = Effect.fn("NpmRelease.make")(function* (
+  packageName: string = BRAND.updates.npmPackage,
+) {
   const runner = yield* ProcessRunner.ProcessRunner;
   const http = yield* HttpClient.HttpClient;
   const lookupPublic = Effect.fn("NpmRelease.lookupPublic")(function* (spec: string) {
@@ -63,7 +67,7 @@ export const make = Effect.fn("NpmRelease.make")(function* () {
       reason: "npm is not installed and the public npm registry could not be reached.",
     });
     const json = yield* Effect.gen(function* () {
-      const response = yield* http.get(`https://registry.npmjs.org/t3/${spec}`);
+      const response = yield* http.get(`https://registry.npmjs.org/${packageName}/${spec}`);
       if (response.status === 404) return Option.none<string>();
       if (response.status < 200 || response.status >= 300) return yield* unreachable;
       return Option.some(yield* response.text);
@@ -87,7 +91,7 @@ export const make = Effect.fn("NpmRelease.make")(function* () {
           runner.run({
             command: npmPath,
             // Named fields keep the output small; the full package document grows with every release.
-            args: ["view", "--global", "--json", `t3@${spec}`, "version", "t3code"],
+            args: ["view", "--global", "--json", `${packageName}@${spec}`, "version", "t3code"],
             timeout: Duration.seconds(15),
             maxOutputBytes: 256 * 1024,
           }),
@@ -122,6 +126,7 @@ export const make = Effect.fn("NpmRelease.make")(function* () {
           () => new ServerNpmReleaseError({ reason: "Invalid release version or track." }),
         ),
       );
+      if (packageName === "") return null;
       return yield* Cache.get(cache, spec);
     }),
   });

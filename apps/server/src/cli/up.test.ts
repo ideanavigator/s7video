@@ -23,7 +23,7 @@ const SERVICE = {
   supported: true,
   installed: true,
   current: true,
-  unitPath: "/home/me/.config/systemd/user/t3code.service",
+  unitPath: "/home/me/.config/systemd/user/s7video.service",
   logPath: "/home/me/.t3/userdata/logs/boot-service.log",
 } as const;
 
@@ -61,7 +61,7 @@ const answering = (text: string) =>
     display: () => Effect.void,
   });
 
-it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("t3 up", (it) => {
+it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("s7video up", (it) => {
   afterEach(() => vi.restoreAllMocks());
 
   it.effect.each<{
@@ -130,7 +130,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("t3 up", (it) => 
     {
       label: "a failed update keeps service.env matching the old service",
       // The old service still runs, so no foreground server is offered.
-      prints: "Fix that, then run `t3 up` again.",
+      prints: "Fix that, then run `s7video up` again.",
       installed: true,
       status: { current: false },
       installFails: true,

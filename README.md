@@ -42,8 +42,8 @@ vp i                 # install dependencies
 vp run dev:desktop --home-dir ~/.s7video-dev --no-seed
 ```
 
-Until S7V-003 gives s7video its own data folder, pass `--home-dir` and `--no-seed`: without them,
-dev state goes into `~/.t3`, the folder an installed T3 Code uses.
+`--home-dir` keeps dev state in its own folder and `--no-seed` starts with an empty database.
+s7video keeps its data in `~/.s7video` and never uses `~/.t3`, the folder an installed T3 Code uses.
 
 `vp run dev` (same flags) runs the server and the web UI without Electron. The
 [development runbook](docs/operations/development.md) covers the other commands, tests and local

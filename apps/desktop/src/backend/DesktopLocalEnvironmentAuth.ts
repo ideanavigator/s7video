@@ -1,3 +1,4 @@
+import { BRAND } from "@t3tools/shared/brand";
 import { bootstrapRemoteBearerSession } from "@t3tools/client-runtime/authorization";
 import type { RemoteEnvironmentRequestError } from "@t3tools/client-runtime/rpc";
 import { PRIMARY_LOCAL_ENVIRONMENT_ID } from "@t3tools/contracts";
@@ -101,7 +102,7 @@ export const make = Effect.gen(function* () {
           httpBaseUrl: config.httpBaseUrl.href,
           credential,
           clientMetadata: {
-            label: "T3 Code Desktop",
+            label: `${BRAND.app.productName} Desktop`,
             deviceType: "desktop",
           },
         }).pipe(

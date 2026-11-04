@@ -2,6 +2,7 @@ export type {
   ProviderMaintenanceCapabilities,
   ProviderMaintenanceCommandAction,
 } from "@t3tools/provider-core/server/maintenance";
+import { BRAND } from "@t3tools/shared/brand";
 import type {
   ProviderMaintenanceCapabilities,
   ProviderMaintenanceCommandAction,
@@ -896,7 +897,7 @@ export const makeCachedProviderMaintenanceResolution = Effect.fn(
 
 function manualUpdateMessage(latestVersion: string, installPath: string | undefined): string {
   return installPath
-    ? `Version ${latestVersion} is out. T3 Code runs ${installPath}; update it with the app or tool that installed it.`
+    ? `Version ${latestVersion} is out. ${BRAND.app.productName} runs ${installPath}; update it with the app or tool that installed it.`
     : `Version ${latestVersion} is out. Update it with the app or tool that installed it.`;
 }
 

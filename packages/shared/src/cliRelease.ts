@@ -1,10 +1,15 @@
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
+import { BRAND } from "./config/brand.ts";
 import { compareSemverVersions } from "./semver.ts";
 
-const CLI_RELEASE_REPOSITORY = "pingdotgg/t3code";
-export const CLI_RELEASES_PAGE_URL = `https://github.com/${CLI_RELEASE_REPOSITORY}/releases`;
+/** From the brand config; empty means this build has no release feed and never self-updates. */
+const CLI_RELEASE_REPOSITORY = BRAND.updates.githubRepository;
+export const CLI_RELEASES_PAGE_URL = CLI_RELEASE_REPOSITORY
+  ? `https://github.com/${CLI_RELEASE_REPOSITORY}/releases`
+  : BRAND.urls.repository;
+export const CLI_RELEASES_UNCONFIGURED_MESSAGE = `This ${BRAND.app.productName} build has no release feed (updates.githubRepository in s7video.config.ts), so it cannot download updates.`;
 export const CLI_RELEASE_CHECKSUMS_FILE = "SHA256SUMS";
 export const CLI_RELEASE_BASE_URL_ENV = "T3CODE_RELEASE_BASE_URL";
 
@@ -41,13 +46,18 @@ export function cliArchiveFileName(version: string, platformKey: CliArchivePlatf
   return `t3-${version}-${platformKey}.${platformKey.startsWith("win32") ? "zip" : "tar.gz"}`;
 }
 
-const CLI_RELEASE_DEFAULT_BASE_URL = `https://github.com/${CLI_RELEASE_REPOSITORY}/releases/download`;
+const CLI_RELEASE_DEFAULT_BASE_URL = CLI_RELEASE_REPOSITORY
+  ? `https://github.com/${CLI_RELEASE_REPOSITORY}/releases/download`
+  : undefined;
 
+/** `undefined` when neither `baseUrl` nor the brand config names a release source. */
 export function cliReleaseDownloadBaseUrl(
   version: string,
   baseUrl: string | undefined = CLI_RELEASE_DEFAULT_BASE_URL,
-): string {
-  return `${(baseUrl?.trim() || CLI_RELEASE_DEFAULT_BASE_URL).replace(/\/+$/, "")}/v${version}`;
+  defaultBaseUrl: string | undefined = CLI_RELEASE_DEFAULT_BASE_URL,
+): string | undefined {
+  const base = baseUrl?.trim() || defaultBaseUrl;
+  return base === undefined ? undefined : `${base.replace(/\/+$/, "")}/v${version}`;
 }
 
 export function parseChecksums(text: string): ReadonlyMap<string, string> {
@@ -100,8 +110,13 @@ export function acceptsTrackSwitchRelease(
 }
 
 /** Page until the channel matches; nightlies can push preview/stable releases past the first page. */
-export function cliReleaseIndexPageUrl(page: number): string {
-  return `https://api.github.com/repos/${CLI_RELEASE_REPOSITORY}/releases?per_page=100&page=${page}`;
+export function cliReleaseIndexPageUrl(
+  page: number,
+  repository: string | undefined = CLI_RELEASE_REPOSITORY,
+): string | undefined {
+  return repository
+    ? `https://api.github.com/repos/${repository}/releases?per_page=100&page=${page}`
+    : undefined;
 }
 
 /** Draft assets are not downloadable. */

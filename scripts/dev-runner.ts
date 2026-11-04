@@ -7,6 +7,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NetService from "@t3tools/shared/Net";
 import { resolveGitWorktreePath, resolveWorktreeT3Home } from "@t3tools/shared/devHome";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { defaultDataHome, guardDataHome } from "@t3tools/shared/dataHome";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
@@ -60,7 +61,7 @@ export function isProxiableBindHost(host: string): boolean {
 }
 
 export const DEFAULT_T3_HOME = Effect.map(Effect.service(Path.Path), (path) =>
-  path.join(NodeOS.homedir(), ".t3"),
+  defaultDataHome(NodeOS.homedir(), path.join),
 );
 
 const MODE_ARGS = {
@@ -276,10 +277,11 @@ const resolveBaseDir = Effect.fn("dev-runner.resolveBaseDir")(function* (
     return yield* HostProcess.HomeDirectory;
   }
   if (configured?.startsWith("~/") || configured?.startsWith("~\\")) {
-    return path.join(yield* HostProcess.HomeDirectory, configured.slice(2));
+    const home = yield* HostProcess.HomeDirectory;
+    return guardDataHome(path.join(home, configured.slice(2)), home);
   }
   if (configured) {
-    return path.resolve(configured);
+    return guardDataHome(path.resolve(configured), NodeOS.homedir());
   }
 
   return yield* DEFAULT_T3_HOME;
@@ -327,9 +329,9 @@ export const createDevRunnerEnv = Effect.fn("dev-runner.createDevRunnerEnv")(fun
   };
 
   if (configuredBaseDir !== undefined) {
-    output.T3CODE_HOME = resolvedBaseDir;
+    output.S7VIDEO_HOME = resolvedBaseDir;
   } else {
-    delete output.T3CODE_HOME;
+    delete output.S7VIDEO_HOME;
   }
 
   // Managed T3 service shells leak launcher variables that make dev servers fail version checks.
@@ -633,7 +635,11 @@ const prepareFirstStart = Effect.fn("dev-runner.prepareFirstStart")(function* (i
         );
       }
     }
-    const source = path.join(yield* HostProcess.HomeDirectory, ".t3", "userdata", "statev2.sqlite");
+    const source = path.join(
+      defaultDataHome(yield* HostProcess.HomeDirectory, path.join),
+      "userdata",
+      "statev2.sqlite",
+    );
     // A V1 state.sqlite counts as data too: the server imports it only while
     // statev2.sqlite is missing, so seeding would hide it.
     if (
@@ -729,8 +735,8 @@ export const runDevRunnerWithInput = Effect.fn("dev-runner.runDevRunnerWithInput
 
   const hostEnvironment = yield* HostProcess.Environment;
   // A dev server started inside a worktree defaults to that worktree's own
-  // (gitignored) `.t3` — see @t3tools/shared/devHome for why this must
-  // outrank an ambient T3CODE_HOME. `--home-dir` still wins.
+  // (gitignored) data folder — see @t3tools/shared/devHome for why this must
+  // outrank an ambient S7VIDEO_HOME. `--home-dir` still wins.
   const worktreeHome = yield* resolveWorktreeT3Home(yield* HostProcess.WorkingDirectory);
   // Trim before choosing: `--home-dir ""` is not a selection, and treating it
   // as one would skip the worktree default and land on the shared home —
@@ -738,7 +744,7 @@ export const runDevRunnerWithInput = Effect.fn("dev-runner.runDevRunnerWithInput
   const resolvedT3Home =
     (input.t3Home?.trim() || undefined) ??
     worktreeHome ??
-    (hostEnvironment.T3CODE_HOME?.trim() || undefined);
+    (hostEnvironment.S7VIDEO_HOME?.trim() || undefined);
   const env = yield* createDevRunnerEnv({
     mode: input.mode,
     baseEnv: hostEnvironment,
@@ -757,7 +763,7 @@ export const runDevRunnerWithInput = Effect.fn("dev-runner.runDevRunnerWithInput
     serverOffset !== offset || webOffset !== offset
       ? ` selectedOffset(server=${serverOffset},web=${webOffset})`
       : "";
-  const baseDir = env.T3CODE_HOME ?? (yield* DEFAULT_T3_HOME);
+  const baseDir = env.S7VIDEO_HOME ?? (yield* DEFAULT_T3_HOME);
 
   yield* Effect.logInfo(
     `[dev-runner] mode=${input.mode} source=${source}${selectionSuffix} serverPort=${String(env.T3CODE_PORT)} webPort=${String(env.PORT)} baseDir=${baseDir}`,
@@ -917,7 +923,7 @@ const devRunnerCli = Command.make("dev-runner", {
   ),
   t3Home: Flag.String("home-dir").pipe(
     Flag.withDescription(
-      "Explicit T3 Code data directory; runtime state is stored under userdata (equivalent to T3CODE_HOME). Inside a git worktree this defaults to that worktree's own .t3 so dev state stays off the shared home.",
+      "Explicit data directory; runtime state is stored under userdata (equivalent to S7VIDEO_HOME). Inside a git worktree this defaults to that worktree's own data folder so dev state stays off the shared home. The upstream ~/.t3 folder is refused.",
     ),
     Flag.optional,
     Flag.map(Option.getOrUndefined),
@@ -966,7 +972,7 @@ const devRunnerCli = Command.make("dev-runner", {
   ),
   seed: Flag.Boolean("seed").pipe(
     Flag.withDescription(
-      "Seed an empty worktree database from ~/.t3 on first start (read-only, via migrate-dev-db) if the source is at most 500 MiB. On by default; --no-seed or T3CODE_DEV_SEED=0 skips it.",
+      "Seed an empty worktree database from the s7video home (never ~/.t3) on first start (read-only, via migrate-dev-db) if the source is at most 500 MiB. On by default; --no-seed or T3CODE_DEV_SEED=0 skips it.",
     ),
     Flag.withFallbackConfig(optionalBooleanConfig("T3CODE_DEV_SEED")),
   ),

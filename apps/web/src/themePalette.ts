@@ -1,3 +1,4 @@
+import { BRAND } from "@t3tools/shared/brand";
 import { pipe } from "effect/Function";
 import type { EnvironmentTheme } from "@t3tools/contracts";
 import * as Equal from "effect/Equal";
@@ -13,8 +14,8 @@ import {
   IRIS_THEME,
   OCEAN_THEME,
   T3_CHAT_THEME,
-  T3_CODE_LIGHT_THEME_COLORS,
-  T3_CODE_DARK_THEME_COLORS,
+  DEFAULT_LIGHT_THEME_COLORS,
+  DEFAULT_DARK_THEME_COLORS,
   RESERVED_THEME_IDS,
   THEME_COLOR_ROLES,
   type ThemeAppearance,
@@ -396,23 +397,14 @@ function legacyThemeMode(theme: ThemePreference): ThemeAppearance | null {
 
 export function getStandardThemeColors(appearance: ThemeAppearance): ThemeColors {
   if (appearance === "dark") {
-    return (standardDarkThemeColors ??= decodeThemeColors({
-      ...T3_CODE_DARK_THEME_COLORS,
-      canvas: "#000000",
-    }));
+    return (standardDarkThemeColors ??= decodeThemeColors(DEFAULT_DARK_THEME_COLORS));
   }
-  return (standardLightThemeColors ??= decodeThemeColors(T3_CODE_LIGHT_THEME_COLORS));
+  return (standardLightThemeColors ??= decodeThemeColors(DEFAULT_LIGHT_THEME_COLORS));
 }
 
-// index.css paints the light bubble a step darker than the shared palette mobile uses.
-const STANDARD_WEB_PAINTED_COLORS: Record<ThemeAppearance, Partial<ThemeColors>> = {
-  light: { messageSurface: "#ebebed" },
-  dark: { canvas: "#000000", messageSurface: "#1e1e1e" },
-};
-
-/** The standard theme as index.css paints it, for solves that measure the page. */
+/** The standard theme as painted: the brand theme files in `themes/`, unchanged. */
 export function getStandardPaintedThemeColors(appearance: ThemeAppearance): ThemeColors {
-  return { ...getStandardThemeColors(appearance), ...STANDARD_WEB_PAINTED_COLORS[appearance] };
+  return getStandardThemeColors(appearance);
 }
 
 type ThemeRgbColor = {
@@ -1615,6 +1607,26 @@ export function applyThemeColorPreview(colors: ThemeColors, appearance: ThemeApp
   setThemePreviewAppearance(appearance);
 }
 
+/** Track, diff and radius tokens from the brand theme files; every theme keeps them. */
+export function brandThemeTokenVariables(appearance: ThemeAppearance): Record<string, string> {
+  const theme = BRAND.theme[appearance];
+  return {
+    "--track-video": theme.track.video,
+    "--track-text": theme.track.text,
+    "--track-sfx": theme.track.sfx,
+    "--track-music": theme.track.music,
+    "--diff-add": theme.diff.add,
+    "--diff-remove": theme.diff.remove,
+    "--radius": `${theme.radius / 16}rem`,
+  };
+}
+
+function applyBrandThemeTokens(root: HTMLElement, appearance: ThemeAppearance): void {
+  for (const [variable, value] of Object.entries(brandThemeTokenVariables(appearance))) {
+    root.style.setProperty(variable, value);
+  }
+}
+
 export function applyThemePalette(theme: ThemePreference, appearance?: ThemeAppearance): void {
   if (typeof document === "undefined") return;
 
@@ -1624,7 +1636,9 @@ export function applyThemePalette(theme: ThemePreference, appearance?: ThemeAppe
   setThemePreviewAppearance(null);
   const palette = getThemeDefinition(theme);
 
+  applyBrandThemeTokens(root, appearance ?? palette?.appearance ?? "light");
   if (palette) {
+    delete root.dataset.brandTheme;
     root.dataset.themeId = palette.id;
     const mode = appearance ?? legacyThemeMode(theme) ?? palette.appearance;
     const colors = getThemeColorsForMode(palette, mode) ?? palette.colors;
@@ -1636,10 +1650,12 @@ export function applyThemePalette(theme: ThemePreference, appearance?: ThemeAppe
   }
 
   delete root.dataset.themeId;
-  for (const variable of Object.values(APP_THEME_VARIABLES)) {
-    root.style.removeProperty(variable);
+  const standard = getStandardPaintedThemeColors(appearance ?? "light");
+  root.dataset.brandTheme = appearance ?? "light";
+  for (const [role, value] of Object.entries(standard) as Array<[ThemeColorRole, string]>) {
+    root.style.setProperty(APP_THEME_VARIABLES[role], value);
   }
-  applyContextChipVariables(root, getStandardPaintedThemeColors(appearance ?? "light"));
+  applyContextChipVariables(root, standard);
 }
 
 export function resolveThemeAppearance(

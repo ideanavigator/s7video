@@ -1,3 +1,4 @@
+import { BRAND } from "@t3tools/shared/brand";
 import { useAtomValue } from "@effect/atom-react";
 import { connectionStatusTitle } from "@t3tools/client-runtime/connection";
 import { AsyncResult } from "effect/reactivity";
@@ -1307,7 +1308,7 @@ function ScheduledTaskEditorForm({
     if (schedule.type === "once" && !offersOnce) {
       reportFailure(
         "Once is not available here",
-        "This environment runs an older T3 Code. Update it to schedule a one-time task, or pick another schedule.",
+        `This environment runs an older ${BRAND.app.productName}. Update it to schedule a one-time task, or pick another schedule.`,
       );
       return;
     }

@@ -1,11 +1,14 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 import { converter } from "culori/fn";
-import { BUILT_IN_THEMES } from "@t3tools/shared/themePalettes";
+import { BRAND } from "@t3tools/shared/brand";
+import { BUILT_IN_THEMES, THEME_COLOR_ROLES } from "@t3tools/shared/themePalettes";
 
 import { CONTEXT_CHIP_ACCENTS, contextChipColorVariable } from "./lib/contextChipAccents";
 
 import {
   applyThemePalette,
+  brandThemeTokenVariables,
+  getThemeColorVariable,
   contextChipVariables,
   getThemeColorsForMode,
   getThemeModes,
@@ -59,6 +62,26 @@ function contrastRatio(first: string, second: string): number {
   const darker = Math.min(luminance(first), luminance(second));
   return (lighter + 0.05) / (darker + 0.05);
 }
+
+describe("brand theme", () => {
+  it.each(["light", "dark"] as const)("maps every %s token to a CSS variable", (appearance) => {
+    const theme = BRAND.theme[appearance];
+    const standard = getStandardThemeColors(appearance);
+    for (const role of THEME_COLOR_ROLES) {
+      expect(getThemeColorVariable(role)).toMatch(/^--app-theme-/);
+      expect(asHex(standard[role])).toBe(theme.colors[role]);
+    }
+    expect(brandThemeTokenVariables(appearance)).toEqual({
+      "--track-video": theme.track.video,
+      "--track-text": theme.track.text,
+      "--track-sfx": theme.track.sfx,
+      "--track-music": theme.track.music,
+      "--diff-add": theme.diff.add,
+      "--diff-remove": theme.diff.remove,
+      "--radius": `${theme.radius / 16}rem`,
+    });
+  });
+});
 
 describe("theme files", () => {
   it("gives non-Latin theme names distinct stable ids", () => {

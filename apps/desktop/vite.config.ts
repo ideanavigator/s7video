@@ -1,11 +1,13 @@
 import "vite-plus/test/config";
 import { defaultInclude, defineConfig } from "vite-plus";
 
+import { brandConfigPlugin, loadBrandConfig } from "../../scripts/lib/brand-config.ts";
 import { isDesktopRuntimeExternalDependency } from "../../scripts/lib/desktop-external-packages.ts";
 
 // Install only bundle externals; the server bundle already carries its dependency tree.
 const isMainProcessExternal = (id: string) =>
   id === "electron" || id.startsWith("electron/") || isDesktopRuntimeExternalDependency(id);
+const brand = (await loadBrandConfig()).config;
 const shouldLaunchElectronAfterPack = process.env.T3CODE_DESKTOP_DEV === "1";
 
 export default defineConfig({
@@ -43,6 +45,7 @@ export default defineConfig({
   pack: [
     {
       format: "cjs",
+      plugins: [brandConfigPlugin()],
       outDir: "dist-electron",
       dts: false,
       sourcemap: true,
@@ -59,6 +62,7 @@ export default defineConfig({
     },
     {
       format: "cjs",
+      plugins: [brandConfigPlugin()],
       outDir: "dist-electron",
       dts: false,
       sourcemap: true,
@@ -79,11 +83,13 @@ export default defineConfig({
     {
       // boot.cjs requires the other two at runtime, so all three stay separate files.
       format: "cjs",
+      plugins: [brandConfigPlugin()],
       outDir: "dist-electron",
       dts: false,
       sourcemap: true,
       outExtensions: () => ({ js: ".cjs" }),
       entry: ["src/boot.ts", "src/compileCache.ts", "src/serverCompileCache.ts"],
+      define: { __S7VIDEO_APP_ID__: JSON.stringify(brand.app.id) },
       clean: false,
       deps: {
         neverBundle: (id) => id === "./main.cjs" || id === "./compileCache.cjs",
@@ -91,6 +97,7 @@ export default defineConfig({
     },
     {
       format: "cjs",
+      plugins: [brandConfigPlugin()],
       outDir: "dist-electron",
       dts: false,
       sourcemap: true,
@@ -99,6 +106,7 @@ export default defineConfig({
     },
     {
       format: "cjs",
+      plugins: [brandConfigPlugin()],
       outDir: "dist-electron",
       dts: false,
       sourcemap: true,
@@ -110,6 +118,7 @@ export default defineConfig({
     },
     {
       format: "cjs",
+      plugins: [brandConfigPlugin()],
       outDir: "dist-electron",
       dts: false,
       sourcemap: true,
@@ -119,6 +128,7 @@ export default defineConfig({
     {
       // Sandboxed preloads must be self-contained, without shared runtime chunks.
       format: "cjs",
+      plugins: [brandConfigPlugin()],
       outDir: "dist-electron",
       dts: false,
       sourcemap: true,

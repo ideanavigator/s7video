@@ -1,3 +1,4 @@
+import { BRAND } from "@t3tools/shared/brand";
 import { describe, expect, it } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
@@ -81,9 +82,11 @@ describe("diagnoseLaunchFailure", () => {
         ldd: "",
       });
       expect(error).toBeInstanceOf(PreviewBrowserHost.PreviewBrowserRootError);
-      expect(error?.message).toContain("T3 server is running as root");
-      expect(error?.message).toContain("T3 server's environment and restart the server");
-      expect(error?.message).toContain("T3CODE_SERVER_BROWSER_SANDBOX=0 t3 serve");
+      expect(error?.message).toContain(`${BRAND.app.productName} server is running as root`);
+      expect(error?.message).toContain("server's environment and restart the server");
+      expect(error?.message).toContain(
+        `T3CODE_SERVER_BROWSER_SANDBOX=0 ${BRAND.app.cliName} serve`,
+      );
       expect(error?.message).toContain("Environment=T3CODE_SERVER_BROWSER_SANDBOX=0");
       expect(error?.message).toContain("this disables Chrome's sandbox");
       expect(commands).toEqual([]);

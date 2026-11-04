@@ -1,3 +1,4 @@
+import { BRAND } from "@t3tools/shared/brand";
 import { useAtomValue } from "@effect/atom-react";
 import { NotificationSettings } from "./NotificationSettings";
 import { PRIVACY_POLICY_URL } from "../../legalLinks";
@@ -2042,10 +2043,25 @@ export function AboutSettingsPanel() {
 
       <SettingsSection id="legal" title="Legal">
         <SettingsRow
+          title={`Based on ${BRAND.credits.upstreamName}`}
+          description={`${BRAND.app.productName} is built on ${BRAND.credits.upstreamName}, used under the ${BRAND.credits.license} licence. Thank you to its authors.`}
+          control={
+            <Button
+              render={
+                <a href={BRAND.credits.upstreamUrl} target="_blank" rel="noreferrer noopener" />
+              }
+              size="sm"
+              variant="outline"
+            >
+              View {BRAND.credits.upstreamName}
+            </Button>
+          }
+        />
+        <SettingsRow
           {...searchableSetting("privacy-policy")}
           description={
             telemetryOff === undefined
-              ? "How we handle your data, including the anonymous usage data T3 Code collects."
+              ? `How we handle your data, including the anonymous usage data ${BRAND.app.productName} collects.`
               : `How we handle your data. ${telemetryOff}`
           }
           control={
@@ -2060,7 +2076,7 @@ export function AboutSettingsPanel() {
         />
         <SettingsRow
           {...searchableSetting("open-source-licenses")}
-          description="Notices for dependencies, assets, and optional tools used by T3 Code."
+          description={`Notices for dependencies, assets, and optional tools used by ${BRAND.app.productName}.`}
           control={
             <Button
               render={<Link to="/settings/open-source-licenses" />}

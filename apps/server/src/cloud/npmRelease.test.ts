@@ -32,10 +32,13 @@ const noPublicRegistry = HttpClient.make(() =>
   Effect.die("a configured npm lookup must not fall back to public npm"),
 );
 // A fake npm on PATH decides whether npm counts as installed.
+const TEST_PACKAGE = "example-cli";
+
 const makeService = Effect.fnUntraced(function* (
   run: ProcessRunner.ProcessRunner["Service"]["run"],
   publicRegistry: HttpClient.HttpClient = noPublicRegistry,
   npmInstalled = true,
+  packageName = TEST_PACKAGE,
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -43,7 +46,7 @@ const makeService = Effect.fnUntraced(function* (
   for (const name of ["npm", "npm.cmd"]) {
     yield* fs.writeFileString(path.join(npmBin, name), "", { mode: 0o755 });
   }
-  return yield* NpmRelease.make().pipe(
+  return yield* NpmRelease.make(packageName).pipe(
     Effect.provideService(ProcessRunner.ProcessRunner, { run }),
     Effect.provideService(HttpClient.HttpClient, publicRegistry),
     Effect.provideService(HostProcess.Environment, {
@@ -81,7 +84,7 @@ it.effect.each([
     expect(calls).toHaveLength(1);
     expect(calls[0]).toMatchObject({
       command: expect.stringMatching(/[/\\]npm(?:\.cmd)?$/i),
-      args: ["view", "--global", "--json", `t3@${fixture.spec}`, "version", "t3code"],
+      args: ["view", "--global", "--json", `${TEST_PACKAGE}@${fixture.spec}`, "version", "t3code"],
       maxOutputBytes: 256 * 1024,
     });
     yield* TestClock.adjust("1 minute");
@@ -153,9 +156,9 @@ it.effect("falls back to public npm only when npm is not installed", () =>
     yield* TestClock.adjust("15 seconds");
     expect(Result.isFailure(yield* Fiber.join(stalled))).toBe(true);
     expect(urls).toEqual([
-      "https://registry.npmjs.org/t3/nightly",
-      "https://registry.npmjs.org/t3/9.9.9",
-      "https://registry.npmjs.org/t3/latest",
+      "https://registry.npmjs.org/example-cli/nightly",
+      "https://registry.npmjs.org/example-cli/9.9.9",
+      "https://registry.npmjs.org/example-cli/latest",
     ]);
   }),
 );
@@ -195,4 +198,31 @@ it.effect.each(["--registry=https://example.com", "../other", "other-package@lat
       const service = yield* makeService(() => Effect.die("invalid specs must not spawn npm"));
       expect(Result.isFailure(yield* service.get({ spec }).pipe(Effect.result))).toBe(true);
     }),
+);
+
+it.effect("checks nothing when the brand config names no npm package", () =>
+  Effect.gen(function* () {
+    const service = yield* makeService(
+      () => Effect.die("an unconfigured check must not spawn npm"),
+      HttpClient.make(() => Effect.die("an unconfigured check must not reach a registry")),
+      false,
+      "",
+    );
+    expect(yield* service.get({ spec: "latest" })).toBeNull();
+    expect(yield* service.get({ spec: "nightly" })).toBeNull();
+  }),
+);
+
+it.effect("defaults to the brand config, which publishes no npm package yet", () =>
+  Effect.gen(function* () {
+    const service = yield* NpmRelease.make().pipe(
+      Effect.provideService(ProcessRunner.ProcessRunner, {
+        run: () => Effect.die("must not spawn npm"),
+      }),
+      Effect.provideService(HttpClient.HttpClient, noPublicRegistry),
+      Effect.provideService(HostProcess.Environment, { PATH: "" }),
+      Effect.provide(NodeServices.layer),
+    );
+    expect(yield* service.get({ spec: "latest" })).toBeNull();
+  }),
 );

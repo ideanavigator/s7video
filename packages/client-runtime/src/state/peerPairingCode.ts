@@ -3,6 +3,7 @@
  * user's own session there, so a link card can be answered without fetching a code by hand.
  * It carries exactly what an agent sign-in with the chosen access needs.
  */
+import { BRAND } from "@t3tools/shared/brand";
 import { type AuthMcpClientAccess, mcpClientScopes } from "@t3tools/contracts";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
@@ -18,7 +19,7 @@ import { executeAuthenticatedEnvironmentHttpRequest } from "./environmentHttpAut
 import { createEnvironmentCommand } from "./runtime.ts";
 
 const MINT_TIMEOUT_MS = 8_000;
-const PEER_PAIRING_CODE_LABEL = "T3 Code link";
+const PEER_PAIRING_CODE_LABEL = `${BRAND.app.productName} link`;
 
 /** Minting failed; the user can still paste a code from the other environment. */
 export class PeerPairingCodeError extends Data.TaggedError("PeerPairingCodeError")<{

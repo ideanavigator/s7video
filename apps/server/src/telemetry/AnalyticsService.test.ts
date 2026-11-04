@@ -123,6 +123,10 @@ const sendFor = (
     AnalyticsService.AnalyticsService | Effect.Services<typeof getTelemetryIdentity>
   > = recordTwentyEvents,
   policy?: ManagedPolicyDocument,
+  target: Record<string, string> = {
+    T3CODE_POSTHOG_KEY: "phc_test_key",
+    T3CODE_POSTHOG_HOST: "http://localhost",
+  },
 ) =>
   Effect.gen(function* () {
     const batches: Array<ReadonlyArray<SentEvent>> = [];
@@ -143,11 +147,7 @@ const sendFor = (
       ),
       Layer.provide(
         ConfigProvider.layer(
-          ConfigProvider.fromUnknown({
-            T3CODE_TELEMETRY_ENABLED: true,
-            T3CODE_POSTHOG_KEY: "phc_test_key",
-            T3CODE_POSTHOG_HOST: "http://localhost",
-          }),
+          ConfigProvider.fromUnknown({ T3CODE_TELEMETRY_ENABLED: true, ...target }),
         ),
       ),
       Layer.provide(
@@ -170,6 +170,13 @@ const sendFor = (
   });
 
 it.layer(NodeServices.layer)("AnalyticsService test", (it) => {
+  it.effect("sends nothing when the brand config names no telemetry host or key", () =>
+    Effect.gen(function* () {
+      const batches = yield* sendFor(1, respondWithStatus(204), recordTwentyEvents, undefined, {});
+      assert.deepEqual(batches, []);
+    }),
+  );
+
   it.effect("waits for desktop shell consent and honors a late telemetry opt-out", () =>
     Effect.gen(function* () {
       const env: NodeJS.ProcessEnv = { T3CODE_DESKTOP_SHELL_DISCOVERY_PENDING: "1" };

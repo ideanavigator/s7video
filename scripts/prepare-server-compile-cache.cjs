@@ -40,7 +40,7 @@ module.exports = async ({ appOutDir, electronPlatformName, arch, packager }) => 
     if (name.startsWith("NODE_") || name.startsWith("T3CODE_")) delete env[name];
   }
   const state = fs.mkdtempSync(path.join(os.tmpdir(), "t3-release-cache-"));
-  env.T3CODE_HOME = state;
+  env.S7VIDEO_HOME = state;
   let result;
   try {
     result = spawnSync(
