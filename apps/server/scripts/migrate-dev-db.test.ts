@@ -1,6 +1,8 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -376,5 +378,32 @@ it.layer(NodeServices.layer)("migrate-dev-db", (it) => {
       ).pipe(Effect.flip);
       assert.equal(error._tag, "MigrateDevDbSharedHomeError");
     }),
+  );
+
+  it.effect.each(["", "sub"])(
+    "refuses a target inside a fake home's .t3 (%s) and leaves its database untouched",
+    (subdirectory) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const home = yield* fs.makeTempDirectoryScoped({ prefix: "migrate-dev-db-home-" });
+        const sourceDir = yield* fs.makeTempDirectoryScoped({ prefix: "migrate-dev-db-src-" });
+        const source = yield* createFixtureSource(sourceDir);
+        const upstreamBase = path.join(home, ".t3", subdirectory);
+        const upstreamDb = path.join(upstreamBase, "userdata", "statev2.sqlite");
+        yield* fs.makeDirectory(path.dirname(upstreamDb), { recursive: true });
+        yield* fs.writeFileString(upstreamDb, "T3 Code's database");
+
+        const exit = yield* runMigrateDevDb(
+          { baseDir: upstreamBase, source, projects: 5, threadsPerProject: 10 },
+          { sharedHome: sourceDir, homeDirectory: home },
+        ).pipe(Effect.exit);
+
+        assert.isTrue(Exit.isFailure(exit));
+        if (Exit.isFailure(exit)) {
+          assert.match(String(Cause.squash(exit.cause)), /T3 Code's data folder/);
+        }
+        assert.equal(yield* fs.readFileString(upstreamDb), "T3 Code's database");
+      }).pipe(Effect.scoped),
   );
 });

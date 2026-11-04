@@ -113,6 +113,8 @@ export interface RunMigrateDevDbInput {
 export interface RunMigrateDevDbOptions {
   /** Test override for the directory writes must never target. */
   readonly sharedHome?: string | undefined;
+  /** Home whose `.t3` (T3 Code's data) is refused as source or target. Defaults to the user's. */
+  readonly homeDirectory?: string | undefined;
 }
 
 interface KeptProject {
@@ -418,18 +420,21 @@ export const runMigrateDevDb = Effect.fn("runMigrateDevDb")(function* (
   const sharedHome = path.resolve(
     options.sharedHome ?? defaultDataHome(NodeOS.homedir(), path.join),
   );
+  const homeDirectory = options.homeDirectory ?? NodeOS.homedir();
   const sourcePath = guardDataHome(
     path.resolve(input.source ?? path.join(sharedHome, "userdata", "statev2.sqlite")),
-    NodeOS.homedir(),
+    homeDirectory,
   );
 
-  const baseDir =
+  const resolvedBaseDir =
     input.baseDir !== undefined
       ? path.resolve(input.baseDir)
       : yield* resolveWorktreeT3Home(process.cwd());
-  if (baseDir === undefined) {
+  if (resolvedBaseDir === undefined) {
     return yield* new MigrateDevDbNotInWorktreeError();
   }
+  // This command deletes and rebuilds the target database; T3 Code's must never be the target.
+  const baseDir = guardDataHome(resolvedBaseDir, homeDirectory);
   const stateDir = path.join(baseDir, "userdata");
   const databasePath = path.join(stateDir, "statev2.sqlite");
   const snapshotPath = `${databasePath}.migrate-dev-db-tmp`;
