@@ -15,6 +15,7 @@ import {
   PanelsTopLeftIcon,
   KeyboardIcon,
   KeyRoundIcon,
+  LockKeyholeIcon,
   PaletteIcon,
   SearchIcon,
   ServerIcon,
@@ -86,6 +87,7 @@ const SETTINGS_SECTION_ICONS: Readonly<
   "/settings/secrets": KeyRoundIcon,
   "/settings/maintenance": WrenchIcon,
   "/settings/labs": FlaskConicalIcon,
+  "/settings/privacy": LockKeyholeIcon,
   "/settings/about": InfoIcon,
   "/settings/archived": ArchiveIcon,
 };
