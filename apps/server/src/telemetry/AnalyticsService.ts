@@ -1,7 +1,7 @@
-// T3 ingest retains events and forwards to PostHog; UUIDs deduplicate retries there.
+// Sends to a PostHog-compatible batch endpoint; UUIDs deduplicate retries there.
 import { BRAND } from "@t3tools/shared/brand";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import type { ClientOs } from "@t3tools/contracts";
+import type { ClientOs, ServerUsageData } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as Config from "effect/Config";
 import * as ConfigProvider from "effect/ConfigProvider";
@@ -23,6 +23,7 @@ import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import packageJson from "../../package.json" with { type: "json" };
 import * as ServerConfig from "../config.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
+import { ServerSettingsService } from "../serverSettings.ts";
 import { getTelemetryIdentity, type TelemetryOwner } from "./Identify.ts";
 
 interface BufferedAnalyticsEvent {
@@ -63,13 +64,19 @@ function retryDelayMs(failures: number, random: number): number {
   return Math.round(ceiling / 2 + (ceiling / 2) * random);
 }
 
+const ENABLED_VARIABLE = "S7VIDEO_TELEMETRY_ENABLED";
+
+// Upstream's T3CODE_* names are not read, so an old shell profile cannot switch sharing on.
 const TelemetryEnvConfig = Config.all({
-  // The brand config owns the target; an empty host or key sends nothing.
-  posthogKey: Config.String("T3CODE_POSTHOG_KEY").pipe(Config.withDefault(BRAND.telemetry.key)),
-  posthogHost: Config.String("T3CODE_POSTHOG_HOST").pipe(Config.withDefault(BRAND.telemetry.host)),
-  enabled: Config.Boolean("T3CODE_TELEMETRY_ENABLED").pipe(Config.withDefault(true)),
-  flushBatchSize: Config.Number("T3CODE_TELEMETRY_FLUSH_BATCH_SIZE").pipe(Config.withDefault(20)),
-  maxBufferedEvents: Config.Number("T3CODE_TELEMETRY_MAX_BUFFERED_EVENTS").pipe(
+  // The brand config owns the destination; an empty host or key sends nothing.
+  posthogKey: Config.String("S7VIDEO_TELEMETRY_KEY").pipe(Config.withDefault(BRAND.telemetry.key)),
+  posthogHost: Config.String("S7VIDEO_TELEMETRY_HOST").pipe(
+    Config.withDefault(BRAND.telemetry.host),
+  ),
+  // Unset defers to the `shareUsageData` setting, which is off by default.
+  enabled: Config.Boolean(ENABLED_VARIABLE).pipe(Config.option),
+  flushBatchSize: Config.Number("S7VIDEO_TELEMETRY_FLUSH_BATCH_SIZE").pipe(Config.withDefault(20)),
+  maxBufferedEvents: Config.Number("S7VIDEO_TELEMETRY_MAX_BUFFERED_EVENTS").pipe(
     Config.withDefault(1_000),
   ),
   wslDistroName: Config.String("WSL_DISTRO_NAME").pipe(Config.option),
@@ -94,6 +101,9 @@ export class AnalyticsService extends Context.Service<
       owners: ReadonlyArray<TelemetryOwner>,
       observedBy: "server" | "client",
     ) => Effect.Effect<void>;
+
+    /** Whether clients may offer the sharing switch, and what overrides it. */
+    readonly usageData: Effect.Effect<ServerUsageData>;
   }
 >()("t3/telemetry/AnalyticsService") {}
 
@@ -123,24 +133,41 @@ export const make = Effect.gen(function* () {
     ManagedPolicy.deniedBy(yield* ManagedPolicy.ManagedPolicy, "telemetry") === undefined;
   const hasTarget =
     telemetryConfig.posthogHost.trim() !== "" && telemetryConfig.posthogKey.trim() !== "";
-  // A cached PATH does not establish consent from the current login shell.
-  const telemetryEnabled = Effect.suspend(() => {
-    if (!telemetryConfig.enabled || !policyAllows || !hasTarget) return Effect.succeed(false);
-    if (!awaitingShellConsent) return Effect.succeed(true);
-    if (hostEnvironment.T3CODE_DESKTOP_SHELL_DISCOVERY_PENDING === "1")
-      return Effect.succeed(false);
-    const preference = hostEnvironment.T3CODE_TELEMETRY_ENABLED;
-    return Config.Boolean("T3CODE_TELEMETRY_ENABLED").pipe(
-      Config.withDefault(true),
+  const available = policyAllows && hasTarget;
+  const serverSettings = yield* ServerSettingsService;
+  // The desktop sends the login shell's value after startup; an unreadable one means off.
+  const environmentPreference = Effect.suspend(() => {
+    if (!awaitingShellConsent) return Effect.succeed(telemetryConfig.enabled);
+    const preference = hostEnvironment[ENABLED_VARIABLE];
+    return Config.Boolean(ENABLED_VARIABLE).pipe(
+      Config.option,
       Effect.provideService(
         ConfigProvider.ConfigProvider,
         ConfigProvider.fromEnv({
-          env: preference === undefined ? {} : { T3CODE_TELEMETRY_ENABLED: preference },
+          env: preference === undefined ? {} : { [ENABLED_VARIABLE]: preference },
         }),
       ),
+      Effect.orElseSucceed(() => Option.some(false)),
+    );
+  });
+  const telemetryEnabled = Effect.gen(function* () {
+    if (!available) return false;
+    // A cached PATH does not establish consent from the current login shell.
+    if (hostEnvironment.T3CODE_DESKTOP_SHELL_DISCOVERY_PENDING === "1") return false;
+    const preference = yield* environmentPreference;
+    if (Option.isSome(preference)) return preference.value;
+    return yield* serverSettings.getSettings.pipe(
+      Effect.map((settings) => settings.shareUsageData),
       Effect.orElseSucceed(() => false),
     );
   });
+  const usageData: AnalyticsService["Service"]["usageData"] = Effect.map(
+    environmentPreference,
+    (preference) => ({
+      available,
+      ...(Option.isSome(preference) ? { variable: ENABLED_VARIABLE } : {}),
+    }),
+  );
   const httpClient = yield* HttpClient.HttpClient;
   const serverConfig = yield* ServerConfig.ServerConfig;
   const { distinctId, installId } = yield* getTelemetryIdentity;
@@ -354,7 +381,7 @@ export const make = Effect.gen(function* () {
 
   yield* Effect.addFinalizer(() => flush);
 
-  return AnalyticsService.of({ record, flush, recordOwners });
+  return AnalyticsService.of({ record, flush, recordOwners, usageData });
 });
 
 export const layer = Layer.effect(AnalyticsService, make);

@@ -1826,6 +1826,7 @@ export const layerWsRpc = (
               : {}),
             otlpLogsEnabled: config.otlpLogsUrl !== undefined,
           },
+          usageData: yield* analytics.usageData,
           settings,
           ...(serverSettings.managedPolicy === undefined
             ? {}

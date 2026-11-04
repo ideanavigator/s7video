@@ -299,6 +299,14 @@ export const ServerObservability = Schema.Struct({
 });
 export type ServerObservability = typeof ServerObservability.Type;
 
+export const ServerUsageData = Schema.Struct({
+  /** False when the build names no destination or a managed policy forbids it. */
+  available: Schema.Boolean,
+  /** The environment variable that decides sharing, overriding the setting. */
+  variable: Schema.optionalKey(TrimmedNonEmptyString),
+});
+export type ServerUsageData = typeof ServerUsageData.Type;
+
 export const OtlpSignal = Schema.Literals(["traces", "metrics", "logs"]);
 export type OtlpSignal = typeof OtlpSignal.Type;
 
@@ -620,6 +628,8 @@ export const ServerConfig = Schema.Struct({
   /** Hints only; verify each address answers as this environment. */
   directEndpoints: Schema.optionalKey(ForwardCompatibleArray(ServerDirectEndpoint)),
   observability: ServerObservability,
+  /** Absent from servers that predate opt-in usage data; clients then offer no switch. */
+  usageData: Schema.optionalKey(ServerUsageData),
   settings: ServerSettings,
   /** Present when an administrator's policy file manages this environment. */
   managedPolicy: Schema.optionalKey(ManagedPolicySummary),
