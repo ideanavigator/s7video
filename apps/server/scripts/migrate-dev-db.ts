@@ -566,7 +566,7 @@ export const migrateDevDbCommand = Command.make(
     source: Flag.String("source").pipe(
       Flag.optional,
       Flag.withDescription(
-        "Source database. Defaults to ~/.s7video/userdata/statev2.sqlite; T3 Code's ~/.t3 is refused.",
+        "Source database. Defaults to ~/.s7video/userdata/statev2.sqlite; the upstream ~/.t3 folder is refused.",
       ),
     ),
   },

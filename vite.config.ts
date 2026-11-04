@@ -4,7 +4,7 @@ import * as NodeURL from "node:url";
 import { cachedTestTasks } from "./scripts/lib/cached-tests.ts";
 
 const TEST_EXCLUDE = [
-  "**/.t3/**",
+  "**/.s7video/**",
   "**/node_modules/**",
   "**/dist/**",
   "**/dist-electron/**",

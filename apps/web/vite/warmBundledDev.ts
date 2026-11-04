@@ -1,3 +1,4 @@
+import { BRAND } from "@t3tools/shared/brand";
 import type { Plugin, ViteDevServer } from "vite-plus";
 
 // What the first page load pulls in: the app, the chat layout and its landing
@@ -10,7 +11,7 @@ const STARTUP_LAZY_ENTRIES = [
   "src/lib/lucideIconByName.ts",
 ];
 
-const WARMUP_CLIENT_ID = "t3code-startup-warmup";
+const WARMUP_CLIENT_ID = `${BRAND.app.id}-startup-warmup`;
 
 // Bundled dev keeps these private and untyped. A Vite upgrade that moves them
 // skips the warmup or logs a warning, never breaks dev; bundledDev.test.ts

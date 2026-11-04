@@ -285,8 +285,8 @@ export function ServerUpdateAction({
           installation?.kind === "npm-global" ? "Update command copied" : "Relaunch command copied",
         description:
           installation?.kind === "npm-global"
-            ? `Run \`${command}\` on ${serverLabel}, then restart t3 with your usual options.`
-            : `Stop t3 on ${serverLabel}, then relaunch with \`${command}\` using the same subcommand and options. This does not update an installed t3 command.`,
+            ? `Run \`${command}\` on ${serverLabel}, then restart ${BRAND.app.cliName} with your usual options.`
+            : `Stop ${BRAND.app.cliName} on ${serverLabel}, then relaunch with \`${command}\` using the same subcommand and options. This does not update an installed ${BRAND.app.cliName} command.`,
       });
     },
     onError: (error) => {

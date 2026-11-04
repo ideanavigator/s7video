@@ -12,17 +12,17 @@
 #   T3CODE_RELEASE_BASE_URL  mirror for releases/download (default: GitHub)
 #
 # The archive is unpacked into $S7VIDEO_HOME\runtime\versions\<version>, the
-# same layout `t3 service install` uses, so the service reuses this download.
+# same layout `s7video service install` uses, so the service reuses this download.
 $ErrorActionPreference = "Stop"
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
 $repo = "ideanavigator/s7video"
 $baseUrl = if ($env:T3CODE_RELEASE_BASE_URL) { $env:T3CODE_RELEASE_BASE_URL.TrimEnd("/") } else { "https://github.com/$repo/releases/download" }
-$t3Home = if ($env:S7VIDEO_HOME) { $env:S7VIDEO_HOME } else { Join-Path $HOME ".t3" }
+$t3Home = if ($env:S7VIDEO_HOME) { $env:S7VIDEO_HOME } else { Join-Path $HOME ".s7video" }
 $binDir = if ($env:T3CODE_INSTALL_BIN_DIR) { $env:T3CODE_INSTALL_BIN_DIR } else { Join-Path $HOME ".local\bin" }
 
 function Fail([string] $message) {
-  Write-Error "t3 install: $message"
+  Write-Error "s7video install: $message"
   exit 1
 }
 

@@ -1,3 +1,4 @@
+import { BRAND } from "@t3tools/shared/brand";
 import {
   type AuthMcpApprovalDecision,
   type AuthMcpApprovalDetails,
@@ -243,8 +244,8 @@ export function ConnectAgentSurface() {
               value={pairingCode}
             />
             <p className="text-xs text-muted-foreground">
-              Create one in Settings → Sharing & access, or run <code>t3 auth pairing create</code>{" "}
-              on this machine.
+              Create one in Settings → Sharing & access, or run{" "}
+              <code>{BRAND.app.cliName} auth pairing create</code> on this machine.
             </p>
           </div>
         )}

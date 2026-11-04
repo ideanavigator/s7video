@@ -89,7 +89,7 @@ const formatNextSteps = (lan: boolean, serviceInstalled: boolean) =>
     ? `Run \`${BRAND.app.cliName} pair\`. Use the code on your other device.`
     : serviceInstalled
       ? `Remote access is off. ${BRAND.app.productName} still runs here in the background.`
-      : `Remote access is off. Run \`t3\` to use ${BRAND.app.productName} here.`;
+      : `Remote access is off. Run \`${BRAND.app.cliName}\` to use ${BRAND.app.productName} here.`;
 
 const interactiveTerminal = () => Boolean(process.stdin.isTTY && process.stdout.isTTY);
 
@@ -271,11 +271,20 @@ export const upCommand = Command.make("up", {
     `Set up remote access and the ${BRAND.app.productName} background service. The access flag skips the question. Without a terminal, a needed restart runs without asking and stops running agent turns.`,
   ),
   Command.withExamples([
-    { command: "t3 up", description: "Choose remote access." },
-    { command: "t3 up --lan", description: "Allow LAN access with pairing codes." },
-    { command: "t3 up --no-lan", description: "Stop LAN access." },
-    { command: "t3 up --yes", description: "Take the defaults with no questions." },
-    { command: "t3 status --json", description: "Read the settings from a script." },
+    { command: `${BRAND.app.cliName} up`, description: "Choose remote access." },
+    {
+      command: `${BRAND.app.cliName} up --lan`,
+      description: "Allow LAN access with pairing codes.",
+    },
+    { command: `${BRAND.app.cliName} up --no-lan`, description: "Stop LAN access." },
+    {
+      command: `${BRAND.app.cliName} up --yes`,
+      description: "Take the defaults with no questions.",
+    },
+    {
+      command: `${BRAND.app.cliName} status --json`,
+      description: "Read the settings from a script.",
+    },
   ]),
   Command.withHandler(
     Effect.fn("cli.up.run")(function* (flags) {
@@ -322,8 +331,11 @@ export const statusCommand = Command.make("status", {
 }).pipe(
   Command.withDescription("Show service setup and remote access settings."),
   Command.withExamples([
-    { command: "t3 status", description: "Show the settings." },
-    { command: "t3 status --json", description: "Print them for scripts and agents." },
+    { command: `${BRAND.app.cliName} status`, description: "Show the settings." },
+    {
+      command: `${BRAND.app.cliName} status --json`,
+      description: "Print them for scripts and agents.",
+    },
   ]),
   Command.withHandler(
     Effect.fn("cli.status")(function* (flags) {

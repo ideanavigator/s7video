@@ -15,6 +15,11 @@ const mocks = vi.hoisted(() => ({
   refresh: () => {},
 }));
 
+// SSH is off in s7video until S7V-018; these cases cover the dialog's SSH flow itself.
+vi.mock(import("@t3tools/shared/remoteEnvironments"), async (original) => ({
+  ...(await original()),
+  REMOTE_ENVIRONMENTS_ENABLED: true,
+}));
 vi.mock(import("../../state/use-atom-command"), async (original) => ({
   ...(await original()),
   useAtomCommand: ((command: unknown) => command) as never,

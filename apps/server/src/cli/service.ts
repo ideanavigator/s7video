@@ -136,7 +136,7 @@ function formatProtection(
   if (protection === undefined) return [];
   return [
     protection.unprotected === undefined
-      ? `  Memory protection: on${protection.setByProtect ? " (t3 service protect)" : ""}`
+      ? `  Memory protection: on${protection.setByProtect ? ` (${BRAND.app.cliName} service protect)` : ""}`
       : `  Memory protection: off, ${protection.unprotected} grants none. Run \`${BRAND.app.cliName} service protect\`.`,
     ...(protection.oomScoreAdj === undefined ? [] : [`  OOM score: ${protection.oomScoreAdj}`]),
   ];

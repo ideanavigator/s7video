@@ -74,7 +74,7 @@ export class PreviewBrowserRootError extends Schema.TaggedError<PreviewBrowserRo
   {},
 ) {
   override get message(): string {
-    return `T3 server is running as root; Chrome's sandbox cannot start. Run T3 as a nonroot user. Otherwise set \`T3CODE_SERVER_BROWSER_SANDBOX=0\` in the T3 server's environment and restart the server; this disables Chrome's sandbox. Manual: \`T3CODE_SERVER_BROWSER_SANDBOX=0 t3 serve\`. Systemd: add \`Environment=T3CODE_SERVER_BROWSER_SANDBOX=0\` under \`[Service]\`, reload systemd, then restart the service. \`${BRAND.app.cliName} browser setup\` cannot fix root sandboxing.`;
+    return `${BRAND.app.productName} server is running as root; Chrome's sandbox cannot start. Run ${BRAND.app.productName} as a nonroot user. Otherwise set \`T3CODE_SERVER_BROWSER_SANDBOX=0\` in the server's environment and restart the server; this disables Chrome's sandbox. Manual: \`T3CODE_SERVER_BROWSER_SANDBOX=0 ${BRAND.app.cliName} serve\`. Systemd: add \`Environment=T3CODE_SERVER_BROWSER_SANDBOX=0\` under \`[Service]\`, reload systemd, then restart the service. \`${BRAND.app.cliName} browser setup\` cannot fix root sandboxing.`;
   }
 }
 

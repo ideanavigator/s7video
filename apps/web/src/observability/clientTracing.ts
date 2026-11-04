@@ -50,7 +50,7 @@ const RELEASE_CHANNEL =
       ? "preview"
       : releaseChannelOf(APP_VERSION);
 const CLIENT_TRACING_RESOURCE = {
-  serviceName: "t3code-web",
+  serviceName: `${BRAND.app.id}-web`,
   attributes: {
     "service.namespace": BRAND.app.id,
     "service.instance.id": ClientTracer.serviceInstanceId,

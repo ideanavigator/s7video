@@ -607,7 +607,7 @@ const layerTelemetry = Layer.unwrap(
       ? environment.appVersion
       : desktopPackageJson.version;
     const resource = {
-      serviceName: "t3code-desktop",
+      serviceName: `${BRAND.app.id}-desktop`,
       serviceVersion,
       attributes: {
         "service.namespace": BRAND.app.id,

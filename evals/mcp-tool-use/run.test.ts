@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off
+import { BRAND } from "@t3tools/shared/brand";
 import * as NodeFS from "node:fs";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
@@ -251,7 +252,7 @@ it("rebuilds the template from this checkout and sends a child T3's task prompt"
     `Main prompt.\n - Primary working directory: /home/user/app\n\n${t3SystemAppend("claude-sonnet-5-5")}`,
   ]);
   // The eval offers the device tools, so Claude's append carries the device block.
-  assert.include(t3SystemAppend("claude-sonnet-5-5"), "## T3 Code devices");
+  assert.include(t3SystemAppend("claude-sonnet-5-5"), `## ${BRAND.app.productName} devices`);
   assert.equal(base.environment.cwd, "/home/user/app");
   assert.include(system[2], "model named Sonnet 5.5. The exact model ID is claude-sonnet-5-5.");
   const deferred = system[2]?.split("Load them first:\n")[1]?.split("\n\n")[0]?.split("\n") ?? [];

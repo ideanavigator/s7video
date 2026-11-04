@@ -13,13 +13,13 @@
 #   T3CODE_RELEASE_BASE_URL  mirror for releases/download (default: GitHub)
 #
 # The archive is unpacked into $S7VIDEO_HOME/runtime/versions/<version>, the
-# same layout `t3 service install` uses, so the service reuses this download
+# same layout `s7video service install` uses, so the service reuses this download
 # instead of fetching the release again.
 set -eu
 
 repo="ideanavigator/s7video"
 base_url="${T3CODE_RELEASE_BASE_URL:-https://github.com/${repo}/releases/download}"
-t3_home="${S7VIDEO_HOME:-$HOME/.t3}"
+t3_home="${S7VIDEO_HOME:-$HOME/.s7video}"
 bin_dir="${T3CODE_INSTALL_BIN_DIR:-$HOME/.local/bin}"
 
 fail() {

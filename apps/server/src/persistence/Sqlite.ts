@@ -1,3 +1,4 @@
+import { BRAND } from "@t3tools/shared/brand";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as FileSystem from "effect/FileSystem";
@@ -58,7 +59,7 @@ export const layerFromPath = Effect.fn("makeSqlitePersistenceLive")(function* (d
       checkpointWorker: true,
       spanAttributes: {
         "db.name": path.basename(dbPath),
-        "service.name": "t3code-server",
+        "service.name": `${BRAND.app.id}-server`,
       },
     }),
   );

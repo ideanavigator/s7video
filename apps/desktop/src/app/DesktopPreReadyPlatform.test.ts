@@ -51,6 +51,8 @@ vi.mock("node:fs", () => ({
   mkdirSync: mkdirSyncMock,
   writeFileSync: writeFileSyncMock,
   copyFileSync: copyFileSyncMock,
+  // The data-home guard resolves real paths; nothing here is a symlink.
+  realpathSync: (path: string) => path,
 }));
 
 vi.mock("node:child_process", () => ({

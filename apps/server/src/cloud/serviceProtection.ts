@@ -1,3 +1,4 @@
+import { BRAND } from "@t3tools/shared/brand";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
@@ -9,7 +10,7 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as ProcessRunner from "../processRunner.ts";
 import { BOOT_SERVICE_UNIT_FILE } from "./bootService.ts";
 
-const PROTECT_DROP_IN = "90-t3code-protect.conf";
+const PROTECT_DROP_IN = `90-${BRAND.app.id}-protect.conf`;
 const SYSTEM_UNIT_DIR = "/etc/systemd/system";
 export const REMOTE_ACCESS_UNITS = ["tailscaled.service", "ssh.service", "sshd.service"];
 

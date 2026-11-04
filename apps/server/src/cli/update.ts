@@ -83,15 +83,23 @@ export const resolveNewestVersion = Effect.fn("cli.update.resolve_newest")(funct
     const body = yield* httpClient.execute(authenticatedRequest).pipe(
       Effect.flatMap(HttpClientResponse.filterStatusOk),
       Effect.flatMap((response) => response.text),
-      Effect.mapError(() => new CliUpdateError({ reason: "Could not list t3 releases." })),
+      Effect.mapError(
+        () => new CliUpdateError({ reason: `Could not list ${BRAND.app.cliName} releases.` }),
+      ),
       Effect.timeoutOrElse({
         duration: RELEASE_INDEX_TIMEOUT,
-        orElse: () => Effect.fail(new CliUpdateError({ reason: "Timed out listing t3 releases." })),
+        orElse: () =>
+          Effect.fail(
+            new CliUpdateError({ reason: `Timed out listing ${BRAND.app.cliName} releases.` }),
+          ),
       }),
     );
     const releases = yield* decodeReleaseIndex(body).pipe(
       Effect.mapError(
-        () => new CliUpdateError({ reason: "The t3 release index had an unexpected shape." }),
+        () =>
+          new CliUpdateError({
+            reason: `The ${BRAND.app.cliName} release index had an unexpected shape.`,
+          }),
       ),
     );
     const version = newestCliReleaseVersion(releases, channel);
@@ -120,7 +128,10 @@ export const repointLauncher = Effect.fn("cli.update.repoint_launcher")(function
   const remember = (launcher: string) =>
     recordPinnedRuntimeLauncher({ baseDir: input.baseDir, launcher }).pipe(
       Effect.mapError(
-        () => new CliUpdateError({ reason: `Could not record the t3 launcher at ${launcher}.` }),
+        () =>
+          new CliUpdateError({
+            reason: `Could not record the ${BRAND.app.cliName} launcher at ${launcher}.`,
+          }),
       ),
     );
 
@@ -131,13 +142,14 @@ export const repointLauncher = Effect.fn("cli.update.repoint_launcher")(function
     const quoted = Option.isSome(current) ? windowsShimTarget(current.value) : undefined;
     if (quoted === undefined || !ownsTarget(quoted)) return Option.none<string>();
     yield* remember(shimPath);
-    yield* fs
-      .writeFileString(shimPath, `@echo off\r\n"${input.targetEntryPath}" %*`)
-      .pipe(
-        Effect.mapError(
-          () => new CliUpdateError({ reason: `Could not rewrite the t3 launcher at ${shimPath}.` }),
-        ),
-      );
+    yield* fs.writeFileString(shimPath, `@echo off\r\n"${input.targetEntryPath}" %*`).pipe(
+      Effect.mapError(
+        () =>
+          new CliUpdateError({
+            reason: `Could not rewrite the ${BRAND.app.cliName} launcher at ${shimPath}.`,
+          }),
+      ),
+    );
     return Option.some(shimPath);
   }
 
@@ -151,7 +163,9 @@ export const repointLauncher = Effect.fn("cli.update.repoint_launcher")(function
     Effect.andThen(fs.rename(tempLink, input.launchedAs)),
     Effect.mapError(
       () =>
-        new CliUpdateError({ reason: `Could not repoint the t3 launcher at ${input.launchedAs}.` }),
+        new CliUpdateError({
+          reason: `Could not repoint the ${BRAND.app.cliName} launcher at ${input.launchedAs}.`,
+        }),
     ),
   );
   return Option.some(input.launchedAs);
@@ -209,7 +223,7 @@ const updateFlags = {
   ...projectLocationFlags,
   channel: Flag.Literals("channel", CLI_RELEASE_CHANNELS).pipe(
     Flag.withDescription(
-      "Release channel to follow. Defaults to the channel this t3 was published on.",
+      `Release channel to follow. Defaults to the channel this ${BRAND.app.cliName} was published on.`,
     ),
     Flag.optional,
   ),
@@ -238,7 +252,7 @@ export const updateCommand = Command.make("update", {
   version: versionArgument,
 }).pipe(
   Command.withDescription(
-    "Download a newer t3 and switch this machine to it, including the background service when one is installed.",
+    `Download a newer ${BRAND.app.cliName} and switch this machine to it, including the background service when one is installed.`,
   ),
   Command.withHandler((flags) =>
     Effect.gen(function* () {
@@ -339,7 +353,7 @@ export const runUpdate = Effect.fn("cli.update.run")(function* (input: {
   }
   if (input.requestedVersion !== undefined && !isExactServiceVersion(input.requestedVersion)) {
     return yield* new CliUpdateError({
-      reason: `'${input.requestedVersion}' is not an exact t3 version.`,
+      reason: `'${input.requestedVersion}' is not an exact ${BRAND.app.cliName} version.`,
     });
   }
   const progress = createUpdateProgress();
@@ -401,8 +415,8 @@ export const runUpdate = Effect.fn("cli.update.run")(function* (input: {
   if (executableCurrent && serviceCurrent) {
     yield* Console.log(
       serviceVersion !== undefined
-        ? `t3 and its background service are already on ${targetVersion} (${targetChannel}).`
-        : `t3 is already on ${targetVersion} (${targetChannel}).`,
+        ? `${BRAND.app.cliName} and its background service are already on ${targetVersion} (${targetChannel}).`
+        : `${BRAND.app.cliName} is already on ${targetVersion} (${targetChannel}).`,
     );
     return;
   }
@@ -491,7 +505,7 @@ export const runUpdate = Effect.fn("cli.update.run")(function* (input: {
     Effect.catchIf(
       (error): error is PinnedRuntimeInstallError =>
         error._tag === "PinnedRuntimeInstallError" &&
-        error.step.startsWith("downloading the t3 release checksums") &&
+        error.step.startsWith(`downloading the ${BRAND.app.cliName} release checksums`) &&
         String(error.cause).includes("404"),
       () =>
         Effect.fail(
@@ -551,7 +565,8 @@ export const runUpdate = Effect.fn("cli.update.run")(function* (input: {
 
   progress.success(`Installed ${BRAND.app.productName} ${targetVersion}`);
   if (Option.isSome(repointed)) {
-    yield* Console.log("  Run t3 to get started.\n");
+    yield* Console.log(`  Run ${BRAND.app.cliName} to get started.
+`);
   } else {
     yield* Console.log(`  Run ${runtime.entryPath}\n`);
   }

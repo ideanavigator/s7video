@@ -21,12 +21,26 @@ const MISMATCH_HINT =
 
 describe("versionSkew", () => {
   it("updates only the proven npm prefix and safely quotes its path", () => {
-    expect(manualServerUpdateCommand("0.0.45", { kind: "npm-global", prefix: "/opt/node" })).toBe(
-      "npm install --global --prefix '/opt/node' t3@0.0.45",
-    );
     expect(
-      manualServerUpdateCommand("0.0.45", { kind: "npm-global", prefix: "/opt/maria's node" }),
-    ).toBe("npm install --global --prefix '/opt/maria'\\''s node' t3@0.0.45");
+      manualServerUpdateCommand(
+        "0.0.45",
+        { kind: "npm-global", prefix: "/opt/node" },
+        "example-cli",
+      ),
+    ).toBe("npm install --global --prefix '/opt/node' example-cli@0.0.45");
+    expect(
+      manualServerUpdateCommand(
+        "0.0.45",
+        { kind: "npm-global", prefix: "/opt/maria's node" },
+        "example-cli",
+      ),
+    ).toBe("npm install --global --prefix '/opt/maria'\\''s node' example-cli@0.0.45");
+  });
+  it("never suggests an npm or npx install when the brand config names no npm package", () => {
+    expect(manualServerUpdateCommand("0.0.45", { kind: "npm-global", prefix: "/opt/node" })).toBe(
+      "s7video update 0.0.45",
+    );
+    expect(manualServerUpdateCommand("0.0.45")).toBe("s7video update 0.0.45");
   });
   beforeEach(() => {
     branding.APP_VERSION = "0.0.34";
