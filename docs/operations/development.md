@@ -2,7 +2,7 @@
 
 ## First checkout
 
-Install `vp` using the [root README](../../README.md#install-vp). It provides the Node version
+Install `vp` and pnpm as described in the [root README](../../README.md#requirements). `vp` provides the Node version
 pinned in `package.json` (Node 26), so no separate Node install is needed. From the repository root:
 
 ```sh

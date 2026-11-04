@@ -1,0 +1,116 @@
+# SPDX-FileCopyrightText: 2026 s7video contributors
+# SPDX-License-Identifier: MIT
+name: Bug report
+description: Something in s7video is broken, crashes or behaves differently than it should.
+title: "[Bug]: "
+labels:
+  - bug
+  - needs-triage
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. One problem per issue, please, and search existing issues first.
+        **Security problems:** do not use this form; follow SECURITY.md instead.
+        **Never attach client footage, other people's media, API keys or sign-in tokens.**
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched existing issues and did not find a duplicate.
+          required: true
+        - label: I am on the latest `main` (or the latest release, once there are releases).
+          required: true
+        - label: I removed API keys, private paths and media that is not mine from everything below.
+          required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      description: Which part of s7video is affected?
+      options:
+        - Desktop app (window, menus, install, updates)
+        - Chat and agent
+        - Projects and media
+        - Editing, timeline or player
+        - Rendering and export
+        - Settings
+        - Build, scripts or developer tooling
+        - Docs
+        - Not sure
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: The shortest steps that make the problem happen.
+      placeholder: |
+        1. Open a project with ...
+        2. Ask the agent to ...
+        3. ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: What happened instead
+    validations:
+      required: true
+
+  - type: dropdown
+    id: impact
+    attributes:
+      label: Impact
+      options:
+        - Blocks my work completely
+        - Major problem or happens often
+        - Minor problem or happens rarely
+        - Cosmetic
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+      placeholder: main @ abc1234
+    validations:
+      required: true
+
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: Mac model and chip, macOS version, and the agent CLI and model if relevant.
+      placeholder: MacBook Air M2, macOS 26.1, Claude Code 2.1 with Sonnet 5.5
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: The relevant lines only. Redact secrets and private paths.
+      render: shell
+
+  - type: upload
+    id: attachments
+    attributes:
+      label: Screenshots or recordings
+      description: Only media you made yourself. Never client footage.
+    validations:
+      required: false
+      accept: ".png,.jpg,.jpeg,.gif,.webp,.mp4,.mov,.webm,.log,.txt,.json"

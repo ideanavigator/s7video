@@ -1,149 +1,87 @@
-# T3 Code
+<!--
+SPDX-FileCopyrightText: 2026 s7video contributors
+SPDX-License-Identifier: MIT
+-->
 
-T3 Code is an "agent harness control surface". It enables control of the agents on your machine with a best-in-class mobile app ([iOS](https://apps.apple.com/us/app/t3-code-remote-claude-more/id6787819824), [Android](https://play.google.com/store/apps/details?id=com.t3tools.t3code)), [web app](https://app.t3.codes) and [Electron-based desktop app](https://t3.codes).
+# s7video
 
-Works with your subscriptions on Claude Code, Codex, Cursor, Grok Build, OpenCode, Google Antigravity, and fx. If they're set up on your computer, T3 Code can control them.
+s7video is an open-source Mac app for editing short videos by chatting with an AI agent. You drop in
+your raw clips, say what you want ("cut the pauses, add captions in my usual style"), and the agent
+proposes an edit that you can review as a diff, play back, accept or undo. Projects stay on your
+computer, and nothing leaves it unless you choose a cloud model, once the Sprint 01 privacy work
+lands. Today's pre-alpha build still sends some data to T3 Code's services; see
+[PRIVACY.md](PRIVACY.md#privacy).
 
-## "Wait, what are you selling me?"
+s7video is a fork of [T3 Code](https://github.com/pingdotgg/t3code), the open-source desktop app for
+coding agents. We keep its chat, threads, checkpoints and agent runtime, and build a video editor
+around them.
 
-Nothing. We built T3 Code because we wanted the best possible development experience with agents. We were inspired by existing solutions like the Codex desktop app, Conductor, Claude Desktop and Cursor Glass, but none met our bar.
+> **Status: pre-alpha.** The editing features are not built yet. Today the app is T3 Code with the
+> s7video name, without the parts we do not need (mobile app, hosted sign-in, code-hosting
+> integrations). There are no releases; build it from source. Expect breaking changes.
 
-We wanted something performant, remote-ready, and truly open. If we ever go the wrong direction, we want you to have everything you need to fork and build the editor that you want.
+_Screenshots will be added here with the first editing build._
 
-## Installation
+## Requirements
 
-> [!WARNING]
-> T3 Code currently supports Codex, Claude, Antigravity, and ACP agents. Install and authenticate at least one provider before use:
->
-> - Codex: install [Codex CLI](https://developers.openai.com/codex/cli) and run `codex login`
-> - Claude: install [Claude Code](https://claude.com/product/claude-code) and run `claude auth login`
-> - Antigravity: enable it in Settings, then use **Install Antigravity** and **Sign in with Google**. No CLI is required.
+- A Mac with Apple Silicon (M1 or later). Intel Macs, Windows and Linux are not supported.
+- [pnpm](https://pnpm.io/) 12.14.0: `npm i -g pnpm@12.14.0`.
+- The [Vite+](https://viteplus.dev/guide/) command-line tool `vp`: `curl -fsSL https://vite.plus | bash`.
+  It provides the Node.js version pinned in `package.json`, so no separate Node install is needed.
+- At least one coding-agent CLI installed and signed in, for example
+  [Claude Code](https://claude.com/product/claude-code) (`claude auth login`) or
+  [Codex CLI](https://developers.openai.com/codex/cli) (`codex login`). Until the editing features
+  land, the agent is what you talk to.
 
-### Command line
-
-```bash
-curl -fsSL https://t3.codes/install.sh | sh
-```
-
-On Windows, in PowerShell:
-
-```powershell
-irm https://t3.codes/install.ps1 | iex
-```
-
-Then run `t3` to start the server and open the local web app. `t3 service install` keeps it running in the background, `t3 update` moves to a newer release, and `t3 --help` has the full reference.
-
-To try it once without installing, run `npx t3@latest` instead.
-
-### Desktop app
-
-Install the latest version of the desktop app from [GitHub Releases](https://github.com/pingdotgg/t3code/releases), or from your favorite package registry:
-
-#### Windows (`winget`)
+## Quick start (development)
 
 ```bash
-winget install T3Tools.T3Code
+git clone https://github.com/ideanavigator/s7video.git
+cd s7video
+vp i                 # install dependencies
+vp run dev:desktop --home-dir ~/.s7video-dev --no-seed
 ```
 
-#### Windows (`scoop`)
+Until S7V-003 gives s7video its own data folder, pass `--home-dir` and `--no-seed`: without them,
+dev state goes into `~/.t3`, the folder an installed T3 Code uses.
 
-```bash
-scoop install extras/t3code
-```
+`vp run dev` (same flags) runs the server and the web UI without Electron. The
+[development runbook](docs/operations/development.md) covers the other commands, tests and local
+desktop builds.
 
-#### macOS (Homebrew)
+## Project status and plans
 
-```bash
-brew install --cask t3-code
-```
+| Phase                  | What                                                                      | State       |
+| ---------------------- | ------------------------------------------------------------------------- | ----------- |
+| Sprint 01: Foundations | Fork, branding, licences, community files, engineering rules              | In progress |
+| Sprint 02: Automation  | CI gates, branch protection, signed releases                              | Planned     |
+| Feature phases         | Editing engine, player and timeline, chat edits, styles, projects, review | Planned     |
 
-#### Debian, Ubuntu (`.deb`)
+How work is planned, and how to propose something, is in [docs/planning.md](docs/planning.md).
+Notable changes are listed in [CHANGELOG.md](CHANGELOG.md).
 
-Download the `.deb` from [GitHub Releases](https://github.com/pingdotgg/t3code/releases), then:
+## Contributing
 
-```bash
-sudo apt install ./T3-Code-*.deb
-```
+Contributions are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) first: every change starts from a
+ticket, commits follow Conventional Commits, and every commit needs a DCO sign-off
+(`git commit -s`; required, and enforced automatically from Sprint 02). Everyone taking part follows the [Code of Conduct](CODE_OF_CONDUCT.md).
 
-#### Arch Linux (AUR)
+- Questions and help: [SUPPORT.md](SUPPORT.md)
+- Security problems: [SECURITY.md](SECURITY.md) (please do not open a public issue)
+- What the app sends off your computer: [PRIVACY.md](PRIVACY.md)
+- Who decides, and the licence commitment: [GOVERNANCE.md](GOVERNANCE.md)
+- Using the name and logo: [TRADEMARK.md](TRADEMARK.md)
+- How this fork differs from T3 Code: [docs/FORK.md](docs/FORK.md)
 
-Stable:
+## Credits
 
-```bash
-yay -S t3code-bin
-```
+s7video is built on [T3 Code](https://github.com/pingdotgg/t3code) by T3 Tools Inc., released under
+the MIT licence. Thank you to everyone who built it. s7video is an independent
+project and is not affiliated with or endorsed by T3 Tools Inc.
 
-Nightly:
+The licences of bundled third-party software are in [third-party-licenses/](third-party-licenses).
 
-```bash
-yay -S t3code-nightly-bin
-```
+## Licence
 
-The AUR packaging is maintained in this repository under [`packaging/aur`](./packaging/aur).
-
-#### Nix (nixpkgs)
-
-```bash
-nix profile add github:NixOS/nixpkgs/nixos-unstable#t3code
-```
-
-The package is maintained in [nixpkgs](https://github.com/NixOS/nixpkgs/tree/nixos-unstable/pkgs/by-name/t3/t3code)
-and includes the desktop app (`t3code-desktop`) and the `t3` command.
-See [Nix installation](./docs/user/install.md#nix-nixpkgs) for NixOS configuration and updates.
-
-## Some notes
-
-We are very very early in this project. Expect bugs.
-
-We are (mostly) not accepting contributions yet. Small fixes may be considered. Big features will not be.
-
-## Documentation
-
-Full docs live in [docs/](./docs). There's no docs site yet.
-
-- [FAQ](./docs/user/faq.md)
-- [Install and first run](./docs/user/install.md)
-- [Permission modes](./docs/user/permission-modes.md)
-- [Keyboard shortcuts](./docs/user/keybindings.md)
-- [Project settings](./docs/user/project-settings.md)
-- [Appearance preferences](./docs/user/appearance.md)
-- [Remote access from a phone or another machine](./docs/user/remote-access.md)
-- [Connect Claude Code, Codex, ChatGPT and other agents over MCP](./docs/user/outside-agents.md)
-- [Keeping app and server in sync](./docs/user/updating.md)
-- [Source control integrations](./docs/user/source-control.md)
-- Multiple accounts: [Codex](./docs/user/providers-codex.md) · [Claude](./docs/user/providers-claude.md)
-- [Run T3 Code as a background service](./docs/user/background-service.md)
-
-Building from source? Start at [docs/internals/overview.md](./docs/internals/overview.md).
-
-## If you REALLY want to contribute still.... read this first
-
-### Install `vp`
-
-T3 Code uses Vite+ so you'll need to install the global `vp` command-line tool.
-
-#### macOS / Linux
-
-```bash
-curl -fsSL https://vite.plus | bash
-```
-
-#### Windows
-
-```bash
-irm https://vite.plus/ps1 | iex
-```
-
-Checkout their getting started guide for more information: https://viteplus.dev/guide/
-
-### Install dependencies
-
-```bash
-vp i
-```
-
-Read [CONTRIBUTING.md](./CONTRIBUTING.md) before reporting a bug or opening a PR.
-
-Have a feature request? Start an [Ideas discussion](https://github.com/pingdotgg/t3code/discussions/categories/ideas).
-
-Need support? Join the [Discord](https://discord.gg/jn4EGJjrvv).
+s7video is released under the [MIT licence](LICENSE), the same licence as T3 Code. The s7video name
+and logo are not covered by the licence; see [TRADEMARK.md](TRADEMARK.md).

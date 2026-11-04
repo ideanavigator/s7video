@@ -1,5 +1,10 @@
+# SPDX-FileCopyrightText: 2026 s7video contributors
+# SPDX-License-Identifier: MIT
 blank_issues_enabled: false
 contact_links:
-  - name: Feature request
-    url: https://github.com/pingdotgg/t3code/discussions/categories/ideas
-    about: Suggest an improvement or new capability in Discussions.
+  - name: Report a security problem
+    url: https://github.com/ideanavigator/s7video/blob/main/SECURITY.md
+    about: Email shashwatusa7@gmail.com privately, never a public issue. SECURITY.md has the details.
+  - name: Get help
+    url: https://github.com/ideanavigator/s7video/blob/main/SUPPORT.md
+    about: Where to ask questions and how to get a development build running.
