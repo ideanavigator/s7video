@@ -63,7 +63,7 @@ Covered by `packages/contracts/src/settings.test.ts` ("ServerSettings from upstr
 | Exports in kept packages that only removed code used                                                                                                                                                                                    | Listed under `ignoreIssues` in `knip.jsonc`. Deleting them would turn every upstream change to those files into a conflict. Prune them only together with upstream. Since 2026-11-03 those files are not checked for new dead exports; S7V-009 replaces this with a per-symbol baseline. |
 | Inert code keyed on removed provider names (`"cursor"`, `"grok"`, `"opencode"`, `"pi"`, `"muse"`, `"fx"`), e.g. provider status caching, model manifest entries, usage provider lists and the Cursor Keychain section of the Usage page | No driver reports these kinds, so the branches never run. Kept on purpose so upstream merges apply cleanly.                                                                                                                                                                              |
 | Mobile-only lint rules in `oxlint-plugin-t3code`                                                                                                                                                                                        | Inert without `apps/mobile`; they carry their own tests.                                                                                                                                                                                                                                 |
-| `@clerk/*` (except the mobile-only `@clerk/expo` catalog entry), `infra/*`, telemetry, `heic-to`                                                                                                                                        | Out of scope here; see below.                                                                                                                                                                                                                                                            |
+| `@clerk/*` (except the mobile-only `@clerk/expo` catalog entry), `infra/*`, telemetry                                                                                                                                                   | Out of scope here; see below.                                                                                                                                                                                                                                                            |
 
 ## Changed later
 
@@ -71,7 +71,7 @@ Covered by `packages/contracts/src/settings.test.ts` ("ServerSettings from upstr
 | ----------------- | ----------------------------------------------------------------------------------------------- |
 | S7V-015           | Done: T3 cloud removed (see below). `packages/tailscale` and `packages/ssh` stay until S7V-018. |
 | S7V-013           | Done: usage data off by default and opt-in (see below). Kept in the code, not removed.          |
-| S7V-014           | `heic-to` (LGPL).                                                                               |
+| S7V-014           | Done: `heic-to` (LGPL) replaced by macOS HEIC decoding (see below).                             |
 | S7V-003           | Done: branding from `s7video.config.ts`, own data folder, no T3 endpoints (see below).          |
 | S7V-004           | Licence notices.                                                                                |
 | S7V-006 / S7V-008 | Done: community files and agent rules (see below).                                              |
@@ -195,6 +195,16 @@ No sign-in screen. No account, Connect, guest link or "publish agent activity" o
 New: `docs/engineering/` (standards), `docs/changelog/` (per-ticket entries), `docs/planning.md`,
 `scripts/planning.ts` (`pnpm tickets`, `ticket:*`, `doc:new`) and `scripts/check-doc-links.ts`
 (`pnpm docs:linkcheck`).
+
+## HEIC decoding (S7V-014)
+
+T3 Code decodes iPhone HEIC photos with `heic-to`, which bundles libheif and libde265 under
+LGPL-3.0-or-later. s7video removes it. The desktop app's `desktop:convert-heic` IPC method decodes
+HEIC with macOS ImageIO (`/usr/bin/sips`), and the web app calls it through `convertHeic` on the
+desktop bridge for attachments (`apps/web/src/lib/imageCompression.ts`) and previews
+(`apps/web/src/components/files/decodeImagePreview.ts`). Electron's `nativeImage` cannot read HEIC.
+In a plain browser, HEIC photos ask to be converted to JPEG first. When an upstream merge touches
+HEIC code, keep `heic-to` out of every `package.json`.
 
 ## Merging upstream
 
