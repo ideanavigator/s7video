@@ -70,7 +70,7 @@ Covered by `packages/contracts/src/settings.test.ts` ("ServerSettings from upstr
 | Ticket            | Scope                                                                                           |
 | ----------------- | ----------------------------------------------------------------------------------------------- |
 | S7V-015           | Done: T3 cloud removed (see below). `packages/tailscale` and `packages/ssh` stay until S7V-018. |
-| S7V-013           | Telemetry: turned off by default (kept in the code, not removed).                               |
+| S7V-013           | Done: usage data off by default and opt-in (see below). Kept in the code, not removed.          |
 | S7V-014           | `heic-to` (LGPL).                                                                               |
 | S7V-003           | Done: branding from `s7video.config.ts`, own data folder, no T3 endpoints (see below).          |
 | S7V-004           | Licence notices.                                                                                |
@@ -126,7 +126,7 @@ Nothing T3 owns is contacted by default. S7V-003 moved every endpoint below into
 
 | Path                                                        | Before                                                    | Now                                                                              |
 | ----------------------------------------------------------- | --------------------------------------------------------- | -------------------------------------------------------------------------------- |
-| `telemetry/AnalyticsService.ts`                             | PostHog at `ingest.t3.codes`                              | `telemetry.host`/`key`, empty: sends nothing. The default switch is S7V-013's.   |
+| `telemetry/AnalyticsService.ts`                             | T3's PostHog ingest, on by default                        | `telemetry.host`/`key`, empty: sends nothing. Off unless opted in (S7V-013).     |
 | `cloud/npmRelease.ts`, polled by clients every 5 minutes    | npm package `t3`                                          | `updates.npmPackage`, empty: no lookup, reports no release.                      |
 | `cloud/pinnedRuntime.ts`, `selfUpdate.ts`, `bootService.ts` | `t3` binaries from `github.com/pingdotgg/t3code/releases` | `updates.githubRepository`, empty: install fails before any download.            |
 | `cloud/servicePreflight.ts`                                 | `curl https://t3.codes/install.sh`                        | `updates.installScriptUrl`, empty: names `urls.repository` instead.              |
@@ -138,6 +138,19 @@ Nothing T3 owns is contacted by default. S7V-003 moved every endpoint below into
 SSH environments, SSH device hosts and the WSL backend are turned off (`REMOTE_ENVIRONMENTS_ENABLED`
 in `@t3tools/shared/remoteEnvironments`). Their scripts still use `~/.t3` on the target, which on
 this Mac or any host with T3 Code would reach T3 Code's data and server. S7V-018 removes them.
+
+## Usage data and diagnostics (S7V-013)
+
+| Path                                                         | Decision                                                                                                                                           |
+| ------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `telemetry/AnalyticsService.ts`                              | Off by default. Records only with a destination, no policy denial, and the `shareUsageData` setting or `S7VIDEO_TELEMETRY_ENABLED=true`.           |
+| Env vars                                                     | `S7VIDEO_TELEMETRY_{ENABLED,HOST,KEY,FLUSH_BATCH_SIZE,MAX_BUFFERED_EVENTS,CHANNEL}`. Upstream `T3CODE_TELEMETRY_*` and `T3CODE_POSTHOG_*` ignored. |
+| Desktop shell forwarding                                     | Forwards `S7VIDEO_TELEMETRY_ENABLED` from the login shell instead of `T3CODE_TELEMETRY_ENABLED`.                                                   |
+| Settings > Privacy (`apps/web`)                              | New page: privacy-policy link, and the sharing switch only when the server reports a destination.                                                  |
+| OpenTelemetry export (`otelEnvironment.ts`, `http.ts` proxy) | Kept: exports only to an endpoint the user sets in Settings or the environment. Unset, nothing leaves the machine.                                 |
+| Web client tracing (`clientTracing.ts`)                      | Kept: posts to the local server, which keeps traces for Diagnostics and forwards only to the user's own OTLP endpoint.                             |
+| `isRelayTracingEnabled` (`otelEnvironment.ts`)               | Removed: relay tracing went with S7V-015 and nothing called it.                                                                                    |
+| `pnpm brand:check`                                           | Also fails on upstream's ingest host or a PostHog project key in any tracked file, tests and allowed paths included.                               |
 
 ## Brand config (S7V-003)
 

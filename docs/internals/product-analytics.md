@@ -1,6 +1,19 @@
 # Product analytics
 
-The server owns analytics delivery, opt-out, and identity for every connected client.
+The server owns analytics delivery, consent, and identity for every connected client.
+
+## Opt-in
+
+Analytics is off by default and stays off unless a user opts in (S7V-013). The server records an
+event only when all of these hold: the build names a destination (`telemetry.host` and
+`telemetry.key` in the brand config, both empty in this repository), no managed policy denies
+`telemetry`, and the user switched on the `shareUsageData` server setting. `S7VIDEO_TELEMETRY_ENABLED`
+overrides the setting either way. `S7VIDEO_TELEMETRY_HOST` and `S7VIDEO_TELEMETRY_KEY` override the
+destination, for testing against your own endpoint. Upstream's `T3CODE_TELEMETRY_ENABLED` and
+`T3CODE_POSTHOG_*` are deliberately not read, so a T3 Code shell profile cannot opt a user in.
+
+The server config tells clients `usageData.available` (destination and policy allow it) and
+`usageData.variable` (the environment decides). Clients hide the switch when it is unavailable.
 Clients do not load the PostHog browser SDK. Client-use events require an
 authenticated connection, so visiting the hosted app without connecting does not
 count as product use.
@@ -132,9 +145,9 @@ repeating the call's outcome and duration, so event counts are not call counts.
 
 ## Delivery
 
-The server sends batches to the ingest endpoint at `ingest.t3.codes`, which archives
-every event and forwards some of them to PostHog. A send can fail after the endpoint
-has stored the batch, so every retry is a copy.
+The server sends batches to the PostHog batch API at the configured destination
+(upstream used its own ingest proxy in front of PostHog). A send can fail after the
+endpoint has stored the batch, so every retry is a copy.
 [Delivery](../../apps/server/src/telemetry/AnalyticsService.ts) gives each event a
 uuid when it is recorded (the endpoint rejects events without one), backs off after
 a failed send, and drops a batch after a few tries. Without these limits, one stuck
@@ -147,6 +160,6 @@ send prompts, authentication material, raw provider payloads, user-assigned devi
 names, or conversation identifiers. Client metadata is best effort; invalid values
 must not reject a connection. PostHog person profiles remain disabled.
 
-Dev-runner servers and the CI archive smoke test turn telemetry off, which also
-stops relay tracing, because each would count as a new install. Set
-`T3CODE_TELEMETRY_ENABLED=true` to test analytics or relay tracing from a dev server.
+Dev-runner servers and the CI archive smoke test set `S7VIDEO_TELEMETRY_ENABLED=false`,
+because each would count as a new install, so the setting has no effect there. Set
+`S7VIDEO_TELEMETRY_ENABLED=true` with a test destination to try analytics from a dev server.

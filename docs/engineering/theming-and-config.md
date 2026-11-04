@@ -45,7 +45,8 @@ adds them.
   timelines and edit diffs follow the theme.
 - Fonts referenced by a theme are bundled with their licence file, or are system fonts.
 - New environment variables use the `S7VIDEO_` prefix. Upstream `T3CODE_*` names (for example
-  `T3CODE_DEV_SEED`, `T3CODE_TELEMETRY_ENABLED`) keep working until the ticket that renames each one.
+  `T3CODE_DEV_SEED`) keep working until the ticket that renames each one. Telemetry variables are
+  renamed (`S7VIDEO_TELEMETRY_*`, S7V-013) and the `T3CODE_TELEMETRY_*` names are ignored.
 - Feature flags are read from config at runtime; no `if (brand === ...)` checks.
 
 ## Checking
