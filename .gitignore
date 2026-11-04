@@ -16,6 +16,7 @@ build/
 release/
 release-mock/
 .t3
+.s7video
 .idea/
 apps/web/.playwright
 apps/web/playwright-report

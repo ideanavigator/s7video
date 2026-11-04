@@ -1,5 +1,6 @@
 import * as NodeOS from "node:os";
 
+import { BRAND } from "@t3tools/shared/brand";
 import {
   AgentSessionScanError,
   ClaudeSettings,
@@ -651,6 +652,8 @@ function isT3ManagedWorktree(
   const normalized = normalizeForWorktreeMatch(candidatePath, caseFold);
   return (
     normalized.startsWith(normalizeForWorktreeMatch(worktreesDir, caseFold)) ||
+    normalized.includes(`/${BRAND.app.homeDir}/worktrees/`) ||
+    // T3 Code's worktrees hold its own sessions; never import them.
     normalized.includes("/.t3/worktrees/")
   );
 }

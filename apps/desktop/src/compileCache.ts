@@ -4,6 +4,9 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import { enablePreparedServerCache } from "../../../scripts/lib/server-compile-cache.ts";
 
+// Injected from the brand config at build time; this file loads first and must not pull in effect.
+declare const __S7VIDEO_APP_ID__: string;
+
 // Linux /tmp is shared; macOS and Windows temp dirs are per user.
 // AppImage mounts change paths each launch, so Node's path-keyed cache would miss and accumulate copies.
 try {
@@ -13,7 +16,7 @@ try {
       process.platform === "linux"
         ? process.env.XDG_CACHE_HOME || NodePath.join(NodeOS.homedir(), ".cache")
         : NodeOS.tmpdir();
-    const directory = NodePath.join(cacheRoot, "t3code", "compile-cache");
+    const directory = NodePath.join(cacheRoot, __S7VIDEO_APP_ID__, "compile-cache");
     const prepared =
       process.env.ELECTRON_RUN_AS_NODE === "1" &&
       enablePreparedServerCache(process.argv[1] ?? "", directory);
