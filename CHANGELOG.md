@@ -27,6 +27,9 @@ from; the per-ticket entries and how this file is compiled are in
 - The app is called s7video and keeps its data in `~/.s7video`; name, theme, links and endpoints come
   from `s7video.config.ts`, so it installs alongside T3 Code without touching its data. SSH,
   device-host and WSL environments are turned off for now. (S7V-003)
+- Usage data is off by default and sent only if you turn it on in the new Settings > Privacy page
+  (or with `S7VIDEO_TELEMETRY_ENABLED=true`). The open-source build has no destination and offers no
+  switch; upstream's `T3CODE_TELEMETRY_*` variables are ignored. (S7V-013)
 
 ### Removed
 
