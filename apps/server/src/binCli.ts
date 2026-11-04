@@ -1,3 +1,4 @@
+import { BRAND } from "@t3tools/shared/brand";
 import { doctorCommand } from "./cli/doctor.ts";
 import { policyCommand } from "./cli/policy.ts";
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
@@ -35,16 +36,16 @@ import { statusCommand, upCommand } from "./cli/up.ts";
 const layerCliRuntime = Layer.mergeAll(NodeServices.layer, NetService.layer);
 
 export const makeCli = () =>
-  Command.make("t3", { ...sharedServerCommandFlags }).pipe(
+  Command.make(BRAND.app.cliName, { ...sharedServerCommandFlags }).pipe(
     Command.withDescription(
-      "Run T3 Code in this terminal and open it in your browser. To use it from your other devices, run `t3 up`.",
+      `Run ${BRAND.app.productName} in this terminal and open it in your browser. To use it from your other devices, run \`${BRAND.app.cliName} up\`.`,
     ),
     Command.withHandler(runDefaultServerCommand),
     Command.withSubcommands([
       Command.make("help").pipe(
         Command.withDescription("Show command help."),
         Command.withHandler(() =>
-          Effect.fail(new CliError.ShowHelp({ commandPath: ["t3"], errors: [] })),
+          Effect.fail(new CliError.ShowHelp({ commandPath: [BRAND.app.cliName], errors: [] })),
         ),
       ),
       acpMcpBridgeCommand,

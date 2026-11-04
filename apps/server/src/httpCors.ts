@@ -1,3 +1,4 @@
+import { brandIdentityFor } from "@t3tools/shared/brand";
 import { ORCHESTRATION_PROTOCOL_HEADER } from "@t3tools/contracts";
 
 export const browserApiCorsAllowedMethods = ["GET", "POST", "OPTIONS"] as const;
@@ -9,4 +10,7 @@ export const browserApiCorsAllowedHeaders = [
   ORCHESTRATION_PROTOCOL_HEADER,
 ] as const;
 
-export const DESKTOP_RENDERER_ORIGINS = ["t3code://app", "t3code-dev://app"] as const;
+export const DESKTOP_RENDERER_ORIGINS = [
+  `${brandIdentityFor(false).protocol}://app`,
+  `${brandIdentityFor(true).protocol}://app`,
+] as const;

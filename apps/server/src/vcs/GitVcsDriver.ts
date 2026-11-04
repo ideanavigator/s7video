@@ -1,3 +1,4 @@
+import { BRAND } from "@t3tools/shared/brand";
 import * as NodeBuffer from "node:buffer";
 
 import * as Context from "effect/Context";
@@ -915,10 +916,10 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       const commitEnv: NodeJS.ProcessEnv = {
         ...process.env,
         GIT_INDEX_FILE: tempIndexPath,
-        GIT_AUTHOR_NAME: "T3 Code",
-        GIT_AUTHOR_EMAIL: "t3code@users.noreply.github.com",
-        GIT_COMMITTER_NAME: "T3 Code",
-        GIT_COMMITTER_EMAIL: "t3code@users.noreply.github.com",
+        GIT_AUTHOR_NAME: BRAND.app.productName,
+        GIT_AUTHOR_EMAIL: `${BRAND.app.id}@users.noreply.github.com`,
+        GIT_COMMITTER_NAME: BRAND.app.productName,
+        GIT_COMMITTER_EMAIL: `${BRAND.app.id}@users.noreply.github.com`,
       };
 
       const cleanupTempIndex = Effect.forEach(

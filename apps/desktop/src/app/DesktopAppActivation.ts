@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Local socket ownership checks need lstat, an atomic rename, and a directory watch at the Node adapter boundary.
+import { BRAND } from "@t3tools/shared/brand";
 import { pipe } from "effect/Function";
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
@@ -162,7 +163,10 @@ export async function startDesktopAppControlServer(input: {
       activeRequestId = parsed.requestId;
       void input.handle(parsed).then(finish, () => {
         finish(
-          invalidResponse(parsed.requestId, "T3 Code could not process the desktop app request."),
+          invalidResponse(
+            parsed.requestId,
+            `${BRAND.app.productName} could not process the desktop app request.`,
+          ),
         );
       });
     });

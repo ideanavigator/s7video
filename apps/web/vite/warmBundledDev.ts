@@ -105,12 +105,12 @@ export function warmBundledDevPlugin(): Plugin {
             if (warmed.length === 0) return;
             const seconds = ((performance.now() - startedAt) / 1000).toFixed(1);
             server.config.logger.info(
-              `[t3code] pre-bundled ${String(warmed.length)} startup chunks in ${seconds}s`,
+              `[web] pre-bundled ${String(warmed.length)} startup chunks in ${seconds}s`,
               { timestamp: true },
             );
           },
           (error: unknown) => {
-            server.config.logger.warn(`[t3code] startup chunk warmup failed: ${String(error)}`, {
+            server.config.logger.warn(`[web] startup chunk warmup failed: ${String(error)}`, {
               timestamp: true,
             });
           },

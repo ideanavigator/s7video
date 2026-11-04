@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off
 // Windows cleanup must outlive this executable to delete its directory; scoped ChildProcess kills children on exit.
+import { BRAND } from "@t3tools/shared/brand";
 import * as NodeChildProcess from "node:child_process";
 
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -216,5 +217,5 @@ const runUninstall = Effect.fn("cli.uninstall.run")(function* (input: {
     }
   }
   yield* Console.log("");
-  yield* Console.log("t3 is uninstalled. Thanks for trying T3 Code.");
+  yield* Console.log(`t3 is uninstalled. Thanks for trying ${BRAND.app.productName}.`);
 });

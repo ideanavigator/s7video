@@ -1,3 +1,4 @@
+import { BRAND } from "@t3tools/shared/brand";
 import type {
   EnvironmentId,
   ServerConfig,
@@ -73,7 +74,7 @@ export function resolveVersionMismatch(
   return {
     clientVersion: normalizedClientVersion,
     serverVersion: normalizedServerVersion,
-    hint: "Version mismatch. Try syncing the client and server to the same T3 Code version.",
+    hint: `Version mismatch. Try syncing the client and server to the same ${BRAND.app.productName} version.`,
   };
 }
 

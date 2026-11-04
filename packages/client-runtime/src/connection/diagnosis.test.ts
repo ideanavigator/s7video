@@ -35,8 +35,8 @@ describe("presentConnectionDiagnosis", () => {
     expect(diagnose(AVAILABLE_CONNECTION_STATE)).toBeNull();
   });
 
-  it("blames T3 Code on the host when it cannot be reached", () => {
-    expect(diagnose(backoff(unreachable))?.headline).toBe("T3 Code on Mac mini did not answer");
+  it("blames s7video on the host when it cannot be reached", () => {
+    expect(diagnose(backoff(unreachable))?.headline).toBe("s7video on Mac mini did not answer");
     expect(results(backoff(unreachable))).toEqual(["device:ok", "server:failed"]);
   });
 
@@ -60,6 +60,6 @@ describe("presentConnectionDiagnosis", () => {
       detail: "Update the host.",
       serverUpdateRequired: true,
     });
-    expect(diagnose(backoff(failure))?.steps).toEqual(["Update T3 Code on Mac mini."]);
+    expect(diagnose(backoff(failure))?.steps).toEqual(["Update s7video on Mac mini."]);
   });
 });

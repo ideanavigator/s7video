@@ -108,8 +108,8 @@ describe("link round trips", () => {
 
   it("maps app scheme and hosted links to in-app paths, and nothing else", () => {
     const hosted = "https://hosted.example.test";
-    expect(promptLinkAppPath("t3code://new?prompt=hi")).toBe("/new?prompt=hi");
-    expect(promptLinkAppPath("t3code-dev://threads/env-1/thread-1")).toBe("/env-1/thread-1");
+    expect(promptLinkAppPath("s7video://new?prompt=hi")).toBe("/new?prompt=hi");
+    expect(promptLinkAppPath("s7video-dev://threads/env-1/thread-1")).toBe("/env-1/thread-1");
     expect(promptLinkAppPath(`${hosted}/env-1/thread-1?prompt=go`, hosted)).toBe(
       "/env-1/thread-1?prompt=go",
     );
@@ -117,6 +117,8 @@ describe("link round trips", () => {
     // With no hosted app configured, T3's hosted app is just another website.
     expect(promptLinkAppPath("https://app.t3.codes/env-1/thread-1?prompt=go")).toBeNull();
     expect(promptLinkAppPath("https://evil.test/new?prompt=hi")).toBeNull();
-    expect(promptLinkAppPath("t3code://app/index.html")).toBeNull();
+    expect(promptLinkAppPath("s7video://app/index.html")).toBeNull();
+    // T3 Code's scheme is not ours.
+    expect(promptLinkAppPath("t3code://new?prompt=hi")).toBeNull();
   });
 });

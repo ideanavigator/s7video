@@ -1,3 +1,4 @@
+import { BRAND } from "./config/brand.ts";
 import { ManagedPolicyDocument } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
@@ -21,7 +22,7 @@ export class ManagedPolicyFileError extends Schema.TaggedError<ManagedPolicyFile
   },
 ) {
   override get message(): string {
-    return `T3 Code cannot use the managed policy at ${this.path}: ${this.reason}. It will not start until an administrator fixes this.`;
+    return `${BRAND.app.productName} cannot use the managed policy at ${this.path}: ${this.reason}. It will not start until an administrator fixes this.`;
   }
 }
 
@@ -29,13 +30,13 @@ export class ManagedPolicyFileError extends Schema.TaggedError<ManagedPolicyFile
 export function managedPolicyPath(platform: NodeJS.Platform): string {
   switch (platform) {
     case "darwin":
-      return "/Library/Application Support/T3Code/policy.json";
+      return `/Library/Application Support/${BRAND.app.id}/policy.json`;
     case "win32":
       // Not ProgramData, where a user can create the folder first and own it; and not
       // %ProgramFiles%, which a user can point somewhere they write.
-      return "C:\\Program Files\\T3Code\\policy.json";
+      return `C:\\Program Files\\${BRAND.app.id}\\policy.json`;
     default:
-      return "/etc/t3code/policy.json";
+      return `/etc/${BRAND.app.id}/policy.json`;
   }
 }
 
@@ -88,9 +89,8 @@ export const readManagedPolicyFile = Effect.fn("readManagedPolicyFile")(function
 });
 
 /** Where a configuration profile's managed preferences land on macOS. */
-export const MACOS_MANAGED_PREFERENCES_PATH =
-  "/Library/Managed Preferences/com.t3tools.t3code.plist";
-const WINDOWS_POLICY_SUBKEY = "SOFTWARE\\Policies\\T3Tools\\T3Code";
+export const MACOS_MANAGED_PREFERENCES_PATH = `/Library/Managed Preferences/${BRAND.app.bundleId}.plist`;
+const WINDOWS_POLICY_SUBKEY = `SOFTWARE\\Policies\\${BRAND.app.id}`;
 /** The registry key Group Policy and Intune write to on Windows; `Policy` holds the JSON. */
 export const WINDOWS_POLICY_KEY = `HKLM\\${WINDOWS_POLICY_SUBKEY}`;
 // An absolute path: an earlier PATH entry could otherwise answer that there is no policy.
@@ -294,7 +294,7 @@ const readPlatformPolicy = Effect.fnUntraced(function* (platform: NodeJS.Platfor
                 cause.code === ERROR_UNSUPPORTED_TYPE
                   ? "its Policy value is not a string (REG_SZ)"
                   : cause.code === undefined
-                    ? "this T3 Code install cannot load its registry reader; reinstall T3 Code"
+                    ? `this ${BRAND.app.productName} install cannot load its registry reader; reinstall ${BRAND.app.productName}`
                     : `the registry cannot be read (${cause.message})`,
               cause,
             }),

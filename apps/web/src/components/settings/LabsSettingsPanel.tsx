@@ -1,3 +1,4 @@
+import { BRAND } from "@t3tools/shared/brand";
 import { Link } from "@tanstack/react-router";
 
 import { Switch } from "../ui/switch";
@@ -118,7 +119,7 @@ function SimlockHostsRow() {
           <Link to="/settings/devices" className="underline underline-offset-2">
             Devices
           </Link>
-          . An alpha that may change or break. T3 Code never installs Simlock.
+          . An alpha that may change or break. {BRAND.app.productName} never installs Simlock.
         </>
       }
       control={
