@@ -7,6 +7,7 @@ import {
   IMAGE_DIMENSIONS_HEADER_BYTES,
   readImageDimensions,
 } from "@t3tools/shared/imageDimensions";
+import { canConvertHeic, convertHeicOnDesktop } from "./desktopHeic";
 
 const MAX_DIMENSION = IMAGE_ATTACHMENT_MAX_EDGE;
 export const MAX_STASH_IMAGE_DATA_URL_CHARS = 1_300_000;
@@ -38,6 +39,10 @@ export type CompressStashImageResult =
 export type CompressImageFileResult =
   | { ok: true; file: File; recompressed: boolean; imageSize?: ImageSize }
   | { ok: false; reason: ImageCompressionFailureReason };
+
+export type PrepareImageForAttachmentResult =
+  | CompressImageFileResult
+  | { ok: false; reason: "unsupported-heic" };
 
 /** Finder and some browsers omit the MIME type when dragging HEIC photos. */
 export function isHeicImageFile(file: Pick<File, "name" | "type">): boolean {
@@ -457,9 +462,12 @@ export async function compressImageToByteLimit(
 export async function prepareImageForAttachment(
   file: File,
   maxBytes: number,
-): Promise<CompressImageFileResult> {
+): Promise<PrepareImageForAttachmentResult> {
   if (!isHeicImageFile(file)) {
     return compressImageToByteLimit(file, maxBytes);
+  }
+  if (!canConvertHeic()) {
+    return { ok: false, reason: "unsupported-heic" };
   }
 
   if (file.size > MAX_COMPRESSIBLE_SOURCE_BYTES) {
@@ -472,8 +480,14 @@ export async function prepareImageForAttachment(
     if (dimensionError) {
       return { ok: false, reason: dimensionError };
     }
-    const { heicTo } = await import("heic-to/csp");
-    converted = await heicTo({ blob: file, type: "image/jpeg", quality: QUALITY_STEPS[0] });
+    const result = await convertHeicOnDesktop(
+      new Uint8Array(await file.arrayBuffer()),
+      "image/jpeg",
+    );
+    if (!result.ok) {
+      return result;
+    }
+    converted = result.blob;
   } catch {
     return { ok: false, reason: "unreadable" };
   }
