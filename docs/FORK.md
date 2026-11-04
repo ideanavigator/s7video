@@ -67,12 +67,13 @@ Covered by `packages/contracts/src/settings.test.ts` ("ServerSettings from upstr
 
 ## Changed later
 
-| Ticket                      | Scope                                                                                           |
-| --------------------------- | ----------------------------------------------------------------------------------------------- |
-| S7V-015                     | Done: T3 cloud removed (see below). `packages/tailscale` and `packages/ssh` stay until S7V-018. |
-| S7V-013                     | Telemetry: turned off by default (kept in the code, not removed).                               |
-| S7V-014                     | `heic-to` (LGPL).                                                                               |
-| S7V-003 / S7V-004 / S7V-006 | Branding, licence notices, README.                                                              |
+| Ticket            | Scope                                                                                           |
+| ----------------- | ----------------------------------------------------------------------------------------------- |
+| S7V-015           | Done: T3 cloud removed (see below). `packages/tailscale` and `packages/ssh` stay until S7V-018. |
+| S7V-013           | Telemetry: turned off by default (kept in the code, not removed).                               |
+| S7V-014           | `heic-to` (LGPL).                                                                               |
+| S7V-003 / S7V-004 | Branding, licence notices.                                                                      |
+| S7V-006 / S7V-008 | Done: community files and agent rules (see below).                                              |
 
 ## Removed in S7V-015
 
@@ -132,6 +133,24 @@ with them:
 ### User-visible effects
 
 No sign-in screen. No account, Connect, guest link or "publish agent activity" options. Saved Connect-only machines disappear; direct and SSH machines stay. Websites in the in-app browser can no longer use passkeys.
+
+## Community files and agent rules (S7V-006, S7V-008)
+
+| Upstream                                                      | s7video                                                                                                                                                                                                                                                                                                                                                                                |
+| ------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `README.md`, `CONTRIBUTING.md` (T3's triage and model policy) | Rewritten for s7video: ticket-first, DCO, Conventional Commits, licence allowlist                                                                                                                                                                                                                                                                                                      |
+| `.github/SECURITY.md` (security@ping.gg)                      | Root `SECURITY.md` with private advisories                                                                                                                                                                                                                                                                                                                                             |
+| `bug_report.yml`, `pull_request_template.md`                  | `bug.yml`, `feature.yml`, `PULL_REQUEST_TEMPLATE.md`; `via-triage.yml` kept, reworded                                                                                                                                                                                                                                                                                                  |
+| `TRIAGE_EXEMPTIONS.td`, `contribution-triage` skill           | Removed: they enforced T3's contribution triage                                                                                                                                                                                                                                                                                                                                        |
+| `VOUCHED.td`                                                  | Kept empty: the preview workflow reads it, and T3's list must not get signed s7video previews                                                                                                                                                                                                                                                                                          |
+| `AGENTS.md`                                                   | Rewritten. Kept: the three ways to hurt yourself, `vp` and dev-server notes, test rules, how the code works, hit every surface, taste (Effect patterns). Dropped: T3's product pillars, mobile and removed providers, relay and tunnel modes, GitCafe, seeding dev data from `~/.t3`. Added: read order, the per-ticket process, review and sign-off, data safety, gates, when to stop |
+| `CLAUDE.md`                                                   | Pointer to `AGENTS.md` only                                                                                                                                                                                                                                                                                                                                                            |
+| `.cursor/rules/cursor-cloud.mdc`                              | Kept for now: S7V-003 edits it, and deleting it here would conflict. Remove it after S7V-003 merges (T3's Cursor Cloud VM notes)                                                                                                                                                                                                                                                       |
+| `test-t3-app` skill                                           | Renamed `test-app` and reworded; its dev commands pass `--no-seed --home-dir "$PWD/.t3"`                                                                                                                                                                                                                                                                                               |
+
+New: `docs/engineering/` (standards), `docs/changelog/` (per-ticket entries), `docs/planning.md`,
+`scripts/planning.ts` (`pnpm tickets`, `ticket:*`, `doc:new`) and `scripts/check-doc-links.ts`
+(`pnpm docs:linkcheck`).
 
 ## Merging upstream
 

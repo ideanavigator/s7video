@@ -60,8 +60,8 @@ git commit -s -m "fix(timeline): S7V-123 captions no longer drift after a trim"
 
 This adds a `Signed-off-by: Your Name <you@example.com>` line that must match the commit author.
 Sign-off is required: maintainers check it by hand now, and it is enforced automatically from
-Sprint 02 (S7V-010). To sign off commits you already made, run
-`git rebase --signoff main` and force-push your branch.
+Sprint 02 (S7V-010). To sign off commits you already made on your own pull request branch, run
+`git rebase --signoff <base branch>` and force-push that branch (never a shared one).
 
 If an AI agent helped, say so with a `Co-Authored-By:` line. You still sign off, and you are
 responsible for the change.
@@ -115,6 +115,7 @@ pnpm lint
 pnpm knip:check
 pnpm typecheck
 vp test run <changed test files>
+pnpm test
 ```
 
 Then fill in the [pull request template](.github/PULL_REQUEST_TEMPLATE.md): the ticket ID, what
@@ -122,6 +123,9 @@ changed, the tests you added and ran with their output, the licence checklist, a
 dark and light themes for UI changes.
 
 ## How review works
+
+The full standards are in [docs/engineering/](docs/engineering/README.md); agents also follow
+[AGENTS.md](AGENTS.md).
 
 - Every pull request is reviewed by someone other than its author. For agent-written work, that is a
   separate reviewer session with fresh context, never the session that wrote the code.

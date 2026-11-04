@@ -1,6 +1,8 @@
-# T3 Code docs
+# s7video docs
 
-## Using T3 Code
+The user guides below come from T3 Code and still use its name in places.
+
+## Using the app
 
 - [Install T3 Code](./user/install.md)
 - [Messages and context](./user/composer.md)
@@ -19,7 +21,6 @@
 - [Usage and limits](./user/usage.md)
 - [Product usage data](./user/telemetry.md)
 - [Remote access](./user/remote-access.md)
-- [Guest links](./user/guest-links.md)
 - [Outside agents (MCP)](./user/outside-agents.md)
 - [Running in the background](./user/background-service.md)
 - [Updating T3 Code](./user/updating.md)
@@ -28,10 +29,11 @@
 
 ---
 
-## Working on T3 Code
+## Working on s7video
 
-Start with the [development runbook](./operations/development.md) and
-[contribution policy](../CONTRIBUTING.md).
+Start with the [development runbook](./operations/development.md), the
+[contribution guide](../CONTRIBUTING.md), the [agent rules](../AGENTS.md) and the
+[engineering standards](./engineering/README.md). How work is planned: [planning.md](./planning.md).
 
 Internal notes preserve architectural decisions, constraints, and implementation traps that the
 source alone does not explain. Most code changes do not need an internal documentation update. Follow the
