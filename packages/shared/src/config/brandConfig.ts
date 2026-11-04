@@ -4,6 +4,13 @@ import * as Schema from "effect/Schema";
 
 import { THEME_COLOR_ROLES } from "../themeColorRoles.ts";
 
+const UPSTREAM_IDENTITY = "is T3 Code's own identity; s7video must not reuse it";
+/** Rejects T3 Code's values, so a config can never collide with an installed T3 Code. */
+const notUpstream = (isUpstream: (value: string) => boolean) =>
+  Schema.makeFilter((value: string) =>
+    isUpstream(value.trim().toLowerCase()) ? UPSTREAM_IDENTITY : true,
+  );
+
 const HexColor = Schema.String.check(
   Schema.isPattern(/^#[0-9a-fA-F]{6}$/, { message: "Expected a #rrggbb colour" }),
 );
@@ -52,28 +59,35 @@ export const BrandConfig = Schema.Struct({
       Schema.isPattern(/^[a-z][a-z0-9-]{1,31}$/, {
         message: "Expected a lower-case id such as s7video",
       }),
+      notUpstream((value) => ["t3", "t3code", "t3-code"].includes(value)),
     ),
     /** Shown in window titles, menus, About and messages. */
-    productName: Schema.NonEmptyString,
+    productName: Schema.NonEmptyString.check(
+      notUpstream((value) => value.startsWith("t3 code") || value === "t3code"),
+    ),
     /** macOS bundle id, Windows AppUserModelID and Linux desktop id. */
     bundleId: Schema.String.check(
       Schema.isPattern(/^[a-z][a-z0-9-]*(?:\.[a-zA-Z][a-zA-Z0-9-]*){2,}$/, {
         message: "Expected a reverse-DNS id such as app.s7video.desktop",
       }),
+      notUpstream((value) => value.startsWith("com.t3tools.")),
     ),
     /** Deep-link scheme. Development builds append `-dev`. */
     protocol: Schema.String.check(
       Schema.isPattern(/^[a-z][a-z0-9+.-]*$/, { message: "Expected a URL scheme such as s7video" }),
+      notUpstream((value) => /^t3(code)?(-dev)?$/.test(value)),
     ),
     /** Data folder under the user's home. Development state goes to `<homeDir>/dev`. */
     homeDir: Schema.String.check(
       Schema.isPattern(/^\.[A-Za-z0-9][A-Za-z0-9._-]*$/, {
         message: "Expected a dot-folder name such as .s7video",
       }),
+      notUpstream((value) => value === ".t3"),
     ),
     /** Name of the command-line tool and the desktop app's CLI shim. */
     cliName: Schema.String.check(
       Schema.isPattern(/^[a-z][a-z0-9-]*$/, { message: "Expected a command name such as s7video" }),
+      notUpstream((value) => ["t3", "t3code"].includes(value)),
     ),
     publisher: Schema.NonEmptyString,
   }),

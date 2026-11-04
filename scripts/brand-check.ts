@@ -23,9 +23,18 @@ const BANNED_TEXT: ReadonlyArray<{ readonly pattern: RegExp; readonly label: str
   { pattern: /T3 Tools/g, label: '"T3 Tools"' },
   { pattern: /t3\.codes/g, label: "t3.codes" },
   { pattern: /pingdotgg\/t3code/g, label: "pingdotgg/t3code" },
-  // Bare `t3code`. Prefixed internal keys (`t3code:`, `t3code.`, `t3code/`, `t3code-`) are storage
-  // keys, trace attributes, lint rule ids and temp prefixes kept for upstream merges, and pass.
+  // Bare `t3code`. Prefixed internal keys (`t3code:`, `t3code.`, `t3code/`) are storage keys, trace
+  // attributes and lint rule ids kept for upstream merges, and pass. `t3code-*` names are caught below.
   { pattern: /(?<![\w./-])t3code(?![\w:/.-])/g, label: '"t3code"' },
+  // T3 Code's data folder and identities: these are what would collide with an installed T3 Code.
+  {
+    pattern: /\$HOME\/\.t3\b|["'`/]\.t3["'`/]|\.join\([^)]*["']\.t3["']/g,
+    label: "T3 Code's ~/.t3 folder",
+  },
+  { pattern: /com\.t3tools/g, label: "com.t3tools ids" },
+  { pattern: /\bT3Code\b/g, label: '"T3Code"' },
+  { pattern: /(?<![\w.-])t3code-[a-z]/g, label: "t3code-* names" },
+  { pattern: /[`"']t3 [a-z]/g, label: "the t3 CLI name" },
 ];
 
 /** T3 Code's identity blues. UI colours come from themes/*.json. */
@@ -53,7 +62,32 @@ const ALLOWED_PATHS: ReadonlyArray<{ readonly pattern: RegExp; readonly reason: 
     pattern: /^packages\/contracts\/src\/t3ProjectFile\.ts$/,
     reason: "upstream t3.json project-file format and its published schema",
   },
-  { pattern: /^apps\/server\/scripts\//, reason: "upstream dev tooling (mock agents, recorders)" },
+  {
+    pattern:
+      /^apps\/server\/scripts\/(acp-mock-agent|dev-replay-agent|record-[\w-]+|fetch-expo-schema)\.ts$/,
+    reason: "upstream mock agents and fixture recorders",
+  },
+  {
+    pattern: /^packages\/shared\/src\/config\/brandConfig\.ts$/,
+    reason: "names T3 Code's identity to reject it",
+  },
+  {
+    pattern: /^(apps\/web\/test|packages\/(provider|source-control)-testing)\//,
+    reason: "test helpers and fixtures",
+  },
+  {
+    pattern: /^apps\/server\/src\/project\/AgentSessionScanner\.ts$/,
+    reason: "skips sessions in T3 Code's worktrees so they are never imported",
+  },
+  {
+    pattern: /^scripts\/seed-issue-21397(\.test)?\.py$/,
+    reason: "refuses T3 Code's folder as its target and source",
+  },
+  {
+    pattern:
+      /^(packages\/contracts\/src\/auth|apps\/server\/src\/peer\/(PeerLinks|PeerMcpClient))\.ts$/,
+    reason: "upstream peer-link protocol ids, shared by both ends of a link",
+  },
   { pattern: /^evals\//, reason: "upstream model evals; fixtures name T3 Code's MCP tools" },
   { pattern: /^pnpm-lock\.yaml$/, reason: "lockfile" },
   { pattern: /^patches\//, reason: "dependency patches" },
@@ -93,8 +127,17 @@ export const PENDING_PATHS: ReadonlyArray<{ readonly pattern: RegExp; readonly o
   { pattern: /^apps\/web\/vercel\.ts$/, owner: "S7V-011 (hosted web deploy)" },
   {
     pattern:
-      /^(native\/|apps\/desktop\/gnome-extension\/|apps\/desktop\/resources\/installer\.nsh)/,
+      /^(native\/|apps\/desktop\/gnome-extension\/|apps\/desktop\/resources\/installer\.nsh|apps\/desktop\/src\/snapShot\/(KdeSnapShot|linuxCaptureSession)\.ts)/,
     owner: "S7V-018 (Linux and Windows capture helpers, installer)",
+  },
+  {
+    pattern:
+      /^(packages\/ssh\/|apps\/desktop\/src\/wsl\/|apps\/server\/src\/device\/(SshDeviceHost|sshDeviceScript)\.ts)/,
+    owner: "S7V-018 (SSH, device-host and WSL: turned off, being removed)",
+  },
+  {
+    pattern: /^(scripts\/install\.(sh|ps1)|scripts\/npm-launcher\/)/,
+    owner: "S7V-011 (CLI installers and npm launcher, unpublished)",
   },
 ];
 
@@ -196,6 +239,16 @@ const CONTRAST_PAIRS: ReadonlyArray<readonly [string, string]> = [
   ["accentForeground", "accent"],
   ["codeForeground", "codeBackground"],
   ["terminalForeground", "terminalBackground"],
+  ["textMuted", "messageSurface"],
+  ["placeholder", "input"],
+  ["placeholder", "surface"],
+  ["updateForeground", "updateSurface"],
+  ["mutedForeground", "muted"],
+  ["secondaryLabel", "surface"],
+  ["secondaryForeground", "secondary"],
+  ["errorForeground", "errorSurface"],
+  ["warningForeground", "warningSurface"],
+  ["accentSurfaceForeground", "accentSurface"],
 ];
 
 export function checkThemeContrast(name: string, theme: BrandTheme): BrandCheckProblem[] {

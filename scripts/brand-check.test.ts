@@ -72,10 +72,31 @@ describe("brand-check", () => {
       'const key = "t3code:themes:v1";',
       'const rule = "t3code/no-low-value-comments";',
       'const attribute = "t3code.release.channel";',
-      'const prefix = "t3code-preview-";',
     ].join("\n");
     expect(findBannedText("x.ts", allowed)).toEqual([]);
     expect(findBannedText("x.ts", 'const scheme = "t3code";')).toHaveLength(1);
+  });
+
+  it.each([
+    ['const home = "$HOME/.t3/runtime";', "~/.t3"],
+    ['const dir = path.join(home, ".t3", "device");', "~/.t3"],
+    ['const id = "com.t3tools.t3code";', "com.t3tools"],
+    ['const key = "SOFTWARE\\\\T3Code";', "T3Code"],
+    ['const prefix = "t3code-cookie-import-";', "t3code-*"],
+    ['const hint = "Run `t3 up` again.";', "t3 CLI"],
+    ["const hint = 't3 service install';", "t3 CLI"],
+  ])("fails on %s (%s)", (source) => {
+    expect(findBannedText("x.ts", source)).not.toEqual([]);
+  });
+
+  it("allows s7video's own folder, ids and CLI", () => {
+    const source = [
+      'const dir = path.join(home, ".s7video");',
+      'const id = "app.s7video.desktop";',
+      "const hint = `${BRAND.app.cliName} up`;",
+      'const branch = "t3/add-search";',
+    ].join("\n");
+    expect(findBannedText("x.ts", source)).toEqual([]);
   });
 
   it("fails on T3 Code's identity colours outside the theme files", () => {

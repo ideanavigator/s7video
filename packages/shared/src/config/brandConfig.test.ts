@@ -51,6 +51,20 @@ describe("brandConfig", () => {
     );
   });
 
+  it.each([
+    ["id", "t3code"],
+    ["productName", "T3 Code"],
+    ["bundleId", "com.t3tools.t3code"],
+    ["protocol", "t3code"],
+    ["homeDir", ".t3"],
+    ["homeDir", ".T3"],
+    ["cliName", "t3"],
+  ])("rejects T3 Code's own app.%s %s", (field, value) => {
+    expect(() => decodeBrandConfig(withApp({ [field]: value }))).toThrow(
+      new RegExp(`T3 Code's own identity[\\s\\S]*\\["app"\\]\\["${field}"\\]`),
+    );
+  });
+
   it("rejects non-https URLs but allows empty optional endpoints", () => {
     expect(() =>
       decodeBrandConfig({ ...defaultConfig, urls: { ...defaultConfig.urls, homepage: "" } }),
