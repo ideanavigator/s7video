@@ -3,8 +3,8 @@
 blank_issues_enabled: false
 contact_links:
   - name: Report a security problem
-    url: https://github.com/ideanavigator/s7video/security/advisories/new
-    about: Report vulnerabilities privately, never in a public issue. See SECURITY.md.
+    url: https://github.com/ideanavigator/s7video/blob/main/SECURITY.md
+    about: Email shashwatusa7@gmail.com privately, never a public issue. SECURITY.md has the details.
   - name: Get help
     url: https://github.com/ideanavigator/s7video/blob/main/SUPPORT.md
     about: Where to ask questions and how to get a development build running.

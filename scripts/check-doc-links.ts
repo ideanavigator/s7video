@@ -48,14 +48,17 @@ export function extractLinks(markdown: string): DocLink[] {
 
 /** GitHub's heading anchor: lower case, punctuation dropped, spaces to hyphens. */
 export function headingSlug(heading: string): string {
-  return heading
-    .trim()
-    .toLowerCase()
-    .replace(/<[^>]+>/g, "")
-    .replace(/[`*_~]/g, "")
-    .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1")
-    .replace(/[^\p{L}\p{N}\s-]/gu, "")
-    .replace(/\s/g, "-");
+  return (
+    heading
+      .trim()
+      .toLowerCase()
+      .replace(/<[^>]+>/g, "")
+      // GitHub keeps underscores in anchors, so `Foo_bar` becomes `foo_bar`.
+      .replace(/[`*~]/g, "")
+      .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1")
+      .replace(/[^\p{L}\p{N}\s_-]/gu, "")
+      .replace(/\s/g, "-")
+  );
 }
 
 export function anchorsOf(markdown: string): Set<string> {
@@ -93,7 +96,13 @@ export function checkFile(root: string, file: string): string[] {
   for (const { line, target } of extractLinks(NodeFS.readFileSync(absolute, "utf8"))) {
     if (isExternal(target)) continue;
     const [rawPath = "", fragment] = target.split("#", 2);
-    const pathPart = decodeURIComponent(rawPath);
+    let pathPart: string;
+    try {
+      pathPart = decodeURIComponent(rawPath);
+    } catch {
+      problems.push(`${line}: ${target} (malformed URL encoding)`);
+      continue;
+    }
     const resolved =
       pathPart === ""
         ? absolute

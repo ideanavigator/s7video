@@ -9,11 +9,11 @@ SPDX-License-Identifier: MIT
 
 Please report security problems privately. Do not open a public issue, pull request or discussion.
 
-1. **Preferred:** open a private report through
-   [GitHub Security Advisories](https://github.com/ideanavigator/s7video/security/advisories/new)
-   (the repository's **Security** tab, then **Report a vulnerability**).
-2. **Fallback:** email [shashwatusa7@gmail.com](mailto:shashwatusa7@gmail.com) with "s7video
-   security" in the subject.
+Email [shashwatusa7@gmail.com](mailto:shashwatusa7@gmail.com) with "s7video security" in the
+subject.
+
+GitHub's private vulnerability reporting (the **Security** tab's **Report a vulnerability** button)
+is coming with S7V-010; it is not switched on yet. Until then, email is the only private channel.
 
 Include what you found, the steps to reproduce it, the version or commit you tested, and the impact
 you expect. Do not include real API keys, client footage or other people's data; describe them or use

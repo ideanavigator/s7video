@@ -8,7 +8,9 @@ SPDX-License-Identifier: MIT
 s7video is an open-source Mac app for editing short videos by chatting with an AI agent. You drop in
 your raw clips, say what you want ("cut the pauses, add captions in my usual style"), and the agent
 proposes an edit that you can review as a diff, play back, accept or undo. Projects stay on your
-computer, and nothing leaves it unless you choose a cloud model.
+computer, and nothing leaves it unless you choose a cloud model, once the Sprint 01 privacy work
+lands. Today's pre-alpha build still sends some data to T3 Code's services; see
+[PRIVACY.md](PRIVACY.md#privacy).
 
 s7video is a fork of [T3 Code](https://github.com/pingdotgg/t3code), the open-source desktop app for
 coding agents. We keep its chat, threads, checkpoints and agent runtime, and build a video editor
@@ -37,10 +39,13 @@ _Screenshots will be added here with the first editing build._
 git clone https://github.com/ideanavigator/s7video.git
 cd s7video
 vp i                 # install dependencies
-pnpm dev:desktop     # run the desktop app in development mode
+vp run dev:desktop --home-dir ~/.s7video-dev --no-seed
 ```
 
-`pnpm dev` runs the server and the web UI without Electron. The
+Until S7V-003 gives s7video its own data folder, pass `--home-dir` and `--no-seed`: without them,
+dev state goes into `~/.t3`, the folder an installed T3 Code uses.
+
+`vp run dev` (same flags) runs the server and the web UI without Electron. The
 [development runbook](docs/operations/development.md) covers the other commands, tests and local
 desktop builds.
 
@@ -59,7 +64,7 @@ Notable changes are listed in [CHANGELOG.md](CHANGELOG.md).
 
 Contributions are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) first: every change starts from a
 ticket, commits follow Conventional Commits, and every commit needs a DCO sign-off
-(`git commit -s`). Everyone taking part follows the [Code of Conduct](CODE_OF_CONDUCT.md).
+(`git commit -s`; required, and enforced automatically from Sprint 02). Everyone taking part follows the [Code of Conduct](CODE_OF_CONDUCT.md).
 
 - Questions and help: [SUPPORT.md](SUPPORT.md)
 - Security problems: [SECURITY.md](SECURITY.md) (please do not open a public issue)

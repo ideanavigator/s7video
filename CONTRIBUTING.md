@@ -17,8 +17,11 @@ You need an Apple Silicon Mac, `vp` and pnpm; see the [README](README.md#require
 git clone https://github.com/ideanavigator/s7video.git
 cd s7video
 vp i
-pnpm dev:desktop
+vp run dev:desktop --home-dir ~/.s7video-dev --no-seed
 ```
+
+The two flags keep dev state out of `~/.t3`, the folder an installed T3 Code uses, until S7V-003
+gives s7video its own data folder.
 
 The [development runbook](docs/operations/development.md) has the other dev commands, where dev data
 is stored, and how to build the desktop app locally.
@@ -56,7 +59,8 @@ git commit -s -m "fix(timeline): S7V-123 captions no longer drift after a trim"
 ```
 
 This adds a `Signed-off-by: Your Name <you@example.com>` line that must match the commit author.
-Pull requests with unsigned commits cannot be merged. To sign off commits you already made, run
+Sign-off is required: maintainers check it by hand now, and it is enforced automatically from
+Sprint 02 (S7V-010). To sign off commits you already made, run
 `git rebase --signoff main` and force-push your branch.
 
 If an AI agent helped, say so with a `Co-Authored-By:` line. You still sign off, and you are

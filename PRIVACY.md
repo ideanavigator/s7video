@@ -9,6 +9,21 @@ s7video is a local-first Mac app. Your projects, footage, transcripts and edits 
 computer. **The s7video project collects nothing by default**: no analytics, no crash reports, no
 account. Anything that leaves your computer goes to a service you chose, for the work you asked for.
 
+> [!WARNING]
+> **Current pre-alpha build (2026-11-04).** Until the Sprint 01 privacy work lands, a build from
+> `main` still behaves like T3 Code in these ways:
+>
+> - **Usage data is on by default** and goes to T3 Code's analytics service (`ingest.t3.codes`).
+>   Removed by S7V-013. To turn it off now, set `T3CODE_TELEMETRY_ENABLED=false` before starting the
+>   app.
+> - **Data is stored in `~/.t3`**, the same folder as an installed T3 Code, not `~/.s7video`.
+>   Fixed by S7V-003.
+> - **Update and model-list checks go to T3 Code's GitHub and npm** (`pingdotgg/t3code`, the `t3`
+>   package). Removed by S7V-003.
+>
+> The rest of this page describes s7video from the end of Sprint 01. This box is removed when
+> S7V-013 lands.
+
 This page covers the app as built from this repository. Builds published by someone else may behave
 differently; check their policy.
 
@@ -46,10 +61,10 @@ requests, and how to export or delete your Cloud data.
 
 These carry no project content:
 
-- **Update checks:** the app and its local server check the project's GitHub releases for new
-  versions.
-- **Model and agent lists:** the app downloads the public list of models and of installable agents
-  (the Agent Client Protocol registry) so it can show what is available.
+- **Update checks:** off until s7video publishes releases; then the app and its local server check
+  the project's GitHub releases for new versions (the update feed is set in the brand config).
+- **Model and agent lists:** the app downloads the public list of installable agents (the Agent
+  Client Protocol registry). The model list download is off until s7video publishes its own.
 - **Agent installs and sign-in:** when you install or sign in to an agent from the app, it talks to
   that agent's maker (for example Google for Antigravity, OpenAI for Codex).
 - **Pages you open:** the built-in browser and previews load the pages you ask for.
