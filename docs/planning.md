@@ -38,13 +38,13 @@ Ticket IDs look like `S7V-012`. Every branch, commit and pull request names the 
 draft → ready → in-progress → in-review → done
 ```
 
-| Status        | Meaning                                                                                        |
-| ------------- | ---------------------------------------------------------------------------------------------- |
-| `draft`       | Being written                                                                                  |
-| `ready`       | Fully specified and in a sprint; anyone can pick it up                                         |
-| `in-progress` | Being built; its confidence checks run before any code                                         |
-| `in-review`   | Branch pushed (with its pull request), acceptance criteria met, waiting for independent review |
-| `done`        | Merged after reviewer sign-off on the head commit, with a changelog entry written              |
+| Status        | Meaning                                                                                                                          |
+| ------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| `draft`       | Being written                                                                                                                    |
+| `ready`       | Fully specified and in a sprint; anyone can pick it up                                                                           |
+| `in-progress` | Being built; its confidence checks run before any code                                                                           |
+| `in-review`   | Branch pushed (with its pull request), acceptance criteria met, waiting for independent review                                   |
+| `done`        | Merged into the sprint branch after reviewer sign-off on the head commit, with a changelog entry and a passed PM Experience Test |
 
 ## Key decisions
 

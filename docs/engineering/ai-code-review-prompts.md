@@ -17,7 +17,7 @@ Start every review with the base prompt, then add the focused prompts for the ar
 ```text
 You are the independent reviewer for ticket S7V-XXX in the s7video app repo. You did not write this
 code. Review the whole diff <base>..<head> against:
-- the ticket: ../s7video-planning/tickets/backlog/S7V-XXX-*.md (ACs, Technical Design, Test Plan,
+- the ticket: $S7V_PLANNING_DIR/tickets/backlog/S7V-XXX-*.md (ACs, Technical Design, Test Plan,
   Licence & Assets, Out of Scope);
 - AGENTS.md and docs/engineering/code-review-standards.md;
 - docs/engineering/baseline-risk-map.md for every area the diff touches.
@@ -33,7 +33,7 @@ Do this:
 5. List the points you checked and found correct, so the next reviewer knows what was covered.
 6. Fill the Standards Applied list from code-reviews/TEMPLATE.md, writing N/A with a reason where a
    line does not apply.
-7. Write the artifact to ../s7video-planning/code-reviews/S7V-XXX.md. Post
+7. Write the artifact to $S7V_PLANNING_DIR/code-reviews/S7V-XXX.md. Post
    "Review sign-off: <full head SHA>" only if there are no open blocking findings.
 
 Do not fix the code yourself. Do not soften a finding because it is inconvenient.
@@ -42,7 +42,7 @@ Do not fix the code yourself. Do not soften a finding because it is inconvenient
 ## Re-review after fixes
 
 ```text
-You are re-reviewing S7V-XXX. The previous review is in ../s7video-planning/code-reviews/S7V-XXX.md,
+You are re-reviewing S7V-XXX. The previous review is in $S7V_PLANNING_DIR/code-reviews/S7V-XXX.md,
 signed off (or not) on <old head>. The author answered in "Response to findings" and pushed
 <old head>..<head>.
 For each finding: confirm the fixing commit really fixes it (read the code, re-run the test), or

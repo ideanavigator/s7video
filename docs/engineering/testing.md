@@ -47,7 +47,7 @@ legitimately changes, the PR regenerates it, says why, and attaches before and a
 
 - Only clips we shot ourselves or CC0 clips, each listed with its source and licence in the fixture
   folder's `SOURCES.md`.
-- **Never client footage or audio** (KigaruTalks, Charger, Spicy Food or any other client), CapCut
+- **Never client footage or audio** (from any client), CapCut
   library sounds or effects, or anyone else's media, even for a quick local test that "won't be
   committed".
 - Keep fixtures small: a few seconds, low resolution unless the test is about resolution.
@@ -58,7 +58,7 @@ legitimately changes, the PR regenerates it, says why, and attaches before and a
 
 Real agent turns cost money. Use the free `Replay (dev)` provider that `vp run dev` registers to stream
 recorded turns through the pipeline and UI; see the
-[test-t3-app skill](../../.agents/skills/test-t3-app/SKILL.md). Use a real provider only when the
+[test-app skill](../../.agents/skills/test-app/SKILL.md). Use a real provider only when the
 change depends on its behaviour, with its cheapest model.
 
 ## Running tests locally
@@ -72,8 +72,9 @@ pnpm lint
 pnpm knip:check
 pnpm typecheck
 vp test run <changed test files>
+pnpm test
 ```
 
-`pnpm test` runs every package's suite and is slow; run it when a ticket's ACs ask for it. Failures
+`pnpm test` runs every package's suite. It is slow, and it is required before every PR. Failures
 that also happen on the base commit are recorded in the ticket with the base SHA, not ignored, and
 the developer decides whether they block ([AGENTS.md](../../AGENTS.md#when-to-stop-and-ask)).

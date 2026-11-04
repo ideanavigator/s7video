@@ -31,6 +31,7 @@ change touches media), and the commands you ran with their results. State what y
 - [ ] `pnpm knip:check`
 - [ ] `pnpm typecheck`
 - [ ] Focused tests: `vp test run <files>`
+- [ ] `pnpm test` (list failures that also fail on the base commit, with its SHA)
 
 ## Screenshots
 

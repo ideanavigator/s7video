@@ -47,7 +47,7 @@ the app is T3 Code with the s7video name and without its mobile, cloud and code-
 | 1. Branch        | From the current sprint branch (`sprint/S7V-XXX-slug`), not `main`: `feat/`, `fix/`, `docs/`, `chore/` or `spike/` + `S7V-XXX-slug`.                                                                                                                                                                                                       |
 | 2. Status        | Set the ticket to `in-progress` in the planning repo and run its confidence checks.                                                                                                                                                                                                                                                        |
 | 3. Build         | Code and every test tier the ticket lists ([testing.md](docs/engineering/testing.md)). Spikes never merge their code.                                                                                                                                                                                                                      |
-| 4. Gates         | Run the [local gates](#run-the-gates-locally) and the ticket's Verification Commands. Paste the output in the PR.                                                                                                                                                                                                                          |
+| 4. Gates         | Run the [local gates](#run-the-gates-locally), including `pnpm test`, and the ticket's Verification Commands. Paste the output in the PR.                                                                                                                                                                                                  |
 | 5. Changelog     | Write `docs/changelog/entries/S7V-XXX.md` and the `CHANGELOG.md` bullet ([docs/changelog](docs/changelog/README.md)).                                                                                                                                                                                                                      |
 | 6. Commit        | [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/) with the ticket ID: `fix(timeline): S7V-123 captions no longer drift after a trim`. Always `git commit -s` (DCO). End with the attribution lines the session gives you, for example `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`.                      |
 | 7. Planning repo | Once the branch is pushed for review (with its PR, when one is opened), tick the ACs you met, set `in-review`, add a Results section (branch, SHAs, gate output, ACs open with reasons), keep `tickets/test-map.json` in sync, run `pnpm ticket:validate -- S7V-XXX --strict`, commit there with the ticket ID, `git pull --rebase`, push. |
@@ -55,14 +55,16 @@ the app is T3 Code with the s7video name and without its mobile, cloud and code-
 | 9. Review        | A **separate reviewer agent with fresh context** reviews the whole diff ([code-review-standards.md](docs/engineering/code-review-standards.md), [prompts](docs/engineering/ai-code-review-prompts.md)). The author session never reviews itself.                                                                                           |
 | 10. Fix          | Answer every `[blocking]` and `[non-blocking]` finding with a fixing commit or a written reason. Critical and high findings always block.                                                                                                                                                                                                  |
 | 11. Sign-off     | Only the reviewer posts `Review sign-off: <full head SHA>` and saves `code-reviews/S7V-XXX.md` in the planning repo. A new commit needs a new sign-off.                                                                                                                                                                                    |
-| 12. Merge        | Run the gates on the signed-off head, post the output, then `gh pr merge <n> --squash --match-head-commit <SHA>`. `pnpm ticket:finalize -- S7V-XXX --skip-verify` must pass, then the ticket goes to `done`.                                                                                                                               |
+| 12. Merge        | Run the gates on the signed-off head, post the output, then `gh pr merge <n> --squash --match-head-commit <SHA>`. `pnpm ticket:finalize -- S7V-XXX --skip-verify` must pass, then the ticket goes to `done` once its PM Experience Test has passed.                                                                                        |
 
-Never mark a ticket `done` without the reviewer's sign-off on the head SHA and a changelog entry.
+`in-review` means the branch is pushed for review (with its PR, when the sprint prompt asks for one).
+`done` means merged into the sprint branch with the reviewer's sign-off on the head SHA, a changelog
+entry and a passed PM Experience Test. Never mark a ticket `done` without all three.
 Never merge a sprint branch into `main` without the developer's approval.
 
 ## Never
 
-- **Client footage or audio** (KigaruTalks, Charger, Spicy Food or any other client), CapCut library
+- **Client footage or audio** (from any client, whoever they are), CapCut library
   sounds or effects, or anyone else's media anywhere in this repo: code, tests, fixtures, screenshots,
   logs, evidence or PR attachments. Test clips are ones we shot or CC0.
 - **Secrets**: API keys, tokens, pairing URLs, `.env` values. Not in commits, logs, screenshots or
@@ -99,15 +101,23 @@ Never merge a sprint branch into `main` without the developer's approval.
 - `vp i` installs. Worktrees get this from the `t3.json` setup script; if module resolution looks
   broken, it probably did not run. While `.t3/setup-running` names a live PID, wait for it; it ends
   with `.t3/setup-done` or `.t3/setup-failed`. With no marker at all, run `vp i` yourself.
-- `vp run dev` starts the server and web UI; `vp run dev:desktop` starts the Electron app. In a
-  worktree, state lives in the worktree's gitignored `.t3` folder, which outranks an ambient
-  `T3CODE_HOME` so you cannot land on shared state. Read the real ports from the `[dev-runner]` line.
-- **Start dev with `--no-seed` (or `T3CODE_DEV_SEED=0`).** Upstream seeds an empty worktree database
-  from a read-only snapshot of `~/.t3`, and `vp run migrate-dev-db` rebuilds it from there. Both read
-  T3 Code's data, so do not use them until S7V-003 points them at s7video's own folder. Build test
-  data through the app or the replay provider instead.
+- **Never touch `~/.t3`.** Not to read test data, not to write dev state, not to clean up.
+- **The only safe dev commands** (until S7V-003 gives s7video its own data folder), run from the repo
+  root of your checkout or worktree:
+
+  ```bash
+  vp run dev --no-seed --home-dir "$PWD/.t3"           # server and web UI
+  vp run dev:desktop --no-seed --home-dir "$PWD/.t3"   # Electron app
+  ```
+
+  `--home-dir "$PWD/.t3"` keeps state in this checkout's gitignored `.t3` folder. Without it, a main
+  checkout writes to `~/.t3/dev`, inside T3 Code's folder. `--no-seed` stops upstream from copying
+  `~/.t3/userdata` into the new database. Never run `vp run migrate-dev-db`: it also reads `~/.t3`.
+  Add other flags (`--share`, `--browser`) after these. Build test data through the app or the
+  replay provider. Read the real ports from the `[dev-runner]` line.
+
 - Real agent turns cost money. Use the free `Replay (dev)` provider that `vp run dev` registers; the
-  [test-t3-app skill](.agents/skills/test-t3-app/SKILL.md) shows how. Use a real provider only when
+  [test-app skill](.agents/skills/test-app/SKILL.md) shows how. Use a real provider only when
   the change depends on it, with its cheapest model.
 - Stop what you started, by the PID you tracked. Need a second checkout? `git worktree add` it next to
   this one, not in `/tmp`, and remove it when done.
@@ -117,22 +127,22 @@ Never merge a sprint branch into `main` without the developer's approval.
 There is no CI until Sprint 02 (S7V-009). Every gate runs by hand, by the author before the PR and by
 the reviewer on the head commit.
 
-| Gate                          | Command                                                                             |
-| ----------------------------- | ----------------------------------------------------------------------------------- |
-| Format                        | `pnpm fmt:check` (fix with `pnpm fmt`)                                              |
-| Lint                          | `pnpm lint`                                                                         |
-| Dead code and dependencies    | `pnpm knip:check`                                                                   |
-| Types                         | `pnpm typecheck` (cached per package; never `npx tsc`)                              |
-| Focused tests                 | `vp test run <files>`, with `-t "<name>"` for one case                              |
-| Fast checks for changed files | `vp run check:changed`                                                              |
-| Full test suite               | `pnpm test` (slow; when the ticket asks for it)                                     |
-| Markdown links                | `pnpm docs:linkcheck`                                                               |
-| Licence notices               | `pnpm licenses:sync`; `pnpm licenses:check` and `reuse lint` once S7V-004 adds them |
-| Brand values                  | `pnpm brand:check` once S7V-003 adds it                                             |
-| Ticket structure              | `pnpm ticket:validate -- S7V-XXX --strict`                                          |
-| Ticket behaviour              | `pnpm ticket:verify -- S7V-XXX` (runs the test map)                                 |
-| Commit hygiene                | `pnpm ticket:finalize -- S7V-XXX --skip-verify`                                     |
-| Ticket board                  | `pnpm tickets`                                                                      |
+| Gate                          | Command                                                                                                                                 |
+| ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| Format                        | `pnpm fmt:check` (fix with `pnpm fmt`)                                                                                                  |
+| Lint                          | `pnpm lint`                                                                                                                             |
+| Dead code and dependencies    | `pnpm knip:check`                                                                                                                       |
+| Types                         | `pnpm typecheck` (cached per package; never `npx tsc`)                                                                                  |
+| Focused tests                 | `vp test run <files>`, with `-t "<name>"` for one case                                                                                  |
+| Fast checks for changed files | `vp run check:changed`                                                                                                                  |
+| Full test suite               | `pnpm test`, required before every PR; failures that also fail on the base commit are listed in the ticket with the base SHA and output |
+| Markdown links                | `pnpm docs:linkcheck`                                                                                                                   |
+| Licence notices               | `pnpm licenses:sync`; `pnpm licenses:check` and `reuse lint` once S7V-004 adds them                                                     |
+| Brand values                  | `pnpm brand:check` once S7V-003 adds it                                                                                                 |
+| Ticket structure              | `pnpm ticket:validate -- S7V-XXX --strict`                                                                                              |
+| Ticket behaviour              | `pnpm ticket:verify -- S7V-XXX` (runs the test map)                                                                                     |
+| Commit hygiene                | `pnpm ticket:finalize -- S7V-XXX --skip-verify`                                                                                         |
+| Ticket board                  | `pnpm tickets`                                                                                                                          |
 
 The pre-commit hook runs `vp staged` (format, lint, knip on staged files). Run `node -e` snippets
 from `apps/server` or the owning package: `effect` does not resolve from the repo root.

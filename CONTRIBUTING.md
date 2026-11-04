@@ -115,6 +115,7 @@ pnpm lint
 pnpm knip:check
 pnpm typecheck
 vp test run <changed test files>
+pnpm test
 ```
 
 Then fill in the [pull request template](.github/PULL_REQUEST_TEMPLATE.md): the ticket ID, what
