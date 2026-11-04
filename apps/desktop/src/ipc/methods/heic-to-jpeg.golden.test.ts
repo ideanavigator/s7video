@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off -- The comparator decodes reference images with sips synchronously, outside the code under test.
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { readImageDimensions } from "@t3tools/shared/imageDimensions";
 import * as Effect from "effect/Effect";

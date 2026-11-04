@@ -1,5 +1,7 @@
+// @effect-diagnostics nodeBuiltinImport:off -- Reads committed fixture images synchronously.
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
+import type { DesktopHeicConversionResult } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { readImageDimensions } from "@t3tools/shared/imageDimensions";
 import * as Effect from "effect/Effect";
@@ -40,7 +42,10 @@ describe.runIf(HostProcess.Platform.defaultValue() === "darwin")("convertHeic", 
   it.live("converts a rotated HEIC to an upright JPEG or PNG", () =>
     Effect.gen(function* () {
       for (const format of ["image/jpeg", "image/png"] as const) {
-        const result = yield* convert({ data: fixture("portrait.heic"), format });
+        const result = (yield* convert({
+          data: fixture("portrait.heic"),
+          format,
+        })) as DesktopHeicConversionResult;
         assert(result.ok, `expected ${format} to convert`);
         assert.strictEqual(result.mimeType, format);
         // The stored size is the shown size, so no orientation tag is left to apply.
