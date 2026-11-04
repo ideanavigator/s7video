@@ -49,6 +49,22 @@ describe("brand-check", () => {
     expect(scanFiles(fixtureTree(files), Object.keys(files)).problems).toEqual([]);
   });
 
+  it("fails on upstream's analytics host or a PostHog key anywhere, allowed paths included", () => {
+    // Built at run time so this file holds neither value itself.
+    const host = ["ingest", "t3", "codes"].join(".");
+    const key = `${"phc"}_${"A1b2".repeat(8)}`;
+    const files = {
+      "docs/FORK.md": `Upstream sent analytics to ${host}.\n`,
+      "apps/server/src/telemetry/Example.test.ts": `const key = "${key}";\n`,
+      "docs/user/telemetry.md": `PostHog project keys start with ${"phc"}_.\n`,
+    };
+    const { problems } = scanFiles(fixtureTree(files), Object.keys(files));
+    expect(problems.map(({ file, line }) => `${file}:${line}`)).toEqual([
+      "docs/FORK.md:1",
+      "apps/server/src/telemetry/Example.test.ts:1",
+    ]);
+  });
+
   it("reports pending files by owner instead of failing", () => {
     const files = { "docs/user/install.md": "Install T3 Code.\n" };
     const { problems, pending } = scanFiles(fixtureTree(files), Object.keys(files));
