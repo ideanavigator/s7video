@@ -72,14 +72,16 @@ Covered by `packages/contracts/src/settings.test.ts` ("ServerSettings from upstr
 | S7V-015           | Done: T3 cloud removed (see below). `packages/tailscale` and `packages/ssh` stay until S7V-018. |
 | S7V-013           | Telemetry: turned off by default (kept in the code, not removed).                               |
 | S7V-014           | `heic-to` (LGPL).                                                                               |
-| S7V-003 / S7V-004 | Branding, licence notices.                                                                      |
+| S7V-003           | Done: branding from `s7video.config.ts`, own data folder, no T3 endpoints (see below).          |
+| S7V-004           | Licence notices.                                                                                |
 | S7V-006 / S7V-008 | Done: community files and agent rules (see below).                                              |
 
 ## Removed in S7V-015
 
 Clerk sign-in, T3 Connect, the managed relay and tunnel, DPoP tokens, guest share links, `t3 connect`,
-hosted-app pairing links, `infra/relay` and `infra/task-cache` are gone. Some kept code still contacts
-T3's servers; see [Still contacts T3](#still-contacts-t3).
+hosted-app pairing links, `infra/relay` and `infra/task-cache` are gone. The kept code that still
+contacted T3's servers now reads its endpoints from the brand config; see
+[Still contacts T3](#still-contacts-t3).
 
 | Area             | Removed                                                                                                                                                                                                                                                                             |
 | ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -92,43 +94,70 @@ T3's servers; see [Still contacts T3](#still-contacts-t3).
 
 ### Kept, with reasons
 
-| Item                                                                                                                                                  | Why                                                                                                                                                    |
-| ----------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `apps/server/src/cloud/{bootService,pinnedRuntime,serviceProtocol,serviceLauncherClient,serviceProtection,servicePreflight,selfUpdate,npmRelease}.ts` | Local boot service, pinned runtime and self-update. None import cloud code, but they still fetch T3's releases (below). The folder name is historical. |
-| `DesktopClerk.ts` → `DesktopLaunchLinks.ts`                                                                                                           | Deep links, single-instance lock, early user-data path and ChatGPT sign-in handoff lived in the same file.                                             |
-| Auth scopes `relay:*`, session method `dpop-access-token`, token type `DPoP` in contracts                                                             | They are in stored sessions. Old proof-bound sessions are now rejected.                                                                                |
-| Guest-share orchestration events, decider and projection; scheduled-task relay delivery fields; migration 058                                         | They are in the persisted event log and database. Inert.                                                                                               |
-| Machine kind `"cloud"`                                                                                                                                | Means a cloud VM, not T3's cloud.                                                                                                                      |
-| `cloud-connect` pairing subject, `ScheduledTaskWebhookOrigin.relayHookBaseUrl`, `DESKTOP_UPDATE_RESTART_MARKER_FILE`                                  | Inert: nothing issues or reads them. Revoking old `cloud-connect` sessions would write to T3 Code's session store.                                     |
-| Pending guest messages in old threads                                                                                                                 | Nothing can dismiss them now, so such a thread stays waiting. Only possible with T3 Code's data (see Old data).                                        |
+| Item                                                                                                                                                  | Why                                                                                                                                                                  |
+| ----------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `apps/server/src/cloud/{bootService,pinnedRuntime,serviceProtocol,serviceLauncherClient,serviceProtection,servicePreflight,selfUpdate,npmRelease}.ts` | Local boot service, pinned runtime and self-update. None import cloud code; their release source comes from the brand config (below). The folder name is historical. |
+| `DesktopClerk.ts` → `DesktopLaunchLinks.ts`                                                                                                           | Deep links, single-instance lock, early user-data path and ChatGPT sign-in handoff lived in the same file.                                                           |
+| Auth scopes `relay:*`, session method `dpop-access-token`, token type `DPoP` in contracts                                                             | They are in stored sessions. Old proof-bound sessions are now rejected.                                                                                              |
+| Guest-share orchestration events, decider and projection; scheduled-task relay delivery fields; migration 058                                         | They are in the persisted event log and database. Inert.                                                                                                             |
+| Machine kind `"cloud"`                                                                                                                                | Means a cloud VM, not T3's cloud.                                                                                                                                    |
+| `cloud-connect` pairing subject, `ScheduledTaskWebhookOrigin.relayHookBaseUrl`, `DESKTOP_UPDATE_RESTART_MARKER_FILE`                                  | Inert: nothing issues or reads them. Revoking old `cloud-connect` sessions would write to T3 Code's session store.                                                   |
+| Pending guest messages in old threads                                                                                                                 | Nothing can dismiss them now, so such a thread stays waiting. Only possible with T3 Code's data (see Old data).                                                      |
 
 ### Old data
 
-Until S7V-003 gives s7video its own data folder, it shares `~/.t3/userdata`, the Electron profile and
-the app id with an installed T3 Code. s7video therefore never deletes or rewrites T3 Code's data:
+Since S7V-003 s7video has its own data folder (`~/.s7video`, dev `~/.s7video/dev`), Electron profile
+(`s7video`, `s7video-dev`), app id, URL scheme, CLI shim, boot-service label and socket folder. It
+never reads or writes T3 Code's `~/.t3`, profiles or browser storage, so the shared-catalog effect
+S7V-015 recorded is gone. The read-side tolerance below stays for upstream merges and costs nothing:
 
 - Old catalogs drop T3 Connect routes, learned Connect profiles, their credentials and
-  `remoteDpopTokens` in memory only. The file is not rewritten on load, and every write keeps an empty
-  `remoteDpopTokens` list, which upstream's schema requires.
+  `remoteDpopTokens` in memory only, and every write keeps an empty `remoteDpopTokens` list.
 - Old Clerk token files, the `t3code:cloud-auth` IndexedDB, `__clerk*` keys and the Connect opt-out flag
-  are left alone and never read.
+  are never read.
 - Old cloud secrets in the secret store are never read. A test scans the server source for every
   retired secret name and prefix.
 - `guestSharingEnabled` in old settings decodes and is dropped.
 
 ### Still contacts T3
 
-These kept paths still reach T3's servers. They are not T3's cloud product, but s7video must not ship
-with them:
+Nothing T3 owns is contacted by default. S7V-003 moved every endpoint below into
+`s7video.config.ts`, where an empty value turns it off:
 
-| Path                                                        | Contacts                                                  | Owner   |
-| ----------------------------------------------------------- | --------------------------------------------------------- | ------- |
-| `telemetry/AnalyticsService.ts` (on by default)             | PostHog at `ingest.t3.codes`                              | S7V-013 |
-| `cloud/npmRelease.ts`, polled by clients every 5 minutes    | npm package `t3`                                          | S7V-003 |
-| `cloud/pinnedRuntime.ts`, `selfUpdate.ts`, `bootService.ts` | `t3` binaries from `github.com/pingdotgg/t3code/releases` | S7V-003 |
-| `cloud/servicePreflight.ts`                                 | tells users to run `curl https://t3.codes/install.sh`     | S7V-003 |
-| `cli/update.ts`                                             | `api.github.com/repos/pingdotgg/t3code`                   | S7V-003 |
-| `provider/ModelManifest.ts` (hourly)                        | `raw.githubusercontent.com/pingdotgg/t3code`              | S7V-003 |
+| Path                                                        | Before                                                    | Now                                                                              |
+| ----------------------------------------------------------- | --------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| `telemetry/AnalyticsService.ts`                             | PostHog at `ingest.t3.codes`                              | `telemetry.host`/`key`, empty: sends nothing. The default switch is S7V-013's.   |
+| `cloud/npmRelease.ts`, polled by clients every 5 minutes    | npm package `t3`                                          | `updates.npmPackage`, empty: no lookup, reports no release.                      |
+| `cloud/pinnedRuntime.ts`, `selfUpdate.ts`, `bootService.ts` | `t3` binaries from `github.com/pingdotgg/t3code/releases` | `updates.githubRepository`, empty: install fails before any download.            |
+| `cloud/servicePreflight.ts`                                 | `curl https://t3.codes/install.sh`                        | `updates.installScriptUrl`, empty: names `urls.repository` instead.              |
+| `cli/update.ts`                                             | `api.github.com/repos/pingdotgg/t3code`                   | `updates.githubRepository`, empty: fails with "has no release feed".             |
+| `provider/ModelManifest.ts` (hourly)                        | `raw.githubusercontent.com/pingdotgg/t3code`              | `updates.modelManifestUrl`, empty: bundled manifest only.                        |
+| Desktop auto-update feed (`build-desktop-artifact.ts`)      | CI's `GITHUB_REPOSITORY`                                  | `updates.githubRepository` (or `T3CODE_DESKTOP_UPDATE_REPOSITORY`), empty: none. |
+| Triage, About, boot error, star prompt, release links       | `pingdotgg/t3code`, `t3.codes`                            | `urls.*` (`ideanavigator/s7video`).                                              |
+
+The ssh remote runner downloads the CLI from the same release source; with none configured the remote
+install fails instead of fetching T3's (S7V-018 owns ssh).
+
+## Brand config (S7V-003)
+
+- `s7video.config.ts` is the one place for name, ids, bundle id, URL scheme, data folder, CLI name,
+  URLs, update endpoints, telemetry target, icon folder, theme files (`themes/*.json`) and credits.
+  `packages/shared/src/config/` holds the schema (`brandConfig.ts`) and the active config (`brand.ts`).
+- `S7VIDEO_CONFIG=<path>` selects another file at build time; `scripts/lib/brand-config.ts` points the
+  bundlers at it and fails the build on an invalid config. Plain-Node runs (`pnpm dev:server`,
+  scripts) use the default unless they load the config themselves. Example:
+  `configs/example-whitelabel.config.ts`.
+- `pnpm brand:check` fails on hard-coded `T3 Code`, `T3 Tools`, `t3.codes`, `pingdotgg/t3code`, a bare
+  `t3code`, T3's accent colours, missing icons, empty URLs, unlicensed fonts and theme text below
+  WCAG AA. Comments are not checked. Allowed and pending paths, each with a reason or owner, are listed
+  in `scripts/brand-check.ts`.
+- Kept on purpose for upstream merges: package names `@t3tools/*`, the server package `t3`, env vars
+  other than `S7VIDEO_HOME`/`S7VIDEO_CONFIG`, `t3code:`/`t3code.` storage keys and trace attributes,
+  `t3code/*` lint rule ids, the `t3.json` project file, the `"t3code"` message attribution in the event
+  log, and recognisers for upstream `t3code/` branch and MCP tool names.
+- Still T3's: the icon files in `assets/` (routed through `icons.directory`; replace with s7video art),
+  the CLI's release-archive and npm names (`t3-<version>-<platform>`, `t3@<version>` for npm), and
+  the GNOME extension's caller names, which are static and must be edited for a white-label build.
 
 ### User-visible effects
 
