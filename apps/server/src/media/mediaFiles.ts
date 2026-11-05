@@ -107,27 +107,46 @@ export const streamCopy = (source: string, target: string, onProgress: (value: n
     });
   });
 
+/** Hard links are not supported here (exFAT, some network volumes): claim the name instead. */
+const NO_HARD_LINKS = new Set(["ENOTSUP", "EPERM", "ENOSYS", "EXDEV", "EOPNOTSUPP"]);
+
 /**
- * Gives `partial` its final name in `folder` without ever replacing a file: a hard link is an
- * exclusive create, so a taken name (a kept copy of a removed clip, a concurrent import of the same
- * name) moves on to `stem-2`, `stem-3`… Returns the name used; `partial` is gone afterwards.
+ * Names `partial` in `folder` without replacing an existing file; a taken name moves on to
+ * `stem-2`. A hard link is the exclusive create; without hard links, an exclusive open claims the
+ * name and `partial` is renamed onto that empty claim. Returns the name used.
  */
 export const publishExclusive = (
   partial: string,
   folder: string,
   stem: string,
   extension: string,
+  link: (from: string, to: string) => Promise<void> = NodeFSP.link,
 ) =>
   attempt("publish", async () => {
+    let linking = true;
     for (let index = 1; ; index += 1) {
       const name = index === 1 ? `${stem}${extension}` : `${stem}-${index}${extension}`;
+      const target = `${folder}/${name}`;
+      if (linking) {
+        try {
+          await link(partial, target);
+          await NodeFSP.unlink(partial);
+          return name;
+        } catch (error) {
+          const code = (error as NodeJS.ErrnoException).code ?? "";
+          if (code === "EEXIST") continue;
+          if (!NO_HARD_LINKS.has(code)) throw error;
+          linking = false;
+        }
+      }
       try {
-        await NodeFSP.link(partial, `${folder}/${name}`);
+        await (await NodeFSP.open(target, "wx")).close();
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code === "EEXIST") continue;
         throw error;
       }
-      await NodeFSP.unlink(partial);
+      // The name is ours now (an empty file we just created), so the rename replaces only that.
+      await NodeFSP.rename(partial, target);
       return name;
     }
   });

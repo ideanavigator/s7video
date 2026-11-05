@@ -245,6 +245,43 @@ describe("MediaLibraryService", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
+  it.effect("claims a free name without hard links, never replacing an existing file", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const folder = yield* fileSystem.makeTempDirectoryScoped({ prefix: "s7v-publish-" });
+      NodeFS.writeFileSync(NodePath.join(folder, "cam.mp4"), "kept copy");
+      const noLinks = (code: string) => async () => {
+        throw Object.assign(new Error("no hard links"), { code });
+      };
+      for (const [index, code] of ["ENOTSUP", "EPERM"].entries()) {
+        const partial = NodePath.join(folder, `.cam.${index}.part`);
+        NodeFS.writeFileSync(partial, `new ${index}`);
+        const name = yield* MediaFiles.publishExclusive(
+          partial,
+          folder,
+          "cam",
+          ".mp4",
+          noLinks(code),
+        );
+        assert.equal(name, `cam-${index + 2}.mp4`);
+        assert.equal(NodeFS.readFileSync(NodePath.join(folder, name), "utf8"), `new ${index}`);
+        assert.isFalse(NodeFS.existsSync(partial));
+      }
+      assert.equal(NodeFS.readFileSync(NodePath.join(folder, "cam.mp4"), "utf8"), "kept copy");
+      // Any other link failure is a real error, not a reason to claim a name.
+      const partial = NodePath.join(folder, ".cam.x.part");
+      NodeFS.writeFileSync(partial, "x");
+      const failed = yield* MediaFiles.publishExclusive(
+        partial,
+        folder,
+        "cam",
+        ".mp4",
+        noLinks("EIO"),
+      ).pipe(Effect.flip);
+      assert.equal(failed._tag, "MediaFileError");
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it("names media after the file, uniquely and safely", () => {
     assert.equal(mediaIdFor("Interview 4K (take 2).MOV", new Set()), "interview-4k-take-2");
     assert.equal(mediaIdFor("cam.mp4", new Set(["cam"])), "cam-2");
