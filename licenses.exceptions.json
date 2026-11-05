@@ -5,7 +5,7 @@
       "name": "@anthropic-ai/claude-agent-sdk",
       "license": "Proprietary (Anthropic Commercial Terms)",
       "adr": "ADR-002",
-      "reason": "Claude provider. Shipped the way T3 Code ships it: the SDK's JavaScript only, driving the user's own signed-in Claude CLI."
+      "reason": "Claude provider. Shipped the way the upstream project ships it, per ADR-002: the SDK's JavaScript only, driving the user's own signed-in Claude CLI."
     }
   ]
 }
