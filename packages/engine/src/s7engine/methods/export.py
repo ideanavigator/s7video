@@ -31,6 +31,7 @@ import threading
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from fractions import Fraction
+from pathlib import Path
 from typing import Any
 
 from .. import captions_ass, timebase
@@ -311,7 +312,13 @@ def build_graph(plan: Plan, inputs: list[Input], assignment: list[int | None], *
     if video:
         chains.append(f"{''.join(joined)}concat=n={count}:v=1:a=1[vcat][amix]")
         captions = f"subtitles=filename={ass_file}:fontsdir=fonts," if ass_file else ""
-        chains.append(f"[vcat]{captions}format=yuv420p[vout]")
+        # concat hands out microsecond timestamps with no frame duration, and the MP4 muxer then
+        # drops the last frame of some sources: renumber on the edit's own time base. The tags go
+        # on the frames, since the encoder takes colour from them, not from the output flags.
+        chains.append(
+            f"[vcat]settb=expr={plan.rate.denominator}/{plan.rate.numerator},setpts=N,{captions}"
+            "setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709:range=tv,format=yuv420p[vout]"
+        )
     else:
         chains.append(f"{''.join(joined)}concat=n={count}:v=0:a=1[amix]")
     return ";\n".join(chains)
@@ -567,7 +574,7 @@ def _render(params: dict[str, Any], job: JobContext) -> dict[str, Any]:
         if chunks:
             ass_file = "captions.ass"
             captions_ass.write_ass(os.path.join(workdir, ass_file), chunks, plan.rate, width, height)
-            os.symlink(captions_ass.FONTS_DIR, os.path.join(workdir, "fonts"))
+            captions_ass.link_fonts(Path(workdir) / "fonts")
         with open(os.path.join(workdir, "render.txt"), "w", encoding="utf-8") as file:
             file.write(build_graph(plan, inputs, assignment, video=True, ass_file=ass_file))
             file.write(f";\n[amix]{loudness_chain(gain)}[aout]")
@@ -582,8 +589,10 @@ def _render(params: dict[str, Any], job: JobContext) -> dict[str, Any]:
                 "[vout]",
                 "-map",
                 "[aout]",
+                "-r",
+                _rate(plan.rate),
                 "-fps_mode",
-                "passthrough",
+                "cfr",
                 "-c:v",
                 "h264_videotoolbox",
                 "-profile:v",

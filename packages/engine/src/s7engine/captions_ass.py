@@ -96,14 +96,16 @@ def layout_for(width: int, height: int, style: dict[str, Any] | None = None) -> 
     right = math.ceil(safe["right"] * width)
     top = math.ceil(safe["top"] * height)
     bottom = math.ceil(safe["bottom"] * height)
+    shadow = round(spec["shadow"] * short, 1)
+    # The shadow falls down and to the right of the text, so those margins make room for it.
     return Layout(
         width=width,
         height=height,
         font_size=round(spec["fontSize"] * short),
-        shadow=round(spec["shadow"] * short, 1),
+        shadow=shadow,
         margin_left=left,
-        margin_right=right,
-        margin_bottom=bottom,
+        margin_right=right + math.ceil(shadow),
+        margin_bottom=bottom + math.ceil(shadow),
         safe=(left, top, width - right, height - bottom),
     )
 
@@ -251,6 +253,14 @@ def build_ass(chunks: list[Chunk], rate: Fraction, width: int, height: int) -> p
             pysubs2.SSAEvent(start=frame_to_ms(chunk.start, rate), end=frame_to_ms(chunk.end, rate), text=text)
         )
     return subs
+
+
+def link_fonts(folder: Path) -> None:
+    """Links the bundled font files (not their licence) into ``folder``, for libass's ``fontsdir``."""
+    folder.mkdir()
+    for font in sorted(FONTS_DIR.iterdir()):
+        if font.suffix.lower() in (".ttf", ".otf"):
+            (folder / font.name).symlink_to(font)
 
 
 def write_ass(path: Path, chunks: list[Chunk], rate: Fraction, width: int, height: int) -> None:
