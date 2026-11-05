@@ -207,7 +207,9 @@ networks by default, so set `T3CODE_HOST=127.0.0.1` in its `service.env`. The de
 with network access off, whatever the user chose. That also turns off
 T3 Connect. To keep other remote access but turn off T3 Connect alone, set `"connect": false`.
 
-s7video has no Tailscale Serve, SSH or WSL environments (S7V-018), so a policy has none of them to turn off.
+s7video does not set up Tailscale Serve and no longer checks for Serve routes (S7V-018). Like any
+other port forward, a Serve route set up outside s7video can still front a loopback-only server, and
+the policy does not block it; devices that use it still have to pair.
 
 ### Other capabilities
 
