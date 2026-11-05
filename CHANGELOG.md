@@ -39,6 +39,10 @@ from; the per-ticket entries and how this file is compiled are in
 - Transcription on your Mac, word by word with frame-accurate timings. s7video asks once before
   downloading the speech model (about 3.7 GB, or 2.3 GB for the light model), then works offline,
   and each clip is transcribed only once. Models are listed in `MODELS.md`. (S7V-026)
+- Bring in footage of any size: drop or pick clips into a project, keep a copy (instant on the same
+  drive) or point at the original, and see them in the new Assets tab with length, size and a
+  thumbnail. Awkward files get a smooth preview copy in the background, and a moved original can be
+  relinked. Video dropped into a video project's chat is imported instead of uploaded. (S7V-025)
 
 ### Changed
 

@@ -341,6 +341,18 @@ describe("MediaLibraryService", () => {
           const clip = writeClip(desktop, "cam.mov", 7);
           // Off macOS (or across volumes) no clone is attempted.
           assert.isFalse(yield* MediaFiles.canClone(clip, NodePath.join(root, "assets"), "linux"));
+          // The streamed copy reports progress the Assets list shows while it runs.
+          const big = writeClip(desktop, "big.mov", 8, 40 * MIB);
+          const progress: number[] = [];
+          yield* MediaFiles.streamCopy(big, NodePath.join(desktop, "big-copy.mov"), (value) =>
+            progress.push(value),
+          );
+          assert.isAtLeast(progress.length, 9);
+          assert.deepEqual(
+            progress,
+            progress.toSorted((a, b) => a - b),
+          );
+          assert.equal(progress.at(-1), 1);
           yield* library.import({ projectId, sourcePath: clip, mode: "copy" });
           assert.deepEqual(
             NodeFS.readFileSync(NodePath.join(root, "assets", "cam.mov")),
