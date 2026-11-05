@@ -10,6 +10,7 @@ import { describe, expect, it } from "vite-plus/test";
 import { DEFAULT_BRAND_CONFIG_PATH, loadBrandConfigFile } from "./brand-config.ts";
 import {
   checkLicences,
+  isPatched,
   judgeLicence,
   packagesFromPnpm,
   parseLicenceExpression,
@@ -118,6 +119,21 @@ describe("SPDX expressions", () => {
     expect(judgeLicence("MIT", "production", ALLOWLIST, "Apache-2.0").ok).toBe(false);
   });
 
+  it("keeps AND terms binding under an election", () => {
+    expect(judgeLicence("MIT AND GPL-3.0-only", "production", ALLOWLIST, "MIT").ok).toBe(false);
+    expect(judgeLicence("MIT AND Apache-2.0", "production", ALLOWLIST, "MIT").ok).toBe(false);
+    expect(
+      judgeLicence("(MIT OR GPL-3.0-only) AND GPL-2.0-only", "production", ALLOWLIST, "MIT").ok,
+    ).toBe(false);
+    expect(
+      judgeLicence("Zlib AND (MIT OR Apache-2.0)", "production", ALLOWLIST, "Apache-2.0"),
+    ).toEqual({ ok: true, elected: "Zlib AND Apache-2.0" });
+    expect(judgeLicence("mit or gpl-3.0-or-later", "production", ALLOWLIST, "MIT")).toEqual({
+      ok: true,
+      elected: "MIT",
+    });
+  });
+
   it("records the dual-licence choices for jszip and dompurify", () => {
     const result = check([
       scanned({ name: "jszip", license: "(MIT OR GPL-3.0-or-later)" }),
@@ -171,12 +187,64 @@ describe("checkLicences", () => {
     expect(result.problems).toEqual([]);
   });
 
-  it("accepts WTFPL only for development tooling", () => {
+  it("accepts WTFPL only for the one reviewed development package", () => {
     const result = check([
-      scanned({ name: "build-only", license: "WTFPL", scope: "development" }),
-      scanned({ name: "shipped", license: "WTFPL" }),
+      scanned({ name: "truncate-utf8-bytes", license: "WTFPL", scope: "development" }),
+      scanned({ name: "other-build-tool", license: "WTFPL", scope: "development" }),
+      scanned({ name: "truncate-utf8-bytes", license: "WTFPL", path: "shipped-copy" }),
     ]);
-    expect(result.problems.map((problem) => problem.name)).toEqual(["shipped"]);
+    expect(result.problems.map((problem) => `${problem.name} ${problem.scope}`)).toEqual([
+      "other-build-tool development",
+      "truncate-utf8-bytes production",
+    ]);
+  });
+
+  it("uses an override only when the package declares nothing or the same licence", () => {
+    const overrides = [
+      { name: "restates", license: "MIT" },
+      { name: "picks-option", license: "MIT" },
+      { name: "disagrees", license: "MIT" },
+    ];
+    const result = check(
+      [
+        scanned({ name: "restates", license: "MIT", manifestLicense: "(MIT)" }),
+        scanned({ name: "picks-option", license: "(MIT OR CC0-1.0)" }),
+        scanned({ name: "disagrees", license: "GPL-3.0-only" }),
+      ],
+      { overrides },
+    );
+    expect(result.problems).toEqual([
+      expect.objectContaining({
+        name: "disagrees",
+        license: "GPL-3.0-only",
+        message: expect.stringMatching(/override saying "MIT" but declares "GPL-3.0-only"/),
+      }),
+    ]);
+  });
+
+  it("checks every package a repository override matches against its own declaration", () => {
+    const repositoryUrl = "git+https://github.com/example/mono.git";
+    const result = check(
+      [
+        scanned({ name: "@mono/no-metadata", license: "Unknown", repositoryUrl }),
+        scanned({ name: "@mono/same", license: "MIT", repositoryUrl }),
+        scanned({ name: "@mono/copyleft", license: "AGPL-3.0-only", repositoryUrl }),
+      ],
+      { overrides: [{ repositoryUrl: "https://github.com/example/mono", license: "MIT" }] },
+    );
+    expect(result.problems.map((problem) => problem.name)).toEqual(["@mono/copyleft"]);
+  });
+
+  it("treats unversioned and range patchedDependencies keys as patching the copy", () => {
+    expect(isPatched(new Set(["mpl-lib"]), "mpl-lib", "1.0.0")).toBe(true);
+    expect(isPatched(new Set(["mpl-lib@^1.0.0"]), "mpl-lib", "1.2.0")).toBe(true);
+    expect(isPatched(new Set(["@scope/mpl@1.0.0"]), "@scope/mpl", "1.0.0")).toBe(true);
+    expect(isPatched(new Set(["mpl-lib@1.0.1"]), "mpl-lib", "1.0.0")).toBe(false);
+    expect(isPatched(new Set(["other"]), "mpl-lib", "1.0.0")).toBe(false);
+    const result = check([scanned({ name: "mpl-lib", license: "MPL-2.0" })], {
+      patched: new Set(["mpl-lib"]),
+    });
+    expect(result.problems[0]?.message).toMatch(/unmodified/);
   });
 
   it("fails a patched MPL-2.0 package", () => {
@@ -209,9 +277,39 @@ describe("checkLicences", () => {
     expect(result.configErrors).toEqual([expect.stringMatching(/gone, which is not installed/)]);
   });
 
+  it("applies an exception only inside its version range and to the reviewed declaration", () => {
+    const exceptions = [
+      {
+        name: "closed-sdk",
+        version: ">=0.3.276 <0.4.0",
+        declared: "SEE LICENSE IN README.md",
+        adr: "ADR-002",
+        reason: "Reviewed.",
+      },
+    ];
+    const sdk = (version: string, manifestLicense: string) =>
+      scanned({ name: "closed-sdk", version, license: "Unknown", manifestLicense });
+    expect(check([sdk("0.3.300", "SEE LICENSE IN README.md")], { exceptions }).problems).toEqual(
+      [],
+    );
+    expect(
+      check([sdk("0.4.0", "SEE LICENSE IN README.md")], { exceptions }).problems[0]?.message,
+    ).toMatch(/outside the version range/);
+    expect(
+      check([sdk("0.3.300", "SEE LICENSE IN LICENSE.md")], { exceptions }).problems[0]?.message,
+    ).toMatch(/was reviewed for "SEE LICENSE IN README.md"/);
+  });
+
   it("covers the Claude Agent SDK through ADR-002", () => {
     const result = check(
-      [scanned({ name: "@anthropic-ai/claude-agent-sdk", license: "Unknown" })],
+      [
+        scanned({
+          name: "@anthropic-ai/claude-agent-sdk",
+          version: "0.3.276",
+          license: "Unknown",
+          manifestLicense: "SEE LICENSE IN README.md",
+        }),
+      ],
       { exceptions: EXCEPTIONS },
     );
     expect(result.problems).toEqual([]);
@@ -220,6 +318,22 @@ describe("checkLicences", () => {
 });
 
 describe("packagesFromPnpm", () => {
+  it("matches a version exactly, not as a prefix of another version", () => {
+    const entry = {
+      name: "foo",
+      versions: ["1.0.1", "1.0.10"],
+      paths: [
+        "/repo/node_modules/.pnpm/foo@1.0.10_peer@2.0.0/node_modules/foo",
+        "/repo/node_modules/.pnpm/foo@1.0.1/node_modules/foo",
+      ],
+    };
+    const rows = packagesFromPnpm({ all: { MIT: [entry] }, production: {}, root: "/repo" });
+    expect(rows.map(({ version, path }) => `${version} ${path}`)).toEqual([
+      "1.0.1 node_modules/.pnpm/foo@1.0.1/node_modules/foo",
+      "1.0.10 node_modules/.pnpm/foo@1.0.10_peer@2.0.0/node_modules/foo",
+    ]);
+  });
+
   it("marks copies outside the production tree as development and keeps one row per path", () => {
     const root = "/repo";
     const all = {

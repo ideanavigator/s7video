@@ -23,7 +23,8 @@
   "devOnly": [
     {
       "license": "WTFPL",
-      "reason": "Permissive, not OSI-approved. Only in electron-builder's build chain (truncate-utf8-bytes); never shipped. S7V-005 audit: keep (dev)."
+      "packages": ["truncate-utf8-bytes"],
+      "reason": "Permissive, not OSI-approved. truncate-utf8-bytes only, in electron-builder's build chain; never shipped. S7V-005 audit: keep (dev). PO decision recorded as an ADR-003 amendment."
     }
   ],
   "elections": {

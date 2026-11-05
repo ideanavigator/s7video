@@ -15,13 +15,22 @@ export interface ScannedPackage {
   readonly path: string;
   readonly scope: DependencyScope;
   readonly repositoryUrl?: string | undefined;
+  /** The raw `license` field of the package's package.json, when it has one. */
+  readonly manifestLicense?: string | undefined;
+}
+
+export interface DevOnlyAllowance {
+  readonly license: string;
+  /** The packages the allowance covers; any other package under this licence still fails. */
+  readonly packages: ReadonlyArray<string>;
+  readonly reason: string;
 }
 
 export interface LicenceAllowlist {
   /** Allowed SPDX ids, most permissive first; a dual licence elects the earliest allowed option. */
   readonly allowed: ReadonlyArray<string>;
   /** Extra ids accepted only for packages that never ship (build and test tooling). */
-  readonly devOnly: ReadonlyArray<{ readonly license: string; readonly reason: string }>;
+  readonly devOnly: ReadonlyArray<DevOnlyAllowance>;
   /** Reviewed dual-licence choices by package name. */
   readonly elections: Readonly<Record<string, string>>;
   /** Non-SPDX spellings seen in package metadata, mapped to SPDX ids. */
@@ -30,7 +39,10 @@ export interface LicenceAllowlist {
 
 export interface LicenceException {
   readonly name: string;
+  /** An exact version or a range such as `>=0.3.276 <0.4.0`; a new release needs a fresh review. */
   readonly version?: string | undefined;
+  /** The package.json `license` value the review saw; a different value fails the check. */
+  readonly declared?: string | undefined;
   readonly license?: string | undefined;
   readonly adr?: string | undefined;
   readonly reason?: string | undefined;
@@ -187,6 +199,10 @@ function evaluate(
   return right.rank < left.rank ? right : left;
 }
 
+function preferredExpression(evaluation: Evaluation): Expression {
+  return parseLicenceExpression(evaluation.elected) ?? { kind: "id", id: evaluation.elected };
+}
+
 export interface LicenceVerdict {
   readonly ok: boolean;
   /** The option taken: the whole expression for a single licence, one branch for a dual licence. */
@@ -200,12 +216,18 @@ export function judgeLicence(
   scope: DependencyScope,
   allowlist: LicenceAllowlist,
   election?: string,
+  packageName?: string,
 ): LicenceVerdict {
   const parsed = parseLicenceExpression(declared);
   if (!parsed || /^(unknown|unlicensed|proprietary|none)$/i.test(declared.trim())) {
     return { ok: false, reason: "has no SPDX licence" };
   }
-  const devOnly = scope === "development" ? allowlist.devOnly.map((entry) => entry.license) : [];
+  const devOnly =
+    scope === "development" && packageName !== undefined
+      ? allowlist.devOnly
+          .filter((entry) => entry.packages.includes(packageName))
+          .map((entry) => entry.license)
+      : [];
   const ranked = [...allowlist.allowed, ...devOnly];
   const canonicalise = (expression: Expression): Expression =>
     expression.kind === "id"
@@ -223,13 +245,21 @@ export function judgeLicence(
 
   if (election !== undefined) {
     const elected = canonicalId(election, allowlist, ranked);
-    if (!optionIds(expression).includes(elected)) {
-      return { ok: false, reason: `elected ${election}, which is not one of its options` };
-    }
     if (rankOf(elected) === undefined) {
       return { ok: false, reason: `elected ${election}, which is not on the allowlist` };
     }
-    return { ok: true, elected };
+    // Rank the election first and evaluate normally, so AND terms must all still be allowed.
+    const preferred = evaluate(expression, (id) => (id === elected ? -1 : rankOf(id)));
+    if (!preferred) {
+      return { ok: false, reason: `${render(expression)} is not on the allowlist` };
+    }
+    if (
+      !/\sOR\s/i.test(render(expression)) ||
+      !optionIds(preferredExpression(preferred)).includes(elected)
+    ) {
+      return { ok: false, reason: `elected ${election}, which is not one of its OR options` };
+    }
+    return { ok: true, elected: preferred.elected };
   }
   const verdict = evaluate(expression, rankOf);
   return verdict
@@ -267,6 +297,73 @@ function findOverride(
   );
 }
 
+function comparable(expression: string): string {
+  return expression.replace(/[()\s]/g, "").toLowerCase();
+}
+
+function isUndeclared(license: string | undefined): boolean {
+  return (
+    license === undefined ||
+    /^(unknown|none)$/i.test(license.trim()) ||
+    parseLicenceExpression(license) === null
+  );
+}
+
+/** An override agrees when it restates the declared licence or picks one option of its OR. */
+function overrideAgrees(declared: string, override: string): boolean {
+  if (comparable(declared) === comparable(override)) return true;
+  const parsed = parseLicenceExpression(declared);
+  return (
+    parsed !== null &&
+    /\sOR\s/i.test(declared) &&
+    parseLicenceExpression(override)?.kind === "id" &&
+    optionIds(parsed).some((id) => comparable(id) === comparable(override))
+  );
+}
+
+const SEMVER = /^(\d+)\.(\d+)\.(\d+)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
+
+function compareVersions(left: string, right: string): number {
+  const a = SEMVER.exec(left);
+  const b = SEMVER.exec(right);
+  if (!a || !b) return left.localeCompare(right);
+  for (let index = 1; index <= 3; index += 1) {
+    const difference = Number(a[index]) - Number(b[index]);
+    if (difference !== 0) return difference;
+  }
+  const preA = left.includes("-");
+  const preB = right.includes("-");
+  return preA === preB ? left.localeCompare(right) : preA ? -1 : 1;
+}
+
+/** An exact version, or space-separated comparators (`>=1.2.0 <2.0.0`). */
+function versionSatisfies(version: string, range: string): boolean {
+  const comparators = range.trim().split(/\s+/);
+  return comparators.every((comparator) => {
+    const match = /^(>=|<=|>|<|=)?(.+)$/.exec(comparator);
+    if (!match) return false;
+    const [, operator = "=", bound = ""] = match;
+    const order = compareVersions(version, bound);
+    if (operator === ">=") return order >= 0;
+    if (operator === "<=") return order <= 0;
+    if (operator === ">") return order > 0;
+    if (operator === "<") return order < 0;
+    return version === bound;
+  });
+}
+
+/** True when a `patchedDependencies` key (`name`, `name@version` or `name@range`) covers the copy. */
+export function isPatched(patched: ReadonlySet<string>, name: string, version: string): boolean {
+  for (const key of patched) {
+    const at = key.lastIndexOf("@");
+    const keyName = at > 0 ? key.slice(0, at) : key;
+    const keyVersion = at > 0 ? key.slice(at + 1) : undefined;
+    if (keyName !== name) continue;
+    if (keyVersion === undefined || keyVersion === version || !SEMVER.test(keyVersion)) return true;
+  }
+  return false;
+}
+
 export function validateExceptions(exceptions: ReadonlyArray<LicenceException>): string[] {
   return exceptions.flatMap((exception, index) => {
     const label = `licenses.exceptions.json entry ${String(index + 1)} (${exception.name || "unnamed"})`;
@@ -287,7 +384,7 @@ export function checkLicences(input: {
   readonly allowlist: LicenceAllowlist;
   readonly exceptions: ReadonlyArray<LicenceException>;
   readonly overrides: ReadonlyArray<LicenceOverride>;
-  /** `name@version` of packages changed through pnpm patchedDependencies. */
+  /** Keys of pnpm `patchedDependencies`: `name`, `name@version` or `name@range`. */
   readonly patched?: ReadonlySet<string>;
 }): LicenceCheckResult {
   const configErrors = validateExceptions(input.exceptions);
@@ -303,10 +400,32 @@ export function checkLicences(input: {
     const exception = validExceptions.find(
       (candidate) =>
         candidate.name === scanned.name &&
-        (candidate.version === undefined || candidate.version === scanned.version),
+        (candidate.version === undefined || versionSatisfies(scanned.version, candidate.version)),
     );
+    const problem = (license: string, message: string) =>
+      problems.push({
+        name: scanned.name,
+        version: scanned.version,
+        license,
+        path: scanned.path,
+        scope: scanned.scope,
+        message,
+      });
+    if (!exception && validExceptions.some((candidate) => candidate.name === scanned.name)) {
+      problem(scanned.license, "is outside the version range its exception was reviewed for");
+      usedExceptions.add(validExceptions.find((candidate) => candidate.name === scanned.name)!);
+      continue;
+    }
     if (exception) {
       usedExceptions.add(exception);
+      const installed = scanned.manifestLicense ?? scanned.license;
+      if (exception.declared !== undefined && exception.declared !== installed) {
+        problem(
+          installed,
+          `declares "${installed}", but its exception (${exception.adr}) was reviewed for "${exception.declared}"`,
+        );
+        continue;
+      }
       accepted.push({
         name: scanned.name,
         version: scanned.version,
@@ -316,29 +435,33 @@ export function checkLicences(input: {
       continue;
     }
     const override = findOverride(input.overrides, scanned);
+    const own = scanned.manifestLicense ?? scanned.license;
+    if (override && !isUndeclared(own) && !overrideAgrees(own, override.license)) {
+      problem(
+        own,
+        `has an override saying "${override.license}" but declares "${own}"; review it and pin the override's version`,
+      );
+      continue;
+    }
     const declared = override?.license ?? scanned.license;
     const verdict = judgeLicence(
       declared,
       scanned.scope,
       input.allowlist,
       input.allowlist.elections[scanned.name],
+      scanned.name,
     );
-    const problem = (message: string) =>
-      problems.push({
-        name: scanned.name,
-        version: scanned.version,
-        license: declared,
-        path: scanned.path,
-        scope: scanned.scope,
-        message,
-      });
     if (!verdict.ok) {
-      problem(verdict.reason ?? "is not on the allowlist");
+      problem(declared, verdict.reason ?? "is not on the allowlist");
       continue;
     }
     const elected = verdict.elected ?? declared;
-    if (/\bMPL-2\.0\b/.test(elected) && input.patched?.has(`${scanned.name}@${scanned.version}`)) {
-      problem("is MPL-2.0 and patched; MPL code may only be used unmodified");
+    if (
+      /\bMPL-2\.0\b/.test(elected) &&
+      input.patched !== undefined &&
+      isPatched(input.patched, scanned.name, scanned.version)
+    ) {
+      problem(declared, "is MPL-2.0 and patched; MPL code may only be used unmodified");
       continue;
     }
     if (/\sOR\s/i.test(declared)) {
@@ -400,7 +523,10 @@ function decodePnpmEntries(value: unknown): Array<{ license: string; entry: Pnpm
 
 function versionForPath(entry: PnpmLicenceEntry, path: string, index: number): string {
   const storeName = entry.name.replace("/", "+");
-  const match = entry.versions.find((version) => path.includes(`/${storeName}@${version}`));
+  const escape = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const match = entry.versions.find((version) =>
+    new RegExp(`/${escape(storeName)}@${escape(version)}(?:[/_]|$)`).test(path),
+  );
   return match ?? entry.versions[index] ?? entry.versions[0] ?? "unknown";
 }
 

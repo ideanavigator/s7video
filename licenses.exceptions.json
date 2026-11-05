@@ -3,6 +3,8 @@
   "exceptions": [
     {
       "name": "@anthropic-ai/claude-agent-sdk",
+      "version": ">=0.3.276 <0.4.0",
+      "declared": "SEE LICENSE IN README.md",
       "license": "Proprietary (Anthropic Commercial Terms)",
       "adr": "ADR-002",
       "reason": "Claude provider. Shipped the way the upstream project ships it, per ADR-002: the SDK's JavaScript only, driving the user's own signed-in Claude CLI."

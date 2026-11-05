@@ -34,14 +34,24 @@ function pnpmLicences(production: boolean): unknown {
   );
 }
 
-function readRepositoryUrl(packagePath: string): string | undefined {
+function readManifestFields(packagePath: string): {
+  repositoryUrl: string | undefined;
+  manifestLicense: string | undefined;
+} {
   try {
     const manifest = JSON.parse(
       NodeFS.readFileSync(NodePath.resolve(ROOT, packagePath, "package.json"), "utf8"),
-    ) as { repository?: string | { url?: string } };
-    return typeof manifest.repository === "string" ? manifest.repository : manifest.repository?.url;
+    ) as { repository?: string | { url?: string }; license?: unknown };
+    return {
+      repositoryUrl:
+        typeof manifest.repository === "string" ? manifest.repository : manifest.repository?.url,
+      manifestLicense:
+        typeof manifest.license === "string" && manifest.license.trim().length > 0
+          ? manifest.license.trim()
+          : undefined,
+    };
   } catch {
-    return undefined;
+    return { repositoryUrl: undefined, manifestLicense: undefined };
   }
 }
 
@@ -76,7 +86,7 @@ function readOverrides(): LicenceOverride[] {
   });
 }
 
-/** `name@version` keys from pnpm-workspace.yaml's patchedDependencies. */
+/** Keys of pnpm-workspace.yaml's patchedDependencies (`name`, `name@version` or `name@range`). */
 function readPatchedPackages(): Set<string> {
   const workspace = NodeFS.readFileSync(NodePath.join(ROOT, "pnpm-workspace.yaml"), "utf8");
   const section = /^patchedDependencies:\n((?:[ \t]+.*\n?)*)/m.exec(workspace)?.[1] ?? "";
@@ -87,7 +97,7 @@ const packages = packagesFromPnpm({
   all: pnpmLicences(false),
   production: pnpmLicences(true),
   root: ROOT,
-}).map((scanned) => ({ ...scanned, repositoryUrl: readRepositoryUrl(scanned.path) }));
+}).map((scanned) => ({ ...scanned, ...readManifestFields(scanned.path) }));
 
 const allowlist = readJson("licenses.allowlist.json") as LicenceAllowlist;
 const { exceptions } = readJson("licenses.exceptions.json") as {
