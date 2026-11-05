@@ -1,0 +1,248 @@
+// SPDX-FileCopyrightText: 2026 s7video contributors
+// SPDX-License-Identifier: MIT
+// The video engine as a service (ADR-004): one engine per server, started on first use, started
+// again on the next call after it stops, and stopped only through the scope that spawned it.
+// Agents (S7V-023), the Editor panel and RPC handlers all reach the engine through here.
+import {
+  EngineError,
+  EngineJobCancelResult,
+  EnginePingResult,
+  MediaFrameResult,
+  MediaProbeResult,
+  type EngineJobId,
+  type EngineJobsEvent,
+  type EngineTool,
+  type MediaFrameInput,
+  type MediaProbeInput,
+} from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as Cause from "effect/Cause";
+import * as Clock from "effect/Clock";
+import * as Context from "effect/Context";
+import type * as Duration from "effect/Duration";
+import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
+import type * as Schema from "effect/Schema";
+import * as Scope from "effect/Scope";
+import * as Semaphore from "effect/Semaphore";
+import type * as Stream from "effect/Stream";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+
+import * as ServerConfig from "../config.ts";
+import * as EngineJobs from "./EngineJobs.ts";
+import * as EngineProcess from "./EngineProcess.ts";
+import {
+  engineCommandArgs,
+  engineEnvironment,
+  resolveEngineProjectDir,
+  resolveEngineTools,
+} from "./enginePaths.ts";
+
+export interface EngineServiceOptions {
+  readonly startTimeout?: Duration.Input;
+  /** Per-call timeout for quick methods; jobs have none and are cancelled instead. */
+  readonly callTimeout?: Duration.Input;
+  /** Tool paths from settings, ahead of S7VIDEO_* variables and the usual install folders. */
+  readonly tools?: Partial<Record<EngineTool, string>>;
+  readonly testMethods?: boolean;
+  readonly signalGroup?: EngineProcess.SignalGroup;
+}
+
+export interface EngineStatus {
+  readonly pid: number | undefined;
+  readonly starts: number;
+  readonly lastStartupMs: number | undefined;
+}
+
+export class EngineService extends Context.Service<
+  EngineService,
+  {
+    readonly ping: Effect.Effect<EnginePingResult, EngineError>;
+    readonly probe: (input: MediaProbeInput) => Effect.Effect<MediaProbeResult, EngineError>;
+    /** Writes the frame as a PNG; `outputDir` defaults to the service's scratch folder. */
+    readonly frame: (input: MediaFrameInput) => Effect.Effect<MediaFrameResult, EngineError>;
+    /** A long engine method as a job: progress on `subscribeJobs`, stoppable with `cancelJob`. */
+    readonly runJob: <A>(input: {
+      readonly kind: string;
+      readonly method: string;
+      readonly params: Readonly<Record<string, unknown>>;
+      readonly success: Schema.Decoder<A>;
+    }) => Effect.Effect<A, EngineError>;
+    readonly cancelJob: (jobId: EngineJobId) => Effect.Effect<boolean>;
+    readonly subscribeJobs: Stream.Stream<EngineJobsEvent>;
+    readonly status: Effect.Effect<EngineStatus>;
+  }
+>()("t3/engine/EngineService") {}
+
+const CALL_TIMEOUT = "30 seconds";
+const START_TIMEOUT = "30 seconds";
+const CANCEL_TIMEOUT = "5 seconds";
+
+interface Running {
+  readonly process: EngineProcess.EngineProcess;
+  readonly scope: Scope.Closeable;
+}
+
+const make = Effect.fn("EngineService.make")(function* (options: EngineServiceOptions) {
+  const config = yield* ServerConfig.ServerConfig;
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const context = yield* Effect.context<
+    FileSystem.FileSystem | Path.Path | ChildProcessSpawner.ChildProcessSpawner
+  >();
+  const serviceScope = yield* Effect.scope;
+  const jobs = yield* EngineJobs.make;
+  const startLock = yield* Semaphore.make(1);
+  const scratchDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "engine-frames-" });
+  let current: Running | undefined;
+  let starts = 0;
+  let lastStartupMs: number | undefined;
+
+  const stop = (running: Running) =>
+    Effect.suspend(() => {
+      if (current === running) current = undefined;
+      return Scope.close(running.scope, Exit.void);
+    });
+
+  const spawn = Effect.gen(function* () {
+    const env = yield* HostProcess.Environment;
+    const homeDir = yield* HostProcess.HomeDirectory;
+    const tools = yield* resolveEngineTools({
+      ...(options.tools ? { configured: options.tools } : {}),
+      env,
+      homeDir,
+    });
+    const projectDir = yield* resolveEngineProjectDir(env);
+    const scope = yield* Scope.make();
+    const startedAt = yield* Clock.currentTimeMillis;
+    const process = yield* EngineProcess.start({
+      uv: tools.uv,
+      args: engineCommandArgs(projectDir),
+      cwd: projectDir,
+      env: engineEnvironment({
+        tools,
+        homeDir,
+        modelsDir: config.engineModelsDir,
+        tmpDir: env.TMPDIR,
+        testMethods: options.testMethods ?? false,
+      }),
+      logFile: path.join(config.engineLogsDir, "engine.log"),
+      startTimeout: options.startTimeout ?? START_TIMEOUT,
+      onProgress: (progress) =>
+        jobs.progress(progress.jobId as EngineJobId, progress.progress, progress.stage),
+      ...(options.signalGroup ? { signalGroup: options.signalGroup } : {}),
+    }).pipe(
+      Scope.provide(scope),
+      Effect.tapError(() => Scope.close(scope, Exit.void)),
+    );
+    const running: Running = { process, scope };
+    starts += 1;
+    lastStartupMs = (yield* Clock.currentTimeMillis) - startedAt;
+    yield* Effect.logInfo("video engine started", { pid: process.pid, startupMs: lastStartupMs });
+    // stdout closed: the engine is gone. Its calls have already failed; reap its group.
+    yield* process.client.closed.pipe(
+      Effect.andThen(Effect.logWarning("video engine exited", { pid: process.pid })),
+      Effect.andThen(stop(running)),
+      Effect.forkIn(serviceScope),
+    );
+    return running;
+  }).pipe(Effect.provideContext(context));
+
+  const acquire = startLock.withPermit(
+    Effect.suspend(() =>
+      current && current.process.client.isOpen()
+        ? Effect.succeed(current)
+        : spawn.pipe(Effect.tap((running) => Effect.sync(() => (current = running)))),
+    ),
+  );
+
+  yield* Effect.addFinalizer(() => Effect.suspend(() => (current ? stop(current) : Effect.void)));
+
+  // Every caller is a named operation below, and the client adds its own call span.
+  const call = Effect.fnUntraced(function* <A>(
+    method: string,
+    params: Readonly<Record<string, unknown>>,
+    success: Schema.Decoder<A>,
+    timeout: Duration.Input | undefined,
+  ) {
+    const running = yield* acquire;
+    return yield* running.process.client.call(method, params, success, timeout).pipe(
+      // A hung engine blocks every caller; the next call starts a fresh one.
+      Effect.tapError((error) => (error.reason === "timeout" ? stop(running) : Effect.void)),
+    );
+  });
+
+  const callTimeout = options.callTimeout ?? CALL_TIMEOUT;
+
+  const ping = call("engine.ping", {}, EnginePingResult, callTimeout).pipe(
+    Effect.withSpan("EngineService.ping"),
+  );
+
+  const probe = Effect.fn("EngineService.probe")(function* (input: MediaProbeInput) {
+    return yield* call("media.probe", { path: input.path }, MediaProbeResult, callTimeout);
+  });
+
+  const frame = Effect.fn("EngineService.frame")(function* (input: MediaFrameInput) {
+    return yield* call(
+      "media.frame",
+      {
+        path: input.path,
+        frame: input.frame,
+        rate: input.rate,
+        outputDir: input.outputDir ?? scratchDir,
+        ...(input.maxWidth === undefined ? {} : { maxWidth: input.maxWidth }),
+      },
+      MediaFrameResult,
+      callTimeout,
+    );
+  });
+
+  const cancelJob = Effect.fn("EngineService.cancelJob")(function* (jobId: EngineJobId) {
+    if (!(yield* jobs.isRunning(jobId)) || !current?.process.client.isOpen()) return false;
+    const result = yield* current.process.client
+      .call("job.cancel", { jobId }, EngineJobCancelResult, CANCEL_TIMEOUT)
+      .pipe(Effect.option);
+    return result._tag === "Some" && result.value.cancelled;
+  });
+
+  const runJob = Effect.fn("EngineService.runJob")(function* <A>(input: {
+    readonly kind: string;
+    readonly method: string;
+    readonly params: Readonly<Record<string, unknown>>;
+    readonly success: Schema.Decoder<A>;
+  }) {
+    yield* Effect.annotateCurrentSpan({ "engine.job.kind": input.kind });
+    const jobId = yield* jobs.start(input.kind);
+    return yield* call(input.method, { ...input.params, jobId }, input.success, undefined).pipe(
+      Effect.onExit((exit) => {
+        if (Exit.isSuccess(exit)) return jobs.finish(jobId, "succeeded");
+        if (Cause.hasInterrupts(exit.cause)) {
+          // The caller went away: stop the engine side too.
+          return cancelJob(jobId).pipe(Effect.andThen(jobs.finish(jobId, "cancelled")));
+        }
+        const cancelled = exit.cause.reasons.some(
+          (reason) => Cause.isFailReason(reason) && reason.error.reason === "cancelled",
+        );
+        return jobs.finish(jobId, cancelled ? "cancelled" : "failed");
+      }),
+    );
+  });
+
+  return EngineService.of({
+    ping,
+    probe,
+    frame,
+    runJob,
+    cancelJob,
+    subscribeJobs: jobs.subscribe,
+    status: Effect.sync(() => ({ pid: current?.process.pid, starts, lastStartupMs })),
+  });
+});
+
+export const layerWith = (options: EngineServiceOptions) =>
+  Layer.effect(EngineService, make(options));
+
+export const layer = layerWith({});

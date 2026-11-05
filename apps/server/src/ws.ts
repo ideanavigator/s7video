@@ -217,6 +217,7 @@ import * as ManagedProjectFolders from "./project/ManagedProjectFolders.ts";
 import * as ScratchThreadPromotion from "./project/ScratchThreadPromotion.ts";
 import { mutateProjectWithClone } from "./project/ProjectMutation.ts";
 import * as ProjectCloneTracker from "./project/ProjectCloneTracker.ts";
+import * as EngineService from "./engine/EngineService.ts";
 import * as RepositoryIdentityResolver from "./project/RepositoryIdentityResolver.ts";
 import * as WorktreeSetupTracker from "./project/WorktreeSetupTracker.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
@@ -1335,6 +1336,7 @@ export const layerWsRpc = (
       const usageLimitSources = yield* UsageLimitSources.UsageLimitSources;
       const worktreeSetupTracker = yield* WorktreeSetupTracker.WorktreeSetupTracker;
       const projectCloneTracker = yield* ProjectCloneTracker.ProjectCloneTracker;
+      const engine = yield* EngineService.EngineService;
       const repositoryIdentityResolver =
         yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
       const projectEnrichment = yield* ProjectEnrichmentService.ProjectEnrichmentService;
@@ -2729,6 +2731,9 @@ export const layerWsRpc = (
         [WS_METHODS.projectCloneRetry]: (input) =>
           projectCloneTracker.retry(input.projectId).pipe(Effect.map((applied) => ({ applied }))),
         [WS_METHODS.subscribeProjectClones]: () => projectCloneTracker.stream,
+        [WS_METHODS.engineJobsSubscribe]: () => engine.subscribeJobs,
+        [WS_METHODS.engineJobsCancel]: (input) =>
+          engine.cancelJob(input.jobId).pipe(Effect.map((applied) => ({ applied }))),
         [WS_METHODS.sourceControlPublishRepository]: (input) =>
           sourceControlRepositories.publishRepository(input).pipe(
             Effect.tap(() => repositoryIdentityResolver.resolve(input.cwd, { refresh: true })),

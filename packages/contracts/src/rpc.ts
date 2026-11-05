@@ -7,6 +7,12 @@ import {
 } from "./orchestrationV2.ts";
 import { OrchestrationDispatchCommandError } from "./orchestrationDispatch.ts";
 import {
+  EngineJobsCancelInput,
+  EngineJobsCancelResult,
+  EngineJobsEvent,
+  EngineJobsSubscribeInput,
+} from "./engine.ts";
+import {
   McpAppCallToolInput,
   McpAppCallToolResult,
   McpAppReadResourceInput,
@@ -594,6 +600,9 @@ export const WS_METHODS = {
   subscribeServerLifecycle: "subscribeServerLifecycle",
   subscribeAuthAccess: "subscribeAuthAccess",
   subscribeResourceTelemetry: "subscribeResourceTelemetry",
+
+  engineJobsSubscribe: "engine.jobs.subscribe",
+  engineJobsCancel: "engine.jobs.cancel",
 } as const;
 
 const WsServerUpsertKeybindingRpc = Rpc.make(WS_METHODS.serverUpsertKeybinding, {
@@ -1937,6 +1946,20 @@ export class RpcScopeAuthorization extends RpcMiddleware.Service<RpcScopeAuthori
   { error: EnvironmentAuthorizationError },
 ) {}
 
+// Engine jobs stream outside orchestration snapshots: progress is transient, not thread state.
+const WsEngineJobsSubscribeRpc = Rpc.make(WS_METHODS.engineJobsSubscribe, {
+  payload: EngineJobsSubscribeInput,
+  success: EngineJobsEvent,
+  error: EnvironmentAuthorizationError,
+  stream: true,
+});
+
+const WsEngineJobsCancelRpc = Rpc.make(WS_METHODS.engineJobsCancel, {
+  payload: EngineJobsCancelInput,
+  success: EngineJobsCancelResult,
+  error: EnvironmentAuthorizationError,
+});
+
 export const WsRpcGroup = RpcGroup.make(
   WsServerProbeRpc,
   WsServerGetConfigRpc,
@@ -2143,4 +2166,6 @@ export const WsRpcGroup = RpcGroup.make(
   WsOrchestrationV2SubscribeShellRpc,
   WsOrchestrationV2SubscribeThreadRpc,
   WsOrchestrationV2SubscribeCommandOutputRpc,
+  WsEngineJobsSubscribeRpc,
+  WsEngineJobsCancelRpc,
 ).middleware(RpcScopeAuthorization);
