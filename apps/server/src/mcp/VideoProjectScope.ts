@@ -99,8 +99,18 @@ export const resolveMedia = Effect.fn("VideoProjectScope.resolveMedia")(function
   if (requested === undefined) return yield* notInProject();
   const real = yield* realPathOf(requested);
   if (real === undefined) {
-    // Say nothing about files outside the project, not even whether they exist.
-    if (byId === undefined && !isInside(requested)) return yield* notInProject();
+    // Say nothing about files outside the project, not even whether they exist: judge a missing
+    // file by the real path of its nearest existing folder, so a symlinked folder cannot tell.
+    let folder = path.dirname(requested);
+    let realFolder = yield* realPathOf(folder);
+    while (realFolder === undefined && path.dirname(folder) !== folder) {
+      folder = path.dirname(folder);
+      realFolder = yield* realPathOf(folder);
+    }
+    const recordedReference = byId !== undefined && byId.path === undefined;
+    if (!recordedReference && (realFolder === undefined || !isInside(realFolder))) {
+      return yield* notInProject();
+    }
     return yield* failure(
       "invalid_request",
       byId === undefined

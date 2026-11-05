@@ -404,6 +404,33 @@ describe("video toolkit", () => {
     it.effect("should refuse a file reached through a symlinked folder", () =>
       refused(() => "assets/desktop/secret.mp4"),
     );
+    it.effect("should refuse a missing file behind a symlinked folder the same way", () =>
+      refused(() => "assets/desktop/nothing-here.mp4"),
+    );
+    it.effect("should refuse a missing recorded path outside the project the same way", () =>
+      withTools(({ fixture, call }) =>
+        Effect.gen(function* () {
+          fixture.documents.set(
+            projectA,
+            documentWith([media({ id: "gone", path: "assets/desktop/gone.mp4" })]),
+          );
+          const result = yield* call(threadA, "video_probe", { media: "gone" });
+          expect(textOf(result)).toEqual([NOT_IN_PROJECT]);
+          expect(fixture.calls).toEqual([]);
+        }),
+      ),
+    );
+    it.effect("still says a missing file inside the project is missing", () =>
+      withTools(({ fixture, call }) =>
+        Effect.gen(function* () {
+          const result = yield* call(threadA, "video_probe", { media: "assets/none/x.mp4" });
+          expect(textOf(result)).toEqual([
+            "There is no file at assets/none/x.mp4 in this project.",
+          ]);
+          expect(fixture.calls).toEqual([]);
+        }),
+      ),
+    );
     it.effect("should refuse ../ traversal", () =>
       refused(() => "assets/../../Desktop/secret.mp4"),
     );
