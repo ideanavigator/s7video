@@ -502,6 +502,8 @@ def _check_output(output: str, plan: Plan) -> str:
         raise RpcError(OUTPUT_ERROR, "the exports folder does not exist")
     if os.path.exists(output):
         raise RpcError(OUTPUT_ERROR, "an export with this name already exists")
+    if os.path.exists(f"{output}.part"):
+        raise RpcError(OUTPUT_ERROR, "an export with this name is already being written")
     seconds = Fraction(plan.total_frames) / plan.rate
     needed = (_bitrate(plan) + 256_000) * seconds / 8 * Fraction(5, 4)
     if shutil.disk_usage(folder).free < needed:
@@ -556,6 +558,15 @@ def _render(params: dict[str, Any], job: JobContext) -> dict[str, Any]:
     total_seconds = Fraction(plan.total_frames) / plan.rate
     script_flag = "-/filter_complex" if caps.major >= 7 else "-filter_complex_script"
 
+    # Claimed with O_EXCL: a second job given the same name is refused here, never shares the file.
+    try:
+        os.close(os.open(partial, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644))
+    except FileExistsError:
+        raise RpcError(OUTPUT_ERROR, "an export with this name is already being written") from None
+    except OSError:
+        raise RpcError(OUTPUT_ERROR, "the export file cannot be created") from None
+    job.track_output(partial)
+
     workdir = tempfile.mkdtemp(prefix="s7export-")
     try:
         # 1. Measure the mix.
@@ -583,7 +594,6 @@ def _render(params: dict[str, Any], job: JobContext) -> dict[str, Any]:
             file.write(build_graph(plan, inputs, assignment, video=True, ass_file=ass_file))
             file.write(f";\n[amix]{loudness_chain(gain)}[aout]")
         bitrate = _bitrate(plan)
-        job.track_output(partial)
         run = _ffmpeg(
             [
                 *input_args,

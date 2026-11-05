@@ -642,3 +642,15 @@ def test_untagged_matrix_is_read_as_rec709() -> None:
     tagged = export.Source("/x", Fraction(0), True, False, untagged_matrix=False)
     assert ":in_color_matrix=bt709:out_color_matrix=bt709" in export._video_chain(plan, untagged)
     assert "in_color_matrix" not in export._video_chain(plan, tagged)
+
+
+@pytest.mark.usefixtures("tools")
+def test_refuses_a_name_already_being_written(clip_30: Path, tmp_path: Path) -> None:
+    edit = make_edit(source=clip_30, ranges=[(0, 30)], fps=Fraction(30), duration_frames=360, width=W, height=H)
+    out = tmp_path / "out.mp4"
+    Path(f"{out}.part").write_bytes(b"another job")
+    with pytest.raises(rpc.RpcError, match="already being written") as raised:
+        run_export(edit, out)
+    assert raised.value.code == rpc.OUTPUT_ERROR
+    assert Path(f"{out}.part").read_bytes() == b"another job"
+    assert not out.exists()
