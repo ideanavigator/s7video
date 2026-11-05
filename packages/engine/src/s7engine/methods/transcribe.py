@@ -43,9 +43,8 @@ PAUSE_DB = -35.0
 PAUSE_MIN_S = 0.25
 #: A word whose aligned span averages below this is on silence, not speech (spike A1: -58 dBFS blip).
 SILENT_WORD_DBFS = -50.0
-#: The aligner reports the start of the 80 ms step a word begins in; the onset lies on average at
-#: its middle. Measured on talking-head-01: a mean start error of -27 ms without this shift.
-ALIGNER_START_BIAS_S = 0.04
+#: The aligner's time step when its config does not say (Qwen3-ForcedAligner: 80 ms).
+DEFAULT_ALIGNER_STEP_S = 0.08
 NO_AUDIO = 1010
 #: FFmpeg gets this long to decode a clip's audio (about 2 s for 2 min of AV1 here).
 AUDIO_DECODE_TIMEOUT = 600.0
@@ -276,6 +275,36 @@ def _recognise(asr: Any, piece: np.ndarray) -> tuple[str, str, list[tuple[str, f
     return language or "English", text.strip(), pieces
 
 
+def aligner_step(aligner: Any) -> float:
+    """The aligner's time step in seconds, from its config (`timestamp_segment_time`, in ms)."""
+    try:
+        step_ms = float(aligner.config.timestamp_segment_time)
+    except (AttributeError, TypeError, ValueError):
+        return DEFAULT_ALIGNER_STEP_S
+    return step_ms / 1000 if step_ms > 0 else DEFAULT_ALIGNER_STEP_S
+
+
+def shift_to_step_middle(start: float, end: float, step: float) -> tuple[float, float]:
+    """Moves a word's start to the middle of the aligner step it was reported in; the end stays.
+
+    The aligner reports the step a word starts in, and the onset lies on average half a step later.
+    A one-clip calibration (talking-head-01, machine-made marks; re-measure on our own recordings),
+    34 scored word starts, frames at 24000/1001, 1.7B (0.6B within 1 point):
+
+    | start shift | mean abs error | within 1 frame |
+    | --- | --- | --- |
+    | 0 ms | 31.5 ms | 85% (fails AC-5) |
+    | 20 ms | 23.6 ms | 91% |
+    | 30 ms | 25.6 ms | 91% |
+    | 40 ms = step / 2 (used) | 30.7 ms | 94% |
+    | 60 ms | 43.2 ms | 85% |
+
+    Ends stay where the aligner put them: shifting them by step / 2 too made 28 scored ends worse
+    (82% to 79% within a frame). Full table in MODELS.md, "Word timing calibration".
+    """
+    return min(start + step / 2, max(start, end)), end
+
+
 def _transcribe_chunk(asr: Any, aligner: Any, piece: np.ndarray) -> list[Word]:
     language, text, pieces = _recognise(asr, piece)
     if not text:
@@ -285,9 +314,7 @@ def _transcribe_chunk(asr: Any, aligner: Any, piece: np.ndarray) -> list[Word]:
     confidences = word_confidences(pieces, [item.text for item in items])
     words = []
     for item, confidence in zip(items, confidences, strict=True):
-        start = float(item.start_time)
-        end = float(item.end_time)
-        start = min(start + ALIGNER_START_BIAS_S, max(start, end))
+        start, end = shift_to_step_middle(float(item.start_time), float(item.end_time), aligner_step(aligner))
         words.append(Word(text=item.text, start=start, end=end, confidence=confidence))
     return words
 

@@ -139,6 +139,23 @@ def test_near_silence_filter_drops_word() -> None:
     assert transcribe.word_dbfs(pcm, 1.0, 1.3) < transcribe.SILENT_WORD_DBFS
 
 
+def test_word_starts_move_to_the_middle_of_the_aligner_step() -> None:
+    @dataclass
+    class Config:
+        timestamp_segment_time: float
+
+    @dataclass
+    class Aligner:
+        config: Config
+
+    assert transcribe.aligner_step(Aligner(Config(80))) == pytest.approx(0.08)
+    assert transcribe.aligner_step(Aligner(Config(40))) == pytest.approx(0.04)
+    assert transcribe.aligner_step(object()) == transcribe.DEFAULT_ALIGNER_STEP_S
+    # Half a step later; the end is kept, and a start never passes its end.
+    assert transcribe.shift_to_step_middle(1.0, 1.5, 0.08) == pytest.approx((1.04, 1.5))
+    assert transcribe.shift_to_step_middle(1.0, 1.02, 0.08) == pytest.approx((1.02, 1.02))
+
+
 def test_word_confidence_is_the_geometric_mean_of_its_tokens() -> None:
     pieces = [("Greet", 0.5), ("ings", 0.5), (".", 0.9), (" I", 1.0), ("'m", 1.0), (" Xu", 0.25)]
     assert transcribe.word_confidences(pieces, ["Greetings", "I'm", "Xu", "unheard"]) == [
@@ -412,7 +429,7 @@ def test_transcribe_writes_frames_and_returns_a_path(
     assert data["transcriptVersion"] == 1 and data["model"] == "test/asr-big"
     assert data["fps"] == {"num": 30, "den": 1}
     assert [word["text"] for word in data["words"]] == ["alpha", "bravo"]
-    # 0.5 s + the 40 ms aligner shift, at 30 fps.
+    # 0.5 s + half of the default 80 ms aligner step (the fake has no config), at 30 fps.
     assert data["words"][0]["startFrame"] == 16
     assert data["words"][0]["confidence"] == pytest.approx(0.8)
     for word in data["words"]:
