@@ -29,6 +29,8 @@ from; the per-ticket entries and how this file is compiled are in
   committed, and engine golden tests in `pnpm test:golden`. (S7V-031)
 - A built-in video helper that reads clips and grabs frames on your Mac. It starts on demand,
   restarts itself if it stops, and names any missing tool on a developer machine. (S7V-022)
+- Each new project keeps one edit record (`edit.json`) shared by the assistant and the editor;
+  every change can be undone and redone, and undo never touches your footage. (S7V-024)
 
 ### Changed
 

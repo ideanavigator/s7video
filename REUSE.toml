@@ -29,6 +29,8 @@ path = [
   "fixtures/images/*.png",
   "fixtures/media/*.json",
   "packages/engine/tests/golden/references/*.json",
+  "fixtures/edit-documents/**",
+  "packages/engine/schema/*.json",
   "docs/changelog/entries/*.md",
   "licenses.allowlist.json",
   "licenses.exceptions.json",
