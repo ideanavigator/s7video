@@ -15,7 +15,7 @@ from typing import Any
 import pytest
 
 from s7engine.methods import all_methods
-from s7engine.rpc import Server
+from s7engine.rpc import Method, Server
 
 
 def _tool(name: str) -> str | None:
@@ -80,12 +80,12 @@ def clips(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Path]:
 class Wire:
     """An engine on worker threads, fed lines through a queue, with the replies collected."""
 
-    def __init__(self) -> None:
+    def __init__(self, methods: list[Method] | None = None) -> None:
         self.messages: list[dict[str, Any]] = []
         self._lines: queue.Queue[str | None] = queue.Queue()
         self._changed = threading.Condition()
         self._next_id = 0
-        self.server = Server(all_methods(), self)
+        self.server = Server(all_methods() if methods is None else methods, self)
         self._thread = threading.Thread(target=self.server.serve, args=(self._iterate(),), daemon=True)
         self._thread.start()
 

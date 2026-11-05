@@ -9,6 +9,7 @@ from pathlib import Path
 from conftest import Wire
 
 from s7engine import rpc
+from s7engine.jobs import JobContext
 
 
 def test_ready_first(wire: Wire) -> None:
@@ -79,3 +80,43 @@ def test_finished_job_keeps_its_output(wire: Wire, tmp_path: Path) -> None:
     reply = wire.call("test.slowJob", {"jobId": "j", "outputPath": str(output), "steps": 2, "stepMs": 1})
     assert reply["result"]["steps"] == 2
     assert output.stat().st_size == 2048
+
+
+def test_cancel_after_the_handler_returned_counts_as_success(tmp_path: Path) -> None:
+    output = tmp_path / "done.bin"
+
+    def finish_then_get_cancelled(_params: dict[str, object], job: JobContext) -> dict[str, str]:
+        job.track_output(str(output))
+        output.write_bytes(b"done")
+        job.keep_output(str(output))
+        job.cancel()  # A cancel that lands after the work is done.
+        return {"path": str(output)}
+
+    method = rpc.Method("late.job", finish_then_get_cancelled, {"type": "object"}, job=True)
+    engine = Wire([method])
+    try:
+        reply = engine.call("late.job", {"jobId": "late"})
+        assert reply["result"] == {"path": str(output)}
+        assert output.read_bytes() == b"done"
+    finally:
+        engine.close()
+
+
+def test_internal_errors_log_the_type_not_the_text(caplog: object, tmp_path: Path) -> None:
+    import logging
+
+    secret = str(tmp_path / "private-client-clip.mp4")
+
+    def fail(_params: dict[str, object], _job: JobContext) -> None:
+        raise FileNotFoundError(2, "No such file", secret)
+
+    engine = Wire([rpc.Method("boom", fail, {"type": "object"})])
+    try:
+        with caplog.at_level(logging.INFO, logger="s7engine"):  # type: ignore[attr-defined]
+            reply = engine.call("boom")
+        assert reply["error"] == {"code": rpc.INTERNAL_ERROR, "message": "internal error"}
+        text = caplog.text  # type: ignore[attr-defined]
+        assert "internal error (FileNotFoundError)" in text
+        assert secret not in text
+    finally:
+        engine.close()

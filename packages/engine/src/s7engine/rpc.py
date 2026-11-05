@@ -5,7 +5,8 @@
 One JSON object per line in each direction. Requests run on worker threads so a long job never
 blocks the pipe, and `job.cancel` is answered on the reader thread at once. Bad input gets an
 error response and the engine stays up. stdout carries protocol lines only; logs go to stderr and
-name methods and timings, never parameters, paths or media.
+name methods, outcomes and timings, never parameters, paths, exception text or media. An internal
+error is logged by its exception type alone, since OS errors carry the paths they failed on.
 """
 
 from __future__ import annotations
@@ -159,29 +160,26 @@ class Server:
     def _run(self, request_id: Any, method: Method, params: dict[str, Any], context: JobContext | None) -> None:
         started = time.perf_counter()
         job = context if context is not None else JobContext.detached()
-        outcome = "ok"
         try:
             self._validators.validate(method, params)
-            result = method.handler(params, job)
-            job.raise_if_cancelled()
-            self.send({"jsonrpc": "2.0", "id": request_id, "result": result})
+            # A handler that returned has finished: a cancel arriving now is too late, and the
+            # reply and the files on disk both say the job succeeded.
+            reply: dict[str, Any] = {"jsonrpc": "2.0", "id": request_id, "result": method.handler(params, job)}
+            outcome = "ok"
         except Cancelled:
-            outcome = "cancelled"
-            job.discard_outputs()
-            self._error(request_id, RpcError(CANCELLED, "cancelled"))
+            reply, outcome = self._error_reply(request_id, RpcError(CANCELLED, "cancelled")), "cancelled"
         except RpcError as error:
-            outcome = f"error {error.code}"
+            reply, outcome = self._error_reply(request_id, error), f"error {error.code}"
+        except Exception as error:
+            reply = self._error_reply(request_id, RpcError(INTERNAL_ERROR, "internal error"))
+            outcome = f"internal error ({type(error).__name__})"
+        if "error" in reply:
             job.discard_outputs()
-            self._error(request_id, error)
-        except Exception:
-            outcome = "internal error"
-            job.discard_outputs()
-            log.exception("%s failed", method.name)
-            self._error(request_id, RpcError(INTERNAL_ERROR, "internal error"))
-        finally:
-            if context is not None:
-                self._jobs.finish(context.job_id)
-            log.info("%s %s in %.1f ms", method.name, outcome, (time.perf_counter() - started) * 1000)
+        if context is not None:
+            self._jobs.finish(context.job_id)
+        # Logged before the reply, so the log is complete once the caller has its answer.
+        log.info("%s %s in %.1f ms", method.name, outcome, (time.perf_counter() - started) * 1000)
+        self.send(reply)
 
     def _cancel(self, request_id: Any, params: dict[str, Any]) -> None:
         job_id = params.get("jobId")
@@ -191,10 +189,14 @@ class Server:
         self.send({"jsonrpc": "2.0", "id": request_id, "result": {"cancelled": self._jobs.cancel(job_id)}})
 
     def _error(self, request_id: Any, error: RpcError) -> None:
+        self.send(self._error_reply(request_id, error))
+
+    @staticmethod
+    def _error_reply(request_id: Any, error: RpcError) -> dict[str, Any]:
         body: dict[str, Any] = {"code": error.code, "message": error.message}
         if error.data is not None:
             body["data"] = error.data
-        self.send({"jsonrpc": "2.0", "id": request_id, "error": body})
+        return {"jsonrpc": "2.0", "id": request_id, "error": body}
 
 
 def _engine_version() -> str:
