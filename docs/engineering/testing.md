@@ -67,7 +67,8 @@ Python goldens live in `packages/engine/tests/golden/` as `<case_name>_golden.py
 `pnpm test:golden -- <case-name>` runs one (kebab case maps to the snake-case file). They use
 `harness.py` there (probe summary, SSIM, perceptual hash, loudness, cut-list and word-timing
 comparison) and its `media("<clip-id>")` fixture, which skips with "run pnpm media:fetch" when the clip
-is not in the cache. `pnpm test:golden` fetches or reuses the clips first (`--no-fetch` skips that).
+is not in the cache. `pnpm test:golden` fetches or reuses the clips first (`--no-fetch` skips that),
+and a full run (no case named) also runs the harness's own tests (`tests/golden/test_*.py`).
 
 ## Providers and cost
 

@@ -5,6 +5,7 @@
 // TypeScript cases are `<case>.golden.test.ts` (run with `vp test run`); Python engine cases are
 // `packages/engine/tests/golden/<case_name>_golden.py` (run with uv and pytest). Before Python
 // cases run, the test clips are fetched or reused (`pnpm media:fetch`); `--no-fetch` skips that.
+// A full run (no case named) also runs the harness's own tests (`tests/golden/test_*.py`).
 import * as NodeChildProcess from "node:child_process";
 import * as NodePath from "node:path";
 
@@ -37,14 +38,16 @@ export function planGoldens(
   cases: ReadonlyArray<string>,
 ): GoldenPlan {
   const typescript = tracked.filter((file) => file.endsWith(".golden.test.ts"));
-  const python = tracked.filter(
-    (file) => file.startsWith(`${PYTHON_GOLDEN_DIR}/`) && file.endsWith("_golden.py"),
+  const inGoldenDir = (file: string) => file.startsWith(`${PYTHON_GOLDEN_DIR}/`);
+  const python = tracked.filter((file) => inGoldenDir(file) && file.endsWith("_golden.py"));
+  const harnessTests = tracked.filter(
+    (file) => inGoldenDir(file) && NodePath.basename(file).startsWith("test_"),
   );
   const wanted = (file: string) => cases.length === 0 || cases.includes(caseNameOf(file));
   const known = new Set([...typescript, ...python].map(caseNameOf));
   return {
     typescript: typescript.filter(wanted),
-    python: python.filter(wanted),
+    python: [...(cases.length === 0 ? harnessTests : []), ...python.filter(wanted)],
     unknownCases: cases.filter((name) => !known.has(name)),
   };
 }
@@ -67,7 +70,12 @@ async function main(argv: ReadonlyArray<string>): Promise<number> {
   const cases = args.filter((arg) => !arg.startsWith("--"));
   const tracked = NodeChildProcess.execFileSync(
     "git",
-    ["ls-files", "*.golden.test.ts", `${PYTHON_GOLDEN_DIR}/*_golden.py`],
+    [
+      "ls-files",
+      "*.golden.test.ts",
+      `${PYTHON_GOLDEN_DIR}/*_golden.py`,
+      `${PYTHON_GOLDEN_DIR}/test_*.py`,
+    ],
     { cwd: root, encoding: "utf8" },
   )
     .split("\n")

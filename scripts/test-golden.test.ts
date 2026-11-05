@@ -19,10 +19,10 @@ describe("test-golden", () => {
     expect(caseNameOf("a/heic-to-jpeg.golden.test.ts")).toBe("heic-to-jpeg");
   });
 
-  it("runs every TypeScript and Python golden when no case is named", () => {
+  it("runs every TypeScript and Python golden, and the harness tests, when no case is named", () => {
     expect(planGoldens(TRACKED, [])).toEqual({
       typescript: [TRACKED[0]],
-      python: [TRACKED[1]],
+      python: [TRACKED[2], TRACKED[1]],
       unknownCases: [],
     });
   });
