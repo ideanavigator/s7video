@@ -58,6 +58,17 @@ vi.mock(import("../../editor/editStore"), async (importOriginal) => ({
   useMediaTranscript: () => state.transcript,
   useTranscriptionJobs: () => useSyncExternalStore(jobsStore.subscribe, () => state.jobs),
 }));
+const builds = vi.hoisted(() => ({ count: 0 }));
+vi.mock(import("../../editor/transcriptModel"), async (importOriginal) => {
+  const original = await importOriginal();
+  return {
+    ...original,
+    buildTranscriptModel: (...args: Parameters<typeof original.buildTranscriptModel>) => {
+      builds.count += 1;
+      return original.buildTranscriptModel(...args);
+    },
+  };
+});
 vi.mock(import("../../state/use-atom-command"), () => ({
   useAtomCommand: ((command: { label: string }) => {
     const label = command.label;
@@ -484,6 +495,24 @@ describe("TranscriptTab", () => {
     await expect
       .element(screen.getByRole("listbox", { name: "Transcript" }))
       .toHaveAttribute("aria-activedescendant", target.element().id);
+  });
+
+  it("keeps its model while the plan is rebuilt with the same frames", async () => {
+    ready(SHORT);
+    await using screen = await renderTab({ fps: FPS, segments: SILENCE_CUT });
+    await expect.element(screen.getByRole("option", { name: "hello" })).toBeVisible();
+    const before = builds.count;
+    // A library update makes the panel rebuild its plan: new objects, the same frames.
+    await screen.setPlayback({
+      fps: { ...FPS },
+      segments: SILENCE_CUT.map((entry) => ({ ...entry })),
+    });
+    expect(builds.count).toBe(before);
+    await screen.setPlayback({ fps: FPS, segments: segmentsOf([[0, 62]]) });
+    expect(builds.count).toBe(before + 1);
+    await expect
+      .element(screen.getByRole("option", { name: "silence", exact: true }))
+      .toBeVisible();
   });
 
   it("should keep scroll on agent edit, updating struck words", async () => {

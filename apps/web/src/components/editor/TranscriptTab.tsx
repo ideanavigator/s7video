@@ -22,6 +22,7 @@ import {
 } from "../../editor/editStore";
 import {
   buildTranscriptModel,
+  samePlayback,
   seekFrameOfWord,
   type TranscriptModel,
   type TranscriptPlayback,
@@ -440,8 +441,11 @@ function TranscriptWords(props: {
 }
 
 export function TranscriptTab(props: TranscriptTabProps) {
-  const { projectRef, mediaId, playback } = props;
+  const { projectRef, mediaId } = props;
   const state = useMediaTranscript(projectRef, mediaId);
+  // Kept while the frames played stay the same, so the model and its rows are not rebuilt.
+  const [playback, setPlayback] = useState(props.playback);
+  if (!samePlayback(playback, props.playback)) setPlayback(props.playback);
   if (mediaId === null) {
     return (
       <Message

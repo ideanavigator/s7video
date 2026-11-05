@@ -9,6 +9,7 @@ import {
   MAX_ROW_WORDS,
   PARAGRAPH_PAUSE_SECONDS,
   rowOfWord,
+  samePlayback,
   seekFrameOfWord,
   wordAtSourceFrame,
   wordAtTimelineFrame,
@@ -145,6 +146,29 @@ describe("transcriptModel", () => {
     expect(seekFrameOfWord(model, segments, 2)).toBe(20);
     expect(seekFrameOfWord(model, segments, 3)).toBe(20);
     expect(seekFrameOfWord(model, [], 0)).toBeNull();
+  });
+
+  it("treats a rebuilt plan with the same frames as the same playback", () => {
+    const ranges = [
+      [0, 20],
+      [40, 60],
+    ] as const;
+    const playback = { fps: FPS, segments: segmentsOf(ranges) };
+    expect(samePlayback(playback, { fps: { ...FPS }, segments: segmentsOf(ranges) })).toBe(true);
+    expect(
+      samePlayback(playback, {
+        fps: FPS,
+        segments: segmentsOf([
+          [0, 20],
+          [41, 60],
+        ]),
+      }),
+    ).toBe(false);
+    expect(samePlayback(playback, { fps: { num: 25, den: 1 }, segments: playback.segments })).toBe(
+      false,
+    );
+    expect(samePlayback(playback, { fps: FPS, segments: null })).toBe(false);
+    expect(samePlayback(null, null)).toBe(true);
   });
 
   it("moves word frames to the edit's rate", () => {

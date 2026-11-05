@@ -55,6 +55,28 @@ export interface TranscriptPlayback {
 const sameRate = (left: EditRational, right: EditRational) =>
   left.num * right.den === right.num * left.den;
 
+/**
+ * True when both play the same frames at the same rate. The panel rebuilds its plan whenever the
+ * edit or the media library changes, so the tab keeps its model unless this changes.
+ */
+export function samePlayback(
+  left: TranscriptPlayback | null,
+  right: TranscriptPlayback | null,
+): boolean {
+  if (left === right) return true;
+  if (left === null || right === null) return false;
+  if (left.fps.num !== right.fps.num || left.fps.den !== right.fps.den) return false;
+  const [a, b] = [left.segments, right.segments];
+  if (a === b) return true;
+  if (a === null || b === null || a.length !== b.length) return false;
+  return a.every(
+    (segment, index) =>
+      segment.sourceStart === b[index]!.sourceStart &&
+      segment.sourceEnd === b[index]!.sourceEnd &&
+      segment.timelineStart === b[index]!.timelineStart,
+  );
+}
+
 /** A frame at `from` as a frame at `to`; `ceil` for exclusive ends, so a word never shrinks to 0. */
 function convertFrame(frame: number, from: EditRational, to: EditRational, ceil: boolean): number {
   if (sameRate(from, to)) return frame;
