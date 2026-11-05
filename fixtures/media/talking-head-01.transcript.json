@@ -1,0 +1,2439 @@
+{
+  "transcriptVersion": 1,
+  "mediaFingerprint": {
+    "sha256": "048056796ae45b3f7ff4f17264a065a8627b0d5e9898bd62297e47d80390b721",
+    "size": 12247260
+  },
+  "model": "mlx-community/Qwen3-ASR-1.7B-8bit",
+  "revision": "a8379a2e2f9e313c9292cdf1af4055ab56d50d55",
+  "fps": {
+    "num": 24000,
+    "den": 1001
+  },
+  "durationFrames": 3357,
+  "words": [
+    {
+      "text": "Greetings",
+      "startFrame": 20,
+      "endFrame": 35,
+      "confidence": 0.779,
+      "speaker": "S1"
+    },
+    {
+      "text": "I'm",
+      "startFrame": 36,
+      "endFrame": 38,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "Jiaxu",
+      "startFrame": 39,
+      "endFrame": 52,
+      "confidence": 0.799,
+      "speaker": "S1"
+    },
+    {
+      "text": "and",
+      "startFrame": 55,
+      "endFrame": 60,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "I'm",
+      "startFrame": 60,
+      "endFrame": 65,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "in",
+      "startFrame": 66,
+      "endFrame": 71,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "the",
+      "startFrame": 72,
+      "endFrame": 75,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "arbitration",
+      "startFrame": 76,
+      "endFrame": 90,
+      "confidence": 0.779,
+      "speaker": "S1"
+    },
+    {
+      "text": "committee",
+      "startFrame": 91,
+      "endFrame": 106,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "You",
+      "startFrame": 116,
+      "endFrame": 117,
+      "confidence": 0.882,
+      "speaker": "S1"
+    },
+    {
+      "text": "might",
+      "startFrame": 118,
+      "endFrame": 121,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "have",
+      "startFrame": 122,
+      "endFrame": 125,
+      "confidence": 0.882,
+      "speaker": "S1"
+    },
+    {
+      "text": "heard",
+      "startFrame": 128,
+      "endFrame": 138,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "it",
+      "startFrame": 139,
+      "endFrame": 142,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "or",
+      "startFrame": 145,
+      "endFrame": 146,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "better",
+      "startFrame": 147,
+      "endFrame": 152,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "known",
+      "startFrame": 153,
+      "endFrame": 159,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "as",
+      "startFrame": 160,
+      "endFrame": 165,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "outcome",
+      "startFrame": 168,
+      "endFrame": 178,
+      "confidence": 0.939,
+      "speaker": "S1"
+    },
+    {
+      "text": "There's",
+      "startFrame": 195,
+      "endFrame": 198,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "different",
+      "startFrame": 199,
+      "endFrame": 205,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "outcome",
+      "startFrame": 206,
+      "endFrame": 217,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "in",
+      "startFrame": 218,
+      "endFrame": 221,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "different",
+      "startFrame": 222,
+      "endFrame": 226,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "projects",
+      "startFrame": 227,
+      "endFrame": 244,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "For",
+      "startFrame": 245,
+      "endFrame": 248,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "example",
+      "startFrame": 248,
+      "endFrame": 259,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "in",
+      "startFrame": 260,
+      "endFrame": 261,
+      "confidence": 0.779,
+      "speaker": "S1"
+    },
+    {
+      "text": "English",
+      "startFrame": 262,
+      "endFrame": 269,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "Wikipedia",
+      "startFrame": 270,
+      "endFrame": 280,
+      "confidence": 0.882,
+      "speaker": "S1"
+    },
+    {
+      "text": "it's",
+      "startFrame": 283,
+      "endFrame": 284,
+      "confidence": 0.882,
+      "speaker": "S1"
+    },
+    {
+      "text": "outcome",
+      "startFrame": 287,
+      "endFrame": 297,
+      "confidence": 0.687,
+      "speaker": "S1"
+    },
+    {
+      "text": "In",
+      "startFrame": 304,
+      "endFrame": 305,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "Chinese",
+      "startFrame": 306,
+      "endFrame": 313,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "Wikipedia",
+      "startFrame": 314,
+      "endFrame": 324,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "Russian",
+      "startFrame": 327,
+      "endFrame": 334,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "Wikipedia",
+      "startFrame": 335,
+      "endFrame": 347,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "and",
+      "startFrame": 348,
+      "endFrame": 351,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "all",
+      "startFrame": 356,
+      "endFrame": 361,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "the",
+      "startFrame": 362,
+      "endFrame": 363,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "Wikipedia",
+      "startFrame": 365,
+      "endFrame": 378,
+      "confidence": 0.472,
+      "speaker": "S1"
+    },
+    {
+      "text": "projects",
+      "startFrame": 379,
+      "endFrame": 399,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "And",
+      "startFrame": 419,
+      "endFrame": 430,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "what",
+      "startFrame": 438,
+      "endFrame": 441,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "does",
+      "startFrame": 442,
+      "endFrame": 447,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "outcome",
+      "startFrame": 448,
+      "endFrame": 458,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "do",
+      "startFrame": 459,
+      "endFrame": 466,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "It",
+      "startFrame": 482,
+      "endFrame": 486,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "will",
+      "startFrame": 487,
+      "endFrame": 494,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "do",
+      "startFrame": 495,
+      "endFrame": 502,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "many",
+      "startFrame": 503,
+      "endFrame": 507,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "different",
+      "startFrame": 508,
+      "endFrame": 515,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "ways",
+      "startFrame": 516,
+      "endFrame": 525,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "For",
+      "startFrame": 526,
+      "endFrame": 529,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "example",
+      "startFrame": 529,
+      "endFrame": 540,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "it",
+      "startFrame": 543,
+      "endFrame": 546,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "will",
+      "startFrame": 547,
+      "endFrame": 548,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "manage",
+      "startFrame": 549,
+      "endFrame": 559,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "all",
+      "startFrame": 560,
+      "endFrame": 563,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "the",
+      "startFrame": 564,
+      "endFrame": 565,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "user",
+      "startFrame": 566,
+      "endFrame": 575,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "conflicts",
+      "startFrame": 575,
+      "endFrame": 596,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "in",
+      "startFrame": 599,
+      "endFrame": 605,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "the",
+      "startFrame": 606,
+      "endFrame": 607,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "Wikipedia",
+      "startFrame": 608,
+      "endFrame": 621,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "You",
+      "startFrame": 637,
+      "endFrame": 638,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "might",
+      "startFrame": 639,
+      "endFrame": 642,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "think",
+      "startFrame": 643,
+      "endFrame": 647,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "that",
+      "startFrame": 650,
+      "endFrame": 657,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "user",
+      "startFrame": 666,
+      "endFrame": 670,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "conflicts",
+      "startFrame": 671,
+      "endFrame": 690,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "What's",
+      "startFrame": 691,
+      "endFrame": 693,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "that",
+      "startFrame": 696,
+      "endFrame": 703,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "User",
+      "startFrame": 717,
+      "endFrame": 720,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "conflicts",
+      "startFrame": 721,
+      "endFrame": 736,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "can",
+      "startFrame": 737,
+      "endFrame": 741,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "be",
+      "startFrame": 742,
+      "endFrame": 743,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "simply",
+      "startFrame": 744,
+      "endFrame": 755,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "put",
+      "startFrame": 756,
+      "endFrame": 761,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "as",
+      "startFrame": 762,
+      "endFrame": 772,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "user",
+      "startFrame": 773,
+      "endFrame": 782,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "arguments",
+      "startFrame": 785,
+      "endFrame": 801,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "or",
+      "startFrame": 802,
+      "endFrame": 805,
+      "confidence": 0.779,
+      "speaker": "S1"
+    },
+    {
+      "text": "just",
+      "startFrame": 806,
+      "endFrame": 816,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "people's",
+      "startFrame": 833,
+      "endFrame": 845,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "accuse",
+      "startFrame": 875,
+      "endFrame": 885,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "accuse",
+      "startFrame": 888,
+      "endFrame": 912,
+      "confidence": 0.882,
+      "speaker": "S1"
+    },
+    {
+      "text": "User",
+      "startFrame": 947,
+      "endFrame": 950,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "conflicts",
+      "startFrame": 951,
+      "endFrame": 965,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "can",
+      "startFrame": 966,
+      "endFrame": 969,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "be",
+      "startFrame": 970,
+      "endFrame": 971,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "easily",
+      "startFrame": 972,
+      "endFrame": 979,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "attributed",
+      "startFrame": 980,
+      "endFrame": 996,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "to",
+      "startFrame": 997,
+      "endFrame": 1004,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "the",
+      "startFrame": 1005,
+      "endFrame": 1006,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "user's",
+      "startFrame": 1007,
+      "endFrame": 1019,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "arguments",
+      "startFrame": 1020,
+      "endFrame": 1036,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "that",
+      "startFrame": 1037,
+      "endFrame": 1040,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "it's",
+      "startFrame": 1041,
+      "endFrame": 1044,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "so",
+      "startFrame": 1045,
+      "endFrame": 1052,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "serious",
+      "startFrame": 1053,
+      "endFrame": 1065,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "that",
+      "startFrame": 1066,
+      "endFrame": 1067,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "we",
+      "startFrame": 1068,
+      "endFrame": 1071,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "have",
+      "startFrame": 1072,
+      "endFrame": 1077,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "to",
+      "startFrame": 1078,
+      "endFrame": 1079,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "do",
+      "startFrame": 1079,
+      "endFrame": 1084,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "something",
+      "startFrame": 1085,
+      "endFrame": 1096,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "to",
+      "startFrame": 1097,
+      "endFrame": 1100,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "intervention",
+      "startFrame": 1101,
+      "endFrame": 1119,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "this",
+      "startFrame": 1120,
+      "endFrame": 1123,
+      "confidence": 0.779,
+      "speaker": "S1"
+    },
+    {
+      "text": "arguments",
+      "startFrame": 1126,
+      "endFrame": 1142,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "Ten",
+      "startFrame": 1158,
+      "endFrame": 1163,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "years",
+      "startFrame": 1164,
+      "endFrame": 1169,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "ago",
+      "startFrame": 1170,
+      "endFrame": 1176,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "only",
+      "startFrame": 1179,
+      "endFrame": 1184,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "Jimmy",
+      "startFrame": 1185,
+      "endFrame": 1190,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "Wells",
+      "startFrame": 1191,
+      "endFrame": 1201,
+      "confidence": 0.882,
+      "speaker": "S1"
+    },
+    {
+      "text": "can",
+      "startFrame": 1202,
+      "endFrame": 1207,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "do",
+      "startFrame": 1208,
+      "endFrame": 1211,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "this",
+      "startFrame": 1212,
+      "endFrame": 1219,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "action",
+      "startFrame": 1219,
+      "endFrame": 1228,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "like",
+      "startFrame": 1244,
+      "endFrame": 1247,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "to",
+      "startFrame": 1250,
+      "endFrame": 1251,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "block",
+      "startFrame": 1252,
+      "endFrame": 1259,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "a",
+      "startFrame": 1259,
+      "endFrame": 1260,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "user",
+      "startFrame": 1260,
+      "endFrame": 1272,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "when",
+      "startFrame": 1273,
+      "endFrame": 1282,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "they",
+      "startFrame": 1285,
+      "endFrame": 1290,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "are",
+      "startFrame": 1290,
+      "endFrame": 1291,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "not",
+      "startFrame": 1294,
+      "endFrame": 1297,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "doing",
+      "startFrame": 1298,
+      "endFrame": 1303,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "vandals",
+      "startFrame": 1304,
+      "endFrame": 1318,
+      "confidence": 0.855,
+      "speaker": "S1"
+    },
+    {
+      "text": "But",
+      "startFrame": 1325,
+      "endFrame": 1330,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "today",
+      "startFrame": 1331,
+      "endFrame": 1336,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "the",
+      "startFrame": 1340,
+      "endFrame": 1341,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "arbitration",
+      "startFrame": 1344,
+      "endFrame": 1355,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "committee",
+      "startFrame": 1356,
+      "endFrame": 1366,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "can",
+      "startFrame": 1367,
+      "endFrame": 1374,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "do",
+      "startFrame": 1377,
+      "endFrame": 1383,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "this",
+      "startFrame": 1384,
+      "endFrame": 1393,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "action",
+      "startFrame": 1411,
+      "endFrame": 1420,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "Let's",
+      "startFrame": 1440,
+      "endFrame": 1443,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "imagine",
+      "startFrame": 1444,
+      "endFrame": 1453,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "this",
+      "startFrame": 1453,
+      "endFrame": 1462,
+      "confidence": 0.779,
+      "speaker": "S1"
+    },
+    {
+      "text": "There",
+      "startFrame": 1463,
+      "endFrame": 1466,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "is",
+      "startFrame": 1467,
+      "endFrame": 1468,
+      "confidence": 0.779,
+      "speaker": "S1"
+    },
+    {
+      "text": "a",
+      "startFrame": 1469,
+      "endFrame": 1470,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "person",
+      "startFrame": 1471,
+      "endFrame": 1481,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "Another",
+      "startFrame": 1494,
+      "endFrame": 1499,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "person",
+      "startFrame": 1501,
+      "endFrame": 1510,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "is",
+      "startFrame": 1513,
+      "endFrame": 1516,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "arguing",
+      "startFrame": 1517,
+      "endFrame": 1527,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "whether",
+      "startFrame": 1528,
+      "endFrame": 1535,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "we",
+      "startFrame": 1536,
+      "endFrame": 1539,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "should",
+      "startFrame": 1540,
+      "endFrame": 1547,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "add",
+      "startFrame": 1547,
+      "endFrame": 1552,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "a",
+      "startFrame": 1553,
+      "endFrame": 1554,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "cat",
+      "startFrame": 1559,
+      "endFrame": 1564,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "picture",
+      "startFrame": 1565,
+      "endFrame": 1573,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "in",
+      "startFrame": 1574,
+      "endFrame": 1575,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "cat",
+      "startFrame": 1578,
+      "endFrame": 1581,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "article",
+      "startFrame": 1582,
+      "endFrame": 1594,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "and",
+      "startFrame": 1603,
+      "endFrame": 1606,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "they",
+      "startFrame": 1607,
+      "endFrame": 1608,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "are",
+      "startFrame": 1609,
+      "endFrame": 1610,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "doing",
+      "startFrame": 1611,
+      "endFrame": 1616,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "editing",
+      "startFrame": 1617,
+      "endFrame": 1625,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "war",
+      "startFrame": 1626,
+      "endFrame": 1631,
+      "confidence": 0.882,
+      "speaker": "S1"
+    },
+    {
+      "text": "revert",
+      "startFrame": 1632,
+      "endFrame": 1642,
+      "confidence": 0.732,
+      "speaker": "S1"
+    },
+    {
+      "text": "revert",
+      "startFrame": 1645,
+      "endFrame": 1654,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "revert",
+      "startFrame": 1655,
+      "endFrame": 1665,
+      "confidence": 0.882,
+      "speaker": "S1"
+    },
+    {
+      "text": "mention",
+      "startFrame": 1686,
+      "endFrame": 1692,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "different",
+      "startFrame": 1693,
+      "endFrame": 1702,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "people",
+      "startFrame": 1703,
+      "endFrame": 1715,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "submitting",
+      "startFrame": 1716,
+      "endFrame": 1731,
+      "confidence": 0.779,
+      "speaker": "S1"
+    },
+    {
+      "text": "to",
+      "startFrame": 1735,
+      "endFrame": 1738,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "administrator",
+      "startFrame": 1741,
+      "endFrame": 1763,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "notice",
+      "startFrame": 1768,
+      "endFrame": 1775,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "board",
+      "startFrame": 1776,
+      "endFrame": 1786,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "arguing",
+      "startFrame": 1793,
+      "endFrame": 1804,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "arguing",
+      "startFrame": 1805,
+      "endFrame": 1811,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "arguing",
+      "startFrame": 1812,
+      "endFrame": 1823,
+      "confidence": 0.882,
+      "speaker": "S1"
+    },
+    {
+      "text": "and",
+      "startFrame": 1831,
+      "endFrame": 1834,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "at",
+      "startFrame": 1835,
+      "endFrame": 1846,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "that",
+      "startFrame": 1846,
+      "endFrame": 1847,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "time",
+      "startFrame": 1847,
+      "endFrame": 1852,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "one",
+      "startFrame": 1852,
+      "endFrame": 1855,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "person",
+      "startFrame": 1856,
+      "endFrame": 1865,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "submitted",
+      "startFrame": 1866,
+      "endFrame": 1876,
+      "confidence": 0.779,
+      "speaker": "S1"
+    },
+    {
+      "text": "a",
+      "startFrame": 1879,
+      "endFrame": 1882,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "arbitration",
+      "startFrame": 1883,
+      "endFrame": 1896,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "case",
+      "startFrame": 1898,
+      "endFrame": 1903,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "request",
+      "startFrame": 1904,
+      "endFrame": 1919,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "And",
+      "startFrame": 1928,
+      "endFrame": 1931,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "then",
+      "startFrame": 1934,
+      "endFrame": 1941,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "the",
+      "startFrame": 1942,
+      "endFrame": 1943,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "arbitration",
+      "startFrame": 1945,
+      "endFrame": 1952,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "committee",
+      "startFrame": 1953,
+      "endFrame": 1966,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "will",
+      "startFrame": 1967,
+      "endFrame": 1969,
+      "confidence": 0.472,
+      "speaker": "S1"
+    },
+    {
+      "text": "start",
+      "startFrame": 1970,
+      "endFrame": 1981,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "to",
+      "startFrame": 1984,
+      "endFrame": 1987,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "vote",
+      "startFrame": 1988,
+      "endFrame": 1998,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "whether",
+      "startFrame": 2005,
+      "endFrame": 2012,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "they",
+      "startFrame": 2013,
+      "endFrame": 2015,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "should",
+      "startFrame": 2016,
+      "endFrame": 2021,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "accept",
+      "startFrame": 2022,
+      "endFrame": 2033,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "this",
+      "startFrame": 2033,
+      "endFrame": 2034,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "case",
+      "startFrame": 2034,
+      "endFrame": 2042,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "or",
+      "startFrame": 2045,
+      "endFrame": 2046,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "reject",
+      "startFrame": 2047,
+      "endFrame": 2060,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "Before",
+      "startFrame": 2072,
+      "endFrame": 2077,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "you",
+      "startFrame": 2078,
+      "endFrame": 2079,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "submit",
+      "startFrame": 2080,
+      "endFrame": 2090,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "to",
+      "startFrame": 2091,
+      "endFrame": 2092,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "arbitration",
+      "startFrame": 2093,
+      "endFrame": 2100,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "committee",
+      "startFrame": 2103,
+      "endFrame": 2115,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "your",
+      "startFrame": 2124,
+      "endFrame": 2125,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "case",
+      "startFrame": 2126,
+      "endFrame": 2132,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "have",
+      "startFrame": 2135,
+      "endFrame": 2140,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "to",
+      "startFrame": 2145,
+      "endFrame": 2148,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "be",
+      "startFrame": 2149,
+      "endFrame": 2154,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "passed",
+      "startFrame": 2155,
+      "endFrame": 2161,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "through",
+      "startFrame": 2162,
+      "endFrame": 2167,
+      "confidence": 0.779,
+      "speaker": "S1"
+    },
+    {
+      "text": "all",
+      "startFrame": 2168,
+      "endFrame": 2171,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "the",
+      "startFrame": 2172,
+      "endFrame": 2175,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "conflict",
+      "startFrame": 2176,
+      "endFrame": 2190,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "resolve",
+      "startFrame": 2193,
+      "endFrame": 2202,
+      "confidence": 0.779,
+      "speaker": "S1"
+    },
+    {
+      "text": "methods",
+      "startFrame": 2203,
+      "endFrame": 2215,
+      "confidence": 0.882,
+      "speaker": "S1"
+    },
+    {
+      "text": "for",
+      "startFrame": 2226,
+      "endFrame": 2227,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "example",
+      "startFrame": 2227,
+      "endFrame": 2240,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "for",
+      "startFrame": 2273,
+      "endFrame": 2274,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "comments",
+      "startFrame": 2277,
+      "endFrame": 2293,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "for",
+      "startFrame": 2296,
+      "endFrame": 2297,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "example",
+      "startFrame": 2298,
+      "endFrame": 2307,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "requests",
+      "startFrame": 2309,
+      "endFrame": 2316,
+      "confidence": 0.607,
+      "speaker": "S1"
+    },
+    {
+      "text": "to",
+      "startFrame": 2318,
+      "endFrame": 2319,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "notice",
+      "startFrame": 2319,
+      "endFrame": 2328,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "board",
+      "startFrame": 2329,
+      "endFrame": 2335,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "and",
+      "startFrame": 2336,
+      "endFrame": 2339,
+      "confidence": 0.607,
+      "speaker": "S1"
+    },
+    {
+      "text": "all",
+      "startFrame": 2340,
+      "endFrame": 2345,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "the",
+      "startFrame": 2346,
+      "endFrame": 2351,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "actions",
+      "startFrame": 2352,
+      "endFrame": 2360,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "like",
+      "startFrame": 2361,
+      "endFrame": 2364,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "that",
+      "startFrame": 2365,
+      "endFrame": 2368,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "After",
+      "startFrame": 2382,
+      "endFrame": 2387,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "this",
+      "startFrame": 2388,
+      "endFrame": 2391,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "process",
+      "startFrame": 2392,
+      "endFrame": 2408,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "if",
+      "startFrame": 2411,
+      "endFrame": 2414,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "the",
+      "startFrame": 2415,
+      "endFrame": 2416,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "committee",
+      "startFrame": 2417,
+      "endFrame": 2425,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "accept",
+      "startFrame": 2426,
+      "endFrame": 2441,
+      "confidence": 0.829,
+      "speaker": "S1"
+    },
+    {
+      "text": "then",
+      "startFrame": 2449,
+      "endFrame": 2456,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "committee",
+      "startFrame": 2457,
+      "endFrame": 2468,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "will",
+      "startFrame": 2469,
+      "endFrame": 2472,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "appoint",
+      "startFrame": 2472,
+      "endFrame": 2479,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "two",
+      "startFrame": 2480,
+      "endFrame": 2485,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "or",
+      "startFrame": 2486,
+      "endFrame": 2487,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "three",
+      "startFrame": 2488,
+      "endFrame": 2496,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "drafting",
+      "startFrame": 2497,
+      "endFrame": 2506,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "arbitrators",
+      "startFrame": 2507,
+      "endFrame": 2525,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "who",
+      "startFrame": 2534,
+      "endFrame": 2535,
+      "confidence": 0.779,
+      "speaker": "S1"
+    },
+    {
+      "text": "are",
+      "startFrame": 2536,
+      "endFrame": 2537,
+      "confidence": 0.472,
+      "speaker": "S1"
+    },
+    {
+      "text": "start",
+      "startFrame": 2538,
+      "endFrame": 2542,
+      "confidence": 0.472,
+      "speaker": "S1"
+    },
+    {
+      "text": "drafting",
+      "startFrame": 2543,
+      "endFrame": 2552,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "all",
+      "startFrame": 2553,
+      "endFrame": 2554,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "the",
+      "startFrame": 2555,
+      "endFrame": 2556,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "principles",
+      "startFrame": 2557,
+      "endFrame": 2577,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "all",
+      "startFrame": 2584,
+      "endFrame": 2587,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "the",
+      "startFrame": 2588,
+      "endFrame": 2589,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "facts",
+      "startFrame": 2589,
+      "endFrame": 2602,
+      "confidence": 0.882,
+      "speaker": "S1"
+    },
+    {
+      "text": "and",
+      "startFrame": 2605,
+      "endFrame": 2608,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "all",
+      "startFrame": 2611,
+      "endFrame": 2613,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "the",
+      "startFrame": 2613,
+      "endFrame": 2614,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "enforcement",
+      "startFrame": 2616,
+      "endFrame": 2629,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "method",
+      "startFrame": 2632,
+      "endFrame": 2638,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "The",
+      "startFrame": 2674,
+      "endFrame": 2675,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "principles",
+      "startFrame": 2676,
+      "endFrame": 2692,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "would",
+      "startFrame": 2693,
+      "endFrame": 2696,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "be",
+      "startFrame": 2697,
+      "endFrame": 2704,
+      "confidence": 0.687,
+      "speaker": "S1"
+    },
+    {
+      "text": "the",
+      "startFrame": 2704,
+      "endFrame": 2705,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "Wikipedia",
+      "startFrame": 2718,
+      "endFrame": 2730,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "is",
+      "startFrame": 2731,
+      "endFrame": 2740,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "a",
+      "startFrame": 2740,
+      "endFrame": 2741,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "Is",
+      "startFrame": 2765,
+      "endFrame": 2772,
+      "confidence": 0.607,
+      "speaker": "S1"
+    },
+    {
+      "text": "have",
+      "startFrame": 2773,
+      "endFrame": 2777,
+      "confidence": 0.417,
+      "speaker": "S1"
+    },
+    {
+      "text": "to",
+      "startFrame": 2781,
+      "endFrame": 2782,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "be",
+      "startFrame": 2782,
+      "endFrame": 2785,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "beneficial",
+      "startFrame": 2786,
+      "endFrame": 2800,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "to",
+      "startFrame": 2801,
+      "endFrame": 2802,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "other",
+      "startFrame": 2805,
+      "endFrame": 2808,
+      "confidence": 0.607,
+      "speaker": "S1"
+    },
+    {
+      "text": "readers",
+      "startFrame": 2809,
+      "endFrame": 2825,
+      "confidence": 0.882,
+      "speaker": "S1"
+    },
+    {
+      "text": "The",
+      "startFrame": 2842,
+      "endFrame": 2843,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "fact",
+      "startFrame": 2844,
+      "endFrame": 2850,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "might",
+      "startFrame": 2851,
+      "endFrame": 2858,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "be",
+      "startFrame": 2859,
+      "endFrame": 2862,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "it's",
+      "startFrame": 2863,
+      "endFrame": 2870,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "necessary",
+      "startFrame": 2870,
+      "endFrame": 2881,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "to",
+      "startFrame": 2886,
+      "endFrame": 2889,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "add",
+      "startFrame": 2890,
+      "endFrame": 2894,
+      "confidence": 0.882,
+      "speaker": "S1"
+    },
+    {
+      "text": "pictures",
+      "startFrame": 2899,
+      "endFrame": 2916,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "in",
+      "startFrame": 2917,
+      "endFrame": 2923,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "the",
+      "startFrame": 2924,
+      "endFrame": 2927,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "cat",
+      "startFrame": 2928,
+      "endFrame": 2933,
+      "confidence": 0.417,
+      "speaker": "S1"
+    },
+    {
+      "text": "article",
+      "startFrame": 2936,
+      "endFrame": 2944,
+      "confidence": 0.882,
+      "speaker": "S1"
+    },
+    {
+      "text": "and",
+      "startFrame": 2955,
+      "endFrame": 2958,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "enforcement",
+      "startFrame": 2959,
+      "endFrame": 2971,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "just",
+      "startFrame": 2972,
+      "endFrame": 2979,
+      "confidence": 0.607,
+      "speaker": "S1"
+    },
+    {
+      "text": "be",
+      "startFrame": 2980,
+      "endFrame": 2987,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "we",
+      "startFrame": 2999,
+      "endFrame": 3000,
+      "confidence": 0.779,
+      "speaker": "S1"
+    },
+    {
+      "text": "should",
+      "startFrame": 3001,
+      "endFrame": 3010,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "like",
+      "startFrame": 3011,
+      "endFrame": 3015,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "block",
+      "startFrame": 3016,
+      "endFrame": 3023,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "other",
+      "startFrame": 3024,
+      "endFrame": 3027,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "users",
+      "startFrame": 3028,
+      "endFrame": 3040,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "who",
+      "startFrame": 3041,
+      "endFrame": 3044,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "do",
+      "startFrame": 3045,
+      "endFrame": 3050,
+      "confidence": 0.472,
+      "speaker": "S1"
+    },
+    {
+      "text": "editing",
+      "startFrame": 3051,
+      "endFrame": 3059,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "work",
+      "startFrame": 3060,
+      "endFrame": 3069,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "in",
+      "startFrame": 3069,
+      "endFrame": 3070,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "the",
+      "startFrame": 3070,
+      "endFrame": 3071,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "cat",
+      "startFrame": 3072,
+      "endFrame": 3079,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "article",
+      "startFrame": 3080,
+      "endFrame": 3092,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "and",
+      "startFrame": 3095,
+      "endFrame": 3104,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "we",
+      "startFrame": 3104,
+      "endFrame": 3107,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "should",
+      "startFrame": 3108,
+      "endFrame": 3113,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "like",
+      "startFrame": 3114,
+      "endFrame": 3119,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "people",
+      "startFrame": 3120,
+      "endFrame": 3128,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "who",
+      "startFrame": 3128,
+      "endFrame": 3129,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "is",
+      "startFrame": 3131,
+      "endFrame": 3132,
+      "confidence": 0.779,
+      "speaker": "S1"
+    },
+    {
+      "text": "having",
+      "startFrame": 3133,
+      "endFrame": 3148,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "opposite",
+      "startFrame": 3156,
+      "endFrame": 3173,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "opinions",
+      "startFrame": 3175,
+      "endFrame": 3188,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "all",
+      "startFrame": 3191,
+      "endFrame": 3194,
+      "confidence": 0.472,
+      "speaker": "S1"
+    },
+    {
+      "text": "discussion",
+      "startFrame": 3195,
+      "endFrame": 3211,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "in",
+      "startFrame": 3214,
+      "endFrame": 3217,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "the",
+      "startFrame": 3217,
+      "endFrame": 3218,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "same",
+      "startFrame": 3218,
+      "endFrame": 3226,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "roof",
+      "startFrame": 3243,
+      "endFrame": 3253,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "and",
+      "startFrame": 3256,
+      "endFrame": 3259,
+      "confidence": 0.607,
+      "speaker": "S1"
+    },
+    {
+      "text": "Wikipedia's",
+      "startFrame": 3262,
+      "endFrame": 3282,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "knowledge",
+      "startFrame": 3283,
+      "endFrame": 3293,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "of",
+      "startFrame": 3315,
+      "endFrame": 3318,
+      "confidence": 0.732,
+      "speaker": "S1"
+    },
+    {
+      "text": "All",
+      "startFrame": 3327,
+      "endFrame": 3328,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "the",
+      "startFrame": 3329,
+      "endFrame": 3330,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "human",
+      "startFrame": 3331,
+      "endFrame": 3338,
+      "confidence": 1.0,
+      "speaker": "S1"
+    },
+    {
+      "text": "knowledge",
+      "startFrame": 3339,
+      "endFrame": 3350,
+      "confidence": 1.0,
+      "speaker": "S1"
+    }
+  ],
+  "createdAt": "2026-11-05T22:03:16Z"
+}
