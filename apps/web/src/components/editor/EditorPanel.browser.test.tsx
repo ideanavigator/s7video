@@ -1,31 +1,68 @@
 // SPDX-FileCopyrightText: 2026 s7video contributors
 // SPDX-License-Identifier: MIT
-import { EnvironmentId, type MediaAsset, ProjectId } from "@t3tools/contracts";
+import {
+  EngineJobId,
+  type EngineJob,
+  EnvironmentId,
+  type MediaAsset,
+  ProjectId,
+} from "@t3tools/contracts";
+import { useSyncExternalStore } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import { act, render } from "../../../test/render";
-import type { ProjectEditState } from "../../editor/editStore";
+import type { ProjectEditState, ProjectExport } from "../../editor/editStore";
 import type { MediaLibraryState } from "../../state/media";
 
 const state = vi.hoisted(() => ({
   edit: { _tag: "loading" } as ProjectEditState,
   library: { _tag: "loading" } as MediaLibraryState,
+  export: { job: null, status: null } as ProjectExport,
+  urlRevisions: [] as Array<string | null | undefined>,
+}));
+
+/** The export as the jobs stream would deliver it: setting it re-renders its readers. */
+const exportStore = vi.hoisted(() => {
+  const listeners = new Set<() => void>();
+  return {
+    subscribe: (listener: () => void) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    set: (next: ProjectExport) => {
+      state.export = next;
+      for (const listener of listeners) listener();
+    },
+  };
+});
+
+const commands = vi.hoisted(() => ({
+  start: vi.fn(),
+  cancel: vi.fn(async () => ({ _tag: "Success", value: { applied: true } })),
 }));
 
 vi.mock(import("../../editor/editStore"), async (importOriginal) => ({
   ...(await importOriginal()),
   useProjectEdit: () => state.edit,
-  useEngineJob: () => null,
+  useProjectExport: () => useSyncExternalStore(exportStore.subscribe, () => state.export),
 }));
 vi.mock(import("../../state/media"), () => ({
   useMediaLibrary: () => state.library,
   mediaEnvironment: {} as never,
 }));
 vi.mock(import("../../state/use-atom-command"), () => ({
-  useAtomCommand: (() => vi.fn()) as never,
+  useAtomCommand: ((command: { label: string } | undefined) =>
+    command?.label.endsWith("export:start")
+      ? commands.start
+      : command?.label.endsWith("engine:cancel")
+        ? commands.cancel
+        : vi.fn()) as never,
 }));
 vi.mock(import("../../assets/assetUrls"), () => ({
-  useAssetUrlState: () => ({ _tag: "Success", url: "" }) as never,
+  useAssetUrlState: ((_environmentId: unknown, _resource: unknown, revision?: string | null) => {
+    state.urlRevisions.push(revision);
+    return { _tag: "Success", url: "" };
+  }) as never,
 }));
 
 import "../../index.css";
@@ -94,6 +131,16 @@ const renderPanel = () =>
     router: false,
   });
 
+const exportJob = (overrides: Partial<EngineJob> = {}): EngineJob => ({
+  id: EngineJobId.make("job-1"),
+  kind: "export",
+  progress: 0.4,
+  stage: "render",
+  state: "running",
+  projectId,
+  ...overrides,
+});
+
 describe("EditorPanel", () => {
   it("should handle an empty edit: invites a drop and runs no player", async () => {
     setState([], false);
@@ -147,5 +194,62 @@ describe("EditorPanel", () => {
       .toHaveAttribute("aria-selected", "true");
     expect(scroller.isConnected).toBe(true);
     expect(scroller.scrollTop).toBe(scrolled);
+  });
+
+  it("cancels a running export and says it was cancelled", async () => {
+    setState([asset("clip-0")], true);
+    state.export = { job: exportJob(), status: null };
+    await using screen = await renderPanel();
+    await expect
+      .element(screen.getByRole("progressbar", { name: "Export" }))
+      .toHaveAttribute("aria-valuenow", "40");
+    await screen.getByRole("button", { name: "Cancel" }).click();
+    expect(commands.cancel).toHaveBeenCalledWith({
+      environmentId: EnvironmentId.make("env-1"),
+      input: { jobId: "job-1" },
+    });
+
+    await act(() => exportStore.set({ job: exportJob({ state: "cancelled" }), status: null }));
+    await expect.element(screen.getByText("Export cancelled")).toBeVisible();
+    await expect.element(screen.getByRole("button", { name: "Export" })).toBeVisible();
+  });
+
+  it("shows the plain reason an export failed", async () => {
+    setState([asset("clip-0")], true);
+    state.export = {
+      job: exportJob({ state: "failed" }),
+      status: {
+        jobId: EngineJobId.make("job-1"),
+        projectId,
+        path: "exports/edit.mp4",
+        state: "failed",
+        message: "The disk is full.",
+      },
+    };
+    await using screen = await renderPanel();
+    await expect.element(screen.getByText("Export failed: The disk is full.")).toBeVisible();
+    state.export = { job: null, status: null };
+  });
+
+  it("retries a video that fails once, then explains and offers Retry", async () => {
+    setState([asset("clip-0")], true);
+    state.urlRevisions = [];
+    await using screen = await renderPanel();
+    const fail = async () => {
+      const video = (await screen
+        .getByLabelText("clip-0.mov", { exact: true })
+        .findElement()) as HTMLVideoElement;
+      await act(() => video.dispatchEvent(new Event("error")));
+    };
+    await fail();
+    // The quiet retry mints a fresh URL and keeps the player.
+    expect(state.urlRevisions.at(-1)).toBe("1");
+    await fail();
+    await expect.element(screen.getByText("Video unavailable")).toBeVisible();
+    expect(document.querySelector("video")).toBeNull();
+
+    await screen.getByRole("button", { name: "Retry" }).click();
+    await expect.element(screen.getByLabelText("clip-0.mov", { exact: true })).toBeInTheDocument();
+    expect(state.urlRevisions.at(-1)).toBe("2");
   });
 });

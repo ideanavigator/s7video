@@ -3,7 +3,7 @@
 import { EngineJobId, type EditSnapshot, type EngineJob } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { acceptNewerSnapshot, applyJobsEvent } from "./editStreams";
+import { acceptNewerSnapshot, applyJobsEvent, currentExportJob } from "./editStreams";
 
 const snapshot = (revision: number): EditSnapshot => ({
   revision,
@@ -51,5 +51,35 @@ describe("applyJobsEvent", () => {
     expect(third.get("a")?.progress).toBe(0.5);
     expect([...third.keys()]).toEqual(["a", "b"]);
     expect(applyJobsEvent(third, { type: "snapshot", jobs: [] }).size).toBe(0);
+  });
+});
+
+describe("currentExportJob", () => {
+  const job = (id: string, overrides: Partial<EngineJob> = {}): EngineJob => ({
+    id: EngineJobId.make(id),
+    kind: "export",
+    progress: 0.2,
+    stage: null,
+    state: "running",
+    projectId: "project-1" as EngineJob["projectId"],
+    ...overrides,
+  });
+  const jobs = new Map(
+    [
+      job("other-project", { projectId: "project-2" as EngineJob["projectId"] }),
+      job("transcribe", { kind: "transcribe" }),
+      job("done", { state: "succeeded" }),
+      job("running"),
+    ].map((entry) => [entry.id as string, entry]),
+  );
+
+  it("follows the export this panel started, whatever its state", () => {
+    expect(currentExportJob(jobs, "project-1", "done")?.id).toBe("done");
+    expect(currentExportJob(jobs, "project-1", "not-yet-listed")).toBeNull();
+  });
+
+  it("finds this project's running export after the panel remounts", () => {
+    expect(currentExportJob(jobs, "project-1", null)?.id).toBe("running");
+    expect(currentExportJob(jobs, "project-3", null)).toBeNull();
   });
 });

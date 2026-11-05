@@ -18,7 +18,7 @@ import {
   rememberPlayerFrame,
   selectPlayerSource,
   useEditPlayerStore,
-  useEngineJob,
+  useProjectExport,
   useProjectEdit,
 } from "../../editor/editStore";
 import { playerViewOf, type PlayerView } from "../../editor/editorView";
@@ -33,6 +33,8 @@ import { EditPlayer } from "./EditPlayer";
 import { ImportDialog } from "./ImportDialog";
 
 type EditorTab = "transcript" | "assets";
+
+const MAX_AUTOMATIC_RETRIES = 1;
 
 const TABS: ReadonlyArray<{ readonly id: EditorTab; readonly label: string }> = [
   { id: "transcript", label: "Transcript" },
@@ -66,25 +68,38 @@ function PlayingSource(props: {
   const { projectRef, view } = props;
   const projectKey = scopedProjectKey(projectRef);
   const [attempt, setAttempt] = useState(0);
+  const [errors, setErrors] = useState(0);
+  const [playing, setPlaying] = useState(false);
+  const [variant, setVariant] = useState(view.variant);
+  // A proxy that finishes mid-playback takes over at the next pause, not by stopping playback.
+  if (variant !== view.variant && !playing) setVariant(view.variant);
   const url = useAssetUrlState(
     projectRef.environmentId,
     {
       _tag: "project-media",
       projectId: projectRef.projectId,
       mediaId: view.asset.id,
-      variant: view.variant,
+      variant,
     },
     // A new revision mints a fresh URL, so an expired one recovers on retry.
     String(attempt),
   );
-  if (url._tag === "Failure") {
+  const retry = () => {
+    setErrors(0);
+    setAttempt((current) => current + 1);
+  };
+  if (url._tag === "Failure" || errors > MAX_AUTOMATIC_RETRIES) {
     return (
       <PlayerMessage
         icon={<TriangleAlertIcon />}
         title="Video unavailable"
-        description={`${view.asset.label} can't be opened right now.`}
+        description={
+          url._tag === "Failure"
+            ? `${view.asset.label} can't be opened right now.`
+            : `${view.asset.label} can't be played. The file may be damaged or in a format this Mac can't play.`
+        }
       >
-        <Button size="sm" variant="outline" onClick={() => setAttempt((current) => current + 1)}>
+        <Button size="sm" variant="outline" onClick={retry}>
           Retry
         </Button>
       </PlayerMessage>
@@ -103,14 +118,20 @@ function PlayingSource(props: {
   }
   return (
     <EditPlayer
-      key={`${view.mode}:${view.asset.id}:${view.variant}:${attempt}`}
+      key={`${variant}:${attempt}`}
       projectKey={projectKey}
       src={url.url}
       label={view.asset.label}
       plan={view.plan}
       startFrame={rememberedPlayerFrame(projectKey)}
       onPositionChange={(frame) => rememberPlayerFrame(projectKey, frame)}
-      onError={() => setAttempt((current) => current + 1)}
+      onPlayingChange={setPlaying}
+      onError={() => {
+        setPlaying(false);
+        setErrors((current) => current + 1);
+        // One quiet retry covers an expired URL; a second failure shows the message.
+        if (errors < MAX_AUTOMATIC_RETRIES) setAttempt((current) => current + 1);
+      }}
     />
   );
 }
@@ -205,16 +226,25 @@ function PlayerArea(props: {
         </PlayerMessage>
       );
     case "play":
-      return <PlayingSource projectRef={props.projectRef} view={view} />;
+      return (
+        <PlayingSource
+          key={`${view.mode}:${view.asset.id}`}
+          projectRef={props.projectRef}
+          view={view}
+        />
+      );
   }
 }
 
 function ExportButton(props: { readonly projectRef: ScopedProjectRef }) {
   const { environmentId, projectId } = props.projectRef;
   const start = useAtomCommand(editEnvironment.exportStart, { reportFailure: false });
+  const cancel = useAtomCommand(editEnvironment.cancelJob, { reportFailure: false });
   const [started, setStarted] = useState<{ jobId: EngineJobId; path: string } | null>(null);
-  const job = useEngineJob(environmentId, started?.jobId ?? null);
-  const running = started !== null && (job === null || job.state === "running");
+  const { job, status } = useProjectExport(environmentId, projectId, started?.jobId ?? null);
+  // Started but not yet in the jobs stream counts as running.
+  const running = job?.state === "running" || (started !== null && job === null);
+  const progress = Math.round((job?.progress ?? 0) * 100);
 
   const exportEdit = async () => {
     const result = await start({ environmentId, input: { projectId } });
@@ -230,6 +260,24 @@ function ExportButton(props: { readonly projectRef: ScopedProjectRef }) {
     setStarted(result.value);
   };
 
+  const cancelExport = async () => {
+    const jobId = job?.id ?? started?.jobId;
+    if (jobId === undefined) return;
+    const result = await cancel({ environmentId, input: { jobId } });
+    if (result._tag === "Failure") {
+      toastManager.add({ type: "error", title: "Couldn't cancel the export" });
+    }
+  };
+
+  const outcome = (() => {
+    if (running || job === null) return null;
+    if (job.state === "succeeded") {
+      return <>Exported to {status?.path ?? started?.path ?? "the exports folder"}</>;
+    }
+    if (job.state === "cancelled") return <>Export cancelled</>;
+    return <>Export failed{status?.message ? `: ${status.message}` : ""}</>;
+  })();
+
   return (
     <div className="flex min-w-0 items-center gap-2">
       {running ? (
@@ -239,31 +287,32 @@ function ExportButton(props: { readonly projectRef: ScopedProjectRef }) {
             aria-label="Export"
             aria-valuemin={0}
             aria-valuemax={100}
-            aria-valuenow={Math.round((job?.progress ?? 0) * 100)}
+            aria-valuenow={progress}
             className="h-1.5 w-24 overflow-hidden rounded-full bg-muted"
           >
-            <div
-              className="h-full bg-primary"
-              style={{ width: `${Math.round((job?.progress ?? 0) * 100)}%` }}
-            />
+            <div className="h-full bg-primary" style={{ width: `${progress}%` }} />
           </div>
-          <span className="text-xs text-muted-foreground tabular-nums">
-            {Math.round((job?.progress ?? 0) * 100)}%
-          </span>
+          <span className="text-xs text-muted-foreground tabular-nums">{progress}%</span>
         </div>
-      ) : job?.state === "succeeded" && started !== null ? (
-        <span role="status" className="min-w-0 truncate text-xs text-muted-foreground">
-          Exported to {started.path}
-        </span>
-      ) : job?.state === "failed" ? (
-        <span role="status" className="min-w-0 truncate text-xs text-destructive-foreground">
-          Export failed
+      ) : outcome !== null ? (
+        <span
+          role="status"
+          className="min-w-0 truncate text-xs text-muted-foreground data-[state=failed]:text-destructive-foreground"
+          data-state={job?.state}
+        >
+          {outcome}
         </span>
       ) : null}
-      <Button size="compact" variant="outline" disabled={running} onClick={() => void exportEdit()}>
-        <UploadIcon aria-hidden />
-        Export
-      </Button>
+      {running ? (
+        <Button size="compact" variant="outline" onClick={() => void cancelExport()}>
+          Cancel
+        </Button>
+      ) : (
+        <Button size="compact" variant="outline" onClick={() => void exportEdit()}>
+          <UploadIcon aria-hidden />
+          Export
+        </Button>
+      )}
     </div>
   );
 }

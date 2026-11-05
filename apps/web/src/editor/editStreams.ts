@@ -19,3 +19,16 @@ export function applyJobsEvent(
   if (event.type === "snapshot") return new Map(event.jobs.map((job) => [job.id, job]));
   return new Map(jobs).set(event.job.id, event.job);
 }
+
+/** The export to show: the one started here, else a running export of this project. */
+export function currentExportJob(
+  jobs: ReadonlyMap<string, EngineJob>,
+  projectId: string,
+  startedJobId: string | null,
+): EngineJob | null {
+  if (startedJobId !== null) return jobs.get(startedJobId) ?? null;
+  for (const job of jobs.values()) {
+    if (job.kind === "export" && job.projectId === projectId && job.state === "running") return job;
+  }
+  return null;
+}

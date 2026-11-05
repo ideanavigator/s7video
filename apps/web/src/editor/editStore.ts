@@ -9,12 +9,14 @@ import { useAtomValue } from "@effect/atom-react";
 import { parseScopedProjectKey, scopedProjectKey } from "@t3tools/client-runtime/environment";
 import {
   createEnvironmentRpcCommand,
+  createEnvironmentRpcQueryAtomFamily,
   createEnvironmentRpcSubscriptionAtomFamily,
 } from "@t3tools/client-runtime/state/runtime";
 import {
   type EditSnapshot,
   type EngineJob,
   type EnvironmentId,
+  type ExportStatus,
   type ScopedProjectRef,
   WS_METHODS,
 } from "@t3tools/contracts";
@@ -24,7 +26,7 @@ import { create } from "zustand";
 
 import { connectionAtomRuntime } from "../connection/runtime";
 import { environmentServerConfigsAtom } from "../state/server";
-import { acceptNewerSnapshot, applyJobsEvent } from "./editStreams";
+import { acceptNewerSnapshot, applyJobsEvent, currentExportJob } from "./editStreams";
 
 export const editEnvironment = {
   edit: createEnvironmentRpcSubscriptionAtomFamily(connectionAtomRuntime, {
@@ -49,6 +51,15 @@ export const editEnvironment = {
   exportStart: createEnvironmentRpcCommand(connectionAtomRuntime, {
     label: "environment-data:export:start",
     tag: WS_METHODS.exportStart,
+  }),
+  cancelJob: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "environment-data:engine:cancel",
+    tag: WS_METHODS.engineJobsCancel,
+  }),
+  exportStatus: createEnvironmentRpcQueryAtomFamily(connectionAtomRuntime, {
+    label: "environment-data:export:status",
+    tag: WS_METHODS.exportStatus,
+    isFinal: (status) => status !== null && status.state !== "running",
   }),
 };
 
@@ -105,10 +116,32 @@ const environmentJobsAtom = Atom.family((environmentId: EnvironmentId) =>
   }).pipe(Atom.withLabel(`web-engine-jobs:${environmentId}`)),
 );
 
-/** One engine job's progress, or null before the first event or once it is gone. */
-export function useEngineJob(environmentId: EnvironmentId, jobId: string | null): EngineJob | null {
+const NO_STATUS = Atom.make(AsyncResult.initial<ExportStatus | null>()).pipe(
+  Atom.withLabel("web-export-status:none"),
+);
+
+export interface ProjectExport {
+  readonly job: EngineJob | null;
+  /** `export.status` once the job has ended: its path, or the plain reason it failed. */
+  readonly status: ExportStatus | null;
+}
+
+/**
+ * The project's export: the one this panel started, or one still running from before the panel
+ * mounted, with its outcome once it ends.
+ */
+export function useProjectExport(
+  environmentId: EnvironmentId,
+  projectId: string,
+  startedJobId: string | null,
+): ProjectExport {
   const jobs = useAtomValue(environmentJobsAtom(environmentId));
-  return jobId === null ? null : (jobs.get(jobId) ?? null);
+  const job = currentExportJob(jobs, projectId, startedJobId);
+  const ended = job !== null && job.state !== "running";
+  const result = useAtomValue(
+    ended ? editEnvironment.exportStatus({ environmentId, input: { jobId: job.id } }) : NO_STATUS,
+  );
+  return { job, status: ended && AsyncResult.isSuccess(result) ? result.value : null };
 }
 
 export type PlayerSource =
