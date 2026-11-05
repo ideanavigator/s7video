@@ -94,7 +94,7 @@ it.effect("keeps hosts independent when serials collide and another host fails",
     const writeStarted = yield* Deferred.make<void>();
     const finishWrite = yield* Deferred.make<void>();
     const order: string[] = [];
-    const service = yield* DeviceService.makeWithHosts(hosts, undefined, () =>
+    const service = yield* DeviceService.makeWithHosts(hosts, () =>
       Effect.gen(function* () {
         order.push("write started");
         yield* Deferred.succeed(writeStarted, undefined);

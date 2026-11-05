@@ -755,7 +755,7 @@ export const makeDeviceTools = Effect.fn("evaluateMcpToolUse.makeDeviceTools")(f
               prune: (live) => withFiles(prune({ stateDir, live })),
             }
           : undefined;
-      const service = yield* makeWithHosts(hosts, undefined, configureAgent, undefined, launchers);
+      const service = yield* makeWithHosts(hosts, configureAgent, undefined, launchers);
       return DeviceService.DeviceService.of({
         ...service,
         // Older refs install the CLI through agentCli; makeWithHosts has none to install.

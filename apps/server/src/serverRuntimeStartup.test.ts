@@ -92,8 +92,6 @@ it.effect.each([
           devAllowedOrigins: [],
           desktopBootstrapToken: undefined,
           logWebSocketEvents: false,
-          tailscaleServeEnabled: false,
-          tailscaleServePort: 443,
           mode: "web",
           cwd: "/bootstrap-project",
           host: "localhost",

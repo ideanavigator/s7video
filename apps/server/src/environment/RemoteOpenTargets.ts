@@ -1,11 +1,9 @@
 import { type RemoteOpenTarget } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NetService from "@t3tools/shared/Net";
-import { readTailscaleSshEnabled, readTailscaleStatus } from "@t3tools/tailscale";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import { makeStaleWhileRevalidate } from "./staleWhileRevalidate.ts";
 
@@ -21,7 +19,6 @@ export class RemoteOpenTargets extends Context.Service<
 
 /** @public */
 export const make = Effect.gen(function* () {
-  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const net = yield* NetService.NetService;
 
   const discoverTargets = Effect.gen(function* () {
@@ -33,39 +30,8 @@ export const make = Effect.gen(function* () {
     );
     const username = yield* HostProcess.Username;
 
-    const magicDnsName = yield* readTailscaleStatus.pipe(
-      Effect.map((status) => status.magicDnsName),
-      Effect.orElseSucceed(() => null),
-      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-    );
-
     const targets: Array<RemoteOpenTarget> = [];
-
-    if (!sshdListening) {
-      // Tailscale SSH needs no local sshd; tailscaled alone does not prove an SSH route.
-      if (
-        magicDnsName !== null &&
-        (yield* readTailscaleSshEnabled.pipe(
-          Effect.orElseSucceed(() => false),
-          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-        ))
-      ) {
-        targets.push({
-          kind: "tailscale",
-          host: magicDnsName,
-          ...(username === null ? {} : { username }),
-        });
-      }
-      return targets;
-    }
-
-    if (magicDnsName !== null) {
-      targets.push({
-        kind: "tailscale",
-        host: magicDnsName,
-        ...(username === null ? {} : { username }),
-      });
-    }
+    if (!sshdListening) return targets;
 
     // hostname() may be an FQDN; mDNS always uses <first-label>.local.
     const hostname = yield* HostProcess.Hostname;
@@ -81,8 +47,8 @@ export const make = Effect.gen(function* () {
     return targets;
   });
 
-  // Advertised on every client connect; probing sshd and tailscaled is slow
-  // on a loaded host, so serve the last result while it refreshes.
+  // Advertised on every client connect; probing sshd is slow on a loaded host,
+  // so serve the last result while it refreshes.
   const resolveTargets = yield* makeStaleWhileRevalidate(discoverTargets, TARGETS_CACHE_TTL);
 
   return RemoteOpenTargets.of({
