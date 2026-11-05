@@ -137,9 +137,14 @@ const nextPresentedFrame = (video: HTMLVideoElement) =>
 const ended = (video: HTMLVideoElement) =>
   new Promise((resolve) => video.addEventListener("pause", resolve, { once: true }));
 
-// The clip comes from `pnpm media:fetch` (a 12 MB CC-BY-4.0 download), never from the repo.
-describe.skipIf(mediaPath === null)("transcript-word-sync", () => {
-  it("highlights each word within one frame of its start, skips cut words, and seeks exactly", async () => {
+const NO_CLIP =
+  "talking-head-01 is not in the test-media cache: run `pnpm media:fetch` (pnpm test:golden does it first)";
+
+describe("transcript-word-sync", () => {
+  it("highlights each word within one frame of its start, skips cut words, and seeks exactly", async ({
+    skip,
+  }) => {
+    skip(mediaPath === null, NO_CLIP);
     state.transcript = { _tag: "ready", transcript: transcriptOf(referenceWords) };
     // Keeps "And", "do", "that" and "user"; the silence cut removes "It" (481-486).
     const plan = planOf([
@@ -193,7 +198,10 @@ describe.skipIf(mediaPath === null)("transcript-word-sync", () => {
     expect(await seekTo("It (removed)")).toBe(640);
   });
 
-  it("plays 60 s with a 5,000-word transcript and renders the transcript in under 100 ms, with no main-thread task over 50 ms", async () => {
+  it("plays 60 s with a 5,000-word transcript and renders the transcript in under 100 ms, with no main-thread task over 50 ms", async ({
+    skip,
+  }) => {
+    skip(mediaPath === null, NO_CLIP);
     const words = Array.from({ length: 5_000 }, (_, index): TranscriptWord => {
       const start = Math.floor((index * 3_300) / 5_000);
       return {

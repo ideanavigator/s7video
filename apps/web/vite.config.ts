@@ -20,6 +20,7 @@ import {
 
 import { brandConfigPlugin, loadBrandConfig } from "../../scripts/lib/brand-config.ts";
 import { loadRepoEnv } from "../../scripts/lib/public-config";
+import { testMediaDir } from "../../scripts/lib/test-media.ts";
 import { thirdPartyLicensesPlugin } from "../../scripts/lib/third-party-licenses";
 import { tailwindPlugins } from "./vite/tailwind";
 import { warmBundledDevPlugin } from "./vite/warmBundledDev";
@@ -142,12 +143,11 @@ const browserTestProject = {
 
 // Golden media tests in the browser (S7V-030): the real player on clips from `pnpm media:fetch`,
 // served from the test-media cache. They play media in real time, so their timeouts are longer.
-const testMediaDir =
-  process.env.S7VIDEO_TEST_MEDIA_DIR ?? `${process.env.HOME}/Library/Caches/s7video-test-media`;
+const goldenMediaDir = testMediaDir();
 
 const goldenBrowserProject = {
   ...browserTestProject,
-  server: { fs: { allow: [`${import.meta.dirname}/../..`, testMediaDir] } },
+  server: { fs: { allow: [`${import.meta.dirname}/../..`, goldenMediaDir] } },
   test: {
     ...browserTestProject.test,
     name: "golden",
@@ -161,7 +161,7 @@ const goldenBrowserProject = {
         ...browserTestProject.test.browser.commands,
         // The cached clip's path for `/@fs/`, or null when `pnpm media:fetch` has not run.
         testMediaPath: async (_context, file: string) => {
-          const path = `${testMediaDir}/${file.replaceAll("/", "")}`;
+          const path = `${goldenMediaDir}/${file.replaceAll("/", "")}`;
           return (await NodeFSP.stat(path).catch(() => null))?.isFile() ? path : null;
         },
       },

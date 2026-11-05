@@ -2,7 +2,13 @@
 // SPDX-License-Identifier: MIT
 import { describe, expect, it } from "vite-plus/test";
 
-import { caseNameOf, combineExitCodes, planGoldens, pythonGoldenFile } from "./test-golden.ts";
+import {
+  caseNameOf,
+  combineExitCodes,
+  planGoldens,
+  pythonGoldenFile,
+  usesTestMedia,
+} from "./test-golden.ts";
 
 const TRACKED = [
   "apps/desktop/src/ipc/methods/heic-to-jpeg.golden.test.ts",
@@ -34,6 +40,21 @@ describe("test-golden", () => {
       unknownCases: [],
     });
     expect(planGoldens(TRACKED, ["heic-to-jpeg", "nope"]).unknownCases).toEqual(["nope"]);
+  });
+
+  it("fetches test media for Python and web cases only", () => {
+    const plan = (typescript: ReadonlyArray<string>, python: ReadonlyArray<string> = []) => ({
+      typescript,
+      python,
+      unknownCases: [],
+    });
+    expect(usesTestMedia(plan([], ["packages/engine/tests/golden/a_golden.py"]))).toBe(true);
+    expect(
+      usesTestMedia(plan(["apps/web/src/components/editor/transcript-word-sync.golden.test.ts"])),
+    ).toBe(true);
+    expect(usesTestMedia(plan(["apps/server/src/edit/EditHistoryMedia.golden.test.ts"]))).toBe(
+      false,
+    );
   });
 
   it("fails the run when any step fails or could not start", () => {

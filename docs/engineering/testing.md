@@ -74,8 +74,9 @@ and a full run (no case named) also runs the harness's own tests (`tests/golden/
 
 `apps/web/src/**/*.golden.test.ts` run in Chromium (the web config's `golden` project) with the real
 player on clips from the test-media cache, served through the `testMediaPath` browser command. They
-play media in real time, so they have longer timeouts. Run `pnpm media:fetch` first; without the
-clip they skip.
+play media in real time, so they have longer timeouts. `pnpm test:golden` fetches the clips first, as
+for the engine cases, and a clip it can't fetch fails the run. Run directly without the clip, a case
+skips and names `pnpm media:fetch` as the reason.
 
 ## Providers and cost
 

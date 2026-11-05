@@ -3,8 +3,8 @@
 // @effect-diagnostics nodeBuiltinImport:off globalConsole:off
 // Runs golden media tests: `pnpm test:golden` for all, `pnpm test:golden -- <case>` for one.
 // TypeScript cases are `<case>.golden.test.ts` (run with `vp test run`); Python engine cases are
-// `packages/engine/tests/golden/<case_name>_golden.py` (run with uv and pytest). Before Python
-// cases run, the test clips are fetched or reused (`pnpm media:fetch`); `--no-fetch` skips that.
+// `packages/engine/tests/golden/<case_name>_golden.py` (run with uv and pytest). Before Python or
+// web cases run, the test clips are fetched or reused (`pnpm media:fetch`); `--no-fetch` skips that.
 // A full run (no case named) also runs the harness's own tests (`tests/golden/test_*.py`).
 import * as NodeChildProcess from "node:child_process";
 import * as NodePath from "node:path";
@@ -52,6 +52,14 @@ export function planGoldens(
   };
 }
 
+/**
+ * Python cases and the web's browser cases play clips from the test-media cache; other TypeScript
+ * cases make their own inputs.
+ */
+export function usesTestMedia(plan: GoldenPlan): boolean {
+  return plan.python.length > 0 || plan.typescript.some((file) => file.startsWith("apps/web/"));
+}
+
 /** One failing step fails the run; a step that could not start counts as failing. */
 export function combineExitCodes(codes: ReadonlyArray<number | null>): number {
   return codes.some((code) => code !== 0) ? 1 : 0;
@@ -86,9 +94,10 @@ async function main(argv: ReadonlyArray<string>): Promise<number> {
     return 1;
   }
   const codes: Array<number | null> = [];
+  // A clip that can't be fetched fails the run here, rather than its cases skipping later.
+  if (fetch && usesTestMedia(plan)) codes.push((await fetchTestMedia()) > 0 ? 1 : 0);
   if (plan.typescript.length > 0) codes.push(run("vp", ["test", "run", ...plan.typescript], root));
   if (plan.python.length > 0) {
-    if (fetch) codes.push((await fetchTestMedia()) > 0 ? 1 : 0);
     codes.push(
       run(
         "uv",
