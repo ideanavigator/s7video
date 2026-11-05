@@ -3,12 +3,7 @@
 import { EngineJobId, type EditSnapshot, type EngineJob } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import {
-  acceptNewerSnapshot,
-  adoptedExportJobId,
-  applyJobsEvent,
-  currentExportJob,
-} from "./editStreams";
+import { acceptNewerSnapshot, applyJobsEvent, followExportJob } from "./editStreams";
 
 const snapshot = (revision: number): EditSnapshot => ({
   revision,
@@ -59,7 +54,7 @@ describe("applyJobsEvent", () => {
   });
 });
 
-describe("currentExportJob", () => {
+describe("followExportJob", () => {
   const job = (id: string, overrides: Partial<EngineJob> = {}): EngineJob => ({
     id: EngineJobId.make(id),
     kind: "export",
@@ -69,36 +64,55 @@ describe("currentExportJob", () => {
     projectId: "project-1" as EngineJob["projectId"],
     ...overrides,
   });
-  const jobs = new Map(
-    [
-      job("other-project", { projectId: "project-2" as EngineJob["projectId"] }),
-      job("transcribe", { kind: "transcribe" }),
-      job("done", { state: "succeeded" }),
-      job("running"),
-    ].map((entry) => [entry.id as string, entry]),
+  const jobsOf = (...entries: ReadonlyArray<EngineJob>) =>
+    new Map(entries.map((entry) => [entry.id as string, entry]));
+  const jobs = jobsOf(
+    job("other-project", { projectId: "project-2" as EngineJob["projectId"] }),
+    job("transcribe", { kind: "transcribe" }),
+    job("done", { state: "succeeded" }),
+    job("running"),
   );
 
-  it("follows the export this panel started, whatever its state", () => {
-    expect(currentExportJob(jobs, "project-1", "done")?.id).toBe("done");
-    expect(currentExportJob(jobs, "project-1", "not-yet-listed")).toBeNull();
+  it("follows the export this panel started, before and after it is listed", () => {
+    expect(followExportJob(jobsOf(job("started")), "project-1", "started", null).job?.id).toBe(
+      "started",
+    );
+    expect(followExportJob(jobs, "project-1", "not-yet-listed", null).job).toBeNull();
   });
 
   it("finds this project's running export after the panel remounts", () => {
-    expect(currentExportJob(jobs, "project-1", null)?.id).toBe("running");
-    expect(currentExportJob(jobs, "project-3", null)).toBeNull();
+    expect(followExportJob(jobs, "project-1", null, null)).toMatchObject({
+      job: { id: "running" },
+      adoptedJobId: "running",
+    });
+    expect(followExportJob(jobs, "project-3", null, null).job).toBeNull();
   });
 
   it("keeps following an export picked up after a remount to its end", () => {
-    const shown = currentExportJob(jobs, "project-1", null);
-    const adopted = adoptedExportJobId(null, null, shown);
-    expect(adopted).toBe("running");
+    const { adoptedJobId } = followExportJob(jobs, "project-1", null, null);
+    expect(adoptedJobId).toBe("running");
     for (const state of ["succeeded", "failed", "cancelled"] as const) {
       const ended = new Map(jobs).set("running", job("running", { state }));
-      const followed = currentExportJob(ended, "project-1", adopted);
-      expect(followed?.state).toBe(state);
-      expect(adoptedExportJobId(adopted, null, followed)).toBe("running");
+      expect(followExportJob(ended, "project-1", null, adoptedJobId)).toMatchObject({
+        job: { id: "running", state },
+        adoptedJobId: "running",
+      });
     }
-    // An export started here takes over from one picked up before.
-    expect(adoptedExportJobId(adopted, "done", null)).toBeNull();
+  });
+
+  it("moves to a newly running export once the followed one has ended", () => {
+    const ended = jobsOf(job("first", { state: "succeeded" }), job("second"));
+    // Adopted earlier, or started here: either way the new export takes over.
+    expect(followExportJob(ended, "project-1", null, "first")).toMatchObject({
+      job: { id: "second" },
+      adoptedJobId: "second",
+    });
+    expect(followExportJob(ended, "project-1", "first", null)).toMatchObject({
+      job: { id: "second" },
+      adoptedJobId: "second",
+    });
+    // A running followed export is never replaced.
+    const both = jobsOf(job("first"), job("second"));
+    expect(followExportJob(both, "project-1", "first", null).job?.id).toBe("first");
   });
 });

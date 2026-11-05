@@ -30,12 +30,7 @@ import { create } from "zustand";
 
 import { connectionAtomRuntime } from "../connection/runtime";
 import { environmentServerConfigsAtom } from "../state/server";
-import {
-  acceptNewerSnapshot,
-  adoptedExportJobId,
-  applyJobsEvent,
-  currentExportJob,
-} from "./editStreams";
+import { acceptNewerSnapshot, applyJobsEvent, followExportJob } from "./editStreams";
 
 export const editEnvironment = {
   edit: createEnvironmentRpcSubscriptionAtomFamily(connectionAtomRuntime, {
@@ -247,10 +242,14 @@ export function useProjectExport(
   startedJobId: string | null,
 ): ProjectExport {
   const jobs = useAtomValue(environmentJobsAtom(environmentId));
-  const [adoptedJobId, setAdoptedJobId] = useState<string | null>(null);
-  const job = currentExportJob(jobs, projectId, startedJobId ?? adoptedJobId);
-  const adopt = adoptedExportJobId(adoptedJobId, startedJobId, job);
-  if (adopt !== adoptedJobId) setAdoptedJobId(adopt);
+  // An adoption belongs to the export started here when it was made; a new start replaces it.
+  const [adoption, setAdoption] = useState<{
+    readonly startedJobId: string | null;
+    readonly jobId: string;
+  } | null>(null);
+  const adoptedJobId = adoption?.startedJobId === startedJobId ? adoption.jobId : null;
+  const { job, adoptedJobId: adopt } = followExportJob(jobs, projectId, startedJobId, adoptedJobId);
+  if (adopt !== adoptedJobId) setAdoption(adopt === null ? null : { startedJobId, jobId: adopt });
   const ended = job !== null && job.state !== "running";
   const result = useAtomValue(
     ended ? editEnvironment.exportStatus({ environmentId, input: { jobId: job.id } }) : NO_STATUS,
