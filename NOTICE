@@ -1,0 +1,36 @@
+s7video
+Copyright (c) 2026 s7video contributors
+Licensed under the MIT License (see LICENSE).
+
+This product is built on the following open-source project:
+
+  T3 Code
+  https://github.com/pingdotgg/t3code
+  Copyright (c) 2026 T3 Tools Inc.
+  Licensed under the MIT License
+
+s7video started as a fork of T3 Code. Files that came from T3 Code remain under T3 Code's copyright
+and the MIT License; what the fork changed is recorded in docs/FORK.md.
+
+Planned: OpenCut (https://github.com/OpenCut-app/OpenCut, MIT License). No OpenCut code is included
+yet. When some is, it is credited here with its copyright line.
+
+Proprietary component
+
+  Claude Agent SDK (@anthropic-ai/claude-agent-sdk)
+  Copyright (c) Anthropic PBC. All rights reserved.
+  Proprietary, used under Anthropic's Commercial Terms of Service
+  (https://www.anthropic.com/legal/commercial-terms).
+  s7video ships the SDK's JavaScript the same way T3 Code does; it drives the Claude CLI the user
+  installed and signed in to themselves.
+
+Third-party notices
+
+The app lists every bundled package, font, sound and asset with its full licence text under
+Settings > About > Open source licenses. The same notices are generated at build time from
+third-party-licenses.config.json and the SPDX templates in third-party-licenses/.
+
+The desktop app includes Electron (MIT; Copyright (c) Electron contributors, Copyright (c)
+2013-2020 GitHub Inc.), which contains Chromium and its dependencies. electron-builder keeps their
+licences inside the app bundle as Contents/Resources/LICENSE.electron.txt and
+Contents/Resources/LICENSES.chromium.html.

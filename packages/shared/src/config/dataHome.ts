@@ -1,3 +1,5 @@
+// SPDX-FileCopyrightText: 2026 s7video contributors
+// SPDX-License-Identifier: MIT
 // @effect-diagnostics nodeBuiltinImport:off - Synchronous path checks run before any Effect runtime.
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";

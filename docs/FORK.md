@@ -1,3 +1,8 @@
+<!--
+SPDX-FileCopyrightText: 2026 s7video contributors
+SPDX-License-Identifier: MIT
+-->
+
 # s7video fork of T3 Code
 
 s7video is a fork of [T3 Code](https://github.com/pingdotgg/t3code) (MIT, © 2026 T3 Tools Inc.).

@@ -1,3 +1,5 @@
+// SPDX-FileCopyrightText: 2026 s7video contributors
+// SPDX-License-Identifier: MIT
 // No runtime imports: early-boot bundles import the config file directly and must stay small.
 import type { BrandConfig } from "./brandConfig.ts";
 

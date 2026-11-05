@@ -1,3 +1,5 @@
+// SPDX-FileCopyrightText: 2026 s7video contributors
+// SPDX-License-Identifier: MIT
 import type { ServerUsageData } from "@t3tools/contracts";
 
 /** The sharing switch is offered only by servers whose build names a destination. */

@@ -1,3 +1,5 @@
+// SPDX-FileCopyrightText: 2026 s7video contributors
+// SPDX-License-Identifier: MIT
 // @effect-diagnostics nodeBuiltinImport:off globalConsole:off
 // Runs golden media tests: `pnpm test:golden` for all, `pnpm test:golden -- <case>` for one.
 import * as NodeChildProcess from "node:child_process";

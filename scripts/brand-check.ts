@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+// SPDX-FileCopyrightText: 2026 s7video contributors
+// SPDX-License-Identifier: MIT
 // @effect-diagnostics nodeBuiltinImport:off globalConsole:off - A plain repository scan; no Effect runtime.
 // `pnpm brand:check`: fails when branding leaks past s7video.config.ts. See docs/FORK.md.
 import * as NodeChildProcess from "node:child_process";

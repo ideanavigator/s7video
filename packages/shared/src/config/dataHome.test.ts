@@ -1,3 +1,5 @@
+// SPDX-FileCopyrightText: 2026 s7video contributors
+// SPDX-License-Identifier: MIT
 // @effect-diagnostics nodeBuiltinImport:off - Builds a fake home with a symlink on disk.
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";

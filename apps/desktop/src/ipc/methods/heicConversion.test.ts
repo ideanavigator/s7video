@@ -1,3 +1,5 @@
+// SPDX-FileCopyrightText: 2026 s7video contributors
+// SPDX-License-Identifier: MIT
 // @effect-diagnostics nodeBuiltinImport:off -- Reads committed fixture images synchronously.
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";

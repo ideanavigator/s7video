@@ -1,3 +1,5 @@
+// SPDX-FileCopyrightText: 2026 s7video contributors
+// SPDX-License-Identifier: MIT
 // The single brand config. Build with S7VIDEO_CONFIG=<path> to use another file (white-label builds).
 import { defineConfig } from "./packages/shared/src/config/defineConfig.ts";
 import dark from "./themes/s7video-dark.json" with { type: "json" };
