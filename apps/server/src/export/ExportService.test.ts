@@ -308,7 +308,13 @@ describe("ExportService", () => {
   );
 
   it("captions from the transcript only when captions are on and the edit has none", () => {
-    const document = (tracks: EditDocument["tracks"]) => ({ tracks }) as unknown as EditDocument;
+    const media = [
+      { id: "cam", probe: { hasAudio: true } },
+      { id: "phone", probe: { hasAudio: true } },
+      { id: "silent", probe: { hasAudio: false } },
+    ];
+    const document = (tracks: EditDocument["tracks"]) =>
+      ({ media, tracks }) as unknown as EditDocument;
     const video = {
       kind: "video",
       id: "V1",
@@ -316,6 +322,8 @@ describe("ExportService", () => {
         { id: "a", media: "cam", start: 0, duration: 10, in: 0 },
         { id: "b", media: "cam", start: 10, duration: 10, in: 40 },
         { id: "c", media: "phone", start: 20, duration: 10, in: 0 },
+        // No audio stream: it can never be transcribed, so it is not looked up.
+        { id: "d", media: "silent", start: 30, duration: 10, in: 0 },
       ],
     } as unknown as EditDocument["tracks"][number];
     const caption = (items: ReadonlyArray<unknown>, muted = false) =>

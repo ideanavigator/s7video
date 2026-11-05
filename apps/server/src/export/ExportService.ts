@@ -70,7 +70,8 @@ export const exportSlug = (title: string) =>
 
 /**
  * The media whose transcripts caption the export: those on the first video track (the one the
- * engine renders), when captions are on and no caption track has items. Empty otherwise.
+ * engine renders) that have sound, when captions are on and no caption track has items. A clip
+ * without audio cannot be transcribed, so it gets no captions rather than blocking the export.
  */
 export const transcriptMediaFor = (document: EditDocument, captions: boolean) => {
   if (!captions) return [];
@@ -78,7 +79,12 @@ export const transcriptMediaFor = (document: EditDocument, captions: boolean) =>
     return [];
   }
   const video = document.tracks.find((track) => track.kind === "video");
-  return [...new Set(video?.items.map((item) => item.media) ?? [])];
+  const audible = new Set(
+    document.media.filter((entry) => entry.probe.hasAudio).map((entry) => entry.id),
+  );
+  return [...new Set(video?.items.map((item) => item.media) ?? [])].filter((media) =>
+    audible.has(media),
+  );
 };
 
 /** Local date and time to the minute, `yyyymmdd-hhmm`. */
