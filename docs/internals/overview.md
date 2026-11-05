@@ -80,9 +80,7 @@ Thread settlement is server-owned. The
 [settlement service](../../apps/server/src/orchestration-v2/ThreadSettlementService.ts) evaluates PR
 and inactivity settings without a connected client. Merge notifications invalidate cached PR state
 and trigger a check. A merge outside T3, such as an agent running `gh pr merge`, sends no
-notification, so the [PR sync reactor](../../apps/server/src/orchestration-v2/PullRequestSyncReactor.ts)
-re-reads a thread's open links when a run that ran a merge or close command ends. Each forge's
-definition names its CLI's commands in `changeRequestCloseCommand`. The guarded
+notification; s7video removed the PR sync reactor that re-read links after such commands (S7V-018). The guarded
 `thread.auto-settle` command rejects newer activity, explicit settlement overrides, and live or
 blocked work. It records the activity timestamp for stable
 sorting and detaches idle provider sessions. Clients render the persisted result; they do not

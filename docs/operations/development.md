@@ -81,18 +81,17 @@ A fresh process still uses filesystem, Node compilation, provider, and Vite depe
 Measure a missing Vite dependency cache separately from a restart with an existing database.
 Neither the Vite ready message nor the HTTP listener proves that a browser has rendered the app.
 
-### Sharing and remote debugging
+### Remote debugging
 
-`vp run dev --share` publishes the web port over the machine's tailnet and prints a pairing URL
-for that origin. Give the tester the complete URL, including its token. The dev runner removes
-its mapping on exit.
+s7video removed `vp run dev --share` and `--built` with Tailscale (S7V-018). To test from another
+device on your network, start dev with `--host 0.0.0.0` and pair through the printed URL.
 
 Leave `VITE_HTTP_URL` and `VITE_WS_URL` unset. Vite proxies the backend through the browser's
 origin so the same build works over localhost and remote connections.
 
-Shared runs enable bundled dev to avoid a network round trip for each import level.
-`T3CODE_BUNDLED_DEV=0` opts out when debugging bundler differences. Two reload traps matter
-when changing this setup:
+`T3CODE_BUNDLED_DEV=1` turns on bundled dev, which avoids a network round trip for each import
+level; `0` opts out when debugging bundler differences. Two reload traps matter when changing
+this setup:
 
 - The web entry must dynamically import the app so React refresh initializes before application
   chunks. Static imports can work on first load and fail after a route split.
@@ -105,14 +104,6 @@ when changing this setup:
 The workarounds live in the [web entry](../../apps/web/src/bootstrap.ts),
 [Tailwind plugin](../../apps/web/vite/tailwind.ts), and
 [startup warmup](../../apps/web/vite/warmBundledDev.ts).
-
-`vp run dev --share --built` skips the Vite dev server. It runs `vp build --watch` for the web
-app, and the backend serves `apps/web/dist` on the same tailnet URL and pairing flow. Use it when
-someone tests over a slow link or only needs to use the app: loads are production size, and the
-first load does not wait for dev bundling. There is no HMR. After an edit, wait for the
-`built in` line (about 6 s), then reload. Until the first build exists, the URL shows a page that
-reloads by itself. The license manifest is not generated in this mode. `--built` requires
-`--share` and the `dev` mode.
 
 #### Reusable dev credential
 
@@ -143,7 +134,7 @@ For a manual worktree or launcher without that link, export the same fixed value
 export T3CODE_DEV_AUTH_TOKEN="<the value generated above>"
 ```
 
-Do not generate a new value at startup. Start or restart `vp run dev --share` after configuration,
+Do not generate a new value at startup. Start or restart `vp run dev` after configuration,
 then open its printed startup pairing URL once per browser profile on that hostname. Later web dev
 servers on the same hostname accept the shared cookie across ports. The cookie expires after 30
 days. Reload an old tab if its URL now serves a replacement environment.

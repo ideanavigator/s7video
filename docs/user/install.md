@@ -110,13 +110,6 @@ terminal, open **Settings → About** and choose **Install** next to
 terminal afterwards. **Remove** takes it off again. If you already have `t3`
 from npm, it stays as it is.
 
-### Windows Subsystem for Linux
-
-Choose a WSL distro in **Settings → Sharing & access** to run agents and projects
-there. Install the provider CLIs inside that distro. T3 Code installs its own
-server runtime there automatically; the first launch after an app update can
-take longer.
-
 ### Open a project from a terminal
 
 With the desktop app already running on the same machine:

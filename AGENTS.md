@@ -113,7 +113,7 @@ Never merge a sprint branch into `main` without the developer's approval.
   `--home-dir "$PWD/.t3"` keeps state in this checkout's gitignored `.t3` folder. Without it, a main
   checkout writes to `~/.t3/dev`, inside T3 Code's folder. `--no-seed` stops upstream from copying
   `~/.t3/userdata` into the new database. Never run `vp run migrate-dev-db`: it also reads `~/.t3`.
-  Add other flags (`--share`, `--browser`) after these. Build test data through the app or the
+  Add other flags (such as `--browser`) after these. Build test data through the app or the
   replay provider. Read the real ports from the `[dev-runner]` line.
 
 - Real agent turns cost money. Use the free `Replay (dev)` provider that `vp run dev` registers; the
