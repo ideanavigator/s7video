@@ -27,6 +27,8 @@ path = [
   "themes/s7video-light.json",
   "fixtures/images/*.heic",
   "fixtures/images/*.png",
+  "fixtures/media/*.json",
+  "packages/engine/tests/golden/references/*.json",
   "docs/changelog/entries/*.md",
   "licenses.allowlist.json",
   "licenses.exceptions.json",
