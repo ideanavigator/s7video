@@ -21,8 +21,9 @@ from ..jobs import Cancelled, JobContext
 from ..rpc import INVALID_PARAMS, MEDIA_ERROR, OUTPUT_ERROR, Method, RpcError
 from ._media import PATH_SCHEMA, RATE_SCHEMA, media_file
 
-# Long enough to see several keyframes of any sane GOP, short enough to stay well under a second.
-_SCAN_SECONDS = 30
+# Enough to judge a 2 s keyframe threshold: one keyframe in 10 s is a 10 s gap. Reading packet
+# flags of 10 s of 110 Mbit/s 4K is ~140 MB, which keeps import fast.
+_SCAN_SECONDS = 10
 _PROXY_LONG_SIDE = 1920
 
 
