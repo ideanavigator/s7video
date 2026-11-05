@@ -8,6 +8,7 @@ import {
   EngineJob,
   EngineJobId,
   EngineJobState,
+  ExportPreset,
   MediaProbeResult,
   OrchestratorMcpFailure,
 } from "@t3tools/contracts";
@@ -19,6 +20,7 @@ import { McpSchema, Tool, Toolkit } from "effect/ai";
 
 import * as EditDocumentService from "../../../edit/EditDocumentService.ts";
 import * as EngineService from "../../../engine/EngineService.ts";
+import * as ExportService from "../../../export/ExportService.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../../../project/ProjectService.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
@@ -132,12 +134,27 @@ const VideoJobCancelTool = Tool.make("video_job_cancel", {
   .annotate(Tool.Title, "Cancel video job")
   .annotateMerge(videoAnnotations(false));
 
+// Answers with the job at once; the agent follows it with video_job_status (S7V-028).
+const VideoExportTool = Tool.make("video_export", {
+  description: "Export the edit to MP4 with captions; returns a video job.",
+  parameters: Schema.Struct({
+    preset: Schema.optional(ExportPreset),
+    captions: Schema.optional(Schema.Boolean),
+  }),
+  success: Schema.Struct({ jobId: EngineJobId, path: Schema.String }),
+  failure: OrchestratorMcpFailure,
+  dependencies: [...dependencies, ExportService.ExportService],
+})
+  .annotate(Tool.Title, "Export video")
+  .annotateMerge(videoAnnotations(false));
+
 /** Tools that return JSON. A new tool goes here, with its handler in `handlers.ts`. */
 export const VideoStandardToolkit = Toolkit.make(
   VideoProbeTool,
   VideoEditReadTool,
   VideoJobStatusTool,
   VideoJobCancelTool,
+  VideoExportTool,
 );
 
 /** `video_frame` returns image content, so it registers on its own (`registerVideoFrame`). */
@@ -148,5 +165,6 @@ export const VideoToolkit = Toolkit.make(
   VideoEditReadTool,
   VideoJobStatusTool,
   VideoJobCancelTool,
+  VideoExportTool,
   VideoFrameTool,
 );

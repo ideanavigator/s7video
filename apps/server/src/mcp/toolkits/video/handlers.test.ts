@@ -8,11 +8,13 @@ import {
   type EditDocument,
   type EditMedia,
   type EditSnapshot,
+  EditUnavailableError,
   EngineError,
   type EngineJob,
   EngineJobId,
   type EngineJobsEvent,
   EnvironmentId,
+  type ExportStartInput,
   type MediaFrameInput,
   type MediaProbeResult,
   ProjectId,
@@ -33,6 +35,7 @@ import * as NodePath from "node:path";
 
 import * as EditDocumentService from "../../../edit/EditDocumentService.ts";
 import * as EngineService from "../../../engine/EngineService.ts";
+import * as ExportService from "../../../export/ExportService.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../../../project/ProjectService.ts";
 import * as ServerSettings from "../../../serverSettings.ts";
@@ -140,6 +143,7 @@ interface Fixture {
   readonly outside: string;
   readonly calls: Array<readonly ["probe", string] | readonly ["frame", MediaFrameInput]>;
   readonly cancelled: Array<string>;
+  readonly exports: Array<ExportStartInput>;
   readonly engine: { failNextProbe: boolean };
   readonly documents: Map<ProjectId, EditDocument>;
 }
@@ -180,6 +184,7 @@ const makeFixture = (): Fixture => {
     outside,
     calls: [],
     cancelled: [],
+    exports: [],
     engine: { failNextProbe: false },
     documents,
   };
@@ -205,11 +210,33 @@ const layerFor = (fixture: Fixture, cancelSignal: Deferred.Deferred<string>) => 
     [threadB, projectB],
   ]);
   const jobs = [job("engine-job-1", projectA), job("engine-job-2", projectB)];
+  // Like the real service: the export's engine job carries the project it was started for.
+  const exportService = Layer.mock(ExportService.ExportService)({
+    start: (input) =>
+      Effect.suspend(() => {
+        if (!fixture.documents.has(input.projectId)) {
+          return Effect.fail(
+            new EditUnavailableError({
+              projectId: input.projectId,
+              reason: "not-an-edit-project",
+              explanation: "This project has no edit yet.",
+            }),
+          );
+        }
+        fixture.exports.push(input);
+        const id = EngineJobId.make(`engine-job-export-${fixture.exports.length}`);
+        jobs.push({ ...job(id, input.projectId), kind: "export", stage: "render" });
+        return Effect.succeed({ jobId: id, path: "exports/my-reel-20261106-0930.mp4" });
+      }),
+  });
   return Layer.mergeAll(
+    exportService,
     Layer.mock(ThreadManagementService.ThreadManagementService)({
       getThreadShell: (threadId) =>
         Effect.succeed({
           ...McpToolAccessTestkit.liveThreadShell(threadId),
+          // The provider that owns the run, as in scopeFor, so writing tools see a live caller.
+          providerInstanceId: ProviderInstanceId.make("claudeAgent"),
           projectId: projectOf.get(threadId) ?? ProjectId.make("project:mcp-test"),
         }),
     }),
@@ -318,12 +345,13 @@ const textOf = (result: McpSchema.CallToolResult) =>
   result.content.map((entry) => (entry.type === "text" ? entry.text : `[${entry.type}]`));
 
 describe("video toolkit", () => {
-  it.effect("video toolkit lists five tools with video_ names", () =>
+  it.effect("video toolkit lists six tools with video_ names", () =>
     withTools(({ server }) =>
       Effect.sync(() => {
         const tools = server.tools.map(({ tool }) => tool);
         expect(tools.map((tool) => tool.name).toSorted()).toEqual([
           "video_edit_read",
+          "video_export",
           "video_frame",
           "video_job_cancel",
           "video_job_status",
@@ -339,6 +367,7 @@ describe("video toolkit", () => {
         expect(described.video_edit_read).toContain("edit");
         expect(described.video_job_status).toContain("job");
         expect(described.video_job_cancel).toContain("job");
+        expect(described.video_export).toContain("job");
       }),
     ),
   );
@@ -464,6 +493,7 @@ describe("video toolkit", () => {
           ["video_edit_read", {}],
           ["video_job_status", {}],
           ["video_job_cancel", { jobId: "engine-job-1" }],
+          ["video_export", {}],
         ] as const) {
           // A hidden tool is not callable at all: the server answers as for an unknown tool.
           const error = yield* call(threadA, tool, args, ["orchestration"]).pipe(Effect.flip);
@@ -471,6 +501,7 @@ describe("video toolkit", () => {
         }
         expect(fixture.calls).toEqual([]);
         expect(fixture.cancelled).toEqual([]);
+        expect(fixture.exports).toEqual([]);
       }),
     ),
   );
@@ -622,6 +653,47 @@ describe("video toolkit", () => {
     ),
   );
 
+  it.effect(
+    "video_export starts the caller's project's export as a job it can follow and stop",
+    () =>
+      withTools(({ fixture, call }) =>
+        Effect.gen(function* () {
+          const started = yield* call(threadA, "video_export", { preset: "reel-9x16" });
+          expect(started.isError).toBe(false);
+          expect(started.structuredContent).toEqual({
+            jobId: "engine-job-export-1",
+            path: "exports/my-reel-20261106-0930.mp4",
+          });
+          // Always the caller's own project: the tool takes no project argument.
+          expect(fixture.exports).toEqual([{ projectId: projectA, preset: "reel-9x16" }]);
+
+          const mine = yield* call(threadA, "video_job_status", { jobId: "engine-job-export-1" });
+          expect(mine.structuredContent).toMatchObject({
+            jobs: [{ id: "engine-job-export-1", kind: "export", projectId: projectA }],
+          });
+          const theirs = yield* call(threadB, "video_job_status", { jobId: "engine-job-export-1" });
+          expect(theirs.structuredContent).toEqual({ jobs: [] });
+          const foreign = yield* call(threadB, "video_job_cancel", {
+            jobId: "engine-job-export-1",
+          });
+          expect(foreign.isError).toBe(true);
+          expect(fixture.cancelled).toEqual([]);
+          yield* call(threadA, "video_job_cancel", { jobId: "engine-job-export-1" });
+          expect(fixture.cancelled).toEqual(["engine-job-export-1"]);
+        }),
+      ),
+  );
+
+  it.effect("should refuse video_export outside a video project", () =>
+    withTools(({ fixture, call }) =>
+      Effect.gen(function* () {
+        const plain = yield* call(threadPlain, "video_export", { captions: false });
+        expect(plain.isError).toBe(true);
+        expect(fixture.exports).toEqual([]);
+      }),
+    ),
+  );
+
   it.effect("should return crashed then succeed on retry", () =>
     withTools(({ fixture, call }) =>
       Effect.gen(function* () {
@@ -699,6 +771,7 @@ it.effect("should hide tools without the video capability", () =>
 
       expect(yield* listed("videoToken")).toEqual([
         "video_edit_read",
+        "video_export",
         "video_frame",
         "video_job_cancel",
         "video_job_status",
