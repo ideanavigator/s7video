@@ -10,6 +10,7 @@ Schema cannot state. The checks run in the same order so both sides report the s
 from __future__ import annotations
 
 import json
+import math
 import re
 from dataclasses import dataclass
 from functools import cache
@@ -79,8 +80,9 @@ def _frame_issues(raw: dict[str, Any]) -> list[EditIssue]:
             frame = value.get(key)
             if not _is_number(frame):
                 continue
-            if float(frame) != int(frame) or frame < 0:
-                shown = int(frame) if float(frame) == int(frame) else frame
+            whole = math.isfinite(frame) and float(frame).is_integer()
+            if not whole or frame < 0:
+                shown = int(frame) if whole else frame
                 issues.append(
                     EditIssue(
                         owner,
@@ -300,7 +302,7 @@ def validate_edit_document(raw: Any) -> list[EditIssue]:
     """Returns the problems with a parsed ``edit.json``; an empty list means it is valid."""
     version = raw.get("version") if isinstance(raw, dict) else None
     if not _is_number(version) or version != EDIT_DOCUMENT_VERSION:
-        known = _is_number(version) and float(version) == int(version) and version > 0
+        known = _is_number(version) and math.isfinite(version) and float(version).is_integer() and version > 0
         return [
             EditIssue(
                 None,

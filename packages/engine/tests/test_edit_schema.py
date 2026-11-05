@@ -35,3 +35,10 @@ def test_names_the_item_in_plain_words() -> None:
     raw = json.loads((FIXTURES / "11-overlap.json").read_text(encoding="utf-8"))
     [issue] = validate_edit_document(raw)
     assert '"v3"' in issue.explanation and "overlaps" in issue.explanation
+
+
+def test_rejects_non_finite_frames_without_crashing() -> None:
+    raw = json.loads((FIXTURES / "02-single-clip.json").read_text(encoding="utf-8"))
+    raw["tracks"][0]["items"][0]["duration"] = float("inf")
+    [issue] = validate_edit_document(raw)
+    assert (issue.reason, issue.item_id) == ("frame", "v1")
