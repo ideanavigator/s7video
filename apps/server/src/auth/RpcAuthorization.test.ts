@@ -68,6 +68,15 @@ describe("RPC authorization scopes", () => {
     }
   });
 
+  it("lets readers watch engine jobs but only operators cancel them", () => {
+    expect(requiredScopeForRpcMethod(WS_METHODS.engineJobsSubscribe)).toBe(
+      AuthOrchestrationReadScope,
+    );
+    expect(requiredScopeForRpcMethod(WS_METHODS.engineJobsCancel)).toBe(
+      AuthOrchestrationOperateScope,
+    );
+  });
+
   it("rejects unknown RPC method names", () => {
     for (const method of ["server.notRegistered", "toString", "constructor"]) {
       expect(() => requiredScopeForRpcMethod(method)).toThrow(

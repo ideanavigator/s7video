@@ -102,6 +102,14 @@ without an ADR, for a package no longer installed, for a version outside its ran
 package whose `package.json` licence changed since the review, fails the check. The rules and their
 tests are in `scripts/lib/licenses-check.ts`.
 
+The same rules judge the video engine's Python dependencies (S7V-022). The check runs
+`python -m s7engine.licences` in `packages/engine`, which lists every distribution in `uv.lock` with
+its scope (production when the engine's own dependencies reach it) and the licence its installed
+metadata declares: `License-Expression` first, then `License ::` classifiers, then a short `License`
+field (`scripts/lib/python-licences.ts`). A locked package that a platform marker keeps off macOS is
+listed as not installed and skipped, since it never ships. It needs `uv` and a synced engine
+environment (`uv sync --frozen --project packages/engine`).
+
 The check covers the locked install, not the desktop app's staged `node_modules`:
 `scripts/build-desktop-artifact.ts` stages production dependencies with `vp install --prod`, which
 resolves versions afresh, so scanning the staged install (or the final `app.asar`) is a follow-up

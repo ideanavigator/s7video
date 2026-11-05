@@ -32,6 +32,8 @@ path = [
   "docs/changelog/entries/*.md",
   "licenses.allowlist.json",
   "licenses.exceptions.json",
+  "packages/engine/.python-version",
+  "packages/engine/uv.lock",
 ]
 precedence = "closest"
 SPDX-FileCopyrightText = "2026 s7video contributors"
