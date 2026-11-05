@@ -7,8 +7,15 @@
  */
 import { scopedProjectKey } from "@t3tools/client-runtime/environment";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import type { EngineJobId, EnvironmentId, ProjectId, ScopedProjectRef } from "@t3tools/contracts";
+import {
+  type EngineJobId,
+  type EnvironmentId,
+  ExportStartError,
+  type ProjectId,
+  type ScopedProjectRef,
+} from "@t3tools/contracts";
 import { ClapperboardIcon, FilmIcon, PlusIcon, TriangleAlertIcon, UploadIcon } from "lucide-react";
+import * as Schema from "effect/Schema";
 import { useState, type DragEvent, type ReactNode } from "react";
 
 import { useAssetUrlState } from "../../assets/assetUrls";
@@ -277,6 +284,10 @@ function transcriptSourceOf(
   }
 }
 
+const isExportStartError = Schema.is(ExportStartError);
+const isNoTranscript = (error: unknown) =>
+  isExportStartError(error) && error.reason === "no-transcript";
+
 function ExportButton(props: { readonly projectRef: ScopedProjectRef }) {
   const { environmentId, projectId } = props.projectRef;
   const start = useAtomCommand(editEnvironment.exportStart, { reportFailure: false });
@@ -290,14 +301,26 @@ function ExportButton(props: { readonly projectRef: ScopedProjectRef }) {
   const [cancellingJobId, setCancellingJobId] = useState<EngineJobId | null>(null);
   const cancelling = cancellingJobId !== null && cancellingJobId === (job?.id ?? started?.jobId);
 
-  const exportEdit = async () => {
-    const result = await start({ environmentId, input: { projectId } });
+  const exportEdit = async (captions?: false) => {
+    const result = await start({
+      environmentId,
+      input: captions === false ? { projectId, captions } : { projectId },
+    });
     if (result._tag === "Failure") {
       const error = squashAtomCommandFailure(result);
       toastManager.add({
         type: "error",
         title: "Couldn't start the export",
         description: error instanceof Error ? error.message : "Check the project, then try again.",
+        // Captions stay on by default; without a transcript the user can still export, uncaptioned.
+        ...(isNoTranscript(error)
+          ? {
+              actionProps: {
+                children: "Export without captions",
+                onClick: () => void exportEdit(false),
+              },
+            }
+          : {}),
       });
       return;
     }

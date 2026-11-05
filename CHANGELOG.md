@@ -49,7 +49,8 @@ from; the per-ticket entries and how this file is compiled are in
 - The Transcript tab shows every word, highlights the one being spoken, jumps the player when you
   click a word, and crosses out words the edit removed. (S7V-030)
 - Exports now show captions made from your transcript, timed to your voice, with cut words left
-  out. Without a transcript, an export with captions asks you to transcribe the clip first. (S7V-046)
+  out. Without a transcript, the Export button asks you to transcribe the clip first, or offers to
+  export without captions. (S7V-046)
 
 ### Changed
 
