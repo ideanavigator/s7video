@@ -41,7 +41,6 @@ import * as ExportService from "../../../export/ExportService.ts";
 import * as MediaLibraryService from "../../../media/MediaLibraryService.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../../../project/ProjectService.ts";
-import * as ServerConfig from "../../../config.ts";
 import * as ServerSettings from "../../../serverSettings.ts";
 import * as TranscriptService from "../../../transcript/TranscriptService.ts";
 import * as McpHttpServer from "../../McpHttpServer.ts";
@@ -261,7 +260,6 @@ const layerFor = (fixture: Fixture, cancelSignal: Deferred.Deferred<string>) => 
   });
   return Layer.mergeAll(
     exportService,
-    Layer.mock(ServerConfig.ServerConfig)({ attachmentsDir: fixture.attachmentsDir } as never),
     Layer.mock(MediaLibraryService.MediaLibraryService)({
       plan: (input) =>
         Effect.succeed(
@@ -363,7 +361,16 @@ const layerFor = (fixture: Fixture, cancelSignal: Deferred.Deferred<string>) => 
 const layerWithTranscripts = (fixture: Fixture, cancelSignal: Deferred.Deferred<string>) =>
   TranscriptService.layerWith({ totalMemoryBytes: 36 * 1024 ** 3 }).pipe(
     Layer.provideMerge(layerFor(fixture, cancelSignal)),
-    Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "video-transcript-" })),
+    // The test config, with chat attachments in the fixture's folder for video_import.
+    Layer.provideMerge(
+      Layer.effect(
+        ServerConfig.ServerConfig,
+        Effect.gen(function* () {
+          const config = yield* ServerConfig.ServerConfig;
+          return { ...config, attachmentsDir: fixture.attachmentsDir };
+        }),
+      ).pipe(Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "video-transcript-" }))),
+    ),
   );
 
 const withTools = <A, E>(
@@ -974,6 +981,7 @@ it.effect("should hide tools without the video capability", () =>
         ),
         Layer.provide(layerFor(fixture, cancelSignal)),
         Layer.provide(Layer.mock(TranscriptService.TranscriptService)({})),
+        Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "video-tools-list-" })),
         Layer.provide(
           Layer.mock(McpSessionRegistry.McpSessionRegistry)({
             resolve: (presented) => Effect.succeed(tokens.get(presented)),
