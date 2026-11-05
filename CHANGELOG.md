@@ -38,9 +38,9 @@ from; the per-ticket entries and how this file is compiled are in
 
 ### Removed
 
-- Connecting to other computers over SSH, Tailscale or WSL, and the pull-request screens: "Create
-  PR", pull-request status and sync, and their settings. Local commit and push stay, and LAN pairing
-  still works. (S7V-018)
+- Connecting to other computers over SSH, Tailscale or WSL; the "Create PR" action, pull-request
+  status and sync; and the pull-request settings. The pull-request screens are hidden while no code
+  host is set up. Local commit and push stay, and LAN pairing still works. (S7V-018)
 - T3 Code's cloud features: Clerk sign-in, T3 Connect, the managed relay and tunnel, and guest share
   links. (S7V-015)
 - Apps, agent providers and code-hosting integrations s7video does not use: the mobile app, the

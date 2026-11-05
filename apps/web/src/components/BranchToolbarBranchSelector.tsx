@@ -67,6 +67,7 @@ import { ComposerControl } from "./chat/ComposerControl";
 import { MiddleTruncate } from "./ui/middle-truncate";
 import { BranchPicker, BranchPickerRefItem } from "./BranchPicker";
 import { stackedThreadToast, toastManager } from "./ui/toast";
+import { hasCodeHosts } from "../lib/codeHosts";
 
 export interface BranchToolbarBranchSelectorHandle {
   open: () => void;
@@ -682,7 +683,7 @@ export function BranchToolbarBranchSelector({
           className,
         )}
       >
-        {displayMode !== "panel" ? (
+        {displayMode !== "panel" && hasCodeHosts() ? (
           <ThreadPullRequestBadgeControl
             render={<ComposerControl size="xs" />}
             badge={prBadge}

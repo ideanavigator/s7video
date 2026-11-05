@@ -15,6 +15,7 @@ import {
 } from "./presentation";
 import { primaryEnvironmentIdAtom } from "./primaryEnvironment";
 import { usePreparedConnection } from "./session";
+import { hasCodeHosts } from "../lib/codeHosts";
 
 export interface EnvironmentPresentation extends BaseEnvironmentPresentation {
   readonly environmentId: EnvironmentId;
@@ -95,7 +96,8 @@ export function useEnvironmentIdentities() {
 }
 
 export function usePullRequestsSupported() {
-  return useAtomValue(environmentSummaries.pullRequestsSupportedAtom);
+  const environmentsSupport = useAtomValue(environmentSummaries.pullRequestsSupportedAtom);
+  return environmentsSupport && hasCodeHosts();
 }
 
 export function useEnvironmentMachines() {
