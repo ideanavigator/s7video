@@ -20,11 +20,16 @@ export function droppedMediaKind(file: Pick<File, "name" | "type">): DroppedKind
  * Video and audio dropped into a video project's chat go to its Assets by path, so footage never
  * meets the 50 MiB chat upload limit (S7V-025). Audio is attached as well, so the agent sees it in
  * the message; video is not. Elsewhere (no desktop path, not a video project) nothing changes.
- * Returns the files the composer should still attach.
+ * Returns the files the composer should still attach; `onFirstMedia` opens the Editor (S7V-029).
  */
-export function useChatMediaImport(environmentId: EnvironmentId, projectId: ProjectId | null) {
+export function useChatMediaImport(
+  environmentId: EnvironmentId,
+  projectId: ProjectId | null,
+  onFirstMedia?: (projectId: ProjectId) => void,
+) {
   const plan = useAtomCommand(mediaEnvironment.plan, { reportFailure: false });
   const importMedia = useAtomCommand(mediaEnvironment.importMedia, { reportFailure: false });
+  const readEdit = useAtomCommand(mediaEnvironment.readEdit, { reportFailure: false });
   return async (files: ReadonlyArray<File>): Promise<File[]> => {
     const getPath = window.desktopBridge?.getPathForFile;
     const media = files.filter((file) => droppedMediaKind(file) !== "other");
@@ -35,6 +40,8 @@ export function useChatMediaImport(environmentId: EnvironmentId, projectId: Proj
     const planned = await plan({ environmentId, input: { projectId, sourcePaths: paths } });
     // Not a video project, or a server on another machine that cannot see these paths.
     if (planned._tag === "Failure") return [...files];
+    const before = await readEdit({ environmentId, input: { projectId } });
+    const firstMedia = before._tag === "Success" && before.value.document.media.length === 0;
     const failedVideo: File[] = [];
     let added = 0;
     for (const [index, file] of media.entries()) {
@@ -45,6 +52,7 @@ export function useChatMediaImport(environmentId: EnvironmentId, projectId: Proj
       if (result._tag === "Success") added += 1;
       else if (droppedMediaKind(file) === "video") failedVideo.push(file);
     }
+    if (added > 0 && firstMedia) onFirstMedia?.(projectId);
     if (added > 0) {
       toastManager.add({
         type: "success",

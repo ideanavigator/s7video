@@ -43,6 +43,9 @@ from; the per-ticket entries and how this file is compiled are in
   drive) or point at the original, and see them in the new Assets tab with length, size and a
   thumbnail. Awkward files get a smooth preview copy in the background, and a moved original can be
   relinked. Video dropped into a video project's chat is imported instead of uploaded. (S7V-025)
+- An Editor panel beside the chat plays your edit as it stands, skipping the parts that were cut,
+  with tabs for the transcript and your project's clips and an Export button. Every chat in a project
+  shows the same edit, and the Editor opens by itself when a project gets its first clip. (S7V-029)
 
 ### Changed
 
