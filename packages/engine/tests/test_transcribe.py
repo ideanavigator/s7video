@@ -488,6 +488,19 @@ def test_download_verifies_and_reports_status(hub: FakeHub) -> None:
     assert (folder.parent.parent / "refs" / "main").read_text() == "0" * 40
 
 
+def test_two_downloads_at_once_share_the_files(hub: FakeHub) -> None:
+    results: list[dict[str, Any]] = []
+    threads = [threading.Thread(target=lambda: results.append(_download())) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert [result["ready"] for result in results] == [True, True]
+    assert sum(1 for name, _range in hub.requests if name == "big.bin") == 1
+    folder = models.snapshot_dir(models.load_lock()["asr-1.7b"])
+    assert (folder / "big.bin").read_bytes() == FILES["big.bin"]
+
+
 def test_bad_checksum_rejected(hub: FakeHub) -> None:
     hub.files["aligner.bin"].served = b"X" * len(FILES["aligner.bin"])
     with pytest.raises(rpc.RpcError) as caught:

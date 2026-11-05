@@ -281,7 +281,20 @@ def _download_file(model: Model, file: ModelFile, folder: Path, progress: _Progr
     os.replace(partial, target)
 
 
+_DOWNLOAD_LOCK = threading.Lock()
+
+
 def download(profile: str, job: JobContext) -> dict[str, Any]:
+    """One download at a time: a second request waits, then finds the shared files verified."""
+    while not _DOWNLOAD_LOCK.acquire(timeout=0.2):
+        job.raise_if_cancelled()
+    try:
+        return _download(profile, job)
+    finally:
+        _DOWNLOAD_LOCK.release()
+
+
+def _download(profile: str, job: JobContext) -> dict[str, Any]:
     models = profile_models(profile)
     pending = [model for model in models if not _verified(model)]
     total = sum(model.size for model in models)
