@@ -37,6 +37,7 @@ export type SettingsPath =
   | "/settings/secrets"
   | "/settings/maintenance"
   | "/settings/labs"
+  | "/settings/privacy"
   | "/settings/about"
   | "/settings/archived";
 
@@ -67,6 +68,7 @@ export interface SettingsSearchItem {
   readonly localEnvironmentOnly?: boolean;
   readonly wslAvailableOnly?: boolean;
   readonly peerLinksOnly?: boolean;
+  readonly usageDataOnly?: boolean;
   readonly secondary?: boolean;
   readonly requiresThreadAutoSettlement?: boolean;
 }
@@ -80,6 +82,7 @@ export interface SettingsSearchAvailability {
   readonly isWslSettingsRowVisible: boolean;
   readonly hasThreadAutoSettlement: boolean;
   readonly hasPeerLinkHost?: boolean;
+  readonly hasUsageDataSharing?: boolean;
 }
 
 export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
@@ -103,6 +106,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/secrets": "Secrets",
   "/settings/maintenance": "Maintenance",
   "/settings/labs": "Labs",
+  "/settings/privacy": "Privacy",
   "/settings/about": "About",
   "/settings/archived": "Archive",
 };
@@ -147,7 +151,13 @@ export const SETTINGS_NAV_GROUPS: ReadonlyArray<{
   },
   {
     heading: null,
-    paths: ["/settings/maintenance", "/settings/labs", "/settings/about", "/settings/archived"],
+    paths: [
+      "/settings/maintenance",
+      "/settings/labs",
+      "/settings/privacy",
+      "/settings/about",
+      "/settings/archived",
+    ],
   },
 ];
 
@@ -705,8 +715,16 @@ export const SETTINGS_SEARCH_ITEMS = [
   {
     id: "privacy-policy",
     title: "Privacy policy",
-    to: "/settings/about",
+    to: "/settings/privacy",
     searchTerms: ["telemetry analytics usage data tracking legal opt out"],
+  },
+  {
+    id: "share-usage-data",
+    title: "Share pseudonymous usage data",
+    to: "/settings/privacy",
+    scope: "environment",
+    searchTerms: ["telemetry analytics usage data tracking opt in privacy"],
+    usageDataOnly: true,
   },
   {
     id: "telemetry-export",
@@ -1157,6 +1175,7 @@ const SETTINGS_CATEGORY_SCOPES: Readonly<Record<SettingsPath, SettingsSearchScop
   "/settings/scheduled-tasks": null,
   "/settings/maintenance": null,
   "/settings/labs": null,
+  "/settings/privacy": null,
   "/settings/about": null,
   "/settings/archived": "project-defaults",
 };
@@ -1281,7 +1300,8 @@ export function filterAvailableSettingsSearchItems(
       (!item.localEnvironmentOnly || !availability.localEnvironmentDisabled) &&
       (!item.wslAvailableOnly || availability.isWslSettingsRowVisible) &&
       (!item.requiresThreadAutoSettlement || availability.hasThreadAutoSettlement) &&
-      (!item.peerLinksOnly || availability.hasPeerLinkHost === true),
+      (!item.peerLinksOnly || availability.hasPeerLinkHost === true) &&
+      (!item.usageDataOnly || availability.hasUsageDataSharing === true),
   );
 }
 

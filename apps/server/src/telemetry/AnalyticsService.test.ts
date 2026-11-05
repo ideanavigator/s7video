@@ -4,6 +4,7 @@ import { assert, it } from "@effect/vitest";
 import * as Clock from "effect/Clock";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
@@ -16,10 +17,11 @@ import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
-import type { ManagedPolicyDocument } from "@t3tools/contracts";
+import type { ManagedPolicyDocument, ServerUsageData } from "@t3tools/contracts";
 
 import * as ServerConfig from "../config.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
+import { ServerSettingsService } from "../serverSettings.ts";
 import { getTelemetryIdentity } from "./Identify.ts";
 import * as AnalyticsService from "./AnalyticsService.ts";
 
@@ -109,6 +111,30 @@ const recordTwentyEvents = Effect.gen(function* () {
   }
 });
 
+const TEST_TARGET = {
+  S7VIDEO_TELEMETRY_KEY: "test-project-key",
+  S7VIDEO_TELEMETRY_HOST: "http://localhost",
+};
+
+/** Fails the test on any request: nothing may leave the machine. */
+const refuseEveryRequest: Respond = (request) =>
+  Effect.die(`unexpected analytics request to ${request.url}`);
+
+interface SendOptions {
+  readonly record?: Effect.Effect<
+    void,
+    never,
+    | AnalyticsService.AnalyticsService
+    | ServerSettingsService
+    | Effect.Services<typeof getTelemetryIdentity>
+  >;
+  readonly policy?: ManagedPolicyDocument;
+  /** The server's environment. Defaults to a configured destination and nothing else. */
+  readonly env?: Record<string, unknown>;
+  /** Defaults to the user having switched sharing on. */
+  readonly shareUsageData?: boolean;
+}
+
 /**
  * Runs `record` (20 events by default), then lets `minutes` of background
  * flushes run against a client that answers every send with `respond`.
@@ -117,16 +143,12 @@ const recordTwentyEvents = Effect.gen(function* () {
 const sendFor = (
   minutes: number,
   respond: Respond,
-  record: Effect.Effect<
-    void,
-    never,
-    AnalyticsService.AnalyticsService | Effect.Services<typeof getTelemetryIdentity>
-  > = recordTwentyEvents,
-  policy?: ManagedPolicyDocument,
-  target: Record<string, string> = {
-    T3CODE_POSTHOG_KEY: "phc_test_key",
-    T3CODE_POSTHOG_HOST: "http://localhost",
-  },
+  {
+    record = recordTwentyEvents,
+    policy,
+    env = TEST_TARGET,
+    shareUsageData = true,
+  }: SendOptions = {},
 ) =>
   Effect.gen(function* () {
     const batches: Array<ReadonlyArray<SentEvent>> = [];
@@ -145,11 +167,7 @@ const sendFor = (
       Layer.provideMerge(
         ServerConfig.ServerConfig.layerTest(process.cwd(), { prefix: "t3-telemetry-retry-" }),
       ),
-      Layer.provide(
-        ConfigProvider.layer(
-          ConfigProvider.fromUnknown({ T3CODE_TELEMETRY_ENABLED: true, ...target }),
-        ),
-      ),
+      Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(env))),
       Layer.provide(
         Layer.mergeAll(
           Layer.succeed(HostProcess.Platform, "win32"),
@@ -158,6 +176,7 @@ const sendFor = (
           ManagedPolicy.layerTest(policy),
         ),
       ),
+      Layer.provideMerge(ServerSettingsService.layerTest({ shareUsageData })),
     );
 
     yield* Effect.gen(function* () {
@@ -170,32 +189,215 @@ const sendFor = (
   });
 
 it.layer(NodeServices.layer)("AnalyticsService test", (it) => {
-  it.effect("sends nothing when the brand config names no telemetry host or key", () =>
+  it.effect("records and sends nothing by default, even when the build names a destination", () =>
     Effect.gen(function* () {
-      const batches = yield* sendFor(1, respondWithStatus(204), recordTwentyEvents, undefined, {});
+      // Upstream's spelling of the destination too, so only the default decides.
+      const batches = yield* sendFor(1, refuseEveryRequest, {
+        shareUsageData: false,
+        env: {
+          ...TEST_TARGET,
+          T3CODE_POSTHOG_KEY: "test-project-key",
+          T3CODE_POSTHOG_HOST: "http://localhost",
+        },
+      });
       assert.deepEqual(batches, []);
+    }),
+  );
+
+  it.effect("sends nothing without a destination, even when switched on", () =>
+    Effect.gen(function* () {
+      const batches = yield* sendFor(1, refuseEveryRequest, {
+        env: { S7VIDEO_TELEMETRY_ENABLED: true },
+      });
+      assert.deepEqual(batches, []);
+    }),
+  );
+
+  it.effect("ignores upstream's T3CODE_* telemetry variables", () =>
+    Effect.gen(function* () {
+      const batches = yield* sendFor(1, refuseEveryRequest, {
+        shareUsageData: false,
+        env: {
+          ...TEST_TARGET,
+          T3CODE_TELEMETRY_ENABLED: true,
+          T3CODE_POSTHOG_KEY: "upstream-key",
+          T3CODE_POSTHOG_HOST: "http://upstream.invalid",
+        },
+      });
+      assert.deepEqual(batches, []);
+    }),
+  );
+
+  it.effect("sends once the user opts in, and the environment variable overrides the setting", () =>
+    Effect.gen(function* () {
+      const cases = [
+        { shareUsageData: true, enabled: undefined, sends: true },
+        { shareUsageData: false, enabled: true, sends: true },
+        { shareUsageData: true, enabled: false, sends: false },
+      ];
+      for (const { shareUsageData, enabled, sends } of cases) {
+        const batches = yield* sendFor(1, respondWithStatus(204), {
+          shareUsageData,
+          env: {
+            ...TEST_TARGET,
+            ...(enabled === undefined ? {} : { S7VIDEO_TELEMETRY_ENABLED: enabled }),
+          },
+        });
+        assert.equal(batches.length, sends ? 1 : 0, JSON.stringify({ shareUsageData, enabled }));
+      }
+    }),
+  );
+
+  it.effect("tells clients whether to offer the switch and what overrides it", () =>
+    Effect.gen(function* () {
+      const read = (env: Record<string, unknown>, policy?: ManagedPolicyDocument) =>
+        Effect.gen(function* () {
+          let usageData: ServerUsageData | undefined;
+          yield* sendFor(0, refuseEveryRequest, {
+            env,
+            ...(policy === undefined ? {} : { policy }),
+            shareUsageData: false,
+            record: Effect.gen(function* () {
+              usageData = yield* (yield* AnalyticsService.AnalyticsService).usageData;
+            }),
+          });
+          return usageData;
+        });
+      assert.deepEqual(yield* read({}), { available: false });
+      assert.deepEqual(yield* read(TEST_TARGET), { available: true });
+      assert.deepEqual(yield* read({ ...TEST_TARGET, S7VIDEO_TELEMETRY_ENABLED: false }), {
+        available: true,
+        variable: "S7VIDEO_TELEMETRY_ENABLED",
+      });
+      assert.deepEqual(
+        yield* read(TEST_TARGET, {
+          schemaVersion: 1,
+          organization: "Example Corp",
+          limits: { telemetry: false },
+        }),
+        { available: false },
+      );
+    }),
+  );
+
+  it.effect("refuses a managed policy that tries to opt users in, before anything is sent", () =>
+    Effect.gen(function* () {
+      const error = yield* sendFor(1, refuseEveryRequest, {
+        shareUsageData: false,
+        policy: {
+          schemaVersion: 1,
+          organization: "Example Corp",
+          settings: { shareUsageData: { value: true, locked: true } },
+        },
+      }).pipe(Effect.flip);
+      assert.equal(error._tag, "ManagedPolicyFileError");
+      assert.include(String(error.message), "limits.telemetry: false");
+    }),
+  );
+
+  it.effect("touches no install id or provider login file while sharing is off", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const identityFile = /anonymous-id|\.codex|\.claude/;
+      const run = (shareUsageData: boolean) =>
+        Effect.gen(function* () {
+          const touched: Array<string> = [];
+          const watch = (path: string) => {
+            if (identityFile.test(path)) touched.push(path);
+          };
+          let installIdExists = false;
+          yield* sendFor(0, respondWithStatus(204), {
+            shareUsageData,
+            record: Effect.gen(function* () {
+              const analytics = yield* AnalyticsService.AnalyticsService;
+              yield* analytics.record("test.boot");
+              yield* analytics.recordServerOwners;
+              yield* analytics.flush;
+              const { anonymousIdPath } = yield* ServerConfig.ServerConfig;
+              installIdExists = yield* fileSystem.exists(anonymousIdPath).pipe(Effect.orDie);
+            }),
+          }).pipe(
+            Effect.provideService(FileSystem.FileSystem, {
+              ...fileSystem,
+              exists: (path) => (watch(path), fileSystem.exists(path)),
+              readFileString: (path, encoding) => (
+                watch(path),
+                fileSystem.readFileString(path, encoding)
+              ),
+              writeFileString: (path, data, options) => (
+                watch(path),
+                fileSystem.writeFileString(path, data, options)
+              ),
+            }),
+          );
+          return { touched: touched.length, installIdExists };
+        });
+      assert.deepEqual(yield* run(false), { touched: 0, installIdExists: false });
+      const optedIn = yield* run(true);
+      assert.isAbove(optedIn.touched, 0);
+      assert.isTrue(optedIn.installIdExists);
+    }),
+  );
+
+  it.effect("stops sending, retries included, as soon as the user switches sharing off", () =>
+    Effect.gen(function* () {
+      const ingest = failingFor(Infinity);
+      const batches = yield* sendFor(5, ingest.respond, {
+        record: Effect.gen(function* () {
+          const analytics = yield* AnalyticsService.AnalyticsService;
+          const settings = yield* ServerSettingsService;
+          yield* analytics.record("test.while-on");
+          yield* analytics.flush;
+          yield* settings.updateSettings({ shareUsageData: false }).pipe(Effect.orDie);
+          yield* analytics.record("test.after-off");
+          yield* analytics.flush;
+        }),
+      });
+      assert.deepEqual(
+        batches.map((batch) => batch.map(({ event }) => event)),
+        [["test.while-on"]],
+      );
+    }),
+  );
+
+  it.effect("records owners seen while sharing was off once the user opts in", () =>
+    Effect.gen(function* () {
+      const owner = { source: "device" as const, ownerId: "b".repeat(64) };
+      const batches = yield* sendFor(0, respondWithStatus(204), {
+        shareUsageData: false,
+        record: Effect.gen(function* () {
+          const analytics = yield* AnalyticsService.AnalyticsService;
+          const settings = yield* ServerSettingsService;
+          yield* analytics.recordOwners([owner], "client");
+          yield* settings.updateSettings({ shareUsageData: true }).pipe(Effect.orDie);
+          yield* analytics.recordOwners([owner], "client");
+          yield* analytics.flush;
+        }),
+      });
+      assert.deepEqual(
+        batches.flat().map((event) => event.properties.observedBy),
+        ["client"],
+      );
     }),
   );
 
   it.effect("waits for desktop shell consent and honors a late telemetry opt-out", () =>
     Effect.gen(function* () {
       const env: NodeJS.ProcessEnv = { T3CODE_DESKTOP_SHELL_DISCOVERY_PENDING: "1" };
-      const batches = yield* sendFor(
-        0,
-        respondWithStatus(204),
-        Effect.gen(function* () {
+      const batches = yield* sendFor(0, respondWithStatus(204), {
+        record: Effect.gen(function* () {
           const analytics = yield* AnalyticsService.AnalyticsService;
           yield* analytics.record("test.before-discovery");
           yield* analytics.flush;
-          env.T3CODE_TELEMETRY_ENABLED = "false";
+          env.S7VIDEO_TELEMETRY_ENABLED = "false";
           delete env.T3CODE_DESKTOP_SHELL_DISCOVERY_PENDING;
           yield* analytics.record("test.opted-out");
           yield* analytics.flush;
-          env.T3CODE_TELEMETRY_ENABLED = "true";
+          env.S7VIDEO_TELEMETRY_ENABLED = "true";
           yield* analytics.record("test.allowed");
           yield* analytics.flush;
         }),
-      ).pipe(Effect.provideService(HostProcess.Environment, env));
+      }).pipe(Effect.provideService(HostProcess.Environment, env));
       assert.deepEqual(
         batches.flat().map((event) => event.event),
         ["test.allowed"],
@@ -205,10 +407,8 @@ it.layer(NodeServices.layer)("AnalyticsService test", (it) => {
 
   it.effect("client owner reports cannot use up the server's owner cap", () =>
     Effect.gen(function* () {
-      const batches = yield* sendFor(
-        10,
-        respondWithStatus(204),
-        Effect.gen(function* () {
+      const batches = yield* sendFor(10, respondWithStatus(204), {
+        record: Effect.gen(function* () {
           const analytics = yield* AnalyticsService.AnalyticsService;
           yield* analytics.recordOwners(
             Array.from({ length: 1_001 }, (_, index) => ({
@@ -221,7 +421,7 @@ it.layer(NodeServices.layer)("AnalyticsService test", (it) => {
           yield* analytics.flush;
           yield* analytics.recordOwners([{ source: "connect", ownerId: "a".repeat(64) }], "server");
         }),
-      );
+      });
       const owners = batches.flat().map((event) => event.properties.observedBy);
 
       assert.equal(owners.filter((observedBy) => observedBy === "client").length, 1_000);
@@ -257,14 +457,12 @@ it.layer(NodeServices.layer)("AnalyticsService test", (it) => {
     () =>
       Effect.gen(function* () {
         const policy = { schemaVersion: 1, organization: "Example Corp" } as const;
-        const allowed = yield* sendFor(1, respondWithStatus(204), recordTwentyEvents, {
-          ...policy,
-          limits: { telemetry: true },
+        const allowed = yield* sendFor(1, respondWithStatus(204), {
+          policy: { ...policy, limits: { telemetry: true } },
         });
         assert.equal(allowed.length, 1);
-        const denied = yield* sendFor(1, respondWithStatus(204), recordTwentyEvents, {
-          ...policy,
-          limits: { telemetry: false },
+        const denied = yield* sendFor(1, respondWithStatus(204), {
+          policy: { ...policy, limits: { telemetry: false } },
         });
         assert.deepEqual(denied, []);
       }),
@@ -287,10 +485,9 @@ it.layer(NodeServices.layer)("AnalyticsService test", (it) => {
       const layerTelemetry = AnalyticsService.layer.pipe(Layer.provideMerge(layerServerConfig));
       const layerConfig = ConfigProvider.layer(
         ConfigProvider.fromUnknown({
-          T3CODE_TELEMETRY_ENABLED: true,
-          T3CODE_POSTHOG_KEY: "phc_test_key",
-          T3CODE_POSTHOG_HOST: "http://localhost",
-          T3CODE_TELEMETRY_FLUSH_BATCH_SIZE: 20,
+          ...TEST_TARGET,
+          S7VIDEO_TELEMETRY_ENABLED: true,
+          S7VIDEO_TELEMETRY_FLUSH_BATCH_SIZE: 20,
         }),
       );
       const layerBatchServer = HttpServer.serve(
@@ -317,6 +514,7 @@ it.layer(NodeServices.layer)("AnalyticsService test", (it) => {
             Layer.succeed(HostProcess.Platform, "linux"),
             Layer.succeed(HostProcess.Architecture, "arm64"),
             ManagedPolicy.layerTest(),
+            ServerSettingsService.layerTest({ shareUsageData: true }),
           ),
         ),
         Layer.provideMerge(NodeHttpServer.layerTest),
@@ -389,9 +587,8 @@ it.layer(NodeServices.layer)("AnalyticsService test", (it) => {
       const layerTelemetry = AnalyticsService.layer.pipe(Layer.provideMerge(layerServerConfig));
       const layerConfig = ConfigProvider.layer(
         ConfigProvider.fromUnknown({
-          T3CODE_TELEMETRY_ENABLED: false,
-          T3CODE_POSTHOG_KEY: "phc_test_key",
-          T3CODE_POSTHOG_HOST: "http://localhost",
+          ...TEST_TARGET,
+          S7VIDEO_TELEMETRY_ENABLED: false,
         }),
       );
       const layerBatchServer = HttpServer.serve(
@@ -408,6 +605,7 @@ it.layer(NodeServices.layer)("AnalyticsService test", (it) => {
             Layer.succeed(HostProcess.Platform, "linux"),
             Layer.succeed(HostProcess.Architecture, "arm64"),
             ManagedPolicy.layerTest(),
+            ServerSettingsService.layerTest({ shareUsageData: true }),
           ),
         ),
         Layer.provideMerge(NodeHttpServer.layerTest),

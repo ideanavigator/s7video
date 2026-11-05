@@ -37,6 +37,15 @@ const BANNED_TEXT: ReadonlyArray<{ readonly pattern: RegExp; readonly label: str
   { pattern: /[`"']t3 [a-z]/g, label: "the t3 CLI name" },
 ];
 
+/**
+ * Checked in every tracked file, tests and allowed paths included: upstream's analytics destination
+ * and any PostHog project key. The key pattern avoids spelling the prefix, so the ticket audit grep stays empty.
+ */
+const BANNED_ANALYTICS: ReadonlyArray<{ readonly pattern: RegExp; readonly label: string }> = [
+  { pattern: /ingest\.t3\.codes/, label: "T3 Code's analytics host" },
+  { pattern: /\bph[c]_[A-Za-z0-9]{16,}/, label: "a PostHog project key" },
+];
+
 /** T3 Code's identity blues. UI colours come from themes/*.json. */
 const BANNED_COLOURS = [
   "#1b4ed8",
@@ -216,6 +225,16 @@ export function findBannedText(file: string, contents: string): BrandCheckProble
   return problems;
 }
 
+export function findAnalyticsTargets(file: string, contents: string): BrandCheckProblem[] {
+  return contents.split("\n").flatMap((lineText, index) =>
+    BANNED_ANALYTICS.filter(({ pattern }) => pattern.test(lineText)).map(({ label }) => ({
+      file,
+      line: index + 1,
+      message: `${label}; telemetry destinations come from telemetry in the brand config`,
+    })),
+  );
+}
+
 function relativeLuminance(hex: string): number {
   const channels = [1, 3, 5].map((start) => Number.parseInt(hex.slice(start, start + 2), 16) / 255);
   const [r, g, b] = channels.map((c) => (c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4));
@@ -307,10 +326,13 @@ export function scanFiles(root: string, files: ReadonlyArray<string>) {
   const problems: BrandCheckProblem[] = [];
   const pending = new Map<string, number>();
   for (const file of files) {
-    if (BINARY_EXTENSIONS.test(file) || matchesAny(file, ALLOWED_PATHS)) continue;
+    if (BINARY_EXTENSIONS.test(file)) continue;
     const absolute = NodePath.join(root, file);
     if (!NodeFS.existsSync(absolute) || !NodeFS.statSync(absolute).isFile()) continue;
-    const found = findBannedText(file, NodeFS.readFileSync(absolute, "utf8"));
+    const contents = NodeFS.readFileSync(absolute, "utf8");
+    problems.push(...findAnalyticsTargets(file, contents));
+    if (matchesAny(file, ALLOWED_PATHS)) continue;
+    const found = findBannedText(file, contents);
     if (found.length === 0) continue;
     const owner = PENDING_PATHS.find(({ pattern }) => pattern.test(file))?.owner;
     if (owner === undefined) problems.push(...found);

@@ -9,18 +9,6 @@ s7video is a local-first Mac app. Your projects, footage, transcripts and edits 
 computer. **The s7video project collects nothing by default**: no analytics, no crash reports, no
 account. Anything that leaves your computer goes to a service you chose, for the work you asked for.
 
-> [!WARNING]
-> **Current pre-alpha build (2026-11-04).** Until the Sprint 01 privacy work lands, a build from
-> `main` differs from this page in one way:
->
-> - **Usage data collection is on by default**, but this repository's build has no analytics
->   destination configured (`telemetry.host` in `s7video.config.ts` is empty), so nothing is sent.
->   A build that sets a destination would send it. S7V-013 turns collection off by default. To turn
->   it off now, set `T3CODE_TELEMETRY_ENABLED=false` before starting the app.
->
-> The rest of this page describes s7video from the end of Sprint 01. This box is removed when
-> S7V-013 lands.
-
 This page covers the app as built from this repository. Builds published by someone else may behave
 differently; check their policy.
 
@@ -68,16 +56,21 @@ These carry no project content:
 
 ## Usage data
 
-Sharing anonymous usage data is **off by default** and is never switched on for you.
+Sharing pseudonymous usage data is **off by default** and is never switched on for you. Nothing is
+collected until you turn it on.
 
-- The open-source build has no usage-data destination configured, so it cannot send usage data even
-  if the setting is switched on, and the switch is hidden.
-- If an official build offers it, you turn it on under **Settings > Privacy > Share anonymous usage
-  data**. It would send product events such as which agent and model were used, permission mode, how
-  turns ended, how long they took, token counts and the app version, tied to a random installation
-  ID.
+- The open-source build has no usage-data destination configured, so it cannot send usage data at
+  all, and **Settings > Privacy** shows no switch.
+- If a build offers it, you turn it on under **Settings > Privacy > Share pseudonymous usage data**, or
+  with `S7VIDEO_TELEMETRY_ENABLED=true` in the app's environment. It would send pseudonymous product
+  events such as which agent, model, app features and agent tools were used, permission mode, how turns ended, how long they took, token
+  counts and the app version. Events are tied to a random installation ID and to one-way hashes of
+  the agent accounts you are signed in to (OpenAI, Claude) and of each connecting device, so that one
+  person's installations are counted once.
 - Usage data never includes your prompts, the agent's replies, file contents, footage, transcripts,
   file paths, API keys or sign-in tokens.
+- An administrator's [managed policy](docs/user/managed-policy.md) can keep it off; it cannot turn it
+  on. Details: [Product usage data](docs/user/telemetry.md).
 
 s7video never sends usage data to T3 Code's servers or to anyone other than the destination named in
 the build's settings.

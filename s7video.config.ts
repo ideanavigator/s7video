@@ -19,7 +19,7 @@ export default defineConfig({
     repository: "https://github.com/ideanavigator/s7video",
     issues: "https://github.com/ideanavigator/s7video/issues",
     docs: "https://github.com/ideanavigator/s7video/tree/main/docs",
-    privacyPolicy: "https://github.com/ideanavigator/s7video/blob/main/docs/user/telemetry.md",
+    privacyPolicy: "https://github.com/ideanavigator/s7video/blob/main/PRIVACY.md",
   },
   // Empty values turn the endpoint off. s7video publishes no releases, npm package or manifest yet.
   updates: {

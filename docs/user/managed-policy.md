@@ -224,9 +224,9 @@ so restart T3 Code after that.
   but do not run, and cannot be turned back on. Users can still edit or delete them.
 - `browserCookieImport: false`: users cannot import cookies from another browser into T3 Code's
   browser.
-- `telemetry: false`: the server and desktop app send no [product usage data](./telemetry.md) or
-  relay connection traces. A policy cannot turn them on. A browser that opens the server, such as
-  app.t3.codes, still sends its own relay traces.
+- `telemetry: false`: the server sends no [product usage data](./telemetry.md), even if a user
+  switched it on, and Settings offers no switch. A policy cannot turn usage data on: a `settings`
+  entry for `shareUsageData` is refused, because sharing is each user's choice.
 
 ### Providers
 
