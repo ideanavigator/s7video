@@ -388,10 +388,13 @@ export type ExportStatus = typeof ExportStatus.Type;
 
 export class ExportStartError extends Schema.TaggedError<ExportStartError>()("ExportStartError", {
   projectId: ProjectId,
-  reason: Schema.Literals(["exports-folder"]),
+  /** `no-transcript`: captions are on, the edit has none, and a clip has no transcript (S7V-046). */
+  reason: Schema.Literals(["exports-folder", "no-transcript"]),
   cause: Schema.optional(Schema.Defect()),
 }) {
   override get message(): string {
-    return "Could not create the project's exports folder.";
+    return this.reason === "no-transcript"
+      ? "Transcribe the clip first, or export without captions."
+      : "Could not create the project's exports folder.";
   }
 }

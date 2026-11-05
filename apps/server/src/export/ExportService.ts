@@ -3,8 +3,10 @@
 // Export (S7V-028): renders a project's edit to `exports/<project>-<yyyymmdd-hhmm>.mp4` as an
 // engine job. `start` answers with the job id at once; progress and cancel are the engine job's
 // (`engine.jobs.subscribe`, `engine.jobs.cancel`), and `status` gives the outcome. The Export
-// button (S7V-029) and the agent's `video_export` tool (S7V-023) both call this service.
+// button (S7V-029) and the agent's `video_export` tool (S7V-023) both call this service. With
+// captions on and no caption items, the clips' cached transcripts give the captions (S7V-046).
 import {
+  type EditDocument,
   EditUnavailableError,
   type EngineError,
   type EngineJobId,
@@ -31,6 +33,7 @@ import * as Semaphore from "effect/Semaphore";
 import * as EditDocumentService from "../edit/EditDocumentService.ts";
 import * as EngineService from "../engine/EngineService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
+import * as TranscriptService from "../transcript/TranscriptService.ts";
 
 export class ExportService extends Context.Service<
   ExportService,
@@ -65,6 +68,19 @@ export const exportSlug = (title: string) =>
     .slice(0, 48)
     .replace(/-+$/u, "") || "export";
 
+/**
+ * The media whose transcripts caption the export: those on the first video track (the one the
+ * engine renders), when captions are on and no caption track has items. Empty otherwise.
+ */
+export const transcriptMediaFor = (document: EditDocument, captions: boolean) => {
+  if (!captions) return [];
+  if (document.tracks.some((track) => track.kind === "caption" && track.items.length > 0)) {
+    return [];
+  }
+  const video = document.tracks.find((track) => track.kind === "video");
+  return [...new Set(video?.items.map((item) => item.media) ?? [])];
+};
+
 /** Local date and time to the minute, `yyyymmdd-hhmm`. */
 export const exportStamp = (millis: number) => {
   const parts = DateTime.toParts(
@@ -78,6 +94,7 @@ const make = Effect.gen(function* () {
   const engine = yield* EngineService.EngineService;
   const edits = yield* EditDocumentService.EditDocumentService;
   const projects = yield* ProjectService.ProjectService;
+  const transcripts = yield* TranscriptService.TranscriptService;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const scope = yield* Effect.scope;
@@ -138,6 +155,37 @@ const make = Effect.gen(function* () {
           explanation: "This project no longer exists.",
         });
       }
+      const captions = input.captions ?? true;
+      // Read before anything is written, so a missing transcript leaves no file behind.
+      const captionWords = yield* Effect.forEach(
+        transcriptMediaFor(snapshot.document, captions),
+        (media) =>
+          transcripts.get({ projectId: input.projectId, media }).pipe(
+            Effect.mapError(
+              (cause) =>
+                new ExportStartError({
+                  projectId: input.projectId,
+                  reason: "no-transcript",
+                  cause,
+                }),
+            ),
+            Effect.flatMap((transcript) =>
+              transcript === null
+                ? Effect.fail(
+                    new ExportStartError({ projectId: input.projectId, reason: "no-transcript" }),
+                  )
+                : Effect.succeed({
+                    media,
+                    fps: transcript.fps,
+                    words: transcript.words.map(({ text, startFrame, endFrame }) => ({
+                      text,
+                      startFrame,
+                      endFrame,
+                    })),
+                  }),
+            ),
+          ),
+      );
       const root = path.resolve(project.value.workspaceRoot);
       const folder = path.join(root, EXPORTS_DIR);
       yield* fileSystem
@@ -200,7 +248,8 @@ const make = Effect.gen(function* () {
             edit: snapshot.document,
             projectDir: root,
             outputPath: file,
-            captions: input.captions ?? true,
+            captions,
+            ...(captionWords.length > 0 ? { transcripts: captionWords } : {}),
             ...(input.preset ? { canvas: PRESET_CANVAS[input.preset] } : {}),
           },
           success: ExportRenderResult,

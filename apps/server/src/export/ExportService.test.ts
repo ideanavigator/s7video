@@ -4,11 +4,14 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
+  type EditDocument,
+  type EditOp,
   EngineError,
   type EngineJobId,
   type ExportRenderResult,
   type ExportStatus,
   ProjectId,
+  type Transcript,
 } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -20,7 +23,9 @@ import * as NodePath from "node:path";
 
 import { isIgnored, layerEditTest } from "../edit/editHarness.testkit.ts";
 import * as EngineService from "../engine/EngineService.ts";
+import * as EditDocumentService from "../edit/EditDocumentService.ts";
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
+import * as TranscriptService from "../transcript/TranscriptService.ts";
 import * as ExportService from "./ExportService.ts";
 
 interface RunJobCall {
@@ -82,6 +87,50 @@ const fakeEngine = (
   });
 };
 
+const transcriptOf = (words: Transcript["words"]): Transcript => ({
+  transcriptVersion: 1,
+  mediaFingerprint: { sha256: "ab".repeat(32), size: 4096 },
+  model: "mlx-community/Qwen3-ASR-1.7B-8bit",
+  revision: "test",
+  fps: { num: 30, den: 1 },
+  durationFrames: 900,
+  words,
+  createdAt: "2026-11-06T00:00:00Z",
+});
+
+/** The cached transcripts by media id; asked-for media are recorded. */
+const fakeTranscripts = (cached: Readonly<Record<string, Transcript>>, asked: Array<string>) =>
+  Layer.mock(TranscriptService.TranscriptService)({
+    get: (input) =>
+      Effect.sync(() => {
+        asked.push(input.media);
+        return cached[input.media] ?? null;
+      }),
+  });
+
+const withVideo: ReadonlyArray<EditOp> = [
+  {
+    _tag: "putMedia",
+    media: {
+      id: "cam",
+      kind: "video",
+      path: "assets/cam.mp4",
+      fingerprint: { sha256: "ab".repeat(32), size: 4096 },
+      probe: { durationFrames: 900, hasVideo: true, hasAudio: true },
+    },
+  },
+  { _tag: "addTrack", track: { kind: "video", id: "V1", items: [] } },
+  {
+    _tag: "setKeepRanges",
+    trackId: "V1",
+    mediaId: "cam",
+    ranges: [
+      { in: 0, duration: 300 },
+      { in: 450, duration: 300 },
+    ],
+  },
+];
+
 /** `exists` yields before answering, so concurrent starts interleave between check and reserve. */
 const layerSlowExists = Layer.effect(
   FileSystem.FileSystem,
@@ -104,28 +153,44 @@ const withExports = <A, E>(
     readonly exports: ExportService.ExportService["Service"];
     readonly calls: ReadonlyArray<RunJobCall>;
     readonly finish: Effect.Effect<void>;
+    readonly asked: ReadonlyArray<string>;
   }) => Effect.Effect<A, E>,
+  setup: {
+    readonly ops?: ReadonlyArray<EditOp>;
+    readonly cached?: Record<string, Transcript>;
+  } = {},
 ) =>
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
     const baseDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "s7v-export-" });
     const calls: Array<RunJobCall> = [];
+    const asked: Array<string> = [];
     const done = yield* Deferred.make<"ok" | "cancelled" | "no-libass">();
     return yield* Effect.gen(function* () {
       const folders = yield* ManagedProjectFolders.ManagedProjectFolders;
+      const edits = yield* EditDocumentService.EditDocumentService;
       const exports = yield* ExportService.ExportService;
       const created = yield* folders.createNamedProject({ name: "My Reel #2" });
+      if (setup.ops) {
+        const initial = yield* edits.read(created.projectId);
+        yield* edits.apply(created.projectId, setup.ops, {
+          origin: "agent",
+          baseRevision: initial.revision,
+        });
+      }
       return yield* body({
         projectId: created.projectId,
         root: created.workspaceRoot,
         exports,
         calls,
         finish: Deferred.succeed(done, outcome).pipe(Effect.asVoid),
+        asked,
       });
     }).pipe(
       Effect.provide(
         ExportService.layer.pipe(
           Layer.provide(fakeEngine(calls, done)),
+          Layer.provide(fakeTranscripts(setup.cached ?? {}, asked)),
           Layer.provide(layerSlowExists),
           Layer.provideMerge(layerEditTest(baseDir)),
         ),
@@ -239,6 +304,88 @@ describe("ExportService", () => {
         assert.strictEqual(status.state, "failed");
         assert.include(status.message, "libass");
       }),
+    ),
+  );
+
+  it("captions from the transcript only when captions are on and the edit has none", () => {
+    const document = (tracks: EditDocument["tracks"]) => ({ tracks }) as unknown as EditDocument;
+    const video = {
+      kind: "video",
+      id: "V1",
+      items: [
+        { id: "a", media: "cam", start: 0, duration: 10, in: 0 },
+        { id: "b", media: "cam", start: 10, duration: 10, in: 40 },
+        { id: "c", media: "phone", start: 20, duration: 10, in: 0 },
+      ],
+    } as unknown as EditDocument["tracks"][number];
+    const caption = (items: ReadonlyArray<unknown>, muted = false) =>
+      ({ kind: "caption", id: "C1", muted, items }) as unknown as EditDocument["tracks"][number];
+    const typed = { id: "t", start: 0, duration: 10, text: "typed" };
+    assert.deepStrictEqual(ExportService.transcriptMediaFor(document([video]), true), [
+      "cam",
+      "phone",
+    ]);
+    assert.deepStrictEqual(ExportService.transcriptMediaFor(document([video, caption([])]), true), [
+      "cam",
+      "phone",
+    ]);
+    assert.deepStrictEqual(ExportService.transcriptMediaFor(document([video]), false), []);
+    // Caption items win; a muted caption track with items still means "no captions from words".
+    assert.deepStrictEqual(
+      ExportService.transcriptMediaFor(document([video, caption([typed])]), true),
+      [],
+    );
+    assert.deepStrictEqual(
+      ExportService.transcriptMediaFor(document([video, caption([typed], true)]), true),
+      [],
+    );
+  });
+
+  it.effect("passes the clip's cached transcript words to the engine", () =>
+    withExports(
+      "ok",
+      ({ projectId, exports, calls, asked }) =>
+        Effect.gen(function* () {
+          yield* exports.start({ projectId });
+          assert.deepStrictEqual(asked, ["cam"]);
+          assert.deepStrictEqual(calls[0]?.params.transcripts, [
+            {
+              media: "cam",
+              fps: { num: 30, den: 1 },
+              words: [{ text: "hello", startFrame: 12, endFrame: 20 }],
+            },
+          ]);
+        }),
+      {
+        ops: withVideo,
+        cached: {
+          cam: transcriptOf([
+            { text: "hello", startFrame: 12, endFrame: 20, confidence: 0.9, speaker: "S1" },
+          ]),
+        },
+      },
+    ),
+  );
+
+  it.effect("fails plainly without a transcript and writes nothing", () =>
+    withExports(
+      "ok",
+      ({ projectId, root, exports, calls }) =>
+        Effect.gen(function* () {
+          const error = yield* exports.start({ projectId }).pipe(Effect.flip);
+          assert.strictEqual(error._tag, "ExportStartError");
+          assert.strictEqual(
+            error.message,
+            "Transcribe the clip first, or export without captions.",
+          );
+          assert.strictEqual(calls.length, 0);
+          assert.deepStrictEqual(NodeFS.readdirSync(NodePath.join(root, "exports")), []);
+          // Captions off needs no transcript.
+          yield* exports.start({ projectId, captions: false });
+          assert.strictEqual(calls.length, 1);
+          assert.isUndefined(calls[0]?.params.transcripts);
+        }),
+      { ops: withVideo },
     ),
   );
 

@@ -34,7 +34,7 @@ from fractions import Fraction
 from pathlib import Path
 from typing import Any
 
-from .. import captions_ass, timebase
+from .. import captions_ass, captions_from_words, timebase
 from ..edit_schema import validate_edit_document
 from ..ffmpeg import _tool_env, ffprobe_json, run_tool, tool_path
 from ..jobs import Cancelled, JobContext
@@ -191,6 +191,19 @@ def caption_items(edit: dict[str, Any]) -> list[dict[str, Any]]:
             captions_ass.load_style(item.get("style") or track.get("style") or captions_ass.DEFAULT_STYLE)
             items.append(item)
     return items
+
+
+def has_caption_items(edit: dict[str, Any]) -> bool:
+    """Any caption item, even on a muted track: a muted caption track means no captions."""
+    return any(track["items"] for track in edit["tracks"] if track["kind"] == "caption")
+
+
+def export_chunks(edit: dict[str, Any], plan: Plan, params: dict[str, Any]) -> list[captions_ass.Chunk]:
+    """The edit's caption items win; with none, the clips' transcripts give the captions (S7V-046)."""
+    if has_caption_items(edit) or not params.get("transcripts"):
+        return captions_ass.caption_chunks(caption_items(edit), plan.rate, plan.total_frames)
+    transcripts = {entry["media"]: entry for entry in params["transcripts"]}
+    return captions_from_words.transcript_chunks(plan.segments, transcripts, plan.rate, plan.total_frames)
 
 
 # --- Filter graph ------------------------------------------------------------------------------
@@ -538,10 +551,7 @@ def _render(params: dict[str, Any], job: JobContext) -> dict[str, Any]:
         raise RpcError(INVALID_PARAMS, "invalid params at projectDir: must be absolute")
     partial = _check_output(output, plan)
 
-    want_captions = params.get("captions", True)
-    chunks = (
-        captions_ass.caption_chunks(caption_items(edit), plan.rate, plan.total_frames) if want_captions else []
-    )
+    chunks = export_chunks(edit, plan, params) if params.get("captions", True) else []
     caps = capabilities(job)
     _require(caps.videotoolbox, "h264_videotoolbox", "to encode the video with the Mac's hardware")
     if chunks:
@@ -698,6 +708,41 @@ METHOD = Method(
             "projectDir": PATH_SCHEMA,
             "outputPath": PATH_SCHEMA,
             "captions": {"type": "boolean"},
+            # The clips' cached transcripts (S7V-046), used only when the edit has no caption items.
+            "transcripts": {
+                "type": "array",
+                "maxItems": 256,
+                "items": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": ["media", "fps", "words"],
+                    "properties": {
+                        "media": {"type": "string"},
+                        "fps": {
+                            "type": "object",
+                            "additionalProperties": False,
+                            "required": ["num", "den"],
+                            "properties": {
+                                "num": {"type": "integer", "minimum": 1},
+                                "den": {"type": "integer", "minimum": 1},
+                            },
+                        },
+                        "words": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "additionalProperties": False,
+                                "required": ["text", "startFrame", "endFrame"],
+                                "properties": {
+                                    "text": {"type": "string"},
+                                    "startFrame": {"type": "integer", "minimum": 0},
+                                    "endFrame": {"type": "integer", "minimum": 0},
+                                },
+                            },
+                        },
+                    },
+                },
+            },
             "canvas": {
                 "type": "object",
                 "additionalProperties": False,
