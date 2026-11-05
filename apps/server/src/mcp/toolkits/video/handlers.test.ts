@@ -248,7 +248,7 @@ const layerFor = (fixture: Fixture, cancelSignal: Deferred.Deferred<string>) => 
           return { path: file, frame: input.frame, rate: input.rate, width: 640, height: 360 };
         }),
       subscribeJobs: Stream.concat(
-        Stream.make<EngineJobsEvent>({ type: "snapshot", jobs }),
+        Stream.make({ type: "snapshot", jobs } as EngineJobsEvent),
         Stream.fromEffect(Deferred.await(cancelSignal)).pipe(
           Stream.map((id): EngineJobsEvent => ({
             type: "updated",
@@ -272,7 +272,7 @@ const withTools = <A, E>(
       name: string,
       args: object,
       capabilities?: ReadonlyArray<McpInvocationContext.McpCapability>,
-    ) => Effect.Effect<McpSchema.CallToolResult, unknown>;
+    ) => Effect.Effect<McpSchema.CallToolResult, McpSchema.InternalError | McpSchema.InvalidParams>;
     readonly server: McpServer.McpServer["Service"];
   }) => Effect.Effect<A, E, McpServer.McpServer>,
 ) =>

@@ -387,18 +387,19 @@ export const layerWithOptions = (
       );
       // Video tools work on the thread's own edit project (S7V-023), so only its threads get them.
       const isEditProject = isEditProjectFolder(fileSystem);
-      const videoToolsAvailable = (threadId: ThreadId) =>
-        Option.isNone(projectService)
-          ? Effect.succeed(false)
-          : projectionStore.getThread(threadId).pipe(
-              Effect.flatMap((thread) => projectService.value.getById(thread.projectId)),
-              Effect.flatMap((project) =>
-                Option.isSome(project)
-                  ? isEditProject(project.value.workspaceRoot)
-                  : Effect.succeed(false),
-              ),
-              Effect.orElseSucceed(() => false),
-            );
+      const videoToolsAvailable = Effect.fn("ProviderSessionManagerV2.videoToolsAvailable")(
+        function* (threadId: ThreadId) {
+          if (Option.isNone(projectService)) return false;
+          const thread = yield* projectionStore.getThread(threadId);
+          const project = yield* projectService.value.getById(thread.projectId);
+          const available = Option.isSome(project)
+            ? yield* isEditProject(project.value.workspaceRoot)
+            : false;
+          yield* Effect.annotateCurrentSpan({ "video.available": available });
+          return available;
+        },
+        Effect.orElseSucceed(() => false),
+      );
       const layerScope = yield* Effect.scope;
       // Group signals stop providers before restart capture; drop post-signal events so recovery owns that state.
       const shutdownSignal = { received: false };

@@ -17,7 +17,6 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import { McpSchema, McpServer } from "effect/ai";
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
@@ -143,7 +142,7 @@ describe.skipIf(!available)("video-frame-tool golden", () => {
                 Effect.succeed({ ...McpToolAccessTestkit.liveThreadShell(id), projectId }),
             }),
             Layer.mock(ProjectService.ProjectService)({
-              getById: () => Effect.succeed(Option.some({ workspaceRoot: root } as never)),
+              getById: () => Effect.succeedSome({ workspaceRoot: root } as never),
             }),
             Layer.mock(EditDocumentService.EditDocumentService)({
               read: () => Effect.succeed(snapshot),
@@ -171,7 +170,7 @@ describe.skipIf(!available)("video-frame-tool golden", () => {
             providerInstanceId: ProviderInstanceId.make("claudeAgent"),
           },
           client: undefined,
-          capabilities: new Set(["video"]),
+          capabilities: new Set(["video"] as const),
           issuedAt: 1,
         }),
         Effect.provideService(

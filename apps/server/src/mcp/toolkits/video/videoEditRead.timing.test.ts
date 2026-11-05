@@ -89,7 +89,7 @@ describe.runIf(ENABLED)("video_edit_read timing", () => {
                 providerInstanceId: ProviderInstanceId.make("claudeAgent"),
               },
               client: undefined,
-              capabilities: new Set(["video"]),
+              capabilities: new Set(["video"] as const),
               issuedAt: 1,
             }),
             Effect.provideService(

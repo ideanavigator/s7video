@@ -389,5 +389,8 @@ export const layerProduction = Layer.mergeAll(
 ).pipe(
   Layer.provide(ResourceCleanupService.layer.pipe(Layer.provide(layerScheduledTaskProvided))),
   Layer.provide(Scheduler.layer),
+  // Memoized layers keep the context of their first build, and resource cleanup above builds the
+  // session manager first. It reads ProjectService as optional (agent access, S7V-023 video tools).
+  Layer.provide(layerProjectService),
   Layer.provideMerge(layerEventInfrastructure),
 );
