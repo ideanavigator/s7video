@@ -218,3 +218,18 @@ def test_should_handle_vfr_phone_footage(wire: Wire, gop_clips: dict[str, Path],
         output = tmp_path / "proxies" / "vfr.mp4"
         wire.call("media.proxy", _proxy_params(wire, source, output, "proxy-vfr"))
         assert _video_pts(output) == _video_pts(source)
+
+
+@needs_videotoolbox
+@pytest.mark.usefixtures("tools")
+def test_two_proxy_jobs_for_one_output_do_not_share_a_temp_file(
+    wire: Wire, gop_clips: dict[str, Path], tmp_path: Path
+) -> None:
+    source = gop_clips["short"]
+    output = tmp_path / "proxies" / "same.mp4"
+    first = wire.request("media.proxy", _proxy_params(wire, source, output, "proxy-a"))
+    second = wire.request("media.proxy", _proxy_params(wire, source, output, "proxy-b"))
+    assert wire.reply(first)["result"] == {"path": str(output)}
+    assert wire.reply(second)["result"] == {"path": str(output)}
+    assert _video_pts(output) == _video_pts(source)
+    assert list(output.parent.glob("*.part")) == []

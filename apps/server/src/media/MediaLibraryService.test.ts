@@ -737,6 +737,35 @@ describe("MediaLibraryService", () => {
     ),
   );
 
+  it.effect("two concurrent re-imports start exactly one proxy job", () =>
+    withLibrary(({ projectId, desktop, library, fake }) =>
+      Effect.gen(function* () {
+        fake.gapSeconds = 10;
+        const clip = writeClip(desktop, "phone.mp4", 7);
+        yield* library.import({ projectId, sourcePath: clip, mode: "reference" });
+        yield* Deferred.succeed(fake.proxyOutcome, "failed");
+        yield* library.subscribe(projectId).pipe(
+          Stream.filter((snapshot) => snapshot.items[0]!.proxy.status === "failed"),
+          Stream.runHead,
+        );
+        fake.proxyOutcome = yield* Deferred.make<"succeed" | "cancelled" | "failed">();
+        const results = yield* Effect.forEach(
+          [clip, clip, clip],
+          (sourcePath) => library.import({ projectId, sourcePath, mode: "reference" }),
+          { concurrency: "unbounded" },
+        );
+        assert.equal(fake.proxies.length, 2);
+        assert.deepEqual(
+          results.map((result) => result.mediaId),
+          ["phone", "phone", "phone"],
+        );
+        // While it runs, a list does not start another either.
+        yield* library.list(projectId);
+        assert.equal(fake.proxies.length, 2);
+      }),
+    ),
+  );
+
   it.effect("/api/assets serves only media recorded in that project's edit.json", () =>
     withLibrary(({ projectId, desktop, library, edits, newProject }) =>
       Effect.gen(function* () {

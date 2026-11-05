@@ -203,6 +203,8 @@ const make = Effect.fn("MediaLibraryService.make")(function* (options: MediaLibr
   /** Proxy jobs by `${projectId}\0${sha256}`; a finished proxy is its file in `.s7cache/`. */
   const proxyRuns = new Map<string, ProxyRun>();
   const proxyJobs = new Map<EngineJobId, { key: string; projectId: ProjectId }>();
+  /** Media whose proxy is being decided or made right now; one at a time per media. */
+  const proxyClaims = new Set<string>();
   /** Media whose proxy need this server run has already judged. */
   const proxyChecked = new Set<string>();
 
@@ -498,18 +500,41 @@ const make = Effect.fn("MediaLibraryService.make")(function* (options: MediaLibr
   });
 
   /** Starts a background proxy when the policy asks for one; returns its job id. */
-  const startProxy = Effect.fnUntraced(function* (
+  const startProxy = (
     projectId: ProjectId,
     root: string,
     source: string,
     sha256: string,
     probe: MediaProbeResult,
+  ) =>
+    Effect.suspend(() => {
+      const key = `${projectId}\0${sha256}`;
+      // Claimed before anything waits, so concurrent callers (two re-imports, a re-import and a
+      // first list) cannot both start a proxy; the claim lasts until that job ends.
+      if (probe.video === null || probe.video.durationFrames < 1 || proxyClaims.has(key)) {
+        return Effect.succeed(proxyRuns.get(key)?.jobId);
+      }
+      proxyClaims.add(key);
+      const job = { forked: false };
+      return decideProxy(projectId, root, source, sha256, probe, key, job).pipe(
+        Effect.onExit(() =>
+          Effect.sync(() => {
+            if (!job.forked) proxyClaims.delete(key);
+          }),
+        ),
+      );
+    });
+
+  const decideProxy = Effect.fnUntraced(function* (
+    projectId: ProjectId,
+    root: string,
+    source: string,
+    sha256: string,
+    probe: MediaProbeResult,
+    key: string,
+    job: { forked: boolean },
   ) {
-    const video = probe.video;
-    const key = `${projectId}\0${sha256}`;
-    if (video === null || video.durationFrames < 1 || proxyRuns.get(key)?.status === "preparing") {
-      return undefined;
-    }
+    const video = probe.video!;
     const output = cachePaths(root, sha256).proxy;
     if (Option.isSome(yield* isFile(output))) return undefined;
     const keyframes = yield* engine.keyframes({ path: source }).pipe(Effect.option);
@@ -553,11 +578,13 @@ const make = Effect.fn("MediaLibraryService.make")(function* (options: MediaLibr
                 ));
             if (exit._tag === "Success" || cancelled) proxyRuns.delete(key);
             else proxyRuns.set(key, { status: "failed" });
+            proxyClaims.delete(key);
             return Deferred.succeed(started, undefined).pipe(Effect.andThen(notify(projectId)));
           }),
         ),
         Effect.forkIn(serviceScope),
       );
+    job.forked = true;
     return yield* Deferred.await(started);
   });
 

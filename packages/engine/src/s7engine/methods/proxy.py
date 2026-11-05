@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import uuid
 from fractions import Fraction
 from typing import Any
 
@@ -117,7 +118,8 @@ def _proxy(params: dict[str, Any], job: JobContext) -> dict[str, Any]:
         os.makedirs(os.path.dirname(output), exist_ok=True)
     except OSError:
         raise RpcError(OUTPUT_ERROR, "the output folder cannot be created") from None
-    partial = f"{output}.{os.getpid()}.part"
+    # One temp file per job, so two jobs for the same output never write into each other.
+    partial = f"{output}.{uuid.uuid4().hex}.part"
     job.track_output(partial)
     job.progress(0, "proxy")
     args = [
