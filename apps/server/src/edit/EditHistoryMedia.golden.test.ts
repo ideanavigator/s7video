@@ -129,15 +129,15 @@ describe.skipIf(FFMPEG === undefined)("edit history with media in the project", 
         const restoreMs: number[] = [];
         const refs = [0, 1].map((n) => CheckpointRef.make(`refs/t3/edit/bench/${n}`));
         for (let run = 0; run < 10; run++) {
-          NodeFS.writeFileSync(NodePath.join(root, "project.json"), `{"bench":${run}}\n`);
-          const ref = refs[run % 2]!;
+          NodeFS.writeFileSync(NodePath.join(root, "styles", "bench.json"), `{"run":${run}}\n`);
           const captureStart = now();
-          yield* store.captureCheckpoint({ cwd: root, checkpointRef: ref });
+          yield* store.captureCheckpoint({ cwd: root, checkpointRef: refs[run % 2]! });
           captureMs.push(now() - captureStart);
         }
+        // Restore as undo does it: edit.json from the checkpoint, written with a new revision.
         for (let run = 0; run < 10; run++) {
           const restoreStart = now();
-          yield* store.restoreCheckpoint({ cwd: root, checkpointRef: refs[run % 2]! });
+          yield* run % 2 === 0 ? edits.undo(projectId) : edits.redo(projectId);
           restoreMs.push(now() - restoreStart);
         }
         const result = {
