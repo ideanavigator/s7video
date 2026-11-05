@@ -29,6 +29,9 @@ import * as McpInvocationContext from "./McpInvocationContext.ts";
 
 export const NOT_IN_PROJECT = "That file is not part of this project. Import it first.";
 
+/** The system's own symlink limit (macOS MAXSYMLINKS). */
+const MAX_LINK_HOPS = 32;
+
 const failure = (code: OrchestratorMcpFailure["code"], message: string) =>
   new OrchestratorMcpFailure({ code, message });
 
@@ -117,7 +120,14 @@ export const resolveMedia = Effect.fn("VideoProjectScope.resolveMedia")(function
   if (real === undefined) {
     // Say nothing about files outside the project, not even whether they exist: judge a missing
     // file by the real path of its nearest existing folder, so a symlinked folder cannot tell.
-    let folder = path.dirname(requested);
+    // A dangling symlink is judged by the end of its link chain, so it cannot tell either.
+    let missing = requested;
+    for (let hop = 0; hop < MAX_LINK_HOPS; hop++) {
+      const target = yield* fileSystem.readLink(missing).pipe(Effect.option);
+      if (Option.isNone(target)) break;
+      missing = path.resolve(path.dirname(missing), target.value);
+    }
+    let folder = path.dirname(missing);
     let realFolder = yield* realPathOf(folder);
     while (realFolder === undefined && path.dirname(folder) !== folder) {
       folder = path.dirname(folder);
