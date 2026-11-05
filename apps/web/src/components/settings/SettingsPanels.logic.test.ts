@@ -6,6 +6,7 @@ import {
   getChangedBrowserSettingLabels,
   hasChangedBackgroundActivitySettings,
 } from "./SettingsPanels.logic";
+import settingsPanelsSource from "./SettingsPanels.tsx?raw";
 
 describe("background activity settings restore", () => {
   it("detects legacy interval values even when the structured setting is at its default", () => {
@@ -86,5 +87,12 @@ describe("getChangedBrowserSettingLabels", () => {
         browserCustomSearchUrl: "https://search.example/?q=%s",
       }),
     ).toEqual(["Search engine"]);
+  });
+});
+
+describe("settings panels name no pull request options (S7V-018)", () => {
+  it("has no pull request section titles or restore-defaults labels", () => {
+    expect(settingsPanelsSource).not.toMatch(/title="[^"]*pull request/i);
+    expect(settingsPanelsSource).not.toMatch(/\["[^"]*pull request[^"]*"\]/i);
   });
 });
