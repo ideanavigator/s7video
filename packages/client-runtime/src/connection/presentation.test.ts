@@ -10,7 +10,6 @@ import {
 import {
   BearerConnectionTarget,
   ConnectionTransientError,
-  SshConnectionTarget,
   type SupervisorConnectionState,
 } from "./model.ts";
 import { environmentMcpUrl, presentConnectionState } from "./presentation.ts";
@@ -84,19 +83,19 @@ describe("connection presentation", () => {
 
   // regression: #16909 Copy MCP URL falls back to an alternate route when the connected route has no address
   it("passes over routes without an address of their own", () => {
-    const ssh = new SshConnectionTarget({
+    const noAddress = new BearerConnectionTarget({
       environmentId: TARGET.environmentId,
       label: TARGET.label,
-      connectionId: "ssh-1",
+      connectionId: "no-profile",
     });
     const entry: ConnectionCatalogEntry = {
       ...ENTRY,
-      target: ssh,
+      target: noAddress,
       profile: Option.none(),
       alternateRoutes: [{ target: ENTRY.target, profile: ENTRY.profile }],
     };
 
-    expect(environmentMcpUrl({ entry, connectedTarget: ssh })).toBe(
+    expect(environmentMcpUrl({ entry, connectedTarget: noAddress })).toBe(
       "https://environment.example.test/mcp",
     );
   });

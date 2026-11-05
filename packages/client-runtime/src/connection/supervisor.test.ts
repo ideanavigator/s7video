@@ -14,13 +14,12 @@ import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
 import type { ConnectionCatalogEntry, ConnectionRoute } from "./catalog.ts";
 import * as Connectivity from "./connectivity.ts";
 import * as ConnectionDriver from "./driver.ts";
-import { BearerConnectionProfile, SshConnectionProfile } from "./catalog.ts";
+import { BearerConnectionProfile } from "./catalog.ts";
 import {
   BearerConnectionTarget,
   ConnectionBlockedError,
   ConnectionTransientError,
   PrimaryConnectionTarget,
-  SshConnectionTarget,
   type ConnectionAttemptError,
   type ConnectionTarget,
   type NetworkStatus,
@@ -40,22 +39,28 @@ const TARGET = new PrimaryConnectionTarget({
   wsBaseUrl: "wss://environment.example.test",
 });
 
-const SSH_TARGET = new SshConnectionTarget({
+// A public route the tests never reachability-check, so it is the fallback after LAN routes.
+const REMOTE_TARGET = new BearerConnectionTarget({
   environmentId: TARGET.environmentId,
   label: TARGET.label,
-  connectionId: "ssh:devbox",
+  connectionId: "bearer:remote",
 });
-const SSH_ROUTE: ConnectionRoute = {
-  target: SSH_TARGET,
+const REMOTE_ROUTE: ConnectionRoute = {
+  target: REMOTE_TARGET,
   profile: Option.some(
-    new SshConnectionProfile({
-      connectionId: SSH_TARGET.connectionId,
+    new BearerConnectionProfile({
+      connectionId: REMOTE_TARGET.connectionId,
       environmentId: TARGET.environmentId,
       label: TARGET.label,
-      target: { alias: "devbox", hostname: "devbox.example.test", username: "dev", port: 22 },
+      httpBaseUrl: "https://devbox.example.test/",
+      wsBaseUrl: "wss://devbox.example.test/",
     }),
   ),
 };
+
+/** The remote route, or the target's tag for every other route. */
+const routeKind = (target: ConnectionTarget): string =>
+  connectionRouteId(target) === REMOTE_TARGET.connectionId ? "remote" : target._tag;
 
 const TARGET_ENTRY: ConnectionCatalogEntry = {
   target: TARGET,
@@ -63,9 +68,9 @@ const TARGET_ENTRY: ConnectionCatalogEntry = {
   enabled: true,
 };
 
-const SSH_ENTRY: ConnectionCatalogEntry = {
-  target: SSH_ROUTE.target,
-  profile: SSH_ROUTE.profile,
+const REMOTE_ENTRY: ConnectionCatalogEntry = {
+  target: REMOTE_ROUTE.target,
+  profile: REMOTE_ROUTE.profile,
   enabled: true,
 };
 
@@ -97,10 +102,10 @@ const LAN_ROUTE: ConnectionRoute = {
     }),
   ),
 };
-const LAN_THEN_SSH_ENTRY: ConnectionCatalogEntry = {
+const LAN_THEN_REMOTE_ENTRY: ConnectionCatalogEntry = {
   target: LAN_ROUTE.target,
   profile: LAN_ROUTE.profile,
-  alternateRoutes: [SSH_ROUTE],
+  alternateRoutes: [REMOTE_ROUTE],
   enabled: true,
 };
 
@@ -382,7 +387,7 @@ describe("EnvironmentSupervisor", () => {
             ? Effect.die(new Error("Native transport defect."))
             : Effect.succeed(PREPARED_CONNECTION),
       });
-      const supervisor = yield* EnvironmentSupervisor.make(SSH_ENTRY, {
+      const supervisor = yield* EnvironmentSupervisor.make(REMOTE_ENTRY, {
         initiallyDesired: true,
       }).pipe(Effect.provide(harness.dependencies));
 
@@ -688,7 +693,7 @@ describe("EnvironmentSupervisor", () => {
         initialConfig: () => Effect.succeed(PROBE_CAPABLE_CONFIG),
         probe: options?.probe ?? ((attempt) => (attempt === 1 ? Effect.never : Effect.void)),
         checkHost: (prepared) =>
-          Ref.updateAndGet(hostChecks, (checks) => [...checks, prepared.target._tag]).pipe(
+          Ref.updateAndGet(hostChecks, (checks) => [...checks, routeKind(prepared.target)]).pipe(
             Effect.map((checks) => options?.checkHost?.(checks.length) ?? "answered"),
           ),
       });
@@ -722,7 +727,7 @@ describe("EnvironmentSupervisor", () => {
   it.effect("replaces a remote socket only after 2.5 seconds of silence", () =>
     Effect.gen(function* () {
       const harness = yield* makeSilentSocketHarness();
-      const supervisor = yield* EnvironmentSupervisor.make(SSH_ENTRY, {
+      const supervisor = yield* EnvironmentSupervisor.make(REMOTE_ENTRY, {
         initiallyDesired: true,
       }).pipe(Effect.provide(harness.dependencies));
 
@@ -736,7 +741,7 @@ describe("EnvironmentSupervisor", () => {
         supervisor.state,
         (state) => state.phase === "connected" && state.generation === 2,
       );
-      expect(yield* Ref.get(harness.hostChecks)).toEqual(["SshConnectionTarget"]);
+      expect(yield* Ref.get(harness.hostChecks)).toEqual(["remote"]);
     }).pipe(Effect.provide(TestClock.layer())),
   );
 
@@ -760,7 +765,7 @@ describe("EnvironmentSupervisor", () => {
   it.effect("replaces a remote socket after a long resume while the network reports offline", () =>
     Effect.gen(function* () {
       const harness = yield* makeSilentSocketHarness();
-      const supervisor = yield* EnvironmentSupervisor.make(SSH_ENTRY, {
+      const supervisor = yield* EnvironmentSupervisor.make(REMOTE_ENTRY, {
         initiallyDesired: true,
       }).pipe(Effect.provide(harness.dependencies));
 
@@ -785,7 +790,7 @@ describe("EnvironmentSupervisor", () => {
         inboundFrames: Ref.get(frames),
         checkHost: () => Effect.succeed("answered"),
       });
-      const supervisor = yield* EnvironmentSupervisor.make(SSH_ENTRY, {
+      const supervisor = yield* EnvironmentSupervisor.make(REMOTE_ENTRY, {
         initiallyDesired: true,
       }).pipe(Effect.provide(harness.dependencies));
 
@@ -810,7 +815,7 @@ describe("EnvironmentSupervisor", () => {
   it.effect("keeps a running check's window when the network changes during a long resume", () =>
     Effect.gen(function* () {
       const harness = yield* makeSilentSocketHarness();
-      const supervisor = yield* EnvironmentSupervisor.make(SSH_ENTRY, {
+      const supervisor = yield* EnvironmentSupervisor.make(REMOTE_ENTRY, {
         initiallyDesired: true,
       }).pipe(Effect.provide(harness.dependencies));
 
@@ -947,7 +952,7 @@ describe("EnvironmentSupervisor", () => {
           probe: (attempt) => (attempt === 1 ? Effect.sleep("4 seconds") : Effect.void),
           checkHost: () => "silent",
         });
-        const supervisor = yield* EnvironmentSupervisor.make(SSH_ENTRY, {
+        const supervisor = yield* EnvironmentSupervisor.make(REMOTE_ENTRY, {
           initiallyDesired: true,
         }).pipe(Effect.provide(harness.dependencies));
 
@@ -1093,12 +1098,12 @@ describe("EnvironmentSupervisor", () => {
 });
 
 describe("EnvironmentSupervisor routes", () => {
-  it.effect("connects over SSH before a slow LAN reachability check times out", () =>
+  it.effect("connects over a remote route before a slow LAN reachability check times out", () =>
     Effect.gen(function* () {
       const checkingLan = yield* Deferred.make<void>();
       const harness = yield* makeHarness({
         checkRoute: (route) =>
-          route.target._tag === "BearerConnectionTarget"
+          routeKind(route.target) === "BearerConnectionTarget"
             ? Deferred.succeed(checkingLan, undefined).pipe(
                 Effect.andThen(Effect.sleep("2500 millis")),
                 Effect.as("silent" as const),
@@ -1106,16 +1111,16 @@ describe("EnvironmentSupervisor routes", () => {
             : Effect.succeed("unchecked"),
         prepare: (_attempt, target) => Effect.succeed(preparedFor(target)),
       });
-      const supervisor = yield* EnvironmentSupervisor.make(LAN_THEN_SSH_ENTRY, {
+      const supervisor = yield* EnvironmentSupervisor.make(LAN_THEN_REMOTE_ENTRY, {
         initiallyDesired: true,
       }).pipe(Effect.provide(harness.dependencies));
 
       yield* Deferred.await(checkingLan);
       yield* TestClock.adjust("500 millis");
       yield* awaitState(supervisor.state, (state) => state.phase === "connected");
-      expect(Option.getOrThrow(yield* SubscriptionRef.get(supervisor.prepared)).target._tag).toBe(
-        "SshConnectionTarget",
-      );
+      expect(
+        routeKind(Option.getOrThrow(yield* SubscriptionRef.get(supervisor.prepared)).target),
+      ).toBe("remote");
       expect(yield* Ref.get(harness.prepareCount)).toBe(1);
     }).pipe(Effect.provide(TestClock.layer())),
   );
@@ -1128,7 +1133,7 @@ describe("EnvironmentSupervisor routes", () => {
         connectionId: "bearer:second-lan",
       });
       const entry: ConnectionCatalogEntry = {
-        ...LAN_THEN_SSH_ENTRY,
+        ...LAN_THEN_REMOTE_ENTRY,
         alternateRoutes: [
           {
             target: secondLanTarget,
@@ -1142,14 +1147,14 @@ describe("EnvironmentSupervisor routes", () => {
               }),
             ),
           },
-          SSH_ROUTE,
+          REMOTE_ROUTE,
         ],
       };
       const checking = yield* Ref.make(0);
       const checkingLans = yield* Deferred.make<void>();
       const harness = yield* makeHarness({
         checkRoute: (route) =>
-          route.target._tag === "BearerConnectionTarget"
+          routeKind(route.target) === "BearerConnectionTarget"
             ? Ref.updateAndGet(checking, (count) => count + 1).pipe(
                 Effect.flatMap((count) =>
                   count === 2 ? Deferred.succeed(checkingLans, undefined) : Effect.void,
@@ -1167,9 +1172,9 @@ describe("EnvironmentSupervisor routes", () => {
       yield* Deferred.await(checkingLans);
       yield* TestClock.adjust("500 millis");
       yield* awaitState(supervisor.state, (state) => state.phase === "connected");
-      expect(Option.getOrThrow(yield* SubscriptionRef.get(supervisor.prepared)).target._tag).toBe(
-        "SshConnectionTarget",
-      );
+      expect(
+        routeKind(Option.getOrThrow(yield* SubscriptionRef.get(supervisor.prepared)).target),
+      ).toBe("remote");
     }).pipe(Effect.provide(TestClock.layer())),
   );
 
@@ -1178,7 +1183,7 @@ describe("EnvironmentSupervisor routes", () => {
       const checkingLan = yield* Deferred.make<void>();
       const harness = yield* makeHarness({
         checkRoute: (route) =>
-          route.target._tag === "BearerConnectionTarget"
+          routeKind(route.target) === "BearerConnectionTarget"
             ? Deferred.succeed(checkingLan, undefined).pipe(
                 Effect.andThen(Effect.sleep("100 millis")),
                 Effect.as("answered" as const),
@@ -1186,16 +1191,16 @@ describe("EnvironmentSupervisor routes", () => {
             : Effect.succeed("unchecked"),
         prepare: (_attempt, target) => Effect.succeed(preparedFor(target)),
       });
-      const supervisor = yield* EnvironmentSupervisor.make(LAN_THEN_SSH_ENTRY, {
+      const supervisor = yield* EnvironmentSupervisor.make(LAN_THEN_REMOTE_ENTRY, {
         initiallyDesired: true,
       }).pipe(Effect.provide(harness.dependencies));
 
       yield* Deferred.await(checkingLan);
       yield* TestClock.adjust("100 millis");
       yield* awaitState(supervisor.state, (state) => state.phase === "connected");
-      expect(Option.getOrThrow(yield* SubscriptionRef.get(supervisor.prepared)).target._tag).toBe(
-        "BearerConnectionTarget",
-      );
+      expect(
+        routeKind(Option.getOrThrow(yield* SubscriptionRef.get(supervisor.prepared)).target),
+      ).toBe("BearerConnectionTarget");
       expect(yield* Ref.get(harness.prepareCount)).toBe(1);
     }).pipe(Effect.provide(TestClock.layer())),
   );
@@ -1207,9 +1212,9 @@ describe("EnvironmentSupervisor routes", () => {
         label: TARGET.label,
         connectionId: "bearer:tailnet",
       });
-      // No SSH fallback: a Tailscale-only client away from the LAN.
+      // No remote fallback: a Tailscale-only client away from the LAN.
       const entry: ConnectionCatalogEntry = {
-        ...LAN_THEN_SSH_ENTRY,
+        ...LAN_THEN_REMOTE_ENTRY,
         alternateRoutes: [
           {
             target: tailnetTarget,
@@ -1262,50 +1267,52 @@ describe("EnvironmentSupervisor routes", () => {
     }).pipe(Effect.provide(TestClock.layer())),
   );
 
-  it.effect("still tries a slow LAN route when SSH fails", () =>
+  it.effect("still tries a slow LAN route when the remote route fails", () =>
     Effect.gen(function* () {
       const checkingLan = yield* Deferred.make<void>();
       const attempted: string[] = [];
       const harness = yield* makeHarness({
         checkRoute: (route) =>
-          route.target._tag === "BearerConnectionTarget"
+          routeKind(route.target) === "BearerConnectionTarget"
             ? Deferred.succeed(checkingLan, undefined).pipe(
                 Effect.andThen(Effect.sleep("2500 millis")),
                 Effect.as("answered" as const),
               )
             : Effect.succeed("unchecked"),
         prepare: (_attempt, target) => {
-          attempted.push(target._tag);
-          return target._tag === "SshConnectionTarget"
-            ? Effect.fail(blocked("SSH authentication failed."))
+          attempted.push(routeKind(target));
+          return routeKind(target) === "remote"
+            ? Effect.fail(blocked("Remote authentication failed."))
             : Effect.succeed(preparedFor(target));
         },
       });
-      const supervisor = yield* EnvironmentSupervisor.make(LAN_THEN_SSH_ENTRY, {
+      const supervisor = yield* EnvironmentSupervisor.make(LAN_THEN_REMOTE_ENTRY, {
         initiallyDesired: true,
       }).pipe(Effect.provide(harness.dependencies));
 
       yield* Deferred.await(checkingLan);
       yield* TestClock.adjust("2500 millis");
       yield* awaitState(supervisor.state, (state) => state.phase === "connected");
-      expect(attempted).toEqual(["SshConnectionTarget", "BearerConnectionTarget"]);
+      expect(attempted).toEqual(["remote", "BearerConnectionTarget"]);
     }).pipe(Effect.provide(TestClock.layer())),
   );
 
-  it.effect("skips a silent LAN route and connects over SSH", () =>
+  it.effect("skips a silent LAN route and connects over the remote route", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness({
         checkRoute: (route) =>
-          Effect.succeed(route.target._tag === "BearerConnectionTarget" ? "silent" : "unchecked"),
+          Effect.succeed(
+            routeKind(route.target) === "BearerConnectionTarget" ? "silent" : "unchecked",
+          ),
         prepare: (_attempt, target) => Effect.succeed(preparedFor(target)),
       });
-      const supervisor = yield* EnvironmentSupervisor.make(LAN_THEN_SSH_ENTRY, {
+      const supervisor = yield* EnvironmentSupervisor.make(LAN_THEN_REMOTE_ENTRY, {
         initiallyDesired: true,
       }).pipe(Effect.provide(harness.dependencies));
 
       yield* awaitState(supervisor.state, (state) => state.phase === "connected");
       const prepared = Option.getOrThrow(yield* SubscriptionRef.get(supervisor.prepared));
-      expect(prepared.target._tag).toBe("SshConnectionTarget");
+      expect(routeKind(prepared.target)).toBe("remote");
       expect(yield* Ref.get(harness.prepareCount)).toBe(1);
     }),
   );
@@ -1315,17 +1322,17 @@ describe("EnvironmentSupervisor routes", () => {
       const harness = yield* makeHarness({
         checkRoute: () => Effect.succeed("answered"),
         prepare: (_attempt, target) =>
-          target._tag === "BearerConnectionTarget"
+          routeKind(target) === "BearerConnectionTarget"
             ? Effect.fail(blocked("The environment credential is invalid."))
             : Effect.succeed(preparedFor(target)),
       });
-      const supervisor = yield* EnvironmentSupervisor.make(LAN_THEN_SSH_ENTRY, {
+      const supervisor = yield* EnvironmentSupervisor.make(LAN_THEN_REMOTE_ENTRY, {
         initiallyDesired: true,
       }).pipe(Effect.provide(harness.dependencies));
 
       yield* awaitState(supervisor.state, (state) => state.phase === "connected");
       const prepared = Option.getOrThrow(yield* SubscriptionRef.get(supervisor.prepared));
-      expect(prepared.target._tag).toBe("SshConnectionTarget");
+      expect(routeKind(prepared.target)).toBe("remote");
     }),
   );
 
@@ -1335,13 +1342,13 @@ describe("EnvironmentSupervisor routes", () => {
         checkRoute: () => Effect.succeed("silent"),
         prepare: (_attempt, target) => Effect.succeed(preparedFor(target)),
       });
-      const supervisor = yield* EnvironmentSupervisor.make(LAN_THEN_SSH_ENTRY, {
+      const supervisor = yield* EnvironmentSupervisor.make(LAN_THEN_REMOTE_ENTRY, {
         initiallyDesired: true,
       }).pipe(Effect.provide(harness.dependencies));
 
       yield* awaitState(supervisor.state, (state) => state.phase === "connected");
       const prepared = Option.getOrThrow(yield* SubscriptionRef.get(supervisor.prepared));
-      expect(prepared.target._tag).toBe("BearerConnectionTarget");
+      expect(routeKind(prepared.target)).toBe("BearerConnectionTarget");
     }),
   );
 
@@ -1350,11 +1357,11 @@ describe("EnvironmentSupervisor routes", () => {
       const harness = yield* makeHarness({
         checkRoute: () => Effect.succeed("answered"),
         prepare: (_attempt, target) =>
-          target._tag === "SshConnectionTarget"
-            ? Effect.fail(blocked("SSH authentication failed."))
+          routeKind(target) === "remote"
+            ? Effect.fail(blocked("Remote authentication failed."))
             : Effect.fail(transient("LAN socket refused.")),
       });
-      const supervisor = yield* EnvironmentSupervisor.make(LAN_THEN_SSH_ENTRY, {
+      const supervisor = yield* EnvironmentSupervisor.make(LAN_THEN_REMOTE_ENTRY, {
         initiallyDesired: true,
       }).pipe(Effect.provide(harness.dependencies));
 
@@ -1368,14 +1375,14 @@ describe("EnvironmentSupervisor routes", () => {
       const lanReachable = yield* Ref.make(false);
       const harness = yield* makeHarness({
         checkRoute: (route) =>
-          route.target._tag === "BearerConnectionTarget"
+          routeKind(route.target) === "BearerConnectionTarget"
             ? Ref.get(lanReachable).pipe(
                 Effect.map((reachable) => (reachable ? "answered" : "silent")),
               )
             : Effect.succeed("unchecked"),
         prepare: (_attempt, target) => Effect.succeed(preparedFor(target)),
       });
-      const supervisor = yield* EnvironmentSupervisor.make(LAN_THEN_SSH_ENTRY, {
+      const supervisor = yield* EnvironmentSupervisor.make(LAN_THEN_REMOTE_ENTRY, {
         initiallyDesired: true,
       }).pipe(Effect.provide(harness.dependencies));
 
@@ -1383,9 +1390,9 @@ describe("EnvironmentSupervisor routes", () => {
         supervisor.state,
         (state) => state.phase === "connected" && state.generation === 1,
       );
-      expect(Option.getOrThrow(yield* SubscriptionRef.get(supervisor.prepared)).target._tag).toBe(
-        "SshConnectionTarget",
-      );
+      expect(
+        routeKind(Option.getOrThrow(yield* SubscriptionRef.get(supervisor.prepared)).target),
+      ).toBe("remote");
 
       yield* Ref.set(lanReachable, true);
       yield* harness.setNetworkStatus("unknown");
@@ -1395,9 +1402,9 @@ describe("EnvironmentSupervisor routes", () => {
         supervisor.state,
         (state) => state.phase === "connected" && state.generation === 2,
       );
-      expect(Option.getOrThrow(yield* SubscriptionRef.get(supervisor.prepared)).target._tag).toBe(
-        "BearerConnectionTarget",
-      );
+      expect(
+        routeKind(Option.getOrThrow(yield* SubscriptionRef.get(supervisor.prepared)).target),
+      ).toBe("BearerConnectionTarget");
       expect(yield* Ref.get(harness.releaseCount)).toBe(1);
     }),
   );
@@ -1408,7 +1415,7 @@ describe("EnvironmentSupervisor routes", () => {
       const lanChecks = yield* Ref.make(0);
       const harness = yield* makeHarness({
         checkRoute: (route) =>
-          route.target._tag === "BearerConnectionTarget"
+          routeKind(route.target) === "BearerConnectionTarget"
             ? Ref.update(lanChecks, (count) => count + 1).pipe(
                 Effect.andThen(Ref.get(lanReachable)),
                 Effect.map((reachable) => (reachable ? "answered" : "silent")),
@@ -1416,7 +1423,7 @@ describe("EnvironmentSupervisor routes", () => {
             : Effect.succeed("unchecked"),
         prepare: (_attempt, target) => Effect.succeed(preparedFor(target)),
       });
-      const supervisor = yield* EnvironmentSupervisor.make(LAN_THEN_SSH_ENTRY, {
+      const supervisor = yield* EnvironmentSupervisor.make(LAN_THEN_REMOTE_ENTRY, {
         initiallyDesired: true,
       }).pipe(Effect.provide(harness.dependencies));
 
@@ -1438,9 +1445,9 @@ describe("EnvironmentSupervisor routes", () => {
         supervisor.state,
         (state) => state.phase === "connected" && state.generation === 2,
       );
-      expect(Option.getOrThrow(yield* SubscriptionRef.get(supervisor.prepared)).target._tag).toBe(
-        "BearerConnectionTarget",
-      );
+      expect(
+        routeKind(Option.getOrThrow(yield* SubscriptionRef.get(supervisor.prepared)).target),
+      ).toBe("BearerConnectionTarget");
     }),
   );
 
@@ -1449,14 +1456,16 @@ describe("EnvironmentSupervisor routes", () => {
       const lanPreflights = yield* Ref.make(0);
       const harness = yield* makeHarness({
         checkRoute: (route) =>
-          Effect.succeed(route.target._tag === "BearerConnectionTarget" ? "silent" : "unchecked"),
+          Effect.succeed(
+            routeKind(route.target) === "BearerConnectionTarget" ? "silent" : "unchecked",
+          ),
         preflight: (route) =>
-          route.target._tag === "BearerConnectionTarget"
+          routeKind(route.target) === "BearerConnectionTarget"
             ? Ref.update(lanPreflights, (count) => count + 1).pipe(Effect.as("unprepared" as const))
             : Effect.succeed("unchecked"),
         prepare: (_attempt, target) => Effect.succeed(preparedFor(target)),
       });
-      const supervisor = yield* EnvironmentSupervisor.make(LAN_THEN_SSH_ENTRY, {
+      const supervisor = yield* EnvironmentSupervisor.make(LAN_THEN_REMOTE_ENTRY, {
         initiallyDesired: true,
       }).pipe(Effect.provide(harness.dependencies));
 
@@ -1480,7 +1489,7 @@ describe("EnvironmentSupervisor routes", () => {
       const wakeupHandled = yield* Deferred.make<void>();
       const harness = yield* makeHarness({
         checkRoute: (route) =>
-          route.target._tag === "BearerConnectionTarget"
+          routeKind(route.target) === "BearerConnectionTarget"
             ? Ref.updateAndGet(lanChecks, (count) => count + 1).pipe(
                 Effect.flatMap((check) =>
                   check === 1
@@ -1504,7 +1513,7 @@ describe("EnvironmentSupervisor routes", () => {
             Effect.asVoid,
           ),
       });
-      const supervisor = yield* EnvironmentSupervisor.make(LAN_THEN_SSH_ENTRY, {
+      const supervisor = yield* EnvironmentSupervisor.make(LAN_THEN_REMOTE_ENTRY, {
         initiallyDesired: true,
       }).pipe(Effect.provide(harness.dependencies));
 
@@ -1523,9 +1532,9 @@ describe("EnvironmentSupervisor routes", () => {
         supervisor.state,
         (state) => state.phase === "connected" && state.generation === 2,
       );
-      expect(Option.getOrThrow(yield* SubscriptionRef.get(supervisor.prepared)).target._tag).toBe(
-        "BearerConnectionTarget",
-      );
+      expect(
+        routeKind(Option.getOrThrow(yield* SubscriptionRef.get(supervisor.prepared)).target),
+      ).toBe("BearerConnectionTarget");
     }),
   );
 
@@ -1534,7 +1543,7 @@ describe("EnvironmentSupervisor routes", () => {
       const lanReachable = yield* Ref.make(true);
       const harness = yield* makeHarness({
         checkRoute: (route) =>
-          route.target._tag === "BearerConnectionTarget"
+          routeKind(route.target) === "BearerConnectionTarget"
             ? Ref.get(lanReachable).pipe(
                 Effect.map((reachable) => (reachable ? "answered" : "silent")),
               )
@@ -1545,7 +1554,7 @@ describe("EnvironmentSupervisor routes", () => {
             Effect.flatMap((reachable) => (reachable ? Effect.void : Effect.never)),
           ),
       });
-      const supervisor = yield* EnvironmentSupervisor.make(LAN_THEN_SSH_ENTRY, {
+      const supervisor = yield* EnvironmentSupervisor.make(LAN_THEN_REMOTE_ENTRY, {
         initiallyDesired: true,
       }).pipe(Effect.provide(harness.dependencies));
 
@@ -1553,9 +1562,9 @@ describe("EnvironmentSupervisor routes", () => {
         supervisor.state,
         (state) => state.phase === "connected" && state.generation === 1,
       );
-      expect(Option.getOrThrow(yield* SubscriptionRef.get(supervisor.prepared)).target._tag).toBe(
-        "BearerConnectionTarget",
-      );
+      expect(
+        routeKind(Option.getOrThrow(yield* SubscriptionRef.get(supervisor.prepared)).target),
+      ).toBe("BearerConnectionTarget");
 
       yield* Ref.set(lanReachable, false);
       yield* harness.wake("network-changed");
@@ -1565,9 +1574,9 @@ describe("EnvironmentSupervisor routes", () => {
         supervisor.state,
         (state) => state.phase === "connected" && state.generation === 2,
       );
-      expect(Option.getOrThrow(yield* SubscriptionRef.get(supervisor.prepared)).target._tag).toBe(
-        "SshConnectionTarget",
-      );
+      expect(
+        routeKind(Option.getOrThrow(yield* SubscriptionRef.get(supervisor.prepared)).target),
+      ).toBe("remote");
     }),
   );
 

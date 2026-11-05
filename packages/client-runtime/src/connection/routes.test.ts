@@ -4,12 +4,11 @@ import * as Option from "effect/Option";
 
 import {
   BearerConnectionProfile,
-  SshConnectionProfile,
   type ConnectionCatalogEntry,
   type ConnectionRoute,
 } from "./catalog.ts";
 import { pullRequestRoutingConnectionKey } from "./pullRequestRoutingPermissions.ts";
-import { BearerConnectionTarget, SshConnectionTarget } from "./model.ts";
+import { BearerConnectionTarget } from "./model.ts";
 import {
   connectionRouteId,
   connectionRouteKind,
@@ -46,24 +45,10 @@ function direct(id: string, httpBaseUrl: string): ConnectionRoute {
   };
 }
 
-const SSH: ConnectionRoute = {
-  target: new SshConnectionTarget({
-    environmentId: ENVIRONMENT_ID,
-    label: "Desk",
-    connectionId: "ssh",
-  }),
-  profile: Option.some(
-    new SshConnectionProfile({
-      connectionId: "ssh",
-      environmentId: ENVIRONMENT_ID,
-      label: "Desk",
-      target: { alias: "desk", hostname: "desk.example.com", username: "maria", port: 22 },
-    }),
-  ),
-};
 const LAN = direct("lan", "http://192.168.1.10:3773/");
 const TAILNET = direct("tailnet", "https://desk.tail1234.ts.net/");
 const PUBLIC = direct("public", "https://desk.example.com/");
+const REMOTE = direct("remote", "https://remote.example.org/");
 
 function learned(id: string, httpBaseUrl: string): ConnectionRoute {
   const route = direct(id, httpBaseUrl);
@@ -85,20 +70,18 @@ describe("connection routes", () => {
     expect(connectionRouteKind(direct("lo", "http://127.0.0.1:3773/"))).toBe("loopback");
     expect(connectionRouteKind(direct("ts6", "http://[fd7a:115c:a1e0::1]:3773/"))).toBe("tailnet");
     expect(connectionRouteLabel(TAILNET)).toBe("Tailscale");
-    expect(connectionRouteKind(SSH)).toBe("ssh");
-    expect(connectionRouteLabel(SSH)).toBe("SSH maria@desk.example.com");
   });
 
-  it("places a new route after faster kinds and ahead of SSH", () => {
-    expect(insertRoute([SSH], LAN)).toEqual([LAN, SSH]);
-    expect(insertRoute([LAN, SSH], TAILNET)).toEqual([LAN, TAILNET, SSH]);
+  it("places a new route after faster kinds and ahead of slower ones", () => {
+    expect(insertRoute([REMOTE], LAN)).toEqual([LAN, REMOTE]);
+    expect(insertRoute([LAN, REMOTE], TAILNET)).toEqual([LAN, TAILNET, REMOTE]);
     expect(insertRoute([TAILNET], LAN)).toEqual([LAN, TAILNET]);
-    expect(insertRoute([LAN, TAILNET], SSH)).toEqual([LAN, TAILNET, SSH]);
+    expect(insertRoute([LAN, TAILNET], REMOTE)).toEqual([LAN, TAILNET, REMOTE]);
   });
 
   it("keeps a user's order when a saved route is replaced", () => {
     const repaired = direct("lan", "http://192.168.1.11:3773/");
-    expect(upsertRoute([SSH, LAN], repaired)).toEqual([SSH, repaired]);
+    expect(upsertRoute([REMOTE, LAN], repaired)).toEqual([REMOTE, repaired]);
   });
 
   it("puts a newly paired route ahead of saved routes of the same kind", () => {
@@ -133,7 +116,7 @@ describe("learned routes", () => {
 
   it("learns an address after the active route, borrowing its paired token", () => {
     const routes = mergeLearnedRoutes({
-      entry: entryWithRoutes(lanOnly, [LAN, SSH]),
+      entry: entryWithRoutes(lanOnly, [LAN, REMOTE]),
       activeRoute: LAN,
       reported: [{ httpBaseUrl: "http://10.0.0.42:3773/" }],
       allowInsecure: true,
@@ -141,7 +124,7 @@ describe("learned routes", () => {
     expect(ids(routes)).toEqual([
       "lan",
       `learned:${ENVIRONMENT_ID}:http://10.0.0.42:3773@lan`,
-      "ssh",
+      "remote",
     ]);
     expect(profileOf(routes![1]!)).toMatchObject({
       learned: true,
@@ -169,7 +152,7 @@ describe("learned routes", () => {
   it("keeps a learned route where the user moved it while the server reports it", () => {
     const lan = { httpBaseUrl: "http://10.0.0.42:3773/" };
     const first = mergeLearnedRoutes({
-      entry: entryWithRoutes(lanOnly, [LAN, SSH]),
+      entry: entryWithRoutes(lanOnly, [LAN, REMOTE]),
       activeRoute: LAN,
       reported: [lan],
       allowInsecure: true,
@@ -192,7 +175,7 @@ describe("learned routes", () => {
     expect(ids(next)).toEqual([
       "lan",
       `learned:${ENVIRONMENT_ID}:http://100.101.102.103:3773@lan`,
-      "ssh",
+      "remote",
       `learned:${ENVIRONMENT_ID}:http://10.0.0.42:3773@lan`,
     ]);
   });
@@ -227,7 +210,7 @@ describe("learned routes", () => {
   });
 
   it("leaves user routes alone and does not learn an address already saved", () => {
-    const entry = entryWithRoutes(lanOnly, [LAN, SSH]);
+    const entry = entryWithRoutes(lanOnly, [LAN, REMOTE]);
     expect(
       mergeLearnedRoutes({
         entry,
@@ -238,17 +221,6 @@ describe("learned routes", () => {
     ).toBeNull();
     expect(
       mergeLearnedRoutes({ entry, activeRoute: LAN, reported: [], allowInsecure: true }),
-    ).toBeNull();
-  });
-
-  it("learns nothing over an SSH route", () => {
-    expect(
-      mergeLearnedRoutes({
-        entry: entryWithRoutes(lanOnly, [SSH]),
-        activeRoute: SSH,
-        reported: [{ httpBaseUrl: "http://10.0.0.42:3773/" }],
-        allowInsecure: true,
-      }),
     ).toBeNull();
   });
 
@@ -264,7 +236,7 @@ describe("learned routes", () => {
   });
 
   it("keeps a token paired over HTTPS off plain HTTP addresses outside the tailnet", () => {
-    const entry = entryWithRoutes(lanOnly, [PUBLIC, SSH]);
+    const entry = entryWithRoutes(lanOnly, [PUBLIC, REMOTE]);
     const routes = mergeLearnedRoutes({
       entry,
       activeRoute: PUBLIC,
@@ -279,16 +251,16 @@ describe("learned routes", () => {
       `learned:${ENVIRONMENT_ID}:http://100.101.102.103:3773@public`,
       `learned:${ENVIRONMENT_ID}:https://desk.tail1234.ts.net@public`,
       "public",
-      "ssh",
+      "remote",
     ]);
   });
 
   it("drops a stale plain HTTP route borrowing an HTTPS-paired token while another route is active", () => {
     const lanOrigin = "http://10.0.0.42:3773";
     const stale = learned(`learned:${ENVIRONMENT_ID}:${lanOrigin}@public`, `${lanOrigin}/`);
-    const entry = entryWithRoutes(lanOnly, [stale, LAN, PUBLIC, SSH]);
-    expect(sendsTokenInClear([stale, LAN, PUBLIC, SSH], stale)).toBe(true);
-    expect(ids(usableRoutes(entry))).toEqual(["lan", "public", "ssh"]);
+    const entry = entryWithRoutes(lanOnly, [stale, LAN, PUBLIC, REMOTE]);
+    expect(sendsTokenInClear([stale, LAN, PUBLIC, REMOTE], stale)).toBe(true);
+    expect(ids(usableRoutes(entry))).toEqual(["lan", "public", "remote"]);
     const routes = mergeLearnedRoutes({
       entry,
       activeRoute: LAN,
@@ -300,7 +272,7 @@ describe("learned routes", () => {
       "lan",
       `learned:${ENVIRONMENT_ID}:${lanOrigin}@lan`,
       "public",
-      "ssh",
+      "remote",
     ]);
   });
 
@@ -308,7 +280,7 @@ describe("learned routes", () => {
     const lanOrigin = "http://10.0.0.42:3773";
     const overLan = learned(`learned:${ENVIRONMENT_ID}:${lanOrigin}@lan`, `${lanOrigin}/`);
     const routes = mergeLearnedRoutes({
-      entry: entryWithRoutes(lanOnly, [overLan, LAN, PUBLIC, SSH]),
+      entry: entryWithRoutes(lanOnly, [overLan, LAN, PUBLIC, REMOTE]),
       activeRoute: PUBLIC,
       reported: [{ kind: "lan", httpBaseUrl: `${lanOrigin}/` }],
       allowInsecure: true,
@@ -332,13 +304,13 @@ describe("learned routes", () => {
 
   it("removes learned routes along with the route whose credential they borrow", () => {
     const overLan = mergeLearnedRoutes({
-      entry: entryWithRoutes(lanOnly, [LAN, SSH]),
+      entry: entryWithRoutes(lanOnly, [LAN, REMOTE]),
       activeRoute: LAN,
       reported: [{ httpBaseUrl: "https://desk.tail1234.ts.net/" }],
       allowInsecure: true,
     })!;
-    expect(ids(routesAfterRemoving(overLan, "lan"))).toEqual(["ssh"]);
-    expect(ids(routesAfterRemoving(overLan, "ssh"))).toHaveLength(2);
+    expect(ids(routesAfterRemoving(overLan, "lan"))).toEqual(["remote"]);
+    expect(ids(routesAfterRemoving(overLan, "remote"))).toHaveLength(2);
   });
 
   it("keeps pull request routing trust when a route is learned", () => {
