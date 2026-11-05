@@ -1,5 +1,6 @@
 // SPDX-FileCopyrightText: 2026 s7video contributors
 // SPDX-License-Identifier: MIT
+// @effect-diagnostics nodeBuiltinImport:off -- Compares the committed schema file byte for byte.
 import * as NodeFS from "node:fs";
 import { describe, expect, it } from "vite-plus/test";
 

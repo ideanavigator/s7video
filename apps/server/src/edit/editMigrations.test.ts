@@ -1,5 +1,6 @@
 // SPDX-FileCopyrightText: 2026 s7video contributors
 // SPDX-License-Identifier: MIT
+// @effect-diagnostics nodeBuiltinImport:off -- Reads the shared migration fixture files.
 import { EDIT_DOCUMENT_VERSION, validateEditDocument } from "@t3tools/contracts";
 import * as NodeFS from "node:fs";
 import * as NodeURL from "node:url";

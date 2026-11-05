@@ -1,13 +1,14 @@
 // SPDX-FileCopyrightText: 2026 s7video contributors
 // SPDX-License-Identifier: MIT
+// @effect-diagnostics nodeBuiltinImport:off -- Reads the shared fixture files the engine also reads.
 import { describe, expect, it } from "@effect/vitest";
 import * as NodeFS from "node:fs";
 import * as NodeURL from "node:url";
 
-import { validateEditDocument } from "./edit.ts";
+import { validateEditDocument } from "@t3tools/contracts";
 
 const FIXTURES = NodeURL.fileURLToPath(
-  new URL("../../../fixtures/edit-documents/", import.meta.url),
+  new URL("../../../../fixtures/edit-documents/", import.meta.url),
 );
 interface FixtureCase {
   readonly file: string;
