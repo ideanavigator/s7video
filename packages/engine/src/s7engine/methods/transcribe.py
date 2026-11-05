@@ -458,8 +458,24 @@ def _run(params: dict[str, Any], job: JobContext) -> dict[str, Any]:
     }
     _write_cache(target, transcript, job)
     result = _summary(target, transcript, cached=False)
-    result["timings"] = {"loadMs": load_ms, "totalMs": round((time.perf_counter() - started) * 1000)}
+    result["timings"] = {
+        "loadMs": load_ms,
+        "totalMs": round((time.perf_counter() - started) * 1000),
+        "peakMemoryBytes": _mlx_peak_bytes(),
+    }
     return result
+
+
+def _mlx_peak_bytes() -> int:
+    """MLX's peak Metal allocation since the last call, which the process RSS does not show."""
+    try:
+        import mlx.core as mx
+
+        peak = int(mx.get_peak_memory())
+        mx.reset_peak_memory()
+        return peak
+    except Exception:
+        return 0
 
 
 def _models_status(_params: dict[str, Any], _job: JobContext) -> dict[str, Any]:

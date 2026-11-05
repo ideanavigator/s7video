@@ -54,7 +54,14 @@ export const TranscribeRunResult = Schema.Struct({
   fps: EngineRational,
   wordCount: NonNegativeInt,
   durationFrames: NonNegativeInt,
-  timings: Schema.optional(Schema.Struct({ loadMs: NonNegativeInt, totalMs: NonNegativeInt })),
+  timings: Schema.optional(
+    Schema.Struct({
+      loadMs: NonNegativeInt,
+      totalMs: NonNegativeInt,
+      /** MLX's peak GPU memory during the job (0 when unknown). */
+      peakMemoryBytes: NonNegativeInt,
+    }),
+  ),
 });
 export type TranscribeRunResult = typeof TranscribeRunResult.Type;
 
