@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 
 import { act, render } from "../../../test/render";
-import { clipPlaybackPlan, editPlaybackPlan } from "../../editor/editPlayback";
+import { clipPlaybackPlan, editPlaybackPlan, timeOfFrame } from "../../editor/editPlayback";
 import { EditPlayer, type EditPlayerProps } from "./EditPlayer";
 
 const FPS = { num: 30, den: 1 };
@@ -85,6 +85,18 @@ describe("EditPlayer", () => {
     await userEvent.keyboard("{ArrowLeft}{ArrowLeft}");
     expect(onPositionChange).toHaveBeenLastCalledWith(29);
     await expect.element(screen.getByText("0:00 / 0:10")).toBeVisible();
+  });
+
+  it("steps from the frame on screen while playing, not from the last clock update", async () => {
+    using _stubs = stubPlayback();
+    const onPositionChange = vi.fn();
+    await using screen = await renderPlayer({ onPositionChange });
+    const video = (await screen.getByLabelText("interview.mov").findElement()) as HTMLVideoElement;
+    await screen.getByRole("button", { name: "Play" }).click();
+    // Playback moved on to frame 100 with no timeupdate yet.
+    video.currentTime = timeOfFrame(100, FPS);
+    await screen.getByRole("button", { name: "Next frame" }).click();
+    expect(onPositionChange).toHaveBeenLastCalledWith(101);
   });
 
   it("measures the clock in edit time, without the cut parts", async () => {

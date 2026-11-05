@@ -20,6 +20,7 @@ export interface EditPlayerProps {
   /** Edit frame to show first, where this project's player last paused. */
   readonly startFrame: number;
   readonly onPositionChange: (frame: number) => void;
+  readonly onPlayingChange?: ((playing: boolean) => void) | undefined;
   readonly onError: () => void;
 }
 
@@ -27,10 +28,14 @@ const stepSize = (event: KeyboardEvent, plan: PlaybackPlan) =>
   event.shiftKey ? Math.round(plan.fps.num / plan.fps.den) : 1;
 
 export function EditPlayer(props: EditPlayerProps) {
-  const { plan, projectKey, onPositionChange } = props;
+  const { plan, projectKey, onPositionChange, onPlayingChange } = props;
   const [video, setVideo] = useState<HTMLVideoElement | null>(null);
   const [loop, setLoop] = useState<PlaybackLoop | null>(null);
-  const [playing, setPlaying] = useState(false);
+  const [playing, setPlayingState] = useState(false);
+  const setPlaying = (next: boolean) => {
+    setPlayingState(next);
+    onPlayingChange?.(next);
+  };
   const [clock, setClock] = useState(props.startFrame);
 
   const attachVideo = (element: HTMLVideoElement) => {
@@ -77,8 +82,9 @@ export function EditPlayer(props: EditPlayerProps) {
   };
 
   const step = (frames: number) => {
+    if (loop === null) return;
     video?.pause();
-    seek(clock + frames);
+    seek(loop.timelineFrame() + frames);
   };
 
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
