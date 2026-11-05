@@ -115,6 +115,23 @@ describe("python licences", () => {
     expect(result.problems.map((problem) => problem.message)).toEqual(["has no SPDX licence"]);
   });
 
+  it("fails a production package it cannot read, skipping only development ones", () => {
+    const scan = packagesFromPythonReport(
+      {
+        lockfile: LOCK,
+        packages: [
+          entry({ name: "platform-only", installed: false }),
+          entry({ name: "colorama", scope: "development", installed: false }),
+        ],
+      },
+      LOCK,
+    );
+    expect(scan.notInstalled).toEqual([{ name: "colorama", version: "1.0.0" }]);
+    expect(scan.errors).toEqual([
+      "platform-only@1.0.0 is a production dependency in the lockfile but is not installed, so its licence cannot be checked; run uv sync --frozen in packages/engine",
+    ]);
+  });
+
   it("reports an environment that drifted from the lockfile", () => {
     const scan = packagesFromPythonReport(
       {

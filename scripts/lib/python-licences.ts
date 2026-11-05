@@ -60,9 +60,13 @@ export function pythonLicence(entry: PythonLicenceEntry): string {
 
 export interface PythonScan {
   readonly packages: ReadonlyArray<ScannedPackage>;
-  /** Locked but not installed here: excluded by a platform marker, so never shipped on macOS. */
+  /**
+   * Development packages locked but not installed here (a platform marker, such as Windows-only
+   * colorama). Production packages must be installed so their licence can be read; one that is
+   * not is an error, since it could ship.
+   */
   readonly notInstalled: ReadonlyArray<{ readonly name: string; readonly version: string }>;
-  /** Installed version differs from the lockfile: the environment is out of date. */
+  /** Uninstalled production packages, and versions that drifted from the lockfile. */
   readonly errors: ReadonlyArray<string>;
 }
 
@@ -75,7 +79,13 @@ export function packagesFromPythonReport(
   const errors: string[] = [];
   for (const entry of report.packages) {
     if (!entry.installed) {
-      notInstalled.push({ name: entry.name, version: entry.version });
+      if (entry.scope === "production") {
+        errors.push(
+          `${entry.name}@${entry.version} is a production dependency in the lockfile but is not installed, so its licence cannot be checked; run uv sync --frozen in packages/engine`,
+        );
+      } else {
+        notInstalled.push({ name: entry.name, version: entry.version });
+      }
       continue;
     }
     if (entry.installedVersion !== undefined && entry.installedVersion !== entry.version) {

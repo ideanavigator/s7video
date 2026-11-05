@@ -162,7 +162,9 @@ for (const election of pythonResult.elections) {
   );
 }
 for (const skipped of pythonScan.notInstalled) {
-  console.log(`  not installed on this platform: ${skipped.name}@${skipped.version}`);
+  console.log(
+    `  skipped, development only and not installed on this platform: ${skipped.name}@${skipped.version}`,
+  );
 }
 for (const error of pythonScan.errors) console.error(`error: ${error}`);
 for (const problem of pythonResult.problems) {
