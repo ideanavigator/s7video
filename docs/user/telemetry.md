@@ -1,6 +1,6 @@
 # Product usage data
 
-Sharing anonymous usage data is **off by default**. Nothing is collected or sent unless you turn it
+Sharing pseudonymous usage data is **off by default**. Nothing is collected or sent unless you turn it
 on, and it is never sent to T3 Code's servers.
 
 The build you get from this repository has no usage-data destination, so it cannot send usage data at
@@ -8,16 +8,20 @@ all. **Settings > Privacy** links to the [privacy policy](../../PRIVACY.md) and 
 
 ## If a build offers it
 
-A build that names a destination in its brand config shows **Share anonymous usage data** under
+A build that names a destination in its brand config shows **Share pseudonymous usage data** under
 **Settings > Privacy**. When you switch it on, the server sends product events to that destination:
 the provider, model, reasoning effort, permission mode, turn and request results, duration, release
-channel, app version, and token counts when available. Child-agent token counts are reported
+channel, app version, and token counts when available. They also say which app features were used
+(`feature.used`: the feature, its option, and whether it was the desktop app or a browser) and which
+agent tools ran (`mcp.tool.invoked`: the tool, its outcome, how deep in a chain of agents it ran,
+and its handoff options). Child-agent token counts are reported
 separately from the main agent's. Model names are sent only when they appear in a provider's public
 model list.
 
-Events are tied to a random installation ID. To count how many installations one person uses, they
-also carry one-way hashes of the OpenAI and Claude accounts you are signed in to and of each device
-that connects.
+The data is pseudonymous, not anonymous. Events are tied to a random installation ID. To count how
+many installations one person uses, they also carry one-way hashes of the OpenAI and Claude accounts
+you are signed in to and of each device that connects; anyone who knows one of those account IDs
+could link events to it. The switch takes effect immediately, without a restart.
 
 Events never include prompts, responses, file contents, footage, transcripts, file paths,
 authentication tokens, conversation IDs, raw provider events, or child-agent output.

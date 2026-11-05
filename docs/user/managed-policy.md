@@ -225,7 +225,8 @@ so restart T3 Code after that.
 - `browserCookieImport: false`: users cannot import cookies from another browser into T3 Code's
   browser.
 - `telemetry: false`: the server sends no [product usage data](./telemetry.md), even if a user
-  switched it on, and Settings offers no switch. A policy cannot turn usage data on.
+  switched it on, and Settings offers no switch. A policy cannot turn usage data on: a `settings`
+  entry for `shareUsageData` is refused, because sharing is each user's choice.
 
 ### Providers
 

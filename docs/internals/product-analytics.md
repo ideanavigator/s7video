@@ -11,6 +11,10 @@ event only when all of these hold: the build names a destination (`telemetry.hos
 overrides the setting either way. `S7VIDEO_TELEMETRY_HOST` and `S7VIDEO_TELEMETRY_KEY` override the
 destination, for testing against your own endpoint. Upstream's `T3CODE_TELEMETRY_ENABLED` and
 `T3CODE_POSTHOG_*` are deliberately not read, so a T3 Code shell profile cannot opt a user in.
+Managed policies refuse `shareUsageData` in `settings`, so an administrator can keep sharing off
+(`limits.telemetry: false`) but never switch it on. Until the user opts in, the server neither
+creates the install id file nor reads the Codex and Claude login files, and owners seen while off
+are not marked as sent.
 
 The server config tells clients `usageData.available` (destination and policy allow it) and
 `usageData.variable` (the environment decides). Clients hide the switch when it is unavailable.

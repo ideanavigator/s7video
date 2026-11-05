@@ -56,14 +56,14 @@ These carry no project content:
 
 ## Usage data
 
-Sharing anonymous usage data is **off by default** and is never switched on for you. Nothing is
+Sharing pseudonymous usage data is **off by default** and is never switched on for you. Nothing is
 collected until you turn it on.
 
 - The open-source build has no usage-data destination configured, so it cannot send usage data at
   all, and **Settings > Privacy** shows no switch.
-- If a build offers it, you turn it on under **Settings > Privacy > Share anonymous usage data**, or
-  with `S7VIDEO_TELEMETRY_ENABLED=true` in the app's environment. It would send product events such
-  as which agent and model were used, permission mode, how turns ended, how long they took, token
+- If a build offers it, you turn it on under **Settings > Privacy > Share pseudonymous usage data**, or
+  with `S7VIDEO_TELEMETRY_ENABLED=true` in the app's environment. It would send pseudonymous product
+  events such as which agent, model, app features and agent tools were used, permission mode, how turns ended, how long they took, token
   counts and the app version. Events are tied to a random installation ID and to one-way hashes of
   the agent accounts you are signed in to (OpenAI, Claude) and of each connecting device, so that one
   person's installations are counted once.
