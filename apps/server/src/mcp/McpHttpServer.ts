@@ -78,6 +78,9 @@ import {
   DeviceStandardToolkit,
 } from "./toolkits/device/tools.ts";
 import * as HtmlHandlers from "./toolkits/html/handlers.ts";
+import * as VideoHandlers from "./toolkits/video/handlers.ts";
+import { VideoFrameTool, VideoFrameToolkit, VideoProbeToolkit } from "./toolkits/video/tools.ts";
+import * as EngineService from "../videoEngine/EngineService.ts";
 import { HtmlPreviewTool, HtmlPreviewToolkit, HtmlRenderToolkit } from "./toolkits/html/tools.ts";
 
 const mcpResourceMetadataUrl = (request: HttpServerRequest.HttpServerRequest) =>
@@ -812,6 +815,24 @@ const registerHtmlPreview = Effect.fn("McpHttpServer.registerHtmlPreview")(funct
   );
 });
 
+const registerVideoFrame = Effect.fn("McpHttpServer.registerVideoFrame")(function* () {
+  const engine = yield* EngineService.EngineService;
+  const built = yield* decodeAsAdvertised(VideoFrameToolkit);
+  yield* registerImageTool(
+    VideoFrameTool,
+    (payload) =>
+      built
+        .handle("video_frame", payload)
+        .pipe(Stream.unwrap, Stream.run(Sink.last()), Effect.flatMap(Effect.fromOption)),
+    (effect) => effect.pipe(Effect.provideService(EngineService.EngineService, engine)),
+    "frame",
+    (error) =>
+      isOrchestratorMcpFailure(error) || AiError.isAiError(error)
+        ? error.message
+        : "Video frame failed.",
+  );
+});
+
 /**
  * Tools that hand work to another thread's agent: they create it, message it,
  * steer it, or move context into it. Their events name the receiving agent too.
@@ -1084,6 +1105,11 @@ export const layerHtmlToolkit = Layer.mergeAll(
   imageToolRegistration(registerHtmlPreview(), HtmlHandlers.layerPreview),
 ).pipe(Layer.provide(HtmlRender.layer));
 
+const layerVideoToolkit = Layer.mergeAll(
+  toolkitRegistration(VideoProbeToolkit, VideoHandlers.layerProbe),
+  imageToolRegistration(registerVideoFrame(), VideoHandlers.layerFrame),
+).pipe(Layer.provide(EngineService.layer));
+
 const layerPreviewStandardToolkitRegistration = toolkitRegistration(
   PreviewStandardToolkit,
   PreviewHandlers.layerStandard,
@@ -1169,6 +1195,7 @@ export const layerTools = Layer.mergeAll(
   layerPullRequestsToolkit,
   layerDeviceToolkit,
   layerHtmlToolkit,
+  layerVideoToolkit,
 );
 
 export const layer = layerTools.pipe(Layer.provideMerge(layerMcpTransport));
