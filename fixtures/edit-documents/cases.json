@@ -123,6 +123,18 @@
       "valid": false,
       "reason": "schema",
       "itemId": "V1"
+    },
+    {
+      "file": "25-style-ref-escapes-styles.json",
+      "valid": false,
+      "reason": "schema",
+      "itemId": "t2"
+    },
+    {
+      "file": "26-zoom-above-two.json",
+      "valid": false,
+      "reason": "schema",
+      "itemId": "b1"
     }
   ]
 }

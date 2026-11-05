@@ -18,9 +18,9 @@ const UnitInterval = Schema.Finite.check(Schema.isBetween({ minimum: 0, maximum:
 export const EditId = Schema.String.check(Schema.isPattern(/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/u));
 export type EditId = typeof EditId.Type;
 
-/** A caption style: one of ours (`s7-neutral`) or a user style under `styles/`. */
+/** A caption style: one of ours (`s7-neutral`) or a user style under `styles/`, never outside it. */
 export const EditStyleRef = Schema.String.check(
-  Schema.isPattern(/^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$/u),
+  Schema.isPattern(/^(?!.*\/\.\.?(?:\/|$))(?!.*\/\/)[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$/u),
 );
 export type EditStyleRef = typeof EditStyleRef.Type;
 
@@ -76,7 +76,7 @@ export type EditMedia = typeof EditMedia.Type;
 
 /** A punch-in over a whole video item; the anchor is normalised to the frame (S7V-037). */
 export const EditZoom = Schema.Struct({
-  scale: Schema.Finite.check(Schema.isBetween({ minimum: 1, maximum: 4 })),
+  scale: Schema.Finite.check(Schema.isBetween({ minimum: 1, maximum: 2 })),
   anchorX: UnitInterval,
   anchorY: UnitInterval,
   rampFrames: Frame,
@@ -89,7 +89,7 @@ export const EditVideoItem = Schema.Struct({
   start: Frame,
   duration: FrameCount,
   in: Frame,
-  /** Gain of the clip's own audio. */
+  /** Gain in dB on the clip's own audio, relative to the source level; missing means 0. */
   gainDb: Schema.optionalKey(Schema.Finite),
   muted: Schema.optionalKey(Schema.Boolean),
   zoom: Schema.optionalKey(EditZoom),
@@ -127,6 +127,10 @@ export const EditAudioItem = Schema.Struct({
   start: Frame,
   duration: FrameCount,
   in: Frame,
+  /**
+   * Gain in dB relative to the file's own level (0 plays it as recorded). Levels relative to the
+   * voice (S7V-036 presets) are converted to this by the tool that places the item.
+   */
   gainDb: Schema.optionalKey(Schema.Finite),
   fadeInFrames: Schema.optionalKey(Frame),
   fadeOutFrames: Schema.optionalKey(Frame),
@@ -549,7 +553,9 @@ function semanticIssues(document: EditDocument): EditValidationIssue[] {
         }
       }
     }
-    const ordered = [...items].sort((a, b) => a.start - b.start || a.id.localeCompare(b.id));
+    const ordered = [...items].sort(
+      (a, b) => a.start - b.start || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
+    );
     for (let index = 1; index < ordered.length; index++) {
       const previous = ordered[index - 1]!;
       const current = ordered[index]!;

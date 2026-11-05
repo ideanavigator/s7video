@@ -248,7 +248,7 @@
                         "scale": {
                           "type": "number",
                           "minimum": 1,
-                          "maximum": 4
+                          "maximum": 2
                         },
                         "anchorX": {
                           "type": "number",
@@ -333,7 +333,7 @@
               },
               "style": {
                 "type": "string",
-                "pattern": "^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$"
+                "pattern": "^(?!.*\\/\\.\\.?(?:\\/|$))(?!.*\\/\\/)[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$"
               },
               "items": {
                 "type": "array",
@@ -386,7 +386,7 @@
                     },
                     "style": {
                       "type": "string",
-                      "pattern": "^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$"
+                      "pattern": "^(?!.*\\/\\.\\.?(?:\\/|$))(?!.*\\/\\/)[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$"
                     },
                     "metadata": {
                       "type": "object"
@@ -758,7 +758,7 @@
                     },
                     "style": {
                       "type": "string",
-                      "pattern": "^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$"
+                      "pattern": "^(?!.*\\/\\.\\.?(?:\\/|$))(?!.*\\/\\/)[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$"
                     },
                     "label": {
                       "type": "string"

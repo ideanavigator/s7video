@@ -181,7 +181,7 @@ export const EditOp = Schema.Union([
 ]);
 export type EditOp = typeof EditOp.Type;
 
-export const EditOrigin = Schema.Literals(["agent", "timeline", "transcript", "user"]);
+export const EditOrigin = Schema.Literals(["agent", "timeline", "transcript"]);
 export type EditOrigin = typeof EditOrigin.Type;
 
 export const EditProjectInput = Schema.Struct({ projectId: ProjectId });
