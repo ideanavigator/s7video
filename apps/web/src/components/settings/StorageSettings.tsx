@@ -579,6 +579,20 @@ export function WorktreeCleanupSection() {
               }
             />
             <SettingsRow
+              title="Delete merged worktrees"
+              status={ruleStatus("worktreeOnMerge")}
+              managedPaths={lockablePath("worktreeOnMerge")}
+              description="Remove worktrees whose branch was merged and whose commits are included in the default branch."
+              serverScoped={!isProjectScope}
+              control={
+                <Switch
+                  aria-label="Delete merged worktrees"
+                  checked={settings.worktreeOnMerge}
+                  onCheckedChange={(worktreeOnMerge) => updateWorktree({ worktreeOnMerge })}
+                />
+              }
+            />
+            <SettingsRow
               title="Delete inactive worktrees"
               status={ruleStatus("worktreeAfterDays")}
               managedPaths={lockablePath("worktreeAfterDays")}
