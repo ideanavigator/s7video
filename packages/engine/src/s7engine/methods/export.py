@@ -111,6 +111,8 @@ class Source:
     video_offset: Fraction
     has_audio: bool
     hdr: bool
+    #: No colour matrix tag: read as Rec.709 (media-standards.md), not swscale's BT.601 default.
+    untagged_matrix: bool = False
 
 
 @dataclass(frozen=True)
@@ -245,8 +247,9 @@ def _video_chain(plan: Plan, source: Source | None) -> str:
         if source is not None and source.hdr
         else ""
     )
+    untagged = ":in_color_matrix=bt709" if source is not None and source.untagged_matrix and not source.hdr else ""
     return (
-        f"{tonemap}scale={plan.width}:{plan.height}:force_original_aspect_ratio=increase"
+        f"{tonemap}scale={plan.width}:{plan.height}:force_original_aspect_ratio=increase{untagged}"
         f":out_color_matrix=bt709:out_range=tv,crop={plan.width}:{plan.height},setsar=1,format=yuv420p"
     )
 
@@ -442,7 +445,7 @@ def _probe_source(path: str, job: JobContext) -> Source:
     info = ffprobe_json(
         [
             "-show_entries",
-            "format=start_time:stream=index,codec_type,start_pts,time_base,color_transfer"
+            "format=start_time:stream=index,codec_type,start_pts,time_base,color_transfer,color_space"
             ":stream_disposition=attached_pic",
             path,
         ],
@@ -466,6 +469,7 @@ def _probe_source(path: str, job: JobContext) -> Source:
         video_offset=max(Fraction(0), video_start - container_start),
         has_audio=any(s.get("codec_type") == "audio" for s in streams),
         hdr=video.get("color_transfer") in HDR_TRANSFERS,
+        untagged_matrix=video.get("color_space") in (None, "", "unknown"),
     )
 
 

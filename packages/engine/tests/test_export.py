@@ -603,3 +603,42 @@ def test_cancel_kills_only_its_own_ffmpeg(big_clip: Path, tmp_path: Path) -> Non
         thread.join(timeout=60)
     assert isinstance(outcomes[0], Cancelled)
     assert isinstance(outcomes[1], dict) and Path(outcomes[1]["path"]).is_file()
+
+
+def _centre_yuv(path: Path) -> tuple[int, int, int]:
+    """Mean Y, Cb, Cr of an 8×8 patch in the middle of the first frame, as stored (no conversion)."""
+    assert FFMPEG is not None
+    raw = subprocess.run(
+        [FFMPEG, "-v", "error", "-i", str(path), "-vf", "crop=8:8:(iw-8)/2:(ih-8)/2,format=yuv444p",
+         "-frames:v", "1", "-f", "rawvideo", "-"],
+        check=True, capture_output=True,
+    ).stdout
+    planes = [raw[index * 64 : (index + 1) * 64] for index in range(3)]
+    return tuple(round(sum(plane) / 64) for plane in planes)  # type: ignore[return-value]
+
+
+@pytest.mark.usefixtures("tools")
+@pytest.mark.parametrize(("tags", "converted"), [([], False), (["-colorspace", "bt470bg", "-color_primaries", "bt470bg", "-color_trc", "smpte170m"], True)])
+def test_untagged_source_keeps_its_colours(tmp_path: Path, tags: list[str], converted: bool) -> None:
+    # A flat colour stored as Y/Cb/Cr 127/95/67. Untagged means Rec.709 (media-standards.md), so the
+    # export must keep the same values; a source tagged BT.601 is converted to 709 as it should be.
+    assert FFMPEG is not None
+    source = tmp_path / "flat.mkv"
+    subprocess.run(
+        [FFMPEG, "-v", "error", "-f", "lavfi", "-i", f"color=c=black:s={W}x{H}:r=30:d=1,format=yuv420p,geq=lum=127:cb=95:cr=67",
+         "-f", "lavfi", "-i", "sine=r=48000:d=1", "-c:v", "ffv1", *tags, "-c:a", "pcm_s16le", str(source)],
+        check=True,
+    )
+    assert _centre_yuv(source) == (127, 95, 67)
+    edit = make_edit(source=source, ranges=[(0, 20)], fps=Fraction(30), duration_frames=30, width=W, height=H)
+    y, cb, cr = _centre_yuv(Path(run_export(edit, tmp_path / "out.mp4")["path"]))
+    unchanged = abs(y - 127) <= 3 and abs(cb - 95) <= 3 and abs(cr - 67) <= 3
+    assert unchanged != converted, (y, cb, cr)
+
+
+def test_untagged_matrix_is_read_as_rec709() -> None:
+    plan = export.Plan(Fraction(30), 1080, 1920, 0, [])
+    untagged = export.Source("/x", Fraction(0), True, False, untagged_matrix=True)
+    tagged = export.Source("/x", Fraction(0), True, False, untagged_matrix=False)
+    assert ":in_color_matrix=bt709:out_color_matrix=bt709" in export._video_chain(plan, untagged)
+    assert "in_color_matrix" not in export._video_chain(plan, tagged)
