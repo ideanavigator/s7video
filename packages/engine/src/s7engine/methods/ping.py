@@ -19,4 +19,6 @@ METHOD = Method(
     "engine.ping",
     _ping,
     {"type": "object", "additionalProperties": False, "properties": {}},
+    # The server's health check: it must answer even while every worker runs a long job.
+    inline=True,
 )

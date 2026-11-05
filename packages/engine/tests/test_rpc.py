@@ -120,3 +120,16 @@ def test_internal_errors_log_the_type_not_the_text(caplog: object, tmp_path: Pat
         assert secret not in text
     finally:
         engine.close()
+
+
+def test_ping_answers_while_every_worker_runs_a_job(wire: Wire, tmp_path: Path) -> None:
+    # S7V-022 review follow-up A: the health ping must not queue behind long jobs.
+    for index in range(10):
+        wire.request("test.slowJob", {"jobId": f"busy-{index}", "outputPath": str(tmp_path / f"{index}.bin"), "steps": 1000})
+    wire.wait_for(lambda message: message.get("method") == "progress")
+    asked_at = time.monotonic()
+    reply = wire.call("engine.ping")
+    assert reply["result"]["pong"] is True
+    assert time.monotonic() - asked_at < 0.5
+    for index in range(10):
+        wire.call("job.cancel", {"jobId": f"busy-{index}"})

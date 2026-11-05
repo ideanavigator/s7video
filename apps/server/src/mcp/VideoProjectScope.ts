@@ -56,23 +56,31 @@ export const callerProject = Effect.fn("VideoProjectScope.callerProject")(functi
     ),
   );
   const threads = yield* ThreadManagementService.ThreadManagementService;
-  const projects = yield* ProjectService.ProjectService;
-  const edits = yield* EditDocumentService.EditDocumentService;
-  const fileSystem = yield* FileSystem.FileSystem;
-  const unavailable = () => failure("orchestration_error", "Could not look up this project.");
   const shell = yield* threads
     .getThreadShell(scope.thread.threadId)
     .pipe(Effect.mapError(unavailable));
   if (shell === null) return yield* failure("thread_not_found", "This thread no longer exists.");
-  const project = yield* projects.getById(shell.projectId).pipe(Effect.mapError(unavailable));
+  return yield* projectFor(shell.projectId);
+});
+
+const unavailable = () => failure("orchestration_error", "Could not look up this project.");
+
+/** A project by id, as the server knows it: for the Editor panel's requests, which name one. */
+export const projectFor = Effect.fn("VideoProjectScope.projectFor")(function* (
+  projectId: ProjectId,
+) {
+  const projects = yield* ProjectService.ProjectService;
+  const edits = yield* EditDocumentService.EditDocumentService;
+  const fileSystem = yield* FileSystem.FileSystem;
+  const project = yield* projects.getById(projectId).pipe(Effect.mapError(unavailable));
   if (Option.isNone(project)) return yield* unavailable();
   const root = yield* fileSystem
     .realPath(project.value.workspaceRoot)
     .pipe(Effect.mapError(() => failure("orchestration_error", "The project folder is missing.")));
   const snapshot = yield* edits
-    .read(shell.projectId)
+    .read(projectId)
     .pipe(Effect.mapError((error) => failure("orchestration_error", error.explanation)));
-  return { projectId: shell.projectId, root, snapshot } satisfies VideoProject;
+  return { projectId, root, snapshot } satisfies VideoProject;
 });
 
 /** Resolves `media` (a media id or a path) to a real file this project may use, or refuses it. */

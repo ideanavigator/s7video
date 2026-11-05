@@ -112,6 +112,7 @@ export interface EngineEnvironmentInput {
   readonly tmpDir: string | undefined;
   /** Registers the engine's crash, hang and slow-job hooks; tests only. */
   readonly testMethods?: boolean;
+  readonly transcribeIdleUnloadSeconds?: number;
 }
 
 /** The engine's whole environment. Nothing else from the server's environment reaches it. */
@@ -127,6 +128,9 @@ export function engineEnvironment(input: EngineEnvironmentInput): Record<string,
     HF_HUB_OFFLINE: "1",
     S7_FFMPEG: input.tools.ffmpeg,
     S7_FFPROBE: input.tools.ffprobe,
+    ...(input.transcribeIdleUnloadSeconds === undefined
+      ? {}
+      : { S7_TRANSCRIBE_IDLE_UNLOAD_SECONDS: String(input.transcribeIdleUnloadSeconds) }),
     ...(input.testMethods ? { S7_ENGINE_TEST_METHODS: "1" } : {}),
   };
 }

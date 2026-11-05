@@ -98,6 +98,7 @@ describe("python licences", () => {
     expect(pythonLicence(entry({ name: "e", classifiers: ["License :: Freeware"] }))).toBe(
       "Unknown",
     );
+    expect(pythonLicence(entry({ name: "f", license: "Apache 2.0 License" }))).toBe("Apache-2.0");
   });
 
   it("fails a package with no licence metadata and lists uninstalled ones", () => {
@@ -122,11 +123,15 @@ describe("python licences", () => {
         packages: [
           entry({ name: "platform-only", installed: false }),
           entry({ name: "colorama", scope: "development", installed: false }),
+          entry({ name: "windows-only", installed: false, otherPlatform: true }),
         ],
       },
       LOCK,
     );
-    expect(scan.notInstalled).toEqual([{ name: "colorama", version: "1.0.0" }]);
+    expect(scan.notInstalled).toEqual([
+      { name: "colorama", version: "1.0.0" },
+      { name: "windows-only", version: "1.0.0" },
+    ]);
     expect(scan.errors).toEqual([
       "platform-only@1.0.0 is a production dependency in the lockfile but is not installed, so its licence cannot be checked; run uv sync --frozen in packages/engine",
     ]);

@@ -3,7 +3,7 @@
 // @effect-diagnostics nodeBuiltinImport:off - checks for the developer's uv and FFmpeg, and probes PIDs.
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, expect, it } from "@effect/vitest";
-import type { EngineJobId, EngineJobsEvent } from "@t3tools/contracts";
+import { type EngineJobId, type EngineJobsEvent, ProjectId } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import type * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
@@ -470,6 +470,35 @@ describe.skipIf(!realEngineAvailable)("EngineService with the real engine", () =
         type: "updated",
         job: { id: jobId, state: "cancelled" },
       });
+    }).pipe(Effect.scoped, Effect.provide(realLayer())),
+  );
+
+  it.live("startJob returns the job id at once and the job finishes on its own", () =>
+    Effect.gen(function* () {
+      const engine = yield* EngineService.EngineService;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "engine-start-" });
+      const output = path.join(directory, "done.bin");
+      const finished = yield* engine.subscribeJobs.pipe(
+        Stream.filter((event) => event.type === "updated" && event.job.state !== "running"),
+        Stream.runHead,
+        Effect.forkChild,
+      );
+      const projectId = ProjectId.make("project-start");
+      const jobId = yield* engine.startJob({
+        kind: "test",
+        method: "test.slowJob",
+        params: { outputPath: output, steps: 3, stepMs: 1 },
+        success: SlowJobResult,
+        projectId,
+      });
+      const last = yield* Fiber.join(finished);
+      expect(last).toMatchObject({
+        _tag: "Some",
+        value: { type: "updated", job: { id: jobId, state: "succeeded", projectId } },
+      });
+      expect(yield* fileSystem.exists(output)).toBe(true);
     }).pipe(Effect.scoped, Effect.provide(realLayer())),
   );
 

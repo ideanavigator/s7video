@@ -52,6 +52,11 @@ def pts_to_frame(pts: int, time_base: Fraction, rate: Fraction, first_pts: int =
     return round(seconds * rate)
 
 
+def seconds_to_frame(seconds: Fraction, rate: Fraction) -> int:
+    """The frame nearest to an exact time, at `rate` (the same rounding as `pts_to_frame`)."""
+    return round(seconds * rate)
+
+
 def frame_to_seconds(frame: int, rate: Fraction) -> Fraction:
     return Fraction(frame) / rate
 

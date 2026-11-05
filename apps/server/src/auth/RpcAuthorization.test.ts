@@ -84,6 +84,19 @@ describe("RPC authorization scopes", () => {
     expect(requiredScopeForRpcMethod(WS_METHODS.exportStart)).toBe(AuthOrchestrationOperateScope);
   });
 
+  it("lets readers see transcripts but only operators transcribe or download models", () => {
+    for (const method of [WS_METHODS.transcriptGet, WS_METHODS.transcribeModelsStatus]) {
+      expect(requiredScopeForRpcMethod(method)).toBe(AuthOrchestrationReadScope);
+    }
+    for (const method of [
+      WS_METHODS.transcribeRun,
+      WS_METHODS.transcribeModelsDownload,
+      WS_METHODS.transcribeModelsDismiss,
+    ]) {
+      expect(requiredScopeForRpcMethod(method)).toBe(AuthOrchestrationOperateScope);
+    }
+  });
+
   it("rejects unknown RPC method names", () => {
     for (const method of ["server.notRegistered", "toString", "constructor"]) {
       expect(() => requiredScopeForRpcMethod(method)).toThrow(

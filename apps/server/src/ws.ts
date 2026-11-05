@@ -220,6 +220,7 @@ import { mutateProjectWithClone } from "./project/ProjectMutation.ts";
 import * as ProjectCloneTracker from "./project/ProjectCloneTracker.ts";
 import * as EngineService from "./engine/EngineService.ts";
 import * as ExportService from "./export/ExportService.ts";
+import * as TranscriptService from "./transcript/TranscriptService.ts";
 import * as RepositoryIdentityResolver from "./project/RepositoryIdentityResolver.ts";
 import * as WorktreeSetupTracker from "./project/WorktreeSetupTracker.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
@@ -1341,6 +1342,7 @@ export const layerWsRpc = (
       const projectCloneTracker = yield* ProjectCloneTracker.ProjectCloneTracker;
       const engine = yield* EngineService.EngineService;
       const exports = yield* ExportService.ExportService;
+      const transcripts = yield* TranscriptService.TranscriptService;
       const repositoryIdentityResolver =
         yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
       const projectEnrichment = yield* ProjectEnrichmentService.ProjectEnrichmentService;
@@ -2749,6 +2751,13 @@ export const layerWsRpc = (
           engine.cancelJob(input.jobId).pipe(Effect.map((applied) => ({ applied }))),
         [WS_METHODS.exportStart]: (input) => exports.start(input),
         [WS_METHODS.exportStatus]: (input) => exports.status(input.jobId),
+        [WS_METHODS.transcriptGet]: (input) =>
+          transcripts.get(input).pipe(Effect.map((transcript) => ({ transcript }))),
+        [WS_METHODS.transcribeRun]: (input) => transcripts.transcribe(input),
+        [WS_METHODS.transcribeModelsStatus]: () => transcripts.modelsStatus,
+        [WS_METHODS.transcribeModelsDownload]: (input) =>
+          transcripts.downloadModels(input.model, input.projectId),
+        [WS_METHODS.transcribeModelsDismiss]: () => transcripts.dismissDownload,
         [WS_METHODS.sourceControlPublishRepository]: (input) =>
           sourceControlRepositories.publishRepository(input).pipe(
             Effect.tap(() => repositoryIdentityResolver.resolve(input.cwd, { refresh: true })),

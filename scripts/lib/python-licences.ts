@@ -14,6 +14,8 @@ export interface PythonLicenceEntry {
   readonly licenseExpression?: string | null | undefined;
   readonly license?: string | null | undefined;
   readonly classifiers?: ReadonlyArray<string> | undefined;
+  /** Reached only through markers that do not hold on this Mac (Windows-only colorama). */
+  readonly otherPlatform?: boolean | undefined;
 }
 
 export interface PythonLicenceReport {
@@ -41,6 +43,11 @@ const CLASSIFIER_SPDX: Readonly<Record<string, string>> = {
   "License :: OSI Approved :: GNU Affero General Public License v3": "AGPL-3.0-only",
 };
 
+/** Free-text `License` values that name exactly one SPDX licence. */
+const LEGACY_SPDX: Readonly<Record<string, string>> = {
+  "Apache 2.0 License": "Apache-2.0",
+};
+
 const SPDX_LIKE = /^[A-Za-z0-9.+-]+(\s+(AND|OR|WITH)\s+[A-Za-z0-9.+-]+)*$/;
 
 /** The licence a distribution declares: PEP 639 expression, then classifiers, then a short `License`. */
@@ -55,15 +62,16 @@ export function pythonLicence(entry: PythonLicenceEntry): string {
       : "Unknown";
   }
   const legacy = entry.license?.trim();
+  if (legacy && LEGACY_SPDX[legacy]) return LEGACY_SPDX[legacy];
   return legacy && SPDX_LIKE.test(legacy) ? legacy : "Unknown";
 }
 
 export interface PythonScan {
   readonly packages: ReadonlyArray<ScannedPackage>;
   /**
-   * Development packages locked but not installed here (a platform marker, such as Windows-only
-   * colorama). Production packages must be installed so their licence can be read; one that is
-   * not is an error, since it could ship.
+   * Packages locked but not installed here: development ones, and production ones the engine
+   * reaches only on other platforms (Windows-only colorama), which never ship in the Mac build.
+   * Any other uninstalled production package is an error, since it could ship.
    */
   readonly notInstalled: ReadonlyArray<{ readonly name: string; readonly version: string }>;
   /** Uninstalled production packages, and versions that drifted from the lockfile. */
@@ -79,7 +87,7 @@ export function packagesFromPythonReport(
   const errors: string[] = [];
   for (const entry of report.packages) {
     if (!entry.installed) {
-      if (entry.scope === "production") {
+      if (entry.scope === "production" && entry.otherPlatform !== true) {
         errors.push(
           `${entry.name}@${entry.version} is a production dependency in the lockfile but is not installed, so its licence cannot be checked; run uv sync --frozen in packages/engine`,
         );

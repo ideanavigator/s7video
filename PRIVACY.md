@@ -18,9 +18,11 @@ differently; check their policy.
 - Proxies, thumbnails, waveforms, transcripts, edit documents, notes, versions, review comments and
   renders, in your project folder.
 - Chats with the agent, settings and app state, in the s7video data folder (`~/.s7video`).
-- The built-in video helper, which reads clips and grabs frames, runs on your Mac as a separate
-  program and sends nothing anywhere. It works offline; its log (`logs/engine/` in the data folder)
-  records what it did and how long it took, never your footage, transcripts or messages.
+- The built-in video helper, which reads clips, grabs frames and transcribes speech, runs on your
+  Mac as a separate program and sends nothing anywhere. Transcription runs offline: the audio and
+  the transcript never leave your computer, and agents get only the transcript text they ask for.
+  The helper's log (`logs/engine/` in the data folder) records what it did and how long it took,
+  never your footage, transcripts or messages.
 - Secrets you save in settings, in the data folder. API keys for the planned bring-your-own-key
   mode will be kept in the macOS Keychain. Keys are never written to logs or project files.
 
@@ -61,6 +63,11 @@ These carry no project content:
 - **Agent installs and sign-in:** when you install or sign in to an agent from the app, it talks to
   that agent's maker (for example Google for Antigravity, OpenAI for Codex).
 - **Pages you open:** the built-in browser and previews load the pages you ask for.
+- **Speech model download:** the first time you transcribe, the app asks before downloading its
+  speech model (about 3.7 GB, or 2.3 GB for the light model) from Hugging Face, and downloads
+  nothing until you agree. This is the transcription feature's only network use. The request names
+  only the model files ([MODELS.md](MODELS.md)), never anything about your projects. The files stay
+  in the data folder (`models/`) and are reused offline from then on.
 
 ## Usage data
 

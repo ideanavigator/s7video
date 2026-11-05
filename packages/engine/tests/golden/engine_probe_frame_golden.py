@@ -6,10 +6,10 @@ synthetic media (S7V-022).
 - The probe summary matches the stored reference exactly, and agrees with the harness's own
   ffprobe packet count, rate, size and colour tags.
 - Frame N, which the engine finds by seeking, matches frame N decoded independently from the start
-  (FFmpeg ``select=eq(n,N)``): SSIM ≥ 0.98 and pHash distance ≤ 6. Its pHash is also within 6 of
-  the stored reference. On the testsrc2 clip a neighbouring frame scores SSIM 0.93, so an
-  off-by-one seek fails; the talking head barely moves between frames, so it guards the seek on
-  real AV1 media rather than frame accuracy, which ``tests/test_media.py`` checks exactly.
+  (FFmpeg ``select=eq(n,N)``): SSIM ≥ 0.98 and pHash distance ≤ 6, and it scores higher against
+  frame N than against N−1 or N+1. Its pHash is also within 6 of the stored reference. The
+  talking head barely moves between frames (its neighbours score about 0.99), so only the
+  neighbour comparison makes it a frame-accuracy check on real AV1 media.
 
 The references are data (JSON), never images. A legitimate change (a new clip or recipe) is
 recorded by running this file with ``S7VIDEO_GOLDEN_UPDATE=1`` and saying why in the PR.
@@ -129,6 +129,11 @@ def _check(case: str, clip: Path, tmp_path: Path) -> None:
     score = harness.ssim(decoded_png, engine_png)
     engine_hash = harness.phash(engine_png)
     assert score.min >= SSIM_MIN, f"{case} frame {n}: SSIM {score.min:.4f} vs independent decode"
+    # Frame accuracy, not just a good seek: the engine's frame must match N better than either
+    # neighbour, which on the talking head also scores about 0.99 (S7V-022 review, follow-up B).
+    for neighbour in (n - 1, n + 1):
+        other = harness.ssim(_decoded_frame(clip, neighbour, tmp_path / f"decoded-{neighbour}.png"), engine_png)
+        assert score.min > other.min, f"{case} frame {n}: frame {neighbour} matches as well ({other.min:.4f})"
     assert harness.phash_distance(engine_hash, harness.phash(decoded_png)) <= PHASH_MAX
 
     record = {"frame": n, "summary": summary, "framePhash": f"{engine_hash:016x}"}

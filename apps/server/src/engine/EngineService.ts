@@ -53,6 +53,8 @@ export interface EngineServiceOptions {
   readonly tools?: Partial<Record<EngineTool, string>>;
   readonly testMethods?: boolean;
   readonly signalGroup?: EngineProcess.SignalGroup;
+  /** Unload the speech model after this many idle minutes (S7V-026; PO default 10). */
+  readonly transcribeIdleUnloadMinutes?: number;
 }
 
 export interface EngineJobInput<A> {
@@ -79,8 +81,19 @@ export class EngineService extends Context.Service<
     readonly probe: (input: MediaProbeInput) => Effect.Effect<MediaProbeResult, EngineError>;
     /** Writes the frame as a PNG; `outputDir` defaults to the service's scratch folder. */
     readonly frame: (input: MediaFrameInput) => Effect.Effect<MediaFrameResult, EngineError>;
+    /** Any quick engine method, with the quick-call timeout; for the engine's other services. */
+    readonly call: <A>(
+      method: string,
+      params: Readonly<Record<string, unknown>>,
+      success: Schema.Decoder<A>,
+    ) => Effect.Effect<A, EngineError>;
     /** A long engine method as a job: progress on `subscribeJobs`, stoppable with `cancelJob`. */
     readonly runJob: <A>(input: EngineJobInput<A>) => Effect.Effect<A, EngineError>;
+    /**
+     * Starts a job that outlives the caller (it runs in the service's scope) and returns its id at
+     * once, for agent tools that hand back a job id and let the agent follow it.
+     */
+    readonly startJob: <A>(input: EngineJobInput<A>) => Effect.Effect<EngineJobId>;
     readonly cancelJob: (jobId: EngineJobId) => Effect.Effect<boolean>;
     readonly subscribeJobs: Stream.Stream<EngineJobsEvent>;
     readonly status: Effect.Effect<EngineStatus>;
@@ -91,6 +104,7 @@ const CALL_TIMEOUT = "30 seconds";
 const START_TIMEOUT = "30 seconds";
 const CANCEL_TIMEOUT = "5 seconds";
 const HEALTH_TIMEOUT = "5 seconds";
+const TRANSCRIBE_IDLE_UNLOAD_MINUTES = 10;
 
 interface Running {
   readonly process: EngineProcess.EngineProcess;
@@ -143,6 +157,8 @@ const make = Effect.fn("EngineService.make")(function* (options: EngineServiceOp
         modelsDir: config.engineModelsDir,
         tmpDir: env.TMPDIR,
         testMethods: options.testMethods ?? false,
+        transcribeIdleUnloadSeconds:
+          (options.transcribeIdleUnloadMinutes ?? TRANSCRIBE_IDLE_UNLOAD_MINUTES) * 60,
       }),
       logFile: path.join(config.engineLogsDir, "engine.log"),
       startTimeout: options.startTimeout ?? START_TIMEOUT,
@@ -249,7 +265,20 @@ const make = Effect.fn("EngineService.make")(function* (options: EngineServiceOp
     yield* Effect.annotateCurrentSpan({ "engine.job.kind": input.kind });
     const jobId = yield* jobs.start(input.kind, input.projectId);
     if (input.onStart) yield* input.onStart(jobId);
-    return yield* call(input.method, { ...input.params, jobId }, input.success, undefined).pipe(
+    return yield* runStartedJob(jobId, input);
+  });
+
+  const startJob = Effect.fn("EngineService.startJob")(function* <A>(input: EngineJobInput<A>) {
+    yield* Effect.annotateCurrentSpan({ "engine.job.kind": input.kind });
+    const jobId = yield* jobs.start(input.kind, input.projectId);
+    if (input.onStart) yield* input.onStart(jobId);
+    // Its outcome reaches callers through the job's state on `subscribeJobs`.
+    yield* runStartedJob(jobId, input).pipe(Effect.ignore, Effect.forkIn(serviceScope));
+    return jobId;
+  });
+
+  const runStartedJob = <A>(jobId: EngineJobId, input: EngineJobInput<A>) =>
+    call(input.method, { ...input.params, jobId }, input.success, undefined).pipe(
       Effect.onExit((exit) => {
         if (Exit.isSuccess(exit)) return jobs.finish(jobId, "succeeded");
         if (Cause.hasInterrupts(exit.cause)) {
@@ -262,13 +291,20 @@ const make = Effect.fn("EngineService.make")(function* (options: EngineServiceOp
         return jobs.finish(jobId, cancelled ? "cancelled" : "failed");
       }),
     );
-  });
+
+  const quickCall = <A>(
+    method: string,
+    params: Readonly<Record<string, unknown>>,
+    success: Schema.Decoder<A>,
+  ) => call(method, params, success, callTimeout).pipe(Effect.withSpan(`EngineService.${method}`));
 
   return EngineService.of({
     ping,
     probe,
     frame,
+    call: quickCall,
     runJob,
+    startJob,
     cancelJob,
     subscribeJobs: jobs.subscribe,
     status: Effect.sync(() => ({ pid: current?.process.pid, starts, lastStartupMs })),

@@ -26,8 +26,10 @@ def tool_path(tool: str) -> str:
     return path
 
 
-# Under the server's 30 s quick-call timeout, so a slow file fails with a reason instead of
-# looking like a hung engine. Long jobs pass their own limit.
+# Per tool run, under the server's 30 s quick-call timeout, so one slow FFmpeg run fails with a
+# reason. A method that runs several tools (a probe up to three, a frame two) can take longer in
+# total; then the server's health ping, not this limit, decides whether the engine is hung.
+# Long jobs pass their own limit.
 QUICK_TOOL_TIMEOUT = 25.0
 
 

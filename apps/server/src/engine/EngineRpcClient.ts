@@ -39,6 +39,9 @@ const errorFromRpc = (method: string, body: EngineRpcErrorBody): EngineError => 
   if (body.code === ENGINE_RPC_ERROR_CODES.cancelled) {
     return new EngineError({ reason: "cancelled", method });
   }
+  if (body.code === ENGINE_RPC_ERROR_CODES.modelsMissing) {
+    return new EngineError({ reason: "models_missing", method });
+  }
   if (body.code === ENGINE_RPC_ERROR_CODES.missingTool) {
     const tool = body.data?.tool;
     const feature = body.data?.feature;

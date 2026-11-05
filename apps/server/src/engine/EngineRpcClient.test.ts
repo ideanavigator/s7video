@@ -83,6 +83,18 @@ describe("EngineRpcClient", () => {
         feature: "libass",
       });
       expect(libassError.message).toContain("libass");
+      const noModel = yield* client
+        .call("transcribe.run", {}, Pong, undefined)
+        .pipe(Effect.flip, Effect.forkChild);
+      yield* reply({
+        error: { code: 1006, message: "not downloaded", data: { profile: "default" } },
+      });
+      const noModelError = yield* Fiber.join(noModel);
+      expect(noModelError).toMatchObject({ reason: "models_missing" });
+      // Agents get this text: a plain request to accept the download, no stack trace.
+      expect(noModelError.message).toBe(
+        "The speech model is not downloaded yet. Ask the user to accept the download in the Editor panel; s7video downloads it only after they agree.",
+      );
 
       const cancelled = yield* client
         .call("test.slowJob", {}, Pong, undefined)

@@ -7,17 +7,29 @@ import {
 } from "./orchestrationV2.ts";
 import { OrchestrationDispatchCommandError } from "./orchestrationDispatch.ts";
 import {
+  EngineError,
   EngineJobsCancelInput,
   EngineJobsCancelResult,
   EngineJobsEvent,
   EngineJobsSubscribeInput,
-  EngineError,
   ExportStartError,
   ExportStartInput,
   ExportStartResult,
   ExportStatus,
   ExportStatusInput,
 } from "./engine.ts";
+import {
+  TranscribeModelsDismissInput,
+  TranscribeModelsDownloadInput,
+  TranscribeModelsDownloadResult,
+  TranscribeModelsStatus,
+  TranscribeModelsStatusInput,
+  TranscribeRunInput,
+  TranscribeRunResult,
+  TranscriptError,
+  TranscriptGetResult,
+  TranscriptMediaInput,
+} from "./transcript.ts";
 import {
   McpAppCallToolInput,
   McpAppCallToolResult,
@@ -626,6 +638,11 @@ export const WS_METHODS = {
   editSubscribe: "edit.subscribe",
   editUndo: "edit.undo",
   editRedo: "edit.redo",
+  transcriptGet: "transcript.get",
+  transcribeRun: "transcribe.run",
+  transcribeModelsStatus: "transcribe.models.status",
+  transcribeModelsDownload: "transcribe.models.download",
+  transcribeModelsDismiss: "transcribe.models.dismiss",
 } as const;
 
 const WsServerUpsertKeybindingRpc = Rpc.make(WS_METHODS.serverUpsertKeybinding, {
@@ -2035,6 +2052,43 @@ const WsEditRedoRpc = Rpc.make(WS_METHODS.editRedo, {
   error: EditRpcError,
 });
 
+const TranscriptRpcError = Schema.Union([
+  EnvironmentAuthorizationError,
+  EngineError,
+  TranscriptError,
+]);
+
+const WsTranscriptGetRpc = Rpc.make(WS_METHODS.transcriptGet, {
+  payload: TranscriptMediaInput,
+  success: TranscriptGetResult,
+  error: TranscriptRpcError,
+});
+
+// Transcription is an engine job: progress and cancel go through engine.jobs.*.
+const WsTranscribeRunRpc = Rpc.make(WS_METHODS.transcribeRun, {
+  payload: TranscribeRunInput,
+  success: TranscribeRunResult,
+  error: TranscriptRpcError,
+});
+
+const WsTranscribeModelsStatusRpc = Rpc.make(WS_METHODS.transcribeModelsStatus, {
+  payload: TranscribeModelsStatusInput,
+  success: TranscribeModelsStatus,
+  error: TranscriptRpcError,
+});
+
+const WsTranscribeModelsDownloadRpc = Rpc.make(WS_METHODS.transcribeModelsDownload, {
+  payload: TranscribeModelsDownloadInput,
+  success: TranscribeModelsDownloadResult,
+  error: TranscriptRpcError,
+});
+
+const WsTranscribeModelsDismissRpc = Rpc.make(WS_METHODS.transcribeModelsDismiss, {
+  payload: TranscribeModelsDismissInput,
+  success: TranscribeModelsStatus,
+  error: TranscriptRpcError,
+});
+
 export const WsRpcGroup = RpcGroup.make(
   WsServerProbeRpc,
   WsServerGetConfigRpc,
@@ -2250,4 +2304,9 @@ export const WsRpcGroup = RpcGroup.make(
   WsEditSubscribeRpc,
   WsEditUndoRpc,
   WsEditRedoRpc,
+  WsTranscriptGetRpc,
+  WsTranscribeRunRpc,
+  WsTranscribeModelsStatusRpc,
+  WsTranscribeModelsDownloadRpc,
+  WsTranscribeModelsDismissRpc,
 ).middleware(RpcScopeAuthorization);

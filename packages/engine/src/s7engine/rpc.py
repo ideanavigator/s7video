@@ -3,7 +3,8 @@
 """Newline-delimited JSON-RPC 2.0 over stdio.
 
 One JSON object per line in each direction. Requests run on worker threads so a long job never
-blocks the pipe, and `job.cancel` is answered on the reader thread at once. Bad input gets an
+blocks the pipe. `job.cancel` and inline methods (`engine.ping`) are answered on the reader thread
+at once, so a pool busy with long jobs never makes a healthy engine look hung. Bad input gets an
 error response and the engine stays up. stdout carries protocol lines only; logs go to stderr and
 name methods, outcomes and timings, never parameters, paths, exception text or media. An internal
 error is logged by its exception type alone, since OS errors carry the paths they failed on.
@@ -58,6 +59,8 @@ class Method:
     params_schema: dict[str, Any]
     #: Jobs take a caller-chosen `jobId`, may stream `progress` and accept `job.cancel`.
     job: bool = False
+    #: Answered on the reader thread, never queued behind the worker pool; must return at once.
+    inline: bool = False
 
 
 @dataclass
@@ -138,6 +141,9 @@ class Server:
         method = self._methods.get(method_name)
         if method is None:
             self._error(request_id, RpcError(METHOD_NOT_FOUND, "method not found"))
+            return
+        if method.inline:
+            self._run(request_id, method, params, None)
             return
         context = None
         if method.job:
