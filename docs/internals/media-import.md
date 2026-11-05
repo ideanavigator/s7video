@@ -24,7 +24,7 @@ So `cp -c` runs only after the up-front check passes. The original is only ever 
 `media.proxy` encodes with `-copyts`, passthrough frame timing and the source's time base, so its
 video packet PTS list equals the original's. A frame picked on the proxy is the same frame in the
 original, and renders always read originals. Proxies are made only when `ProxyPolicy` says the
-player would struggle (keyframe gap over 2 s, a codec or container Chromium cannot play smoothly,
+player would struggle (keyframe gap over 2 s in the first 10 s or 5 s from the middle, a codec or container Chromium cannot play smoothly,
 above 4K, or 4K above 60 fps); ordinary 4K plays from the original.
 
 ## Serving is scoped to `edit.json`
@@ -36,7 +36,10 @@ in at the same path are all refused. The generic `media-file` kinds are unchange
 
 ## Where things live
 
-Copies go to `assets/<media id>.<ext>`, which the project's whitelist `.gitignore` ignores, so the
-edit history's media guard never sees them. Thumbnails and proxies go to `.s7cache/thumbs/` and
+Copies go to `assets/<name>.<ext>`, named from the file, which the project's whitelist `.gitignore`
+ignores, so the edit history's media guard never sees them. The final name is taken with a hard
+link, an exclusive create: a kept copy of a removed clip or a concurrent same-name import is never
+replaced, and the name moves on to `<name>-2`. A media counts as present only when the file at its
+path still has its fingerprint, so an undo to an older entry never plays other bytes. Thumbnails and proxies go to `.s7cache/thumbs/` and
 `.s7cache/proxies/`, named by the media's fingerprint. Import and proxy progress live in memory and
 `media.subscribe`, never in `edit.json`.
