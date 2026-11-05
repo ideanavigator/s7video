@@ -347,7 +347,8 @@ def fixed_gain(measured_lufs: float) -> Gain:
 def loudness_chain(gain: Gain) -> str:
     limit = 10 ** (LIMIT_DBFS / 20)
     volume = f"volume={gain.gain_db}dB," if gain.gain_db else ""
-    # level=0: no auto-levelling (it would pump); latency=1: no lookahead delay, so sync holds.
+    # level=0: no auto-levelling (it would pump); latency=1: compensates the attack lookahead, so the
+    # limiter adds no delay and sync holds.
     return f"{volume}alimiter=limit={limit:.4f}:level=0:latency=1:attack=5:release=50"
 
 
