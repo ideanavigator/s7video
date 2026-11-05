@@ -178,12 +178,9 @@ const layerDesktopServerExposure = Layer.succeed(DesktopServerExposure.DesktopSe
     port: 3773,
     bindHost: "127.0.0.1",
     httpBaseUrl: new URL("http://127.0.0.1:3773"),
-    tailscaleServeEnabled: false,
-    tailscaleServePort: 443,
   }),
   configureFromSettings: () => Effect.die("unexpected configureFromSettings"),
   setMode: () => Effect.die("unexpected setMode"),
-  setTailscaleServeEnabled: () => Effect.die("unexpected setTailscaleServeEnabled"),
   getAdvertisedEndpoints: Effect.die("unexpected getAdvertisedEndpoints"),
 } satisfies DesktopServerExposure.DesktopServerExposure["Service"]);
 
@@ -261,14 +258,8 @@ function layerTest(input: {
         return { settings: desktopSettings, changed };
       }),
     setServerExposureMode: () => Effect.die("unexpected server exposure update"),
-    setTailscaleServe: () => Effect.die("unexpected Tailscale Serve update"),
     setUpdateChannel: () => Effect.die("unexpected update channel change"),
-    setWslBackendEnabled: () => Effect.die("unexpected WSL backend toggle"),
-    setWslDistro: () => Effect.die("unexpected WSL distro change"),
-    setWslOnly: () => Effect.die("unexpected WSL-only toggle"),
     setLocalEnvironmentEnabled: () => Effect.die("unexpected local environment toggle"),
-    applyWslWindowsFallback: Effect.die("unexpected WSL Windows fallback"),
-    applyWslWindowsFallbackInMemory: Effect.die("unexpected WSL Windows fallback"),
   } satisfies DesktopAppSettings.DesktopAppSettings["Service"]);
 
   const layerElectronWindow = Layer.succeed(ElectronWindow.ElectronWindow, {

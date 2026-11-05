@@ -248,28 +248,31 @@ describe("DesktopRemoteUpdates", () => {
     );
   });
 
-  it.effect("refuses to cross tracks remotely while WSL backends need their own checks", () => {
-    const harness = makeHarness({ beforeSetUpdateChannel: Effect.void, wslBackend: true });
+  it.effect(
+    "refuses to cross tracks remotely while secondary backends need their own checks",
+    () => {
+      const harness = makeHarness({ beforeSetUpdateChannel: Effect.void, secondaryBackend: true });
 
-    return runRemoteUpdatesTest(harness, ({ reports, requests }) =>
-      Effect.gen(function* () {
-        const updates = yield* DesktopUpdates.DesktopUpdates;
-        yield* Queue.offer(requests, {
-          ...request("req-wsl"),
-          channel: "nightly",
-          targetVersion: "1.2.4-nightly.20261027.1",
-        });
-        yield* settle;
+      return runRemoteUpdatesTest(harness, ({ reports, requests }) =>
+        Effect.gen(function* () {
+          const updates = yield* DesktopUpdates.DesktopUpdates;
+          yield* Queue.offer(requests, {
+            ...request("req-secondary"),
+            channel: "nightly",
+            targetVersion: "1.2.4-nightly.20261027.1",
+          });
+          yield* settle;
 
-        assert.deepEqual(
-          terminalReports(reports).map((report) => report.outcome),
-          ["failed"],
-        );
-        assert.include(terminalReports(reports)[0]?.reason ?? "", "Switch it on that machine");
-        assert.equal((yield* updates.getState).channel, "latest");
-      }),
-    );
-  });
+          assert.deepEqual(
+            terminalReports(reports).map((report) => report.outcome),
+            ["failed"],
+          );
+          assert.include(terminalReports(reports)[0]?.reason ?? "", "Switch it on that machine");
+          assert.equal((yield* updates.getState).channel, "latest");
+        }),
+      );
+    },
+  );
 
   it.effect("fails a switch that leaves a same-track host below the checked release", () => {
     const harness = makeHarness({ beforeSetUpdateChannel: Effect.void });

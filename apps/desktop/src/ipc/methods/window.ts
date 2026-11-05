@@ -28,8 +28,6 @@ import * as DesktopBackendPool from "../../backend/DesktopBackendPool.ts";
 import * as DesktopLocalEnvironmentAuth from "../../backend/DesktopLocalEnvironmentAuth.ts";
 import * as DesktopEnvironment from "../../app/DesktopEnvironment.ts";
 import * as DesktopAppSettings from "../../settings/DesktopAppSettings.ts";
-import * as DesktopWslBackend from "../../wsl/DesktopWslBackend.ts";
-import * as DesktopWslEnvironment from "../../wsl/DesktopWslEnvironment.ts";
 import * as ElectronApp from "../../electron/ElectronApp.ts";
 import * as ElectronDialog from "../../electron/ElectronDialog.ts";
 import * as ElectronMenu from "../../electron/ElectronMenu.ts";
@@ -41,11 +39,6 @@ import * as MacPermissions from "../../permissions/MacPermissions.ts";
 import { safariPermissionCheck } from "../../preview/BrowserImport/SafariPermission.ts";
 import * as IpcChannels from "../channels.ts";
 import * as DesktopIpc from "../DesktopIpc.ts";
-import {
-  extractDistroFromUncPath,
-  resolveWslPickFolderDefaultPath,
-  wslUncPathToLinuxPath,
-} from "../../wsl/wslPathParsing.ts";
 
 const ContextMenuPosition = Schema.Struct({
   x: Schema.Number,
@@ -116,18 +109,15 @@ export const getLocalEnvironmentBootstraps = DesktopIpc.makeSyncIpcMethod({
         bootstraps.push({
           id: instance.id,
           label: yield* instance.label,
-          runningDistro: null,
           httpBaseUrl: null,
           wsBaseUrl: null,
         });
         continue;
       }
       const { bootstrap, httpBaseUrl } = config.value;
-      const runningDistro = config.value.runningDistro ?? null;
       bootstraps.push({
         id: instance.id,
-        label: runningDistro === null ? yield* instance.label : `WSL (${runningDistro})`,
-        runningDistro,
+        label: yield* instance.label,
         httpBaseUrl: httpBaseUrl.href,
         wsBaseUrl: toWebSocketBaseUrl(httpBaseUrl),
         // Use the current window's derived token; the launch config's token may be stale.
@@ -141,14 +131,6 @@ export const getLocalEnvironmentBootstraps = DesktopIpc.makeSyncIpcMethod({
     return bootstraps;
   }),
 });
-
-function extractWslDistroFromEnvironmentId(envId: string): string | null {
-  if (!envId.startsWith(DesktopWslBackend.WSL_INSTANCE_ID_PREFIX)) {
-    return null;
-  }
-  const suffix = envId.slice(DesktopWslBackend.WSL_INSTANCE_ID_PREFIX.length);
-  return suffix === "default" || suffix.length === 0 ? null : suffix;
-}
 
 export const getLocalEnvironmentBearerToken = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.GET_LOCAL_ENVIRONMENT_BEARER_TOKEN_CHANNEL,
@@ -169,33 +151,12 @@ export const pickFolder = DesktopIpc.makeIpcMethod({
     const electronWindow = yield* ElectronWindow.ElectronWindow;
     const environment = yield* DesktopEnvironment.DesktopEnvironment;
     const appSettings = yield* DesktopAppSettings.DesktopAppSettings;
-    const wslEnvironment = yield* DesktopWslEnvironment.DesktopWslEnvironment;
     const settings = yield* appSettings.get;
     // A picked path only means something to a backend on this machine.
     if (!settings.localEnvironmentEnabled) {
       return null;
     }
-    const targetId = options?.targetEnvironmentId;
-    const wslDistroFromTarget =
-      targetId !== undefined && targetId.startsWith(DesktopWslBackend.WSL_INSTANCE_ID_PREFIX)
-        ? extractWslDistroFromEnvironmentId(targetId)
-        : null;
-    const useWsl =
-      targetId !== undefined &&
-      targetId !== PRIMARY_LOCAL_ENVIRONMENT_ID &&
-      targetId.startsWith(DesktopWslBackend.WSL_INSTANCE_ID_PREFIX);
-    // Match the orchestrator's persisted distro fallback for wsl:default.
-    const wslDistro = useWsl ? (wslDistroFromTarget ?? settings.wslDistro) : null;
-    const defaultPath = useWsl
-      ? Option.fromNullishOr(
-          resolveWslPickFolderDefaultPath(
-            options,
-            { distro: wslDistro },
-            yield* wslEnvironment.listDistros,
-            Option.getOrNull(yield* wslEnvironment.getUserHome(wslDistro)),
-          ),
-        )
-      : environment.resolvePickFolderDefaultPath(options);
+    const defaultPath = environment.resolvePickFolderDefaultPath(options);
     const selectedPath = yield* dialog.pickFolder({
       owner: yield* electronWindow.focusedMainOrFirst,
       defaultPath,
@@ -203,20 +164,7 @@ export const pickFolder = DesktopIpc.makeIpcMethod({
     if (Option.isNone(selectedPath)) {
       return null;
     }
-    if (!useWsl) {
-      return selectedPath.value;
-    }
-
-    const linuxUncPath = wslUncPathToLinuxPath(selectedPath.value);
-    if (linuxUncPath !== null) {
-      return linuxUncPath;
-    }
-
-    const converted = yield* wslEnvironment.windowsToWslPath(
-      extractDistroFromUncPath(selectedPath.value) ?? wslDistro,
-      selectedPath.value,
-    );
-    return Option.getOrElse(converted, () => selectedPath.value);
+    return selectedPath.value;
   }),
 });
 

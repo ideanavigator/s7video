@@ -23,12 +23,6 @@ const savedRegistryRecord: PersistedSavedEnvironmentRecord = {
   wsBaseUrl: "wss://remote.example.com/",
   createdAt: "2026-04-09T00:00:00.000Z",
   lastConnectedAt: "2026-04-09T01:00:00.000Z",
-  desktopSsh: {
-    alias: "devbox",
-    hostname: "devbox.example.com",
-    username: "julius",
-    port: 22,
-  },
 };
 
 const SavedEnvironmentRegistryDocumentProbe = Schema.Struct({
@@ -153,7 +147,7 @@ const withSavedEnvironments = <A, E, R>(
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped);
 
 describe("DesktopSavedEnvironments", () => {
-  it.effect("loads lenient saved environment registry documents", () =>
+  it.effect("loads lenient registry documents and drops removed SSH environments", () =>
     withSavedEnvironments(
       Effect.gen(function* () {
         const environment = yield* DesktopEnvironment.DesktopEnvironment;
@@ -173,6 +167,14 @@ describe("DesktopSavedEnvironments", () => {
                 "wsBaseUrl": "wss://remote.example.com/",
                 "createdAt": "2026-04-09T00:00:00.000Z",
                 "lastConnectedAt": "2026-04-09T01:00:00.000Z",
+              },
+              {
+                "environmentId": "ssh-environment",
+                "label": "SSH environment",
+                "httpBaseUrl": "http://127.0.0.1:41773/",
+                "wsBaseUrl": "ws://127.0.0.1:41773/",
+                "createdAt": "2026-04-09T00:00:00.000Z",
+                "lastConnectedAt": null,
                 "desktopSsh": {
                   "alias": "devbox",
                   "hostname": "devbox.example.com",
