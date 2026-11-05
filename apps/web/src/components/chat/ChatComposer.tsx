@@ -2629,7 +2629,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     },
   });
 
-  const importDroppedMedia = useChatMediaImport(environmentId, activeProjectId);
+  const importDroppedMedia = useChatMediaImport(environmentId, activeProjectId, (projectId) =>
+    useRightPanelStore.getState().openEditor(routeThreadRef, projectId),
+  );
   const attachDroppedThreadFile = useEffectEvent((file: File) => addComposerAttachments([file]));
   const importDroppedThread = useEffectEvent(
     async (ref: ScopedThreadRef, isActive: () => boolean) => {

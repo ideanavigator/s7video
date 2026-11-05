@@ -34,6 +34,7 @@ const DevicePanel = lazy(() =>
   import("../device/DevicePanel").then((module) => ({ default: module.DevicePanel })),
 );
 const FilePreviewPanel = lazy(() => import("../files/FilePreviewPanel"));
+const EditorPanel = lazy(() => import("../editor/EditorPanel"));
 
 type RightPanelTerminalProps = Omit<
   PersistentThreadTerminalPanelProps,
@@ -193,6 +194,16 @@ export function RightPanelSurfaceContent(props: {
               props.onCloseSurface(surface);
               useRightPanelStore.getState().show(threadRef);
             }}
+          />
+        </Suspense>
+      );
+    case "editor":
+      return (
+        <Suspense fallback={null}>
+          <EditorPanel
+            key={surface.projectId}
+            environmentId={props.environmentId}
+            projectId={surface.projectId as ProjectId}
           />
         </Suspense>
       );

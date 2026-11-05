@@ -9,11 +9,17 @@ import { act, render, stubGlobal } from "../../../test/render";
 const commands = vi.hoisted(() => ({
   plan: vi.fn(),
   importMedia: vi.fn(),
+  // An edit that already has media, unless a test says otherwise.
+  readEdit: vi.fn(async () => ({ _tag: "Success", value: { document: { media: [{}] } } })),
 }));
 
 vi.mock(import("../../state/use-atom-command"), () => ({
   useAtomCommand: ((command: { label: string }) =>
-    command.label.endsWith("import-plan") ? commands.plan : commands.importMedia) as never,
+    command.label.endsWith("import-plan")
+      ? commands.plan
+      : command.label.endsWith("edit:get")
+        ? commands.readEdit
+        : commands.importMedia) as never,
 }));
 
 import { droppedMediaKind, useChatMediaImport } from "./useChatMediaImport";
@@ -30,8 +36,9 @@ function Probe(props: {
   readonly projectId: ProjectId | null;
   readonly files: ReadonlyArray<File>;
   readonly onResult: (files: File[]) => void;
+  readonly onFirstMedia?: ((projectId: ProjectId) => void) | undefined;
 }) {
-  const route = useChatMediaImport(environmentId, props.projectId);
+  const route = useChatMediaImport(environmentId, props.projectId, props.onFirstMedia);
   return (
     <button type="button" onClick={() => void route(props.files).then(props.onResult)}>
       route
@@ -40,13 +47,17 @@ function Probe(props: {
 }
 
 /** The files the composer would still attach after the drop. */
-async function dropped(projectId: ProjectId | null, files: ReadonlyArray<File>) {
+async function dropped(
+  projectId: ProjectId | null,
+  files: ReadonlyArray<File>,
+  onFirstMedia?: (projectId: ProjectId) => void,
+) {
   let resolve: (files: File[]) => void = () => undefined;
   const promise = new Promise<File[]>((settle) => {
     resolve = settle;
   });
   await using screen = await render(
-    <Probe projectId={projectId} files={files} onResult={resolve} />,
+    <Probe projectId={projectId} files={files} onResult={resolve} onFirstMedia={onFirstMedia} />,
     { router: false },
   );
   await act(() => (screen.getByRole("button").element() as HTMLButtonElement).click());
@@ -54,6 +65,11 @@ async function dropped(projectId: ProjectId | null, files: ReadonlyArray<File>) 
 }
 
 const failure = (error: unknown) => ({ _tag: "Failure", cause: Cause.fail(error) });
+
+const editWithMedia = (count: number) => ({
+  _tag: "Success",
+  value: { revision: 1, document: { media: Array.from({ length: count }, () => ({})) } },
+});
 
 describe("useChatMediaImport", () => {
   it("classifies drops by type, then by extension", () => {
@@ -79,6 +95,24 @@ describe("useChatMediaImport", () => {
       { projectId, sourcePath: "/Users/me/Desktop/interview.mov", mode: "copy" },
       { projectId, sourcePath: "/Users/me/Desktop/whoosh.m4a", mode: "copy" },
     ]);
+  });
+
+  it("opens the Editor when a drop brings the project's first media, and only then", async () => {
+    using _bridge = stubGlobal("desktopBridge", {
+      getPathForFile: (file: File) => `/Users/me/Desktop/${file.name}`,
+    });
+    commands.plan.mockResolvedValue({
+      _tag: "Success",
+      value: { suggestedMode: "copy", totalBytes: 60 * MIB, freeBytes: 900e9 },
+    });
+    commands.importMedia.mockResolvedValue({ _tag: "Success", value: { mediaId: "x" } });
+    const opened = vi.fn();
+    commands.readEdit.mockResolvedValueOnce(editWithMedia(0));
+    await dropped(projectId, [video], opened);
+    expect(opened.mock.calls).toEqual([[projectId]]);
+    commands.readEdit.mockResolvedValueOnce(editWithMedia(1));
+    await dropped(projectId, [video], opened);
+    expect(opened).toHaveBeenCalledTimes(1);
   });
 
   it("attaches as before outside a video project or without file paths", async () => {

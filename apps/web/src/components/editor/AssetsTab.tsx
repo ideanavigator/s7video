@@ -206,7 +206,7 @@ export function AssetsList(props: AssetsListProps) {
         {snapshot.importing.map((entry) => (
           <ImportingRow key={entry.key} entry={entry} />
         ))}
-        <div role="list" aria-label="Project media" className="min-h-0 flex-1">
+        <div role="list" aria-label="Project media" className="flex min-h-0 flex-1 flex-col">
           <LegendList<MediaAsset>
             data={[...snapshot.items]}
             keyExtractor={(item) => item.id}
@@ -284,7 +284,7 @@ const explanationOf = (result: {
 };
 
 /** Import, relink and remove for one project; the dialog state lives here. */
-function useAssetsActions(projectRef: ScopedProjectRef) {
+export function useAssetsActions(projectRef: ScopedProjectRef) {
   const { environmentId, projectId } = projectRef;
   const plan = useAtomCommand(mediaEnvironment.plan, { reportFailure: false });
   const importMedia = useAtomCommand(mediaEnvironment.importMedia, { reportFailure: false });
@@ -384,10 +384,9 @@ function useAssetsActions(projectRef: ScopedProjectRef) {
   };
 }
 
-/** @public Mounted in the Editor panel by S7V-029. */
 export function AssetsTab(props: {
   readonly projectRef: ScopedProjectRef;
-  /** Enter on a row; S7V-029 opens the clip in the player. */
+  /** Enter on a row: the Editor plays that clip. */
   readonly onOpenMedia?: (mediaId: string) => void;
 }) {
   const state = useMediaLibrary(props.projectRef);
