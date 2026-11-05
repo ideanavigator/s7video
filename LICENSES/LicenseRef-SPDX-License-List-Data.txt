@@ -1,0 +1,11 @@
+SPDX License List data
+
+The files under third-party-licenses/spdx/ are unmodified JSON records from the SPDX License List
+(https://github.com/spdx/license-list-data), pinned to the version named by their folder. Each
+record holds the standard text of the licence it is named after, together with SPDX metadata about
+that licence. The licence texts are reproduced verbatim, as each licence permits, so that s7video
+can show third-party notices without downloading them at build time.
+
+The SPDX License List is maintained by the SPDX Workgroup, a Linux Foundation project. These files
+are used only to render notices for the packages and assets that s7video includes; they are not
+part of the software's own licence, which is MIT (see LICENSE).

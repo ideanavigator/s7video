@@ -1,3 +1,5 @@
+// SPDX-FileCopyrightText: 2026 s7video contributors
+// SPDX-License-Identifier: MIT
 import type { DesktopHeicConversionFormat } from "@t3tools/contracts";
 
 export const HEIC_CONVERT_FIRST_MESSAGE =

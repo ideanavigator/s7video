@@ -1,0 +1,38 @@
+{
+  "$comment": "Licences that pnpm licenses:check accepts. Source of truth: the allowlist in s7video-planning tickets/README.md, ADR-001 and ADR-003. Order matters: for a dual licence the check elects the first allowed option in this list (most permissive first).",
+  "allowed": [
+    "MIT",
+    "MIT-0",
+    "ISC",
+    "0BSD",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "Apache-2.0",
+    "Zlib",
+    "Unlicense",
+    "BlueOak-1.0.0",
+    "Python-2.0",
+    "PSF-2.0",
+    "CNRI-Python",
+    "Unicode-3.0",
+    "CC0-1.0",
+    "CC-BY-4.0",
+    "OFL-1.1",
+    "MPL-2.0"
+  ],
+  "devOnly": [
+    {
+      "license": "WTFPL",
+      "packages": ["truncate-utf8-bytes"],
+      "reason": "Permissive, not OSI-approved. truncate-utf8-bytes only, in electron-builder's build chain; never shipped. S7V-005 audit: keep (dev). PO decision recorded as an ADR-003 amendment."
+    }
+  ],
+  "elections": {
+    "jszip": "MIT",
+    "dompurify": "Apache-2.0"
+  },
+  "aliases": {
+    "MIT/X11": "MIT",
+    "Apache2": "Apache-2.0"
+  }
+}

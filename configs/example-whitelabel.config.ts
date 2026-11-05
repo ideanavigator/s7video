@@ -1,3 +1,5 @@
+// SPDX-FileCopyrightText: 2026 s7video contributors
+// SPDX-License-Identifier: MIT
 // Example partner build: S7VIDEO_CONFIG=configs/example-whitelabel.config.ts pnpm dev:desktop
 import { defineConfig } from "../packages/shared/src/config/defineConfig.ts";
 import base from "../s7video.config.ts";

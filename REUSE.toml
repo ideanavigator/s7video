@@ -1,0 +1,130 @@
+# SPDX-FileCopyrightText: 2026 s7video contributors
+# SPDX-License-Identifier: MIT
+#
+# REUSE 3.3 (https://reuse.software/spec-3.3/) licensing for the whole repository.
+#
+# Upstream T3 Code files carry no headers, and we do not add any: thousands of edited files would
+# turn every upstream merge into conflicts. The first annotation covers them, plus lockfiles,
+# generated files, icons and fixtures, with the same two holders as LICENSE. Files s7video creates
+# carry their own SPDX header (CONTRIBUTING.md, "File headers"), which wins over this file
+# (`precedence = "closest"`). Later annotations override earlier ones, so third-party code and
+# media copied into the repo are listed after the catch-all. See docs/FORK.md, "Licensing (S7V-004)".
+version = 1
+
+[[annotations]]
+path = "**"
+precedence = "closest"
+SPDX-FileCopyrightText = ["2026 T3 Tools Inc.", "2026 s7video contributors"]
+SPDX-License-Identifier = "MIT"
+
+# s7video files that cannot carry a header (JSON, images), and changelog entries, which are frozen
+# once their ticket is done.
+[[annotations]]
+path = [
+  "configs/example-whitelabel-dark.json",
+  "configs/example-whitelabel-light.json",
+  "themes/s7video-dark.json",
+  "themes/s7video-light.json",
+  "fixtures/images/*.heic",
+  "fixtures/images/*.png",
+  "docs/changelog/entries/*.md",
+  "licenses.allowlist.json",
+  "licenses.exceptions.json",
+]
+precedence = "closest"
+SPDX-FileCopyrightText = "2026 s7video contributors"
+SPDX-License-Identifier = "MIT"
+
+# Office viewers adapted from opencode (MIT); the licence is in LICENSE.opencode beside them.
+[[annotations]]
+path = "apps/web/src/components/files/office/**"
+precedence = "closest"
+SPDX-FileCopyrightText = ["2025 opencode", "2026 T3 Tools Inc.", "2026 s7video contributors"]
+SPDX-License-Identifier = "MIT"
+
+# Keyboard handling adapted from the Ionic Framework (MIT).
+[[annotations]]
+path = "apps/web/src/lib/softwareKeyboard.ts"
+precedence = "closest"
+SPDX-FileCopyrightText = [
+  "2015-present Drifty Co.",
+  "2026 T3 Tools Inc.",
+  "2026 s7video contributors",
+]
+SPDX-License-Identifier = "MIT"
+
+# libghostty-vt headers and the WebAssembly builds of it (MIT, Ghostty).
+[[annotations]]
+path = ["native/libghostty-vt/**", "apps/web/src/terminal/ghostty/vendor/**"]
+precedence = "override"
+SPDX-FileCopyrightText = "2024 Mitchell Hashimoto, Ghostty contributors"
+SPDX-License-Identifier = "MIT"
+
+# Symbols Nerd Font Mono 3.4.0 (from the font's name table). The Nerd Fonts project licence beside it
+# (fonts/LICENSE) is MIT; the glyph sets inside keep theirs, per the v3.4.0 src/glyphs licence files:
+# Font Awesome, Pomicons and Weather Icons OFL-1.1; Codicons CC-BY-4.0; Material Design Icons
+# Apache-2.0; Font Logos Unlicense; Octicons, Devicons, Powerline and the rest MIT.
+[[annotations]]
+path = "apps/web/src/terminal/ghostty/fonts/*.woff2"
+precedence = "override"
+SPDX-FileCopyrightText = [
+  "2014 Ryan L McIntyre (Nerd Fonts)",
+  "2022 Fonticons, Inc. (Font Awesome)",
+  "2021 Gabriele Lana (Pomicons)",
+  "Erik Flowers (Weather Icons)",
+  "Microsoft Corporation (Codicons)",
+  "Pictogrammers (Material Design Icons)",
+  "Lukas W (Font Logos)",
+  "2023 GitHub Inc. (Octicons)",
+  "2013 Kim Silkebaekken and other contributors (Powerline)",
+]
+SPDX-License-Identifier = "MIT AND OFL-1.1 AND CC-BY-4.0 AND Apache-2.0 AND Unlicense"
+
+# Sounds from freesound.org, dedicated to the public domain (CC0 1.0) and converted to MP3.
+[[annotations]]
+path = [
+  "apps/web/src/assets/notification-completion.mp3",
+  "apps/web/src/assets/notification-input.mp3",
+]
+precedence = "override"
+SPDX-FileCopyrightText = "deadrobotmusic (https://freesound.org/people/deadrobotmusic/)"
+SPDX-License-Identifier = "CC0-1.0"
+
+[[annotations]]
+path = "apps/web/src/assets/snap-shot-whoosh.mp3"
+precedence = "override"
+SPDX-FileCopyrightText = "BaggoNotes (https://freesound.org/people/BaggoNotes/)"
+SPDX-License-Identifier = "CC0-1.0"
+
+[[annotations]]
+path = "apps/web/src/assets/snap-shot-click.mp3"
+precedence = "override"
+SPDX-FileCopyrightText = "Tonik1105 (https://freesound.org/people/Tonik1105/)"
+SPDX-License-Identifier = "CC0-1.0"
+
+# Licence templates from the SPDX License List, used to render generated notices.
+[[annotations]]
+path = "third-party-licenses/spdx/**"
+precedence = "override"
+SPDX-FileCopyrightText = "Linux Foundation and its Contributors (SPDX License List)"
+SPDX-License-Identifier = "LicenseRef-SPDX-License-List-Data"
+
+# The GCC runtime licence shipped beside libatomic in the Linux CLI archive (scripts/build-cli-archive.ts).
+[[annotations]]
+path = "scripts/licenses/libatomic.LICENSE"
+precedence = "override"
+SPDX-FileCopyrightText = "Free Software Foundation, Inc."
+SPDX-License-Identifier = "GPL-3.0-or-later WITH GCC-exception-3.1"
+
+# Hyprland Wayland protocol definitions (BSD-3-Clause; the notice is inside each file).
+[[annotations]]
+path = "native/hyprland-snap-shot/protocols/hyprland-toplevel-export-v1.xml"
+precedence = "override"
+SPDX-FileCopyrightText = "2022 Vaxry"
+SPDX-License-Identifier = "BSD-3-Clause"
+
+[[annotations]]
+path = "native/hyprland-snap-shot/protocols/hyprland-toplevel-mapping-v1.xml"
+precedence = "override"
+SPDX-FileCopyrightText = "2025 WhySoBad"
+SPDX-License-Identifier = "BSD-3-Clause"

@@ -1,3 +1,5 @@
+// SPDX-FileCopyrightText: 2026 s7video contributors
+// SPDX-License-Identifier: MIT
 import type { ServerUsageData } from "@t3tools/contracts";
 import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
 import { describe, expect, it, vi } from "vite-plus/test";

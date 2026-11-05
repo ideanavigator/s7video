@@ -1,3 +1,5 @@
+// SPDX-FileCopyrightText: 2026 s7video contributors
+// SPDX-License-Identifier: MIT
 // Schema for s7video.config.ts (or the S7VIDEO_CONFIG file): name, identity, data folder, URLs,
 // update endpoints, telemetry target, icons and theme.
 import * as Schema from "effect/Schema";

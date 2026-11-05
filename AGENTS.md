@@ -137,7 +137,7 @@ the reviewer on the head commit.
 | Fast checks for changed files | `vp run check:changed`                                                                                                                  |
 | Full test suite               | `pnpm test`, required before every PR; failures that also fail on the base commit are listed in the ticket with the base SHA and output |
 | Markdown links                | `pnpm docs:linkcheck`                                                                                                                   |
-| Licence notices               | `pnpm licenses:sync`; `pnpm licenses:check` and `reuse lint` once S7V-004 adds them                                                     |
+| Licence notices               | `pnpm licenses:sync`, `pnpm licenses:check` and `pnpm reuse:lint` (needs `uv`: `brew install uv`)                                       |
 | Brand values                  | `pnpm brand:check`                                                                                                                      |
 | Ticket structure              | `pnpm ticket:validate -- S7V-XXX --strict`                                                                                              |
 | Ticket behaviour              | `pnpm ticket:verify -- S7V-XXX` (runs the test map)                                                                                     |

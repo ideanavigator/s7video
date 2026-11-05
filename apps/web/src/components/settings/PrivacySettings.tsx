@@ -1,3 +1,5 @@
+// SPDX-FileCopyrightText: 2026 s7video contributors
+// SPDX-License-Identifier: MIT
 import { BRAND } from "@t3tools/shared/brand";
 import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
 

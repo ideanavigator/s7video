@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+// SPDX-FileCopyrightText: 2026 s7video contributors
+// SPDX-License-Identifier: MIT
 // @effect-diagnostics nodeBuiltinImport:off globalConsole:off - A plain repository scan; no Effect runtime.
 // `pnpm brand:check`: fails when branding leaks past s7video.config.ts. See docs/FORK.md.
 import * as NodeChildProcess from "node:child_process";
@@ -59,6 +61,10 @@ const BANNED_COLOURS = [
 /** Paths where upstream names are expected: licences, attribution and upstream-tracking code. */
 const ALLOWED_PATHS: ReadonlyArray<{ readonly pattern: RegExp; readonly reason: string }> = [
   { pattern: /^(LICENSE|NOTICE)(\..*)?$/, reason: "licence and notice" },
+  {
+    pattern: /^(REUSE\.toml$|LICENSES\/)/,
+    reason: "REUSE copyright annotations and licence texts",
+  },
   { pattern: /^third-party-licenses/, reason: "licence notices" },
   { pattern: /^docs\/FORK\.md$/, reason: "fork record" },
   { pattern: /^s7video\.config\.ts$/, reason: "the config credits T3 Code" },

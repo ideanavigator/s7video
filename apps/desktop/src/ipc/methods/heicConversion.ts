@@ -1,3 +1,5 @@
+// SPDX-FileCopyrightText: 2026 s7video contributors
+// SPDX-License-Identifier: MIT
 import {
   HEIC_DECODE_MAX_PIXELS,
   DesktopHeicConversionInputSchema,
