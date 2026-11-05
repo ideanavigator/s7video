@@ -76,6 +76,20 @@ const fakeEngine = (
   });
 };
 
+/** `exists` yields before answering, so concurrent starts interleave between check and reserve. */
+const layerSlowExists = Layer.effect(
+  FileSystem.FileSystem,
+  Effect.map(FileSystem.FileSystem, (fileSystem) =>
+    FileSystem.FileSystem.of({
+      ...fileSystem,
+      exists: (file) =>
+        Effect.forEach(Array.from({ length: 20 }), () => Effect.yieldNow, { discard: true }).pipe(
+          Effect.andThen(fileSystem.exists(file)),
+        ),
+    }),
+  ),
+);
+
 const withExports = <A, E>(
   outcome: "ok" | "cancelled" | "no-libass",
   body: (input: {
@@ -106,6 +120,7 @@ const withExports = <A, E>(
       Effect.provide(
         ExportService.layer.pipe(
           Layer.provide(fakeEngine(calls, done)),
+          Layer.provide(layerSlowExists),
           Layer.provideMerge(layerEditTest(baseDir)),
         ),
       ),
@@ -178,6 +193,19 @@ describe("ExportService", () => {
         assert.match(second.path, /-2\.mp4$/u);
         assert.strictEqual(calls[0]?.params.captions, false);
         assert.isUndefined(calls[0]?.params.canvas);
+      }),
+    ),
+  );
+
+  it.effect("gives two exports started at the same moment different names", () =>
+    withExports("ok", ({ projectId, exports }) =>
+      Effect.gen(function* () {
+        const started = yield* Effect.all(
+          Array.from({ length: 4 }, () => exports.start({ projectId })),
+          { concurrency: 4 },
+        );
+        const paths = started.map((entry) => entry.path);
+        assert.strictEqual(new Set(paths).size, 4, paths.join(", "));
       }),
     ),
   );

@@ -26,6 +26,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Semaphore from "effect/Semaphore";
 
 import * as EditDocumentService from "../edit/EditDocumentService.ts";
 import * as EngineService from "../engine/EngineService.ts";
@@ -84,6 +85,9 @@ const make = Effect.gen(function* () {
   const finished = new Map<EngineJobId, Deferred.Deferred<ExportStatus>>();
   // Names handed out while their file is still being written (as `.part`).
   const reserved = new Set<string>();
+  // Picking a free name yields on file checks, so pick and reserve under one permit: two starts
+  // in the same minute (the button and the agent) never get the same file.
+  const naming = yield* Semaphore.make(1);
 
   const remember = (status: ExportStatus) =>
     Effect.suspend(() => {
@@ -102,18 +106,24 @@ const make = Effect.gen(function* () {
       return status.state === "running" ? Effect.void : Deferred.succeed(done, status);
     }).pipe(Effect.asVoid);
 
-  const freeName = Effect.fnUntraced(function* (folder: string, base: string) {
-    for (let index = 1; ; index += 1) {
-      const name = index === 1 ? `${base}.mp4` : `${base}-${index}.mp4`;
-      const file = path.join(folder, name);
-      if (reserved.has(file)) continue;
-      const taken = yield* Effect.all([
-        fileSystem.exists(file),
-        fileSystem.exists(`${file}.part`),
-      ]).pipe(Effect.orElseSucceed(() => [true, true] as const));
-      if (!taken[0] && !taken[1]) return { name, file };
-    }
-  });
+  const reserveName = (folder: string, base: string) =>
+    naming.withPermit(
+      Effect.gen(function* () {
+        for (let index = 1; ; index += 1) {
+          const name = index === 1 ? `${base}.mp4` : `${base}-${index}.mp4`;
+          const file = path.join(folder, name);
+          if (reserved.has(file)) continue;
+          const taken = yield* Effect.all([
+            fileSystem.exists(file),
+            fileSystem.exists(`${file}.part`),
+          ]).pipe(Effect.orElseSucceed(() => [true, true] as const));
+          if (!taken[0] && !taken[1]) {
+            reserved.add(file);
+            return { name, file };
+          }
+        }
+      }),
+    );
 
   const start: ExportService["Service"]["start"] = Effect.fn("ExportService.start")(
     function* (input) {
@@ -138,12 +148,11 @@ const make = Effect.gen(function* () {
               new ExportStartError({ projectId: input.projectId, reason: "exports-folder", cause }),
           ),
         );
-      const { name, file } = yield* freeName(
+      const { name, file } = yield* reserveName(
         folder,
         `${exportSlug(project.value.title)}-${exportStamp(yield* Clock.currentTimeMillis)}`,
       );
       const relative = `${EXPORTS_DIR}/${name}`;
-      reserved.add(file);
       const started = yield* Deferred.make<EngineJobId, EngineError>();
       let jobId: EngineJobId | undefined;
       const entry = (id: EngineJobId) => ({
