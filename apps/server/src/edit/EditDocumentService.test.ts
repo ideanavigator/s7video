@@ -345,6 +345,65 @@ describe("EditDocumentService", () => {
     );
   });
 
+  it.effect("rolls edit.json back when its revision cannot be saved", () => {
+    const faults: EditFaults = { failTempRename: false };
+    return withProject(
+      ({ projectId, edits, root }) =>
+        Effect.gen(function* () {
+          const initial = yield* edits.read(projectId);
+          const first = yield* edits.apply(projectId, setup, {
+            origin: "agent",
+            baseRevision: initial.revision,
+          });
+          const second = yield* edits.apply(projectId, [keep([[0, 30]])], {
+            origin: "agent",
+            baseRevision: first.revision,
+          });
+          const before = readEdit(root);
+          faults.failTempRenameOf = "project.json";
+          const applyError = yield* edits
+            .apply(projectId, [keep([[0, 60]])], {
+              origin: "agent",
+              baseRevision: second.revision,
+            })
+            .pipe(Effect.flip);
+          const undoError = yield* edits.undo(projectId).pipe(Effect.flip);
+          delete faults.failTempRenameOf;
+          for (const error of [applyError, undoError]) {
+            assert.strictEqual(error._tag, "EditUnavailableError");
+            assert.include(error.message, "Nothing changed");
+          }
+          assert.strictEqual(readEdit(root), before);
+          const after = yield* edits.read(projectId);
+          assert.strictEqual(after.revision, second.revision);
+          assert.isTrue(after.canUndo);
+        }),
+      faults,
+    );
+  });
+
+  it.effect("still reads an outside change that the media guard would refuse to record", () =>
+    withProject(({ projectId, edits, root }) =>
+      Effect.gen(function* () {
+        const initial = yield* edits.read(projectId);
+        const applied = yield* edits.apply(projectId, setup, {
+          origin: "agent",
+          baseRevision: initial.revision,
+        });
+        const outside = { ...applied.document, metadata: { note: "outside" } };
+        NodeFS.writeFileSync(NodePath.join(root, "edit.json"), JSON.stringify(outside));
+        NodeFS.writeFileSync(NodePath.join(root, "styles", "clip.mov"), "not really a movie");
+        const read = yield* edits.read(projectId);
+        assert.deepEqual(read.document.metadata, { note: "outside" });
+        const blocked = yield* edits
+          .apply(projectId, [keep([[0, 30]])], { origin: "agent", baseRevision: read.revision })
+          .pipe(Effect.flip);
+        assert.strictEqual(blocked._tag, "EditUnavailableError");
+        assert.include(blocked.message, "styles/clip.mov");
+      }),
+    ),
+  );
+
   it.effect("streams the current edit, then each change", () =>
     withProject(({ projectId, edits }) =>
       Effect.gen(function* () {

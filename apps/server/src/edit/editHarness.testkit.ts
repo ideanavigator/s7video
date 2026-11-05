@@ -28,9 +28,13 @@ import * as EditDocumentService from "./EditDocumentService.ts";
 import * as EditHistoryService from "./EditHistoryService.ts";
 import * as EditProjectLayout from "./EditProjectLayout.ts";
 
-/** Flip `failTempRename` to simulate a crash between the temp write and the rename. */
+/**
+ * Flip `failTempRename` to simulate a crash between the temp write and the rename; set
+ * `failTempRenameOf` to fail only the temp file of that one file (for example "project.json").
+ */
 export interface EditFaults {
   failTempRename: boolean;
+  failTempRenameOf?: string;
 }
 
 const layerFaultyFileSystem = (faults: EditFaults) =>
@@ -40,7 +44,10 @@ const layerFaultyFileSystem = (faults: EditFaults) =>
       FileSystem.FileSystem.of({
         ...fileSystem,
         rename: (from, to) =>
-          faults.failTempRename && from.endsWith(".tmp")
+          from.endsWith(".tmp") &&
+          (faults.failTempRename ||
+            (faults.failTempRenameOf !== undefined &&
+              from.includes(`/.${faults.failTempRenameOf}.`)))
             ? Effect.fail(
                 PlatformError.systemError({
                   _tag: "Unknown",

@@ -195,28 +195,61 @@ const make = Effect.gen(function* () {
   /**
    * Notices an edit.json changed outside this service (a T3 turn revert, an agent writing the file)
    * and records it as a new revision and history step, so subscribers and undo stay in step.
-   * Runs under the project lock.
+   * Runs under the project lock. A read never fails on recording: it returns the file as it is and
+   * leaves recording to the next change, which reports the problem (the media guard, say).
    */
-  const loadReconciled = Effect.fnUntraced(function* (projectId: ProjectId, root: string) {
+  const loadReconciled = Effect.fnUntraced(function* (
+    projectId: ProjectId,
+    root: string,
+    mode: "read" | "write",
+  ) {
     const current = yield* load(projectId, root);
     if (yield* history.isKnown(root, current.editText)) return current;
-    yield* history.guard(root).pipe(Effect.mapError(historyError(projectId)));
-    const { highestRevision } = yield* history.status(root);
-    const revision = Math.max(current.revision, highestRevision) + 1;
+    const record = Effect.gen(function* () {
+      yield* history.guard(root).pipe(Effect.mapError(historyError(projectId)));
+      const { highestRevision } = yield* history.status(root);
+      const revision = Math.max(current.revision, highestRevision) + 1;
+      yield* writeAtomic(
+        path.join(root, EditProjectLayout.PROJECT_FILE),
+        EditProjectLayout.projectFileContents(revision),
+      ).pipe(
+        Effect.mapError(() =>
+          unavailable(projectId, "write-failed", "Could not save the edit revision."),
+        ),
+      );
+      yield* history
+        .record(root, revision, current.editText)
+        .pipe(Effect.mapError(historyError(projectId)));
+      yield* publish(root, yield* snapshotOf(root, revision, current.document));
+      return { ...current, revision };
+    });
+    return mode === "read"
+      ? yield* record.pipe(Effect.catch(() => load(projectId, root)))
+      : yield* record;
+  });
+
+  /**
+   * Writes edit.json, then its revision. If the revision cannot be written, edit.json goes back to
+   * `previousEdit`, so a failure really leaves nothing changed.
+   */
+  const writeEdit = Effect.fnUntraced(function* (
+    projectId: ProjectId,
+    root: string,
+    editText: string,
+    revision: number,
+    previousEdit: string,
+  ) {
+    const editFile = path.join(root, EditProjectLayout.EDIT_FILE);
+    const writeFailed = () =>
+      unavailable(projectId, "write-failed", "Could not save the edit. Nothing changed.");
+    yield* writeAtomic(editFile, editText).pipe(Effect.mapError(writeFailed));
     yield* writeAtomic(
       path.join(root, EditProjectLayout.PROJECT_FILE),
       EditProjectLayout.projectFileContents(revision),
     ).pipe(
-      Effect.mapError(() =>
-        unavailable(projectId, "write-failed", "Could not save the edit revision."),
-      ),
+      Effect.tapError(() => writeAtomic(editFile, previousEdit).pipe(Effect.ignore)),
+      Effect.mapError(writeFailed),
     );
-    yield* history
-      .record(root, revision, current.editText)
-      .pipe(Effect.mapError(historyError(projectId)));
-    const reconciled = { ...current, revision };
-    yield* publish(root, yield* snapshotOf(root, revision, current.document));
-    return reconciled;
   });
 
   const read: EditDocumentService["Service"]["read"] = Effect.fn("EditDocumentService.read")(
@@ -224,7 +257,7 @@ const make = Effect.gen(function* () {
       const root = yield* resolveRoot(projectId);
       return yield* lockFor(root).withPermit(
         Effect.gen(function* () {
-          const current = yield* loadReconciled(projectId, root);
+          const current = yield* loadReconciled(projectId, root, "read");
           return yield* snapshotOf(root, current.revision, current.document);
         }),
       );
@@ -237,7 +270,7 @@ const make = Effect.gen(function* () {
       const root = yield* resolveRoot(projectId);
       return yield* lockFor(root).withPermit(
         Effect.gen(function* () {
-          const current = yield* loadReconciled(projectId, root);
+          const current = yield* loadReconciled(projectId, root, "write");
           if (options.baseRevision !== current.revision) {
             return yield* new EditConflict({
               baseRevision: options.baseRevision,
@@ -262,13 +295,8 @@ const make = Effect.gen(function* () {
             fileSystem.readFileString(editFile),
             fileSystem.readFileString(projectFile),
           ]).pipe(Effect.orElseSucceed(() => null));
-          const writeFailed = () =>
-            unavailable(projectId, "write-failed", "Could not save the edit. Nothing changed.");
           const editText = EditProjectLayout.editFileContents(validated.document);
-          yield* writeAtomic(editFile, editText).pipe(Effect.mapError(writeFailed));
-          yield* writeAtomic(projectFile, EditProjectLayout.projectFileContents(revision)).pipe(
-            Effect.mapError(writeFailed),
-          );
+          yield* writeEdit(projectId, root, editText, revision, current.editText);
           yield* history.record(root, revision, editText).pipe(
             Effect.mapError(historyError(projectId)),
             // Keep the edit and its history in step: without a checkpoint the change is undone.
@@ -294,18 +322,10 @@ const make = Effect.gen(function* () {
       const root = yield* resolveRoot(projectId);
       return yield* lockFor(root).withPermit(
         Effect.gen(function* () {
-          yield* loadReconciled(projectId, root);
-          const writeFailed = () =>
-            unavailable(projectId, "write-failed", "Could not save the edit. Nothing changed.");
+          const before = yield* loadReconciled(projectId, root, "write");
           const moved = yield* history
             .step(root, direction, (editJson, revision) =>
-              Effect.all([
-                writeAtomic(path.join(root, EditProjectLayout.EDIT_FILE), editJson),
-                writeAtomic(
-                  path.join(root, EditProjectLayout.PROJECT_FILE),
-                  EditProjectLayout.projectFileContents(revision),
-                ),
-              ]).pipe(Effect.mapError(writeFailed)),
+              writeEdit(projectId, root, editJson, revision, before.editText),
             )
             .pipe(
               Effect.mapError((error) =>
