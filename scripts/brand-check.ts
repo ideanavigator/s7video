@@ -144,11 +144,6 @@ export const PENDING_PATHS: ReadonlyArray<{ readonly pattern: RegExp; readonly o
     owner: "S7V-018 (Linux and Windows capture helpers, installer)",
   },
   {
-    pattern:
-      /^(packages\/ssh\/|apps\/desktop\/src\/wsl\/|apps\/server\/src\/device\/(SshDeviceHost|sshDeviceScript)\.ts)/,
-    owner: "S7V-018 (SSH, device-host and WSL: turned off, being removed)",
-  },
-  {
     pattern: /^(scripts\/install\.(sh|ps1)|scripts\/npm-launcher\/)/,
     owner: "S7V-011 (CLI installers and npm launcher, unpublished)",
   },

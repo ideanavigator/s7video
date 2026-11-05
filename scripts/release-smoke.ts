@@ -20,8 +20,6 @@ const workspaceFiles = [
   "packages/client-runtime/package.json",
   "packages/contracts/package.json",
   "packages/shared/package.json",
-  "packages/ssh/package.json",
-  "packages/tailscale/package.json",
   "packages/provider-core/package.json",
   "packages/provider-testing/package.json",
   "packages/provider-acp/package.json",
