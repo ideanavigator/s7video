@@ -119,8 +119,8 @@ licence. Dual-licensed packages are used under their permissive option. Anything
 maintainer decision before you use it.
 
 `pnpm licenses:check` enforces this list from [`licenses.allowlist.json`](licenses.allowlist.json)
-for every installed npm package, and prints the choice it made for each dual-licensed one. Build
-and test tools that never ship may also be WTFPL. The few reviewed packages outside the list are in
+for every installed npm package, and prints the choice it made for each dual-licensed one. One
+build-only package is allowed by name under WTFPL. The few reviewed packages outside the list are in
 [`licenses.exceptions.json`](licenses.exceptions.json), each with the decision record that
 accepted it.
 
