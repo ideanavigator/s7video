@@ -8,7 +8,7 @@ export function PreviewImage(props: {
   readonly src: string;
   readonly name: string;
   readonly mimeType?: string;
-  readonly onError?: () => void;
+  readonly onError?: (message: string) => void;
 }) {
   return (
     <Suspense fallback={<FileSurfaceLoading />}>

@@ -1014,6 +1014,33 @@ export const DesktopMediaReadSchema = Schema.Struct({
 });
 export type DesktopMediaRead = typeof DesktopMediaReadSchema.Type;
 
+/** Same ceiling as the web app's HEIC preview and attachment checks. */
+const DESKTOP_HEIC_CONVERSION_MAX_BYTES = 50 * 1024 * 1024;
+/** Largest HEIC both the web app and the desktop converter will decode. */
+export const HEIC_DECODE_MAX_PIXELS = 64_000_000;
+
+export const DesktopHeicConversionFormatSchema = Schema.Literals(["image/jpeg", "image/png"]);
+export type DesktopHeicConversionFormat = typeof DesktopHeicConversionFormatSchema.Type;
+
+export const DesktopHeicConversionInputSchema = Schema.Struct({
+  data: Schema.Uint8Array.check(Schema.isMaxLength(DESKTOP_HEIC_CONVERSION_MAX_BYTES)),
+  format: DesktopHeicConversionFormatSchema,
+});
+export type DesktopHeicConversionInput = typeof DesktopHeicConversionInputSchema.Type;
+
+export const DesktopHeicConversionResultSchema = Schema.Union([
+  Schema.Struct({
+    ok: Schema.Literal(true),
+    data: Schema.Uint8Array,
+    mimeType: DesktopHeicConversionFormatSchema,
+  }),
+  Schema.Struct({
+    ok: Schema.Literal(false),
+    reason: Schema.Literals(["unsupported", "unreadable", "too-large"]),
+  }),
+]);
+export type DesktopHeicConversionResult = typeof DesktopHeicConversionResultSchema.Type;
+
 export const SystemSettingsPaneSchema = Schema.Literals(["full-disk-access"]);
 export type SystemSettingsPane = typeof SystemSettingsPaneSchema.Type;
 
@@ -1102,6 +1129,8 @@ export interface DesktopBridge {
   openExternal: (url: string) => Promise<boolean>;
   /** Reads http(s) media in the main process, outside renderer CORS and CSP; null on network failure. */
   readMedia: (url: string) => Promise<DesktopMediaRead | null>;
+  /** Decodes HEIC/HEIF with macOS ImageIO into an upright, sRGB JPEG or PNG. */
+  convertHeic: (input: DesktopHeicConversionInput) => Promise<DesktopHeicConversionResult>;
   openSystemSettings: (pane: SystemSettingsPane) => Promise<boolean>;
   checkSystemPermission: (pane: SystemSettingsPane) => Promise<boolean>;
   probeRemoteEditors: () => Promise<readonly EditorId[]>;

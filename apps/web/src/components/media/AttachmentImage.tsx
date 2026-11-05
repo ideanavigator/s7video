@@ -1,18 +1,29 @@
 import { useEffect, useRef, useState, type ComponentProps, type SyntheticEvent } from "react";
 import { isHeicImageFile } from "../../lib/imageCompression";
 
-type AttachmentImageProps = ComponentProps<"img"> & { name: string; mimeType?: string | undefined };
+type AttachmentImageProps = ComponentProps<"img"> & {
+  name: string;
+  mimeType?: string | undefined;
+  /** The decoder's reason, called before `onError` when a HEIC or TIFF fallback decode fails. */
+  onDecodeError?: ((message: string) => void) | undefined;
+};
 
 // Keep import expressions outside hooks until React Compiler supports them.
 const loadImageDecoder = () => import("../files/decodeImagePreview");
 
-export function AttachmentImage({ name, mimeType, ...props }: AttachmentImageProps) {
+export function AttachmentImage({ name, mimeType, onDecodeError, ...props }: AttachmentImageProps) {
   const fallback =
     isHeicImageFile({ name, type: mimeType ?? "" }) ||
     /\.tiff?$/i.test(name) ||
     /^image\/tiff$/i.test(mimeType ?? "");
   return fallback ? (
-    <DecodedImage key={props.src} {...props} name={name} mimeType={mimeType} />
+    <DecodedImage
+      key={props.src}
+      {...props}
+      name={name}
+      mimeType={mimeType}
+      onDecodeError={onDecodeError}
+    />
   ) : (
     <img {...props} />
   );
@@ -20,7 +31,14 @@ export function AttachmentImage({ name, mimeType, ...props }: AttachmentImagePro
 
 type DecodeAttempt = { readonly controller: AbortController; objectUrl?: string };
 
-function DecodedImage({ name, mimeType, src, onError, ...props }: AttachmentImageProps) {
+function DecodedImage({
+  name,
+  mimeType,
+  src,
+  onError,
+  onDecodeError,
+  ...props
+}: AttachmentImageProps) {
   const [previewUrl, setPreviewUrl] = useState<string>();
   // One decode per mount; the parent keys this component by src.
   const decodeRef = useRef<DecodeAttempt | null>(null);
@@ -43,8 +61,10 @@ function DecodedImage({ name, mimeType, src, onError, ...props }: AttachmentImag
         attempt.objectUrl = URL.createObjectURL(blob);
         setPreviewUrl(attempt.objectUrl);
       })
-      .catch(() => {
-        if (!signal.aborted) onError?.(event);
+      .catch((cause: unknown) => {
+        if (signal.aborted) return;
+        if (cause instanceof Error) onDecodeError?.(cause.message);
+        onError?.(event);
       });
   };
 

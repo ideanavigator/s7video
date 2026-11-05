@@ -30,6 +30,9 @@ from; the per-ticket entries and how this file is compiled are in
 - Usage data is off by default and sent only if you turn it on in the new Settings > Privacy page
   (or with `S7VIDEO_TELEMETRY_ENABLED=true`). The open-source build has no destination and offers no
   switch; upstream's `T3CODE_TELEMETRY_*` variables are ignored. (S7V-013)
+- HEIC and HEIF photos are decoded by macOS in the desktop app instead of the bundled LGPL `heic-to`
+  library; rotated iPhone photos show the right way up, and a plain browser asks you to convert HEIC
+  to JPEG first. (S7V-014)
 
 ### Removed
 

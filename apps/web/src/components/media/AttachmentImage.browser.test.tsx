@@ -80,11 +80,18 @@ it("reports failed HEIC conversion through the existing error handler", async ()
   using _createUrl = vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:jpeg");
   using _revokeUrl = vi.spyOn(URL, "revokeObjectURL").mockImplementation(revokeUrl);
   const onError = vi.fn();
+  const onDecodeError = vi.fn();
   vi.mocked(decodeImagePreview).mockRejectedValue(new Error("unreadable"));
   await using screen = await render(
-    <AttachmentImage src="blob:heic" name="photo.heif" onError={onError} />,
+    <AttachmentImage
+      src="blob:heic"
+      name="photo.heif"
+      onError={onError}
+      onDecodeError={onDecodeError}
+    />,
   );
   expectDecodeErrorFor(onError, await failDecode(screen));
+  expect(onDecodeError).toHaveBeenCalledWith("unreadable");
   expect(URL.createObjectURL).not.toHaveBeenCalled();
 });
 
