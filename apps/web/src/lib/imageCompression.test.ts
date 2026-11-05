@@ -329,6 +329,16 @@ describe("HEIC attachment preparation", () => {
     });
   });
 
+  it("passes on the desktop app's too-large verdict", async () => {
+    stubDesktopBridge();
+    mocks.convertHeic.mockResolvedValueOnce({ ok: false, reason: "too-large" });
+
+    expect(await prepareImageForAttachment(makeHeicFile(), 1024)).toEqual({
+      ok: false,
+      reason: "too-large",
+    });
+  });
+
   it("rejects oversized HEIC dimensions before decoding", async () => {
     stubDesktopBridge();
     const original = makeHeicFile({ width: 16_000, height: 4001 });

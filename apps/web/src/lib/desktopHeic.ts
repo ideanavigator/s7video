@@ -5,7 +5,7 @@ export const HEIC_CONVERT_FIRST_MESSAGE =
 
 export type DesktopHeicConversion =
   | { ok: true; blob: Blob }
-  | { ok: false; reason: "unsupported-heic" | "unreadable" };
+  | { ok: false; reason: "unsupported-heic" | "unreadable" | "too-large" };
 
 const heicBridge = () =>
   typeof window === "undefined" ? undefined : window.desktopBridge?.convertHeic;
@@ -23,10 +23,8 @@ export async function convertHeicOnDesktop(
   if (!convert) return { ok: false, reason: "unsupported-heic" };
   const result = await convert({ data, format }).catch(() => null);
   if (!result?.ok) {
-    return {
-      ok: false,
-      reason: result?.reason === "unsupported" ? "unsupported-heic" : "unreadable",
-    };
+    const reason = result?.reason ?? "unreadable";
+    return { ok: false, reason: reason === "unsupported" ? "unsupported-heic" : reason };
   }
   return { ok: true, blob: new Blob([result.data as Uint8Array<ArrayBuffer>], { type: format }) };
 }

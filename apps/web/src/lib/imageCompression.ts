@@ -7,13 +7,13 @@ import {
   IMAGE_DIMENSIONS_HEADER_BYTES,
   readImageDimensions,
 } from "@t3tools/shared/imageDimensions";
+import { HEIC_DECODE_MAX_PIXELS } from "@t3tools/contracts";
 import { canConvertHeic, convertHeicOnDesktop } from "./desktopHeic";
 
 const MAX_DIMENSION = IMAGE_ATTACHMENT_MAX_EDGE;
 export const MAX_STASH_IMAGE_DATA_URL_CHARS = 1_300_000;
 /** Bound source decoding: enormous ImageBitmaps can OOM the tab before resizing. */
 export const MAX_COMPRESSIBLE_SOURCE_BYTES = 50 * 1024 * 1024;
-const MAX_HEIC_DECODE_PIXELS = 64_000_000;
 const MAX_HEIC_METADATA_BYTES = 1024 * 1024;
 const QUALITY_STEPS = [0.92, 0.85, 0.78, 0.68] as const;
 const FALLBACK_SCALE_STEPS = [0.75, 0.55] as const;
@@ -116,7 +116,7 @@ async function validateHeicImageDimensions(
     const width = view.getUint32(image.payloadOffset + 4);
     const height = view.getUint32(image.payloadOffset + 8);
     if (width === 0 || height === 0) return "unreadable";
-    if (width > MAX_HEIC_DECODE_PIXELS / height) return "too-large";
+    if (width > HEIC_DECODE_MAX_PIXELS / height) return "too-large";
     foundImageDimensions = true;
     offset = image.endOffset;
   }

@@ -1016,6 +1016,8 @@ export type DesktopMediaRead = typeof DesktopMediaReadSchema.Type;
 
 /** Same ceiling as the web app's HEIC preview and attachment checks. */
 const DESKTOP_HEIC_CONVERSION_MAX_BYTES = 50 * 1024 * 1024;
+/** Largest HEIC both the web app and the desktop converter will decode. */
+export const HEIC_DECODE_MAX_PIXELS = 64_000_000;
 
 export const DesktopHeicConversionFormatSchema = Schema.Literals(["image/jpeg", "image/png"]);
 export type DesktopHeicConversionFormat = typeof DesktopHeicConversionFormatSchema.Type;
@@ -1034,7 +1036,7 @@ export const DesktopHeicConversionResultSchema = Schema.Union([
   }),
   Schema.Struct({
     ok: Schema.Literal(false),
-    reason: Schema.Literals(["unsupported", "unreadable"]),
+    reason: Schema.Literals(["unsupported", "unreadable", "too-large"]),
   }),
 ]);
 export type DesktopHeicConversionResult = typeof DesktopHeicConversionResultSchema.Type;
