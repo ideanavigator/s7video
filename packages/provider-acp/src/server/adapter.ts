@@ -1317,7 +1317,7 @@ export function acpPostSettleContinuationOfferEvidence(
   if (update.sessionUpdate === "tool_call" || update.sessionUpdate === "tool_call_update") {
     return parseSessionUpdateEvent(notification).events.some((event) => {
       if (event._tag !== "ToolCallUpdated") return false;
-      // Grok monitor start ACKs say completed while the task is still running.
+      // Some flavors report a monitor start ACK as completed while the task is still running.
       const toolCall = flavor.normalizeToolCall?.(event.toolCall) ?? event.toolCall;
       return toolCall.status === "completed" || toolCall.status === "failed";
     });

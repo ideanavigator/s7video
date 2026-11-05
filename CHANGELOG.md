@@ -33,6 +33,9 @@ from; the per-ticket entries and how this file is compiled are in
 - HEIC and HEIF photos are decoded by macOS in the desktop app instead of the bundled LGPL `heic-to`
   library; rotated iPhone photos show the right way up, and a plain browser asks you to convert HEIC
   to JPEG first. (S7V-014)
+- No visible change: three automated checks lost while removing unused agents are restored (agent
+  wake-ups, the Push and Create PR buttons after a commit, usage stats with one broken agent config).
+  (S7V-017)
 
 ### Removed
 
