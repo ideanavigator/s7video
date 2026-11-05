@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "fps": {
+    "num": 30,
+    "den": 1
+  },
+  "canvas": {
+    "width": 1080,
+    "height": 1920
+  },
+  "media": [],
+  "tracks": [
+    {
+      "kind": "overlay",
+      "id": "O1",
+      "items": [
+        {
+          "id": "o1",
+          "text": "Title card",
+          "start": 0,
+          "duration": 90
+        }
+      ]
+    }
+  ],
+  "markers": [],
+  "metadata": {}
+}

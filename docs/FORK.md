@@ -239,6 +239,12 @@ New: `docs/engineering/` (standards), `docs/changelog/` (per-ticket entries), `d
 `scripts/planning.ts` (`pnpm tickets`, `ticket:*`, `doc:new`) and `scripts/check-doc-links.ts`
 (`pnpm docs:linkcheck`).
 
+## Edit projects (S7V-024)
+
+- **Every new named project is an edit project.** `ManagedProjectFolders.createNamedProject` adds `edit.json`, `project.json`, `styles/`, `assets/`, `.s7cache/` and `exports/`. It also adds a whitelist `.gitignore`, and commits those files with T3's starter `README.md` and `assets/icon.svg`. It only adds files: nothing of T3's scaffold is removed. Scratch projects and existing projects are not converted.
+- **What is tracked.** The whitelist ignores everything except `edit.json`, `project.json`, `.gitignore`, `styles/`, `README.md` and `assets/icon.svg`. As a result, T3's per-turn checkpoints, turn diffs and turn reverts in an edit project only see those files. Media, cache, exports and anything else an agent writes outside them never show in a diff and are never reverted.
+- **Edit undo is separate from turn reverts.** Edit undo (`edit.undo`) restores only `edit.json` (and bumps `project.json`) from refs under `refs/t3/edit/checkpoints/`. If a turn revert changes `edit.json`, the edit service records it as a new revision the next time the edit is read or changed.
+
 ## HEIC decoding (S7V-014)
 
 T3 Code decodes iPhone HEIC photos with `heic-to`, which bundles libheif and libde265 under

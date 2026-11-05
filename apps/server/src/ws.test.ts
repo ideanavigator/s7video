@@ -122,6 +122,7 @@ import * as SqlitePersistence from "./persistence/Sqlite.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
 import * as ProjectEnrichment from "./project/ProjectEnrichmentService.ts";
 import * as ProjectService from "./project/ProjectService.ts";
+import * as EditDocumentService from "./edit/EditDocumentService.ts";
 import {
   layerWsRpc,
   resolveOpenDiscoveryForConfig,
@@ -564,6 +565,7 @@ const layerUnusedConfigRpcServices = Layer.mergeAll(
   Layer.mock(ProjectCloneTracker.ProjectCloneTracker)({}),
   Layer.mock(EngineService.EngineService)({}),
   Layer.mock(ProjectService.ProjectService)({}),
+  Layer.mock(EditDocumentService.EditDocumentService)({}),
   Layer.mock(ProjectSetupScriptRunner.ProjectSetupScriptRunner)({}),
   Layer.mock(ProjectStore.ProjectStoreV2)({}),
   Layer.mock(ProviderAuthService.ProviderAuthService)({}),

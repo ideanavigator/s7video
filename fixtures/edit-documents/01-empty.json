@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "fps": {
+    "num": 30,
+    "den": 1
+  },
+  "canvas": {
+    "width": 1080,
+    "height": 1920
+  },
+  "media": [],
+  "tracks": [],
+  "markers": [],
+  "metadata": {}
+}
