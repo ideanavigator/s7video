@@ -2,8 +2,8 @@
 # SPDX-License-Identifier: MIT
 """Preview proxies for footage the player seeks badly (spike A2).
 
-`media.keyframes` reads packet flags (no decoding) over the first stretch of the video and reports
-the longest gap between keyframes. `media.proxy` is a job that writes a short-GOP H.264 copy at
+`media.keyframes` reads packet flags (no decoding) over the first 10 s and 5 s from the middle of
+the video and reports the longest gap between keyframes. `media.proxy` is a job that writes a short-GOP H.264 copy at
 most 1920 px on its long side. It keeps every source timestamp (`-copyts`, passthrough frame
 timing, the source time base), so frame N of the proxy is frame N of the original.
 """
@@ -21,9 +21,12 @@ from ..jobs import Cancelled, JobContext
 from ..rpc import INVALID_PARAMS, MEDIA_ERROR, OUTPUT_ERROR, Method, RpcError
 from ._media import PATH_SCHEMA, RATE_SCHEMA, media_file
 
-# Enough to judge a 2 s keyframe threshold: one keyframe in 10 s is a 10 s gap. Reading packet
-# flags of 10 s of 110 Mbit/s 4K is ~140 MB, which keeps import fast.
-_SCAN_SECONDS = 10
+# Two stretches judge a 2 s keyframe threshold: the first 10 s, and 5 s from the middle, for
+# footage whose GOP grows after the start (scene-cut or variable GOP). One keyframe in a stretch
+# counts as a gap the length of the stretch. Reading packet flags is cheap: ~210 MB of 110 Mbit/s
+# 4K in total. A long GOP only between those stretches is not seen.
+_HEAD_SECONDS = 10
+_MIDDLE_SECONDS = 5
 _PROXY_LONG_SIDE = 1920
 
 
@@ -34,43 +37,55 @@ def _int(value: Any) -> int | None:
         return None
 
 
-def _keyframes(params: dict[str, Any], job: JobContext) -> dict[str, Any]:
-    path = params["path"]
-    media_file(path)
+def _scan(path: str, interval: str, job: JobContext) -> tuple[Fraction | None, list[tuple[int, bool]]]:
     info = ffprobe_json(
-        [
-            "-select_streams",
-            "v:0",
-            "-read_intervals",
-            f"%+{_SCAN_SECONDS}",
-            "-show_entries",
-            "stream=time_base:packet=pts,flags",
-            path,
-        ],
+        ["-select_streams", "v:0", "-read_intervals", interval, "-show_entries", "stream=time_base:packet=pts,flags", path],
         job,
     )
     streams = info.get("streams") or []
     time_base = timebase.parse_rational(streams[0].get("time_base")) if streams else None
-    if time_base is None:
-        raise RpcError(MEDIA_ERROR, "the file has no video")
     packets = [
         (pts, "K" in str(packet.get("flags") or ""))
         for packet in info.get("packets") or []
         if (pts := _int(packet.get("pts"))) is not None
     ]
-    if not packets:
-        raise RpcError(MEDIA_ERROR, "the video stream has no frames")
+    return time_base, packets
+
+
+def _stretch(packets: list[tuple[int, bool]]) -> tuple[int, int, int]:
+    """Longest keyframe gap, keyframe count and span of one stretch, in ticks."""
     keys = sorted(pts for pts, key in packets if key)
     first, last = min(pts for pts, _ in packets), max(pts for pts, _ in packets)
-    # Without a second keyframe in the window, the gap is at least the whole window.
     gaps = [later - earlier for earlier, later in zip(keys, keys[1:])]
     if len(keys) < 2:
         gaps.append(last - (keys[0] if keys else first))
+    return max(gaps), len(keys), last - first
+
+
+def _keyframes(params: dict[str, Any], job: JobContext) -> dict[str, Any]:
+    path = params["path"]
+    media_file(path)
+    time_base, head = _scan(path, f"%+{_HEAD_SECONDS}", job)
+    if time_base is None:
+        raise RpcError(MEDIA_ERROR, "the file has no video")
+    if not head:
+        raise RpcError(MEDIA_ERROR, "the video stream has no frames")
+    stretches = [_stretch(head)]
+    duration_text = (ffprobe_json(["-show_entries", "format=duration", path], job).get("format") or {}).get("duration")
+    try:
+        duration = Fraction(duration_text) if isinstance(duration_text, str) else None
+    except ValueError:
+        duration = None
+    if duration is not None and duration > 2 * _HEAD_SECONDS:
+        middle = (duration - _MIDDLE_SECONDS) / 2
+        _, packets = _scan(path, f"{timebase.decimal_seconds(middle)}%+{_MIDDLE_SECONDS}", job)
+        if packets:
+            stretches.append(_stretch(packets))
     return {
         "timeBase": timebase.rational(time_base),
-        "maxGapTicks": max(gaps),
-        "keyframes": len(keys),
-        "scannedTicks": last - first,
+        "maxGapTicks": max(gap for gap, _, _ in stretches),
+        "keyframes": sum(keys for _, keys, _ in stretches),
+        "scannedTicks": sum(span for _, _, span in stretches),
     }
 
 

@@ -112,7 +112,7 @@ export type MediaThumbnailResult = typeof MediaThumbnailResult.Type;
 export const MediaKeyframesInput = Schema.Struct({ path: TrimmedNonEmptyString });
 export type MediaKeyframesInput = typeof MediaKeyframesInput.Type;
 
-/** The longest keyframe gap over the first 10 s of the video, read from packet flags. */
+/** The longest keyframe gap over the first 10 s and 5 s mid-file, read from packet flags. */
 export const MediaKeyframesResult = Schema.Struct({
   timeBase: EngineRational,
   maxGapTicks: NonNegativeInt,

@@ -40,6 +40,26 @@ def gop_clips(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Path]:
             "testsrc2=s=360x640:r=30000/1001:d=3",
             [*mpeg4, "-g", "300", "-output_ts_offset", "1.5"],
         ),
+        # Half-second GOPs for 12 s, then one keyframe every 10 s: only a mid-file sample sees it.
+        "late": make_clip(
+            root / "late-long-gop.mp4",
+            "testsrc2=s=320x180:r=30:d=30",
+            [*mpeg4, "-g", "300", "-force_key_frames", "expr:lt(t,12)*gte(t,n_forced*0.5)"],
+        ),
+        # Phone-style variable frame rate: from frame 40 each frame is 13 ms later than at 30 fps.
+        "vfr": make_clip(
+            root / "vfr.mp4",
+            "testsrc2=s=640x360:r=30:d=4",
+            [
+                "-vf",
+                "setpts='N/30/TB+if(gt(N,40),0.013*(N-40)/TB,0)'",
+                "-fps_mode",
+                "passthrough",
+                *mpeg4,
+                "-g",
+                "30",
+            ],
+        ),
         # Frame n is grey of luma 16 + 3n, so a decoded thumbnail names its own frame.
         "grey": make_clip(
             root / "grey.mp4",
@@ -172,3 +192,29 @@ def test_unreadable_files_fail_with_a_plain_message(
         error = wire.call(method, {"path": str(broken)})["error"]
         assert error["code"] == rpc.MEDIA_ERROR
         assert str(tmp_path) not in error["message"]
+
+
+@pytest.mark.usefixtures("tools")
+def test_keyframes_sees_a_long_gop_that_starts_mid_file(wire: Wire, gop_clips: dict[str, Path]) -> None:
+    result = wire.call("media.keyframes", {"path": str(gop_clips["late"])})["result"]
+    tick = result["timeBase"]
+    # The first 10 s alone would say 0.5 s; the middle of the file has 10 s between keyframes.
+    assert result["maxGapTicks"] * tick["num"] / tick["den"] > 4
+
+
+@pytest.mark.usefixtures("tools")
+def test_should_handle_vfr_phone_footage(wire: Wire, gop_clips: dict[str, Path], tmp_path: Path) -> None:
+    source = gop_clips["vfr"]
+    video = wire.call("media.probe", {"path": str(source)})["result"]["video"]
+    assert video["variableFrameRate"] is True
+    assert video["frameCount"] == 120
+    # The length comes from the real last timestamp, not from frames ÷ rate: 79 frames each 13 ms
+    # late make the clip about a second longer than 120 frames at 30 fps.
+    seconds = (video["lastPts"] - video["firstPts"]) * video["timeBase"]["num"] / video["timeBase"]["den"]
+    rate = video["frameRate"]["num"] / video["frameRate"]["den"]
+    assert video["durationFrames"] == round(seconds * rate) + 1
+    assert video["durationFrames"] > video["frameCount"]
+    if _has_videotoolbox():
+        output = tmp_path / "proxies" / "vfr.mp4"
+        wire.call("media.proxy", _proxy_params(wire, source, output, "proxy-vfr"))
+        assert _video_pts(output) == _video_pts(source)
