@@ -46,6 +46,8 @@ from; the per-ticket entries and how this file is compiled are in
 - An Editor panel beside the chat plays your edit as it stands, skipping the parts that were cut,
   with tabs for the transcript and your project's clips and an Export button. Every chat in a project
   shows the same edit, and the Editor opens by itself when a project gets its first clip. (S7V-029)
+- The Transcript tab shows every word, highlights the one being spoken, jumps the player when you
+  click a word, and crosses out words the edit removed. (S7V-030)
 
 ### Changed
 

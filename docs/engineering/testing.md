@@ -70,6 +70,13 @@ comparison) and its `media("<clip-id>")` fixture, which skips with "run pnpm med
 is not in the cache. `pnpm test:golden` fetches or reuses the clips first (`--no-fetch` skips that),
 and a full run (no case named) also runs the harness's own tests (`tests/golden/test_*.py`).
 
+### Web golden tests
+
+`apps/web/src/**/*.golden.test.ts` run in Chromium (the web config's `golden` project) with the real
+player on clips from the test-media cache, served through the `testMediaPath` browser command. They
+play media in real time, so they have longer timeouts. Run `pnpm media:fetch` first; without the
+clip they skip.
+
 ## Providers and cost
 
 Real agent turns cost money. Use the free `Replay (dev)` provider that `vp run dev` registers to stream
