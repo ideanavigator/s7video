@@ -86,7 +86,9 @@ const withProject = <A, E>(
     readonly root: string;
     readonly thread: Thread;
     readonly edits: EditDocumentService.EditDocumentService["Service"];
-    readonly call: (name: string) => Effect.Effect<McpSchema.CallToolResult, unknown>;
+    readonly call: (
+      name: string,
+    ) => Effect.Effect<McpSchema.CallToolResult, McpSchema.InternalError | McpSchema.InvalidParams>;
   }) => Effect.Effect<A, E, never>,
 ) =>
   Effect.gen(function* () {
