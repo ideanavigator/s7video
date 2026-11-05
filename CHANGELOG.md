@@ -24,6 +24,9 @@ from; the per-ticket entries and how this file is compiled are in
 - MIT licence naming T3 Tools Inc. and the s7video contributors, a `NOTICE` file, REUSE-compliant
   copyright information for every file (`pnpm reuse:lint`), `pnpm licenses:check` against the
   licence allowlist, and T3 Code and Chromium in the in-app open-source licences list. (S7V-004)
+- A free-licence (CC-BY-4.0) sample video that `pnpm media:fetch` downloads with a checksum into a
+  cache outside the repo, a guard that fails `pnpm licenses:check` if media or model weights are
+  committed, and engine golden tests in `pnpm test:golden`. (S7V-031)
 
 ### Changed
 

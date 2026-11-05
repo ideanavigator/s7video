@@ -45,14 +45,30 @@ legitimately changes, the PR regenerates it, says why, and attaches before and a
 
 ## Test media
 
-- Only clips we shot ourselves or CC0 clips, each listed with its source and licence in the fixture
-  folder's `SOURCES.md`.
+- Only clips we shot ourselves, or clips released as CC0-1.0 or CC-BY-4.0 (with attribution), each
+  listed with its source, author and licence in the fixture folder's `SOURCES.md`. This matches the
+  licence allowlist; CC-BY-3.0, CC-BY-SA and site licences (Pexels, Pixabay) do not qualify.
 - **Never client footage or audio** (from any client), CapCut
-  library sounds or effects, or anyone else's media, even for a quick local test that "won't be
-  committed".
+  library sounds or effects, or anyone else's media without one of those licences, even for a quick
+  local test that "won't be committed".
+- **Audio and video are never committed.** Each clip is listed in
+  [fixtures/media/manifest.json](../../fixtures/media/manifest.json) and downloaded by
+  `pnpm media:fetch` into a cache outside the repo (`$S7VIDEO_TEST_MEDIA_DIR`, default
+  `~/Library/Caches/s7video-test-media`), checked against its sha256 and size. Synthetic clips come
+  from [fixtures/media/synth.ts](../../fixtures/media/synth.ts) into the same cache.
+  `pnpm licenses:check` fails if any audio, video or model-weights file is tracked.
 - Keep fixtures small: a few seconds, low resolution unless the test is about resolution.
 - Model weights are never fixtures. Tests that need a model use a stub, or skip with a clear reason
   when the model is not downloaded.
+
+### Engine golden tests
+
+Python goldens live in `packages/engine/tests/golden/` as `<case_name>_golden.py`;
+`pnpm test:golden -- <case-name>` runs one (kebab case maps to the snake-case file). They use
+`harness.py` there (probe summary, SSIM, perceptual hash, loudness, cut-list and word-timing
+comparison) and its `media("<clip-id>")` fixture, which skips with "run pnpm media:fetch" when the clip
+is not in the cache. `pnpm test:golden` fetches or reuses the clips first (`--no-fetch` skips that),
+and a full run (no case named) also runs the harness's own tests (`tests/golden/test_*.py`).
 
 ## Providers and cost
 

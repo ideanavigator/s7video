@@ -9,6 +9,7 @@ import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 
+import { checkNoMedia } from "./check-no-media.ts";
 import {
   checkLicences,
   packagesFromPnpm,
@@ -132,10 +133,14 @@ for (const problem of result.problems) {
   );
 }
 
+// S7V-031: no audio, video or model weights may be tracked.
+const mediaExit = checkNoMedia(ROOT);
+
 if (result.problems.length > 0 || result.configErrors.length > 0) {
   console.error(
     `licenses:check failed: ${String(result.problems.length)} package(s) outside the allowlist, ${String(result.configErrors.length)} exception error(s). Replace the package, or record an ADR and add it to licenses.exceptions.json.`,
   );
   process.exit(1);
 }
+if (mediaExit !== 0) process.exit(mediaExit);
 console.log("licenses:check passed.");
