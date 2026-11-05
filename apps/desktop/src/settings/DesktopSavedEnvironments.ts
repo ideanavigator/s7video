@@ -11,15 +11,8 @@ import * as Schema from "effect/Schema";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as ElectronSafeStorage from "../electron/ElectronSafeStorage.ts";
 
-type PersistedSavedEnvironmentDesktopSsh = NonNullable<
-  PersistedSavedEnvironmentRecord["desktopSsh"]
->;
-
-interface PersistedSavedEnvironmentStorageRecord extends Omit<
-  PersistedSavedEnvironmentRecord,
-  "desktopSsh"
-> {
-  readonly desktopSsh?: PersistedSavedEnvironmentDesktopSsh;
+interface PersistedSavedEnvironmentStorageRecord extends PersistedSavedEnvironmentRecord {
+  readonly desktopSsh?: unknown;
   readonly encryptedBearerToken?: string;
   readonly relayManaged?: unknown;
 }
@@ -34,13 +27,6 @@ interface SavedEnvironmentRegistryStorageDocument {
   readonly records?: readonly PersistedSavedEnvironmentStorageRecord[];
 }
 
-const DesktopSshTargetSchema = Schema.Struct({
-  alias: Schema.String,
-  hostname: Schema.String,
-  username: Schema.NullOr(Schema.String),
-  port: Schema.NullOr(Schema.Number),
-});
-
 const PersistedSavedEnvironmentStorageRecordSchema = Schema.Struct({
   environmentId: EnvironmentId,
   label: Schema.String,
@@ -48,8 +34,8 @@ const PersistedSavedEnvironmentStorageRecordSchema = Schema.Struct({
   wsBaseUrl: Schema.String,
   createdAt: Schema.String,
   lastConnectedAt: Schema.NullOr(Schema.String),
-  desktopSsh: Schema.optionalKey(DesktopSshTargetSchema),
-  // T3 Connect records; s7video has no relay, so they are dropped on read.
+  // SSH (removed in S7V-018) and T3 Connect records are dropped on read.
+  desktopSsh: Schema.optionalKey(Schema.Unknown),
   relayManaged: Schema.optionalKey(Schema.Unknown),
   encryptedBearerToken: Schema.optionalKey(Schema.String),
 });
@@ -149,17 +135,13 @@ export class DesktopSavedEnvironments extends Context.Service<
 function toPersistedSavedEnvironmentRecord(
   record: PersistedSavedEnvironmentStorageRecord,
 ): PersistedSavedEnvironmentRecord {
-  const nextRecord = {
+  return {
     environmentId: record.environmentId,
     label: record.label,
     httpBaseUrl: record.httpBaseUrl,
     wsBaseUrl: record.wsBaseUrl,
     createdAt: record.createdAt,
     lastConnectedAt: record.lastConnectedAt,
-  };
-  return {
-    ...nextRecord,
-    ...(record.desktopSsh ? { desktopSsh: record.desktopSsh } : {}),
   };
 }
 
@@ -233,7 +215,7 @@ export const make = Effect.gen(function* () {
     getRegistry: readRegistryDocument(fileSystem, environment.savedEnvironmentRegistryPath).pipe(
       Effect.map((document) =>
         document.records
-          .filter((record) => record.relayManaged === undefined)
+          .filter((record) => record.relayManaged === undefined && record.desktopSsh === undefined)
           .map((record) => toPersistedSavedEnvironmentRecord(record)),
       ),
       Effect.withSpan("desktop.savedEnvironments.getRegistry"),

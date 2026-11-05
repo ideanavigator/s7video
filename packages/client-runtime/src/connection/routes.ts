@@ -4,7 +4,6 @@ import {
   isSharedAddressSpaceHost,
   isTailnetHost,
 } from "@t3tools/shared/hostClassification";
-import type { DesktopSshEnvironmentTarget } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 
 import {
@@ -14,14 +13,13 @@ import {
 } from "./catalog.ts";
 import { BearerConnectionTarget, type ConnectionTarget } from "./model.ts";
 
-export type ConnectionRouteKind = "loopback" | "lan" | "tailnet" | "vpn" | "public" | "ssh";
+export type ConnectionRouteKind = "loopback" | "lan" | "tailnet" | "vpn" | "public";
 
 export function connectionRouteId(target: ConnectionTarget): string {
   switch (target._tag) {
     case "PrimaryConnectionTarget":
       return "primary";
     case "BearerConnectionTarget":
-    case "SshConnectionTarget":
       return target.connectionId;
   }
 }
@@ -72,8 +70,6 @@ function routeHostname(route: ConnectionRoute): string | null {
 
 export function connectionRouteKind(route: ConnectionRoute): ConnectionRouteKind {
   switch (route.target._tag) {
-    case "SshConnectionTarget":
-      return "ssh";
     case "PrimaryConnectionTarget":
     case "BearerConnectionTarget": {
       const hostname = routeHostname(route);
@@ -95,7 +91,6 @@ const ROUTE_KIND_RANK: Record<ConnectionRouteKind, number> = {
   tailnet: 2,
   vpn: 2,
   public: 3,
-  ssh: 4,
 };
 
 export function insertRoute(
@@ -139,8 +134,6 @@ function routeAddressKey(route: ConnectionRoute): string | null {
   switch (profile?._tag) {
     case "BearerConnectionProfile":
       return `bearer:${profile.httpBaseUrl.replace(/\/+$/, "")}`;
-    case "SshConnectionProfile":
-      return `ssh:${sshTargetKey(profile.target)}`;
     default:
       return null;
   }
@@ -153,25 +146,15 @@ export function connectionRouteLabel(route: ConnectionRoute): string {
     case "lan":
       return "LAN";
     case "tailnet":
-      return "Tailscale";
+      return "Private network";
     case "vpn":
       return "VPN";
-    case "ssh": {
-      const profile = Option.getOrNull(route.profile);
-      return profile?._tag === "SshConnectionProfile"
-        ? `SSH ${profile.target.username ? `${profile.target.username}@` : ""}${profile.target.hostname}`
-        : "SSH";
-    }
     case "public":
       return routeHostname(route) ?? "Remote link";
   }
 }
 
 export function connectionRouteAddress(route: ConnectionRoute): string | null {
-  if (route.target._tag === "SshConnectionTarget") {
-    const profile = Option.getOrNull(route.profile);
-    return profile?._tag === "SshConnectionProfile" ? profile.target.alias : null;
-  }
   return routeHttpBaseUrl(route);
 }
 
@@ -397,8 +380,4 @@ export function pendingRouteOrder(
   const saved = new Set(savedIds);
   if (!pending.every((id) => saved.has(id))) return null;
   return pending.some((id, index) => id !== savedIds[index]) ? pending : null;
-}
-
-export function sshTargetKey(target: DesktopSshEnvironmentTarget): string {
-  return JSON.stringify([target.alias, target.hostname, target.username, target.port]);
 }

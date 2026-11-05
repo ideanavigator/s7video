@@ -8,14 +8,11 @@ import {
   BearerConnectionCredential,
   BearerConnectionProfile,
   BearerConnectionRegistration,
-  SshConnectionProfile,
-  SshConnectionRegistration,
 } from "../connection/catalog.ts";
 import {
   BearerConnectionTarget,
   ConnectionTransientError,
   PrimaryConnectionTarget,
-  SshConnectionTarget,
 } from "../connection/model.ts";
 import {
   PullRequestRoutingPermissions,
@@ -39,16 +36,17 @@ const encodeCatalogDocumentJson = Schema.encodeSync(
   Schema.fromJsonString(ConnectionCatalogDocument),
 );
 
-const SSH_TARGET = new SshConnectionTarget({
+const LAN_TARGET = new BearerConnectionTarget({
   environmentId: ENVIRONMENT_ID,
   label: "Remote",
-  connectionId: "ssh-1",
+  connectionId: "bearer-lan",
 });
-const SSH_PROFILE = new SshConnectionProfile({
-  connectionId: SSH_TARGET.connectionId,
+const LAN_PROFILE = new BearerConnectionProfile({
+  connectionId: LAN_TARGET.connectionId,
   environmentId: ENVIRONMENT_ID,
-  label: SSH_TARGET.label,
-  target: { alias: "work", hostname: "work.example.test", username: "maria", port: 22 },
+  label: LAN_TARGET.label,
+  httpBaseUrl: "http://192.168.1.10:3773",
+  wsBaseUrl: "ws://192.168.1.10:3773",
 });
 const BEARER_TARGET = new BearerConnectionTarget({
   environmentId: ENVIRONMENT_ID,
@@ -109,8 +107,8 @@ describe("ConnectionCatalogDocument", () => {
       ).toBe("off");
       expect(
         yield* restarted.get({
-          target: SSH_TARGET,
-          profile: Option.some(SSH_PROFILE),
+          target: LAN_TARGET,
+          profile: Option.some(LAN_PROFILE),
           enabled: true,
         }),
       ).toBe("off");
@@ -128,7 +126,7 @@ describe("ConnectionCatalogDocument", () => {
     }),
   );
 
-  it.effect("requires explicit trust for primary, bearer, and SSH connections independently", () =>
+  it.effect("requires explicit trust for primary and bearer connections independently", () =>
     Effect.gen(function* () {
       const permissions = yield* makePullRequestRoutingPermissions({
         read: Effect.succeed([]),
@@ -146,22 +144,6 @@ describe("ConnectionCatalogDocument", () => {
           enabled: true,
         },
         { target: BEARER_TARGET, profile: Option.some(BEARER_PROFILE), enabled: true },
-        {
-          enabled: true,
-          target: new SshConnectionTarget({
-            environmentId: ENVIRONMENT_ID,
-            label: "SSH",
-            connectionId: "ssh-1",
-          }),
-          profile: Option.some(
-            new SshConnectionProfile({
-              environmentId: ENVIRONMENT_ID,
-              label: "SSH",
-              connectionId: "ssh-1",
-              target: { alias: "work", hostname: "work.example.test", username: "maria", port: 22 },
-            }),
-          ),
-        },
       ];
       for (const entry of entries) {
         expect(yield* permissions.get(entry)).toBe("off");
@@ -305,11 +287,10 @@ describe("ConnectionCatalogDocument", () => {
 
     const decoded = decodeCatalogDocument(upstream);
 
-    expect(decoded.targets).toEqual([BEARER_TARGET, SSH_TARGET]);
-    expect(decoded.profiles).toEqual([BEARER_PROFILE, SSH_PROFILE]);
+    expect(decoded.targets).toEqual([BEARER_TARGET]);
+    expect(decoded.profiles).toEqual([BEARER_PROFILE]);
     expect(decoded.targets[0]).toBeInstanceOf(BearerConnectionTarget);
     expect(decoded.profiles[0]).toBeInstanceOf(BearerConnectionProfile);
-    expect(decoded.profiles[1]).toBeInstanceOf(SshConnectionProfile);
     expect(decoded.credentials).toEqual([
       { connectionId: BEARER_TARGET.connectionId, credential: BEARER_CREDENTIAL },
     ]);
@@ -325,6 +306,84 @@ describe("ConnectionCatalogDocument", () => {
     expect(reencoded).not.toContain("stale-thumbprint");
     expect(reencoded).not.toContain("RelayConnectionTarget");
     expect(reencoded).not.toContain("t3-connect");
+    expect(decodeCatalogDocument(JSON.parse(reencoded))).toEqual(decoded);
+  });
+
+  it("drops SSH environments, removed in S7V-018, with their profiles, tokens and settings", () => {
+    const sshOnlyId = EnvironmentId.make("environment-ssh-only");
+    const sshProfile = (connectionId: string, environmentId: string) => ({
+      _tag: "SshConnectionProfile",
+      connectionId,
+      environmentId,
+      label: "Remote",
+      target: { alias: "work", hostname: "work.example.test", username: "maria", port: 22 },
+    });
+    const stored = {
+      schemaVersion: 1,
+      targets: [
+        {
+          _tag: "BearerConnectionTarget",
+          environmentId: ENVIRONMENT_ID,
+          label: "Remote",
+          connectionId: "bearer-1",
+        },
+        {
+          _tag: "SshConnectionTarget",
+          environmentId: ENVIRONMENT_ID,
+          label: "Remote",
+          connectionId: "ssh-1",
+        },
+        {
+          _tag: "SshConnectionTarget",
+          environmentId: sshOnlyId,
+          label: "SSH only",
+          connectionId: "ssh-2",
+        },
+      ],
+      profiles: [
+        {
+          _tag: "BearerConnectionProfile",
+          connectionId: "bearer-1",
+          environmentId: ENVIRONMENT_ID,
+          label: "Remote",
+          httpBaseUrl: "https://remote.example.test",
+          wsBaseUrl: "wss://remote.example.test",
+        },
+        sshProfile("ssh-1", ENVIRONMENT_ID),
+        sshProfile("ssh-2", sshOnlyId),
+      ],
+      credentials: [
+        {
+          connectionId: "bearer-1",
+          credential: { _tag: "BearerConnectionCredential", token: "bearer-token" },
+        },
+        {
+          connectionId: "ssh-1",
+          credential: { _tag: "BearerConnectionCredential", token: "ssh-paired-token" },
+        },
+        {
+          connectionId: "ssh-2",
+          credential: { _tag: "BearerConnectionCredential", token: "ssh-only-token" },
+        },
+      ],
+      githubRoutingPermissions: [
+        { environmentId: sshOnlyId, connectionKey: "ssh", permission: "read" },
+      ],
+      disabledEnvironmentIds: [sshOnlyId],
+    };
+
+    const decoded = decodeCatalogDocument(stored);
+
+    expect(decoded.targets).toEqual([BEARER_TARGET]);
+    expect(decoded.profiles).toEqual([BEARER_PROFILE]);
+    expect(decoded.credentials).toEqual([
+      { connectionId: BEARER_TARGET.connectionId, credential: BEARER_CREDENTIAL },
+    ]);
+    expect(decoded.disabledEnvironmentIds).toEqual([]);
+    expect(decoded.githubRoutingPermissions).toEqual([]);
+    const reencoded = encodeCatalogDocumentJson(decoded);
+    expect(reencoded).not.toContain("Ssh");
+    expect(reencoded).not.toContain("ssh-paired-token");
     expect(decodeCatalogDocument(JSON.parse(reencoded))).toEqual(decoded);
   });
 
@@ -364,37 +423,6 @@ describe("ConnectionCatalogDocument", () => {
     );
   });
 
-  it("persists the normalized SSH profile and its paired token beside its target", () => {
-    const target = new SshConnectionTarget({
-      environmentId: ENVIRONMENT_ID,
-      label: "SSH",
-      connectionId: "ssh-1",
-    });
-    const profile = new SshConnectionProfile({
-      connectionId: target.connectionId,
-      environmentId: target.environmentId,
-      label: target.label,
-      target: {
-        alias: "devbox",
-        hostname: "devbox.example.test",
-        username: "developer",
-        port: 22,
-      },
-    });
-    const document = registerConnectionInCatalog(
-      EMPTY_CONNECTION_CATALOG_DOCUMENT,
-      new SshConnectionRegistration({ target, profile, credential: BEARER_CREDENTIAL }),
-    );
-
-    expect(document.targets).toEqual([target]);
-    expect(document.profiles).toEqual([profile]);
-    expect(document.credentials).toEqual([
-      { connectionId: target.connectionId, credential: BEARER_CREDENTIAL },
-    ]);
-    // Removing the route forgets its token too.
-    expect(removeConnectionFromCatalog(document, ENVIRONMENT_ID).credentials).toEqual([]);
-  });
-
   it("keeps every route of an environment and drops only a removed route's records", () => {
     const withBearer = registerConnectionInCatalog(
       EMPTY_CONNECTION_CATALOG_DOCUMENT,
@@ -404,26 +432,26 @@ describe("ConnectionCatalogDocument", () => {
         credential: BEARER_CREDENTIAL,
       }),
     );
-    const withSsh = registerConnectionInCatalog(
+    const withLan = registerConnectionInCatalog(
       withBearer,
-      new SshConnectionRegistration({
-        target: SSH_TARGET,
-        profile: SSH_PROFILE,
+      new BearerConnectionRegistration({
+        target: LAN_TARGET,
+        profile: LAN_PROFILE,
         credential: BEARER_CREDENTIAL,
       }),
-      [BEARER_TARGET, SSH_TARGET],
+      [BEARER_TARGET, LAN_TARGET],
     );
-    expect(catalogRoutes(withSsh, ENVIRONMENT_ID)).toEqual([BEARER_TARGET, SSH_TARGET]);
-    expect(withSsh.credentials).toHaveLength(2);
+    expect(catalogRoutes(withLan, ENVIRONMENT_ID)).toEqual([BEARER_TARGET, LAN_TARGET]);
+    expect(withLan.credentials).toHaveLength(2);
 
-    const sshOnly = setRoutesInCatalog(withSsh, ENVIRONMENT_ID, [SSH_TARGET]);
-    expect(sshOnly.targets).toEqual([SSH_TARGET]);
-    expect(sshOnly.profiles).toEqual([SSH_PROFILE]);
-    expect(sshOnly.credentials.map((value) => value.connectionId)).toEqual([
-      SSH_TARGET.connectionId,
+    const lanOnly = setRoutesInCatalog(withLan, ENVIRONMENT_ID, [LAN_TARGET]);
+    expect(lanOnly.targets).toEqual([LAN_TARGET]);
+    expect(lanOnly.profiles).toEqual([LAN_PROFILE]);
+    expect(lanOnly.credentials.map((value) => value.connectionId)).toEqual([
+      LAN_TARGET.connectionId,
     ]);
 
-    const bearerOnly = setRoutesInCatalog(withSsh, ENVIRONMENT_ID, [BEARER_TARGET]);
+    const bearerOnly = setRoutesInCatalog(withLan, ENVIRONMENT_ID, [BEARER_TARGET]);
     expect(bearerOnly.profiles).toEqual([BEARER_PROFILE]);
     expect(bearerOnly.credentials.map((value) => value.connectionId)).toEqual([
       BEARER_TARGET.connectionId,
@@ -438,10 +466,10 @@ describe("ConnectionCatalogDocument", () => {
     });
     const document = {
       ...EMPTY_CONNECTION_CATALOG_DOCUMENT,
-      targets: [SSH_TARGET, other],
+      targets: [LAN_TARGET, other],
     };
     expect(
-      setRoutesInCatalog(document, ENVIRONMENT_ID, [BEARER_TARGET, SSH_TARGET]).targets,
-    ).toEqual([BEARER_TARGET, SSH_TARGET, other]);
+      setRoutesInCatalog(document, ENVIRONMENT_ID, [BEARER_TARGET, LAN_TARGET]).targets,
+    ).toEqual([BEARER_TARGET, LAN_TARGET, other]);
   });
 });

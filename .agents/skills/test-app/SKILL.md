@@ -52,6 +52,6 @@ An assistant turn ending is not teardown. Stop only processes you started,
 using retained terminal sessions or captured PIDs.
 
 When sharing is requested, start with
-`vp run dev --no-seed --home-dir "$PWD/.t3" --share` and give the user
+`vp run dev --no-seed --home-dir "$PWD/.t3" --host 0.0.0.0` and give the user
 a fresh complete pairing URL that you have not consumed. Keep other credentials
 out of screenshots, commits, and replies.

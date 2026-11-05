@@ -10,7 +10,6 @@ import {
   AuthAccessReadScope,
   AuthAccessWriteScope,
   AuthOrchestrationOperateScope,
-  AuthOrchestrationReadScope,
   AuthPreviewOperateScope,
   AuthSettingsWriteScope,
   AuthSourceControlWriteScope,
@@ -282,8 +281,8 @@ it.effect(
     ),
 );
 
-it.effect.each(["commit", "push", "commit_push", "create_pr", "commit_push_pr"] as const)(
-  "%s needs thread read permission only when generating a PR from a thread",
+it.effect.each(["commit", "push", "commit_push"] as const)(
+  "%s needs only source control write, with or without a thread",
   (action) =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -299,23 +298,6 @@ it.effect.each(["commit", "push", "commit_push", "create_pr", "commit_push_pr"] 
         registry.set(sessions(env), AsyncResult.success(session));
         expect(registry.get(command.permissionAtom(env, input))).toBe(true);
         yield* command.authorize(registry, env, input);
-        const readsThread = action === "create_pr" || action === "commit_push_pr";
-        expect(registry.get(command.permissionAtom(env, withThread))).toBe(!readsThread);
-        if (readsThread) {
-          expect(
-            yield* command.authorize(registry, env, withThread).pipe(Effect.flip),
-          ).toMatchObject({ requiredPermission: AuthOrchestrationReadScope });
-        } else {
-          yield* command.authorize(registry, env, withThread);
-        }
-        registry.set(
-          sessions(env),
-          AsyncResult.success({
-            ...session,
-            scopes: [AuthSourceControlWriteScope, AuthOrchestrationReadScope],
-            permissions: [AuthSourceControlWriteScope, AuthOrchestrationReadScope],
-          }),
-        );
         expect(registry.get(command.permissionAtom(env, withThread))).toBe(true);
         yield* command.authorize(registry, env, withThread);
       }),

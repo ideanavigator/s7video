@@ -6,11 +6,9 @@ import {
   EasDeviceHostConfig,
   SimlockDeviceHostConfig,
   EasDeviceHostConfigs,
-  SshDeviceHostConfigs,
 } from "./device.ts";
 import { secretSettingsFields } from "./settings.ts";
 
-const decodeSshHosts = Schema.decodeUnknownSync(SshDeviceHostConfigs);
 const decodeEas = Schema.decodeUnknownSync(EasDeviceHostConfigs);
 const encodeState = Schema.encodeSync(DeviceServiceState);
 const decodeState = Schema.decodeUnknownSync(DeviceServiceState);
@@ -24,10 +22,7 @@ const decodeOlderState = Schema.decodeUnknownSync(
 );
 
 describe("configured device hosts", () => {
-  it("reads SSH hosts saved before hosts had a kind, and bounds EAS sessions", () => {
-    expect(decodeSshHosts([{ id: "mac", label: "Mac mini", target: "julius@mac" }])).toEqual([
-      { kind: "ssh", id: "mac", label: "Mac mini", target: "julius@mac" },
-    ]);
+  it("bounds EAS sessions", () => {
     expect(decodeEas([{ kind: "eas", id: "eas", label: "EAS Simulator" }])).toEqual([
       {
         kind: "eas",

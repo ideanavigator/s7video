@@ -564,10 +564,6 @@ function PairingForm({
               <code className="font-mono">{BRAND.app.cliName} serve</code>, then run:
             </p>
             <CommandBlock command={`${BRAND.app.cliName} pair`} className="mt-2" />
-            <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
-              On a tailnet, run{" "}
-              <code className="font-mono">{BRAND.app.cliName} pair --tailscale</code> instead.
-            </p>
           </CollapsiblePanel>
         </Collapsible>
       </form>

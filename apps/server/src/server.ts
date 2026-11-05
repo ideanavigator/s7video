@@ -1,8 +1,6 @@
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import * as DatabaseStorage from "./persistence/DatabaseStorage.ts";
 import * as StorageCleanup from "./storageCleanup.ts";
-import * as PullRequestSyncReactor from "./orchestration-v2/PullRequestSyncReactor.ts";
-import * as PullRequestWatchReactor from "./orchestration-v2/PullRequestWatchReactor.ts";
 import * as DelegatedTaskQuestionReactor from "./orchestration-v2/DelegatedTaskQuestionReactor.ts";
 // Effect wraps this raw Node HTTP server after its startup and write-error guards attach.
 // @effect-diagnostics nodeBuiltinImport:off
@@ -160,16 +158,10 @@ import * as EventStoreV2 from "./orchestration-v2/EventStore.ts";
 import * as ProjectionMaintenance from "./orchestration-v2/ProjectionMaintenance.ts";
 import * as ProjectionStoreV2 from "./orchestration-v2/ProjectionStore.ts";
 import { makePersistedServerRuntimeState } from "./serverRuntimeState.ts";
-import { acceptsPrivateNetworkConnection, loopbackUrlHostForAddress } from "./startupAccess.ts";
+import { acceptsPrivateNetworkConnection } from "./startupAccess.ts";
 import * as OrchestrationHttp from "./orchestration-v2/http.ts";
 import * as ProjectHttp from "./project/http.ts";
 import * as NetService from "@t3tools/shared/Net";
-import {
-  disableTailscaleServe,
-  ensureTailscaleServe,
-  readTailscaleServeRoutesTo,
-  readTailscaleStatus,
-} from "@t3tools/tailscale";
 import * as ServerActivation from "./serverActivation.ts";
 
 // Escaped MCP handoff provenance can exceed find-my-way's 100-character segment default.
@@ -266,10 +258,8 @@ const layerHttpServer = Layer.unwrap(
     const bindHost = yield* ManagedLimits.checkServerReachability(policy, {
       authPolicy: EnvironmentAuthPolicy.resolveServerAuthPolicy(config),
       host: config.host,
-      tailscaleServeEnabled: config.tailscaleServeEnabled,
       privateNetworkOnly: config.privateNetworkOnly,
     });
-    yield* ManagedLimits.closeTailscaleServeTo(policy, { host: bindHost, port: config.port });
     return NodeHttpServer.layer(
       () => {
         const server = rejectRequestsUntilServing(
@@ -528,26 +518,6 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   DelegatedTaskAnalytics.layer,
   Layer.effectDiscard(
     Effect.gen(function* () {
-      const service = yield* PullRequestSyncReactor.PullRequestSyncReactor;
-      yield* service.start();
-    }),
-  ).pipe(
-    Layer.provideMerge(PullRequestSyncReactor.layer),
-    Layer.provide(layerPullRequestService),
-    Layer.provide(ProjectionStoreV2.layer),
-  ),
-  Layer.effectDiscard(
-    Effect.gen(function* () {
-      const service = yield* PullRequestWatchReactor.PullRequestWatchReactor;
-      yield* service.start();
-    }),
-  ).pipe(
-    Layer.provide(PullRequestWatchReactor.layer),
-    Layer.provide(layerPullRequestService),
-    Layer.provide(ProjectionStoreV2.layer),
-  ),
-  Layer.effectDiscard(
-    Effect.gen(function* () {
       const service = yield* DelegatedTaskQuestionReactor.DelegatedTaskQuestionReactor;
       yield* service.start();
     }),
@@ -695,7 +665,6 @@ const layerMakeServer = Layer.unwrap(
     const awaitActivation = Deferred.await(activation);
     const layerActivation = Layer.succeed(ServerActivation.ServerActivation, awaitActivation);
     const runtimeStateParked = yield* Deferred.make<void>();
-    const tailscaleParked = yield* Deferred.make<void>();
     const routesReady = yield* Deferred.make<void>();
     const layerLauncher = ServiceLauncherClient.layer;
 
@@ -734,106 +703,11 @@ const layerMakeServer = Layer.unwrap(
           );
       }),
     );
-    const layerTailscaleServe = config.tailscaleServeEnabled
-      ? Layer.effectDiscard(
-          Effect.acquireRelease(
-            Effect.gen(function* () {
-              yield* Deferred.succeed(tailscaleParked, undefined).pipe(Effect.orDie);
-              yield* awaitActivation;
-              const server = yield* HttpServer.HttpServer;
-              const address = server.address;
-              if (typeof address === "string" || !("port" in address)) {
-                return null;
-              }
-
-              const localPort = address.port;
-              const localHost = loopbackUrlHostForAddress(address);
-              return yield* ensureTailscaleServe({
-                localPort,
-                servePort: config.tailscaleServePort,
-                localHost,
-              }).pipe(
-                Effect.as({
-                  localPort,
-                  localHost: localHost.replace(/^\[|\]$/gu, ""),
-                  servePort: config.tailscaleServePort,
-                }),
-                Effect.tap(() =>
-                  Effect.logInfo("Tailscale Serve configured", {
-                    localPort,
-                    servePort: config.tailscaleServePort,
-                  }),
-                ),
-                Effect.catch((cause) =>
-                  Effect.logWarning("Failed to configure Tailscale Serve", {
-                    cause,
-                    localPort,
-                    servePort: config.tailscaleServePort,
-                  }).pipe(Effect.as(null)),
-                ),
-              );
-            }),
-            (configured) =>
-              configured
-                ? Effect.all(
-                    [
-                      readTailscaleServeRoutesTo({
-                        host: configured.localHost,
-                        port: configured.localPort,
-                      }),
-                      readTailscaleStatus,
-                    ],
-                    { concurrency: 2 },
-                  ).pipe(
-                    // Another service may hold the root route by now, or it may sit under a
-                    // former name, where `off` would act on the current one; only ours goes.
-                    Effect.map(([routes, status]) =>
-                      routes.some(
-                        (route) =>
-                          route.servePort === configured.servePort &&
-                          route.mount === "/" &&
-                          route.owner === undefined &&
-                          route.ambiguous === undefined &&
-                          route.host?.toLowerCase() === status.magicDnsName?.toLowerCase(),
-                      ),
-                    ),
-                    Effect.orElseSucceed(() => false),
-                    Effect.flatMap((ours) =>
-                      ours
-                        ? disableTailscaleServe({ servePort: configured.servePort }).pipe(
-                            Effect.tap(() =>
-                              Effect.logInfo("Tailscale Serve disabled", {
-                                servePort: configured.servePort,
-                              }),
-                            ),
-                          )
-                        : Effect.logInfo(
-                            "Tailscale Serve left on; its root route is not known to be ours",
-                            {
-                              servePort: configured.servePort,
-                            },
-                          ),
-                    ),
-                    Effect.catch((cause) =>
-                      Effect.logWarning("Failed to disable Tailscale Serve", {
-                        cause,
-                        servePort: configured.servePort,
-                      }),
-                    ),
-                  )
-                : Effect.void,
-          ),
-        )
-      : Layer.empty;
     const layerRuntimeServices = ServerRuntimeStartup.layerWithOptions({
       activate: Deferred.succeed(activation, undefined).pipe(Effect.asVoid),
       abort: (error) => Deferred.die(activation, error).pipe(Effect.asVoid),
       awaitAuxiliaryParked: Effect.all(
-        [
-          Deferred.await(runtimeStateParked),
-          Deferred.await(routesReady),
-          ...(config.tailscaleServeEnabled ? [Deferred.await(tailscaleParked)] : []),
-        ],
+        [Deferred.await(runtimeStateParked), Deferred.await(routesReady)],
         { concurrency: "unbounded" },
       ).pipe(Effect.asVoid),
     }).pipe(Layer.provideMerge(layerRuntimeDependencies), Layer.provide(layerLauncher));
@@ -849,7 +723,6 @@ const layerMakeServer = Layer.unwrap(
       layerRoutes,
       layerHttpListening,
       layerRuntimeState.pipe(Layer.provide(layerLauncher)),
-      layerTailscaleServe,
       HeapSnapshot.layer,
     );
 

@@ -59,9 +59,6 @@ vi.mock(import("./settingsLayout"), async (original) => ({
 
 import { SourceControlWritingSettingsSection } from "./SourceControlWritingSettings";
 
-const resetButton = (label: string) =>
-  page.getByRole("button", { name: `Reset ${label} to default` });
-
 const content = () => (
   <StrictMode>
     <SourceControlWritingSettingsSection />
@@ -91,24 +88,18 @@ async function setup() {
   return screen;
 }
 
-describe("mixed source control instructions", () => {
-  it("resets mixed template preferences without replacing each environment's instructions", async () => {
+describe("source control writing settings", () => {
+  it("offers no pull request options (S7V-018)", async () => {
     await using _screen = await setup();
-    const initialInstructions = state.styles.map(({ mode, customInstructions }) => ({
-      mode,
-      customInstructions,
-    }));
 
     await userEvent.click(page.getByRole("button", { name: "Advanced" }));
-    await userEvent.click(resetButton("change request templates"));
 
-    expect(state.updateSettings).toHaveBeenCalledTimes(1);
-    expect(state.styles.map((style) => style.followChangeRequestTemplates)).toEqual([
-      DEFAULT_UNIFIED_SETTINGS.sourceControlWritingStyle.followChangeRequestTemplates,
-      DEFAULT_UNIFIED_SETTINGS.sourceControlWritingStyle.followChangeRequestTemplates,
-    ]);
-    expect(
-      state.styles.map(({ mode, customInstructions }) => ({ mode, customInstructions })),
-    ).toEqual(initialInstructions);
+    await expect
+      .element(page.getByRole("switch", { name: "Follow change request templates" }))
+      .not.toBeInTheDocument();
+    await expect
+      .element(page.getByRole("switch", { name: "Review guides" }))
+      .not.toBeInTheDocument();
+    expect(state.updateSettings).not.toHaveBeenCalled();
   });
 });

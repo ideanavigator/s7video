@@ -393,8 +393,10 @@ export function EmptyRemoteEnvironments() {
         <ChevronsLeftRightEllipsisIcon />
       </EmptyMedia>
       <EmptyHeader>
-        <EmptyTitle>No saved remote environments</EmptyTitle>
-        <EmptyDescription>Click “Add environment” to pair another environment.</EmptyDescription>
+        <EmptyTitle>No other computers on your network</EmptyTitle>
+        <EmptyDescription>
+          Click “Add environment” to pair another computer on your network.
+        </EmptyDescription>
       </EmptyHeader>
     </Empty>
   );

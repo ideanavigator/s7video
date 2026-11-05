@@ -1,13 +1,8 @@
-import { DesktopSshEnvironmentTargetSchema, EnvironmentId } from "@t3tools/contracts";
+import { EnvironmentId } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
-import {
-  BearerConnectionTarget,
-  PrimaryConnectionTarget,
-  SshConnectionTarget,
-  type ConnectionTarget,
-} from "./model.ts";
+import { BearerConnectionTarget, PrimaryConnectionTarget, type ConnectionTarget } from "./model.ts";
 
 const ConnectionProfileBase = {
   connectionId: Schema.String,
@@ -30,15 +25,7 @@ export class BearerConnectionProfile extends Schema.TaggedClass<BearerConnection
   },
 ) {}
 
-export class SshConnectionProfile extends Schema.TaggedClass<SshConnectionProfile>()(
-  "SshConnectionProfile",
-  {
-    ...ConnectionProfileBase,
-    target: DesktopSshEnvironmentTargetSchema,
-  },
-) {}
-
-export const ConnectionProfile = Schema.Union([BearerConnectionProfile, SshConnectionProfile]);
+export const ConnectionProfile = Schema.Union([BearerConnectionProfile]);
 export type ConnectionProfile = typeof ConnectionProfile.Type;
 
 export interface ConnectionRoute {
@@ -81,20 +68,7 @@ export class BearerConnectionRegistration extends Schema.TaggedClass<BearerConne
   },
 ) {}
 
-export class SshConnectionRegistration extends Schema.TaggedClass<SshConnectionRegistration>()(
-  "SshConnectionRegistration",
-  {
-    target: SshConnectionTarget,
-    profile: SshConnectionProfile,
-    /** The token from pairing over SSH, which later connects reuse. */
-    credential: BearerConnectionCredential,
-  },
-) {}
-
-export const ConnectionRegistration = Schema.Union([
-  BearerConnectionRegistration,
-  SshConnectionRegistration,
-]);
+export const ConnectionRegistration = Schema.Union([BearerConnectionRegistration]);
 export type ConnectionRegistration = typeof ConnectionRegistration.Type;
 
 /**
@@ -120,7 +94,6 @@ export function connectionRegistrationCatalogEntry(
         enabled: true,
       };
     case "BearerConnectionRegistration":
-    case "SshConnectionRegistration":
       return {
         target: registration.target,
         profile: Option.some(registration.profile),

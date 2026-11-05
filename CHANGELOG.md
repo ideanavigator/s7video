@@ -25,8 +25,7 @@ from; the per-ticket entries and how this file is compiled are in
 ### Changed
 
 - The app is called s7video and keeps its data in `~/.s7video`; name, theme, links and endpoints come
-  from `s7video.config.ts`, so it installs alongside T3 Code without touching its data. SSH,
-  device-host and WSL environments are turned off for now. (S7V-003)
+  from `s7video.config.ts`, so it installs alongside T3 Code without touching its data. (S7V-003)
 - Usage data is off by default and sent only if you turn it on in the new Settings > Privacy page
   (or with `S7VIDEO_TELEMETRY_ENABLED=true`). The open-source build has no destination and offers no
   switch; upstream's `T3CODE_TELEMETRY_*` variables are ignored. (S7V-013)
@@ -39,6 +38,9 @@ from; the per-ticket entries and how this file is compiled are in
 
 ### Removed
 
+- Connecting to other computers over SSH, Tailscale or WSL; the "Create PR" action, pull-request
+  status and sync; and the pull-request settings. The pull-request screens are hidden while no code
+  host is set up. Local commit and push stay, and LAN pairing still works. (S7V-018)
 - T3 Code's cloud features: Clerk sign-in, T3 Connect, the managed relay and tunnel, and guest share
   links. (S7V-015)
 - Apps, agent providers and code-hosting integrations s7video does not use: the mobile app, the

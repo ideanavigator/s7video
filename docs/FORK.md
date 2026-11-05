@@ -54,8 +54,6 @@ Covered by `packages/contracts/src/settings.test.ts` ("ServerSettings from upstr
 
 | Kept                                                                                                                                                                                                                                    | Why                                                                                                                                                                                                                                                                                      |
 | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `packages/ssh`                                                                                                                                                                                                                          | Deeply coupled: desktop SSH environments (IPC, password prompts, web sidebar and settings), server SSH device hosts, and the WSL environment (`buildRemoteNodeEnvScript`). Removing it means redesigning remote environments.                                                            |
-| `packages/tailscale`                                                                                                                                                                                                                    | Coupled to direct-endpoint advertisement, `t3 pair`, remote open targets, managed limits, desktop server exposure, `dev --share`, and `cloud/ConnectReachability.ts`. The cloud side belongs to S7V-015; revisit both together.                                                          |
 | `packages/source-control-core`, `source-control-definitions`                                                                                                                                                                            | Local git, checkpoints, PR-link parsing and settings types import them.                                                                                                                                                                                                                  |
 | `packages/source-control-testing`                                                                                                                                                                                                       | Imported by 3 kept server test files (`PullRequestService`, `SourceControlProviderRegistry`, `SourceControlDiscovery`; about 100 cases).                                                                                                                                                 |
 | `native/resource-monitor`                                                                                                                                                                                                               | The server's resource telemetry runs it on macOS.                                                                                                                                                                                                                                        |
@@ -67,14 +65,14 @@ Covered by `packages/contracts/src/settings.test.ts` ("ServerSettings from upstr
 
 ## Changed later
 
-| Ticket            | Scope                                                                                           |
-| ----------------- | ----------------------------------------------------------------------------------------------- |
-| S7V-015           | Done: T3 cloud removed (see below). `packages/tailscale` and `packages/ssh` stay until S7V-018. |
-| S7V-013           | Done: usage data off by default and opt-in (see below). Kept in the code, not removed.          |
-| S7V-014           | Done: `heic-to` (LGPL) replaced by macOS HEIC decoding (see below).                             |
-| S7V-003           | Done: branding from `s7video.config.ts`, own data folder, no T3 endpoints (see below).          |
-| S7V-004           | Licence notices.                                                                                |
-| S7V-006 / S7V-008 | Done: community files and agent rules (see below).                                              |
+| Ticket            | Scope                                                                                  |
+| ----------------- | -------------------------------------------------------------------------------------- |
+| S7V-015           | Done: T3 cloud removed (see below).                                                    |
+| S7V-013           | Done: usage data off by default and opt-in (see below). Kept in the code, not removed. |
+| S7V-014           | Done: `heic-to` (LGPL) replaced by macOS HEIC decoding (see below).                    |
+| S7V-003           | Done: branding from `s7video.config.ts`, own data folder, no T3 endpoints (see below). |
+| S7V-004           | Licence notices.                                                                       |
+| S7V-006 / S7V-008 | Done: community files and agent rules (see below).                                     |
 
 ## Removed in S7V-015
 
@@ -135,9 +133,49 @@ Nothing T3 owns is contacted by default. S7V-003 moved every endpoint below into
 | Desktop auto-update feed (`build-desktop-artifact.ts`)      | CI's `GITHUB_REPOSITORY`                                  | `updates.githubRepository` (or `T3CODE_DESKTOP_UPDATE_REPOSITORY`), empty: none. |
 | Triage, About, boot error, star prompt, release links       | `pingdotgg/t3code`, `t3.codes`                            | `urls.*` (`ideanavigator/s7video`).                                              |
 
-SSH environments, SSH device hosts and the WSL backend are turned off (`REMOTE_ENVIRONMENTS_ENABLED`
-in `@t3tools/shared/remoteEnvironments`). Their scripts still use `~/.t3` on the target, which on
-this Mac or any host with T3 Code would reach T3 Code's data and server. S7V-018 removes them.
+SSH environments, SSH device hosts and the WSL backend, whose scripts used `~/.t3` on the target,
+are removed; see [Removed in S7V-018](#removed-in-s7v-018).
+
+## Removed in S7V-018
+
+s7video is a single-Mac editor, so connecting to other computers and code-hosting pull requests go.
+Direct LAN pairing stays: this Mac can still be reached on the local network, and a client can
+still pair with another server by link or code. The `REMOTE_ENVIRONMENTS_ENABLED` flag went with
+the code it guarded.
+
+| Area           | Removed                                                                                                                                                                                                                                                                                                                                                                           |
+| -------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Packages       | `packages/ssh`, `packages/tailscale`, `@t3tools/shared/remoteEnvironments`.                                                                                                                                                                                                                                                                                                       |
+| Desktop        | `src/ssh/`, `src/wsl/`, SSH and WSL IPC, password prompts, the WSL primary and its preflight fallback, the Tailscale endpoint provider and Serve toggle, WSL folder picking. LAN address picking still skips 100.64.0.0/10.                                                                                                                                                       |
+| Server         | SSH device hosts (`SshDeviceHost`, `sshDeviceScript`, `localSshDeviceHost`, `device.testHost`), Tailscale Serve at startup and its managed-policy cleanup, `--tailscale-serve*`, `t3 pair --tailscale`, Serve endpoint advertisement, Tailscale SSH open targets, the pull request sync and watch reactors, PR status in git status, and the Create PR step.                      |
+| Web            | SSH and WSL environment UI, SSH device host editor, Tailscale HTTPS setup, "Create PR" and "Commit, push & PR" actions, and the pull request settings (auto-settle on merge, keep threads with a PR, merge method, agent credits, PR links, change request templates, review guides, PR sharing, PR keybindings). Tailscale wording and `ts.net` examples are gone from Settings. |
+| client-runtime | SSH connection targets, profiles, registrations, gateway and broker; Create PR git actions.                                                                                                                                                                                                                                                                                       |
+| contracts      | SSH/WSL desktop bridge methods and schemas, `runningDistro`, Tailscale Serve fields in the desktop exposure state and bootstrap, `SshDeviceHostConfig`, `deviceHosts`, `device.testHost`, the `create_pr` and `commit_push_pr` git actions.                                                                                                                                       |
+| Scripts        | `dev --share`, `dev --built`, `scripts/lib/dev-share.ts`.                                                                                                                                                                                                                                                                                                                         |
+
+### Old data
+
+- Desktop settings with `tailscaleServe*`, `wslBackendEnabled`, `wslMode`, `wslDistro` or `wslOnly`
+  load; the fields are ignored and dropped on the next save.
+- Saved environments with `desktopSsh`, and catalog SSH targets, profiles and their credentials, are
+  dropped on read.
+- Server settings with `deviceHosts` decode; the list is ignored.
+- `VcsStatusResult.pr` stays in the wire schema and is always null.
+
+### Kept, with reasons
+
+| Item                                                                                                                                                    | Why                                                                                                                                                                                                                      |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| The pull request domain: inbox route, PR panel, review guides, PR RPCs, thread PR links and watches, PR MCP tools, PR routing grants, branch PR lookups | Deep in orchestration events, projections and the thread UI. Inert without a code host. Its removal is a separate ticket. Kept under the PO rule of 2026-11-05 (planning `tickets/README.md`, "Removing upstream code"). |
+| Pull request entry points (sidebar button, "Open pull requests" palette action, branch toolbar PR badge)                                                | Hidden while no code host is registered (`apps/web/src/lib/codeHosts.ts`); they come back when one is.                                                                                                                   |
+| PR MCP toolkit (about 12 tools, including `watch_pull_request`)                                                                                         | Still advertised to agents but inert: with no code host no PR URL resolves, and the watch reactor is gone.                                                                                                               |
+| `pullRequest.copyNumber` default binding (`mod+shift+k`)                                                                                                | Inert outside the hidden PR panel; hidden from the keybindings editor.                                                                                                                                                   |
+| "Delete merged worktrees" (`worktreeOnMerge`)                                                                                                           | Still shown so users can turn it off; it never matches a merged PR without a code host.                                                                                                                                  |
+| WSL connecting splash, `devRemoteT3ServerEntryPath`, `isWslEnvironment` sidebar grouping parameter                                                      | Unused service members and fields; kept under the 2026-11-05 removal rule.                                                                                                                                               |
+| Settings schema fields for removed PR options                                                                                                           | Kept so stored settings round-trip; the UI no longer shows them.                                                                                                                                                         |
+| Generic "tailnet" route and interface classification, remote open over the host's own sshd (`mdns`)                                                     | Host classification and editor links, not the Tailscale package.                                                                                                                                                         |
+| Desktop backend pool, `preflightFailure`, stdin bootstrap delivery                                                                                      | Generic backend machinery that WSL used; small upstream diff to keep.                                                                                                                                                    |
+| Windows WSL runtime packaging in `build-desktop-artifact.ts`, `RemoteOpenTargetKind` `"tailscale"`                                                      | Windows packaging and a wire literal; out of scope for an Apple Silicon build.                                                                                                                                           |
 
 ## Usage data and diagnostics (S7V-013)
 

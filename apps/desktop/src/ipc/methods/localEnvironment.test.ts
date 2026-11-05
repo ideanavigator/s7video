@@ -32,7 +32,7 @@ describe("local environment IPC", () => {
     const layer = Layer.mergeAll(
       DesktopAppSettings.layerTest({
         ...DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS,
-        wslBackendEnabled: true,
+        serverExposureMode: "network-accessible",
       }),
       Layer.mock(DesktopLifecycle.DesktopLifecycle, {
         relaunch: (reason) =>
@@ -51,7 +51,7 @@ describe("local environment IPC", () => {
       yield* setLocalEnvironmentEnabled.handler(true);
       assert.isTrue(yield* getLocalEnvironmentEnabled.handler());
       const appSettings = yield* DesktopAppSettings.DesktopAppSettings;
-      assert.isTrue((yield* appSettings.get).wslBackendEnabled);
+      assert.equal((yield* appSettings.get).serverExposureMode, "network-accessible");
       assert.deepEqual(relaunchReasons, [
         "localEnvironmentEnabled=false",
         "localEnvironmentEnabled=true",

@@ -2,6 +2,7 @@ import { type VcsStatusResult } from "@t3tools/contracts";
 import { resolveAutoFeatureBranchName } from "@t3tools/shared/git";
 import { assert, describe, it } from "vite-plus/test";
 import {
+  buildMenuItems,
   requiresDefaultBranchConfirmation,
   resolveChangesTotals,
   resolveLiveThreadBranchUpdate,
@@ -114,13 +115,37 @@ describe("when: ref has no upstream configured", () => {
   });
 });
 
+describe("git actions are local only (S7V-018)", () => {
+  const cases = [
+    status(),
+    status({ aheadCount: 2 }),
+    status({ aheadCount: 2, aheadOfDefaultCount: 2 }),
+    status({ hasUpstream: false, aheadCount: 1 }),
+    status({ hasWorkingTreeChanges: true }),
+    status({ hasWorkingTreeChanges: true, aheadOfDefaultCount: 3 }),
+    status({ refName: "main", isDefaultRef: true, aheadCount: 1 }),
+  ];
+
+  it("offers commit and push, and never a pull request", () => {
+    for (const gitStatus of cases) {
+      assert.deepEqual(
+        buildMenuItems(gitStatus, false).map((item) => item.id),
+        ["commit", "push"],
+      );
+      for (const isDefaultRef of [false, true]) {
+        const quick = resolveQuickAction(gitStatus, false, isDefaultRef);
+        assert.notInclude(["create_pr", "commit_push_pr"], quick.action ?? "");
+        assert.notMatch(quick.label, /PR|pull request/i);
+      }
+    }
+  });
+});
+
 describe("requiresDefaultBranchConfirmation", () => {
   it("requires confirmation for push actions on default ref", () => {
     assert.isFalse(requiresDefaultBranchConfirmation("commit", true));
     assert.isTrue(requiresDefaultBranchConfirmation("push", true));
-    assert.isTrue(requiresDefaultBranchConfirmation("create_pr", true));
     assert.isTrue(requiresDefaultBranchConfirmation("commit_push", true));
-    assert.isTrue(requiresDefaultBranchConfirmation("commit_push_pr", true));
     assert.isFalse(requiresDefaultBranchConfirmation("commit_push", false));
     assert.isFalse(requiresDefaultBranchConfirmation("push", false));
   });

@@ -47,29 +47,51 @@ const LegacyT3ConnectProfile = Schema.TaggedStruct("BearerConnectionProfile", {
   connectionId: Schema.String,
   authorization: Schema.Literal("t3-connect"),
 });
+/** SSH environments were removed in S7V-018; their routes and profiles decode only to be dropped. */
+const LegacySshConnectionTarget = Schema.TaggedStruct("SshConnectionTarget", {
+  environmentId: EnvironmentId,
+  connectionId: Schema.String,
+});
+const LegacySshConnectionProfile = Schema.TaggedStruct("SshConnectionProfile", {
+  connectionId: Schema.String,
+});
 
 const StoredConnectionCatalogDocument = Schema.Struct({
   ...ConnectionCatalogFields,
-  targets: Schema.Array(Schema.Union([PersistedConnectionTarget, LegacyRelayConnectionTarget])),
-  // The legacy member goes first: a plain profile would otherwise accept it and drop `authorization`.
-  profiles: Schema.Array(Schema.Union([LegacyT3ConnectProfile, ConnectionProfile])),
+  targets: Schema.Array(
+    Schema.Union([
+      PersistedConnectionTarget,
+      LegacyRelayConnectionTarget,
+      LegacySshConnectionTarget,
+    ]),
+  ),
+  // The T3 Connect member goes first: a plain profile would otherwise accept it and drop `authorization`.
+  profiles: Schema.Array(
+    Schema.Union([LegacyT3ConnectProfile, ConnectionProfile, LegacySshConnectionProfile]),
+  ),
   remoteDpopTokens: Schema.optionalKey(Schema.Array(Schema.Unknown)),
 });
 
 type ConnectionCatalogDocumentValue = typeof ConnectionCatalogDocumentType.Type;
 type StoredConnectionCatalogDocumentValue = typeof StoredConnectionCatalogDocument.Type;
 
-function dropLegacyCloudRecords(
+const isConnectionProfile = Schema.is(ConnectionProfile);
+const isPersistedConnectionTarget = Schema.is(PersistedConnectionTarget);
+
+function dropLegacyRecords(
   stored: StoredConnectionCatalogDocumentValue,
 ): ConnectionCatalogDocumentValue {
-  const t3ConnectProfileIds = new Set(
-    stored.profiles.flatMap((profile) =>
-      "authorization" in profile ? [profile.connectionId] : [],
+  const droppedConnectionIds = new Set([
+    ...stored.profiles.flatMap((profile) =>
+      isConnectionProfile(profile) ? [] : [profile.connectionId],
     ),
-  );
+    ...stored.targets.flatMap((target) =>
+      target._tag === "SshConnectionTarget" ? [target.connectionId] : [],
+    ),
+  ]);
   const targets = stored.targets.filter(
     (target): target is PersistedConnectionTarget =>
-      target._tag !== "RelayConnectionTarget" && !t3ConnectProfileIds.has(target.connectionId),
+      isPersistedConnectionTarget(target) && !droppedConnectionIds.has(target.connectionId),
   );
   const remaining = new Set(targets.map((target) => target.environmentId));
   const orphaned = new Set(
@@ -81,10 +103,11 @@ function dropLegacyCloudRecords(
     schemaVersion: stored.schemaVersion,
     targets,
     profiles: stored.profiles.filter(
-      (profile): profile is ConnectionProfile => !("authorization" in profile),
+      (profile): profile is ConnectionProfile =>
+        isConnectionProfile(profile) && !droppedConnectionIds.has(profile.connectionId),
     ),
     credentials: stored.credentials.filter(
-      (credential) => !t3ConnectProfileIds.has(credential.connectionId),
+      (credential) => !droppedConnectionIds.has(credential.connectionId),
     ),
     disabledEnvironmentIds: stored.disabledEnvironmentIds.filter((id) => !orphaned.has(id)),
     ...(stored.githubRoutingPermissions === undefined
@@ -104,7 +127,7 @@ export const ConnectionCatalogDocument = StoredConnectionCatalogDocument.pipe(
       ConnectionCatalogDocumentValue,
       StoredConnectionCatalogDocumentValue
     >({
-      decode: dropLegacyCloudRecords,
+      decode: dropLegacyRecords,
       encode: (document) => ({ ...document, remoteDpopTokens: [] }),
     }),
   ),
@@ -141,7 +164,6 @@ function connectionIdOf(target: ConnectionTarget): string | null {
     case "PrimaryConnectionTarget":
       return null;
     case "BearerConnectionTarget":
-    case "SshConnectionTarget":
       return target.connectionId;
   }
 }

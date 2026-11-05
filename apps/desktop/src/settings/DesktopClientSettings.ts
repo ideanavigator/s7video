@@ -9,7 +9,6 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import * as Ref from "effect/Ref";
 
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 
@@ -220,17 +219,3 @@ export const make = Effect.gen(function* () {
 });
 
 export const layer = Layer.effect(DesktopClientSettings, make);
-
-export const layerTest = (initialSettings: Option.Option<ClientSettings> = Option.none()) =>
-  Layer.effect(
-    DesktopClientSettings,
-    Effect.gen(function* () {
-      const settingsRef = yield* Ref.make(initialSettings);
-      return DesktopClientSettings.of({
-        get: Ref.get(settingsRef),
-        set: Effect.fn("DesktopClientSettings.set")(function (settings) {
-          return Ref.set(settingsRef, Option.some(settings));
-        }),
-      });
-    }),
-  );

@@ -165,6 +165,11 @@ describe("ServerSettings from upstream T3 Code", () => {
     cursorKeychainUsageEnabled: true,
     // Guest links went with T3 Connect (S7V-015).
     guestSharingEnabled: true,
+    // SSH device hosts went with remote environments (S7V-018), even ones a newer check rejects.
+    deviceHosts: [
+      { id: "mini", label: "Mac mini", target: "user@mini", port: 2222 },
+      { id: "mini", label: "Duplicate", target: "-oProxyCommand=bad" },
+    ],
   };
 
   it("decodes settings that name removed providers and hosts without failing", () => {
@@ -177,6 +182,7 @@ describe("ServerSettings from upstream T3 Code", () => {
     expect(encodeServerSettings(decoded).sourceControlHosts).toEqual(stale.sourceControlHosts);
     expect(encodeServerSettings(decoded).secretProviders).toEqual(stale.secretProviders);
     expect(decoded).not.toHaveProperty("guestSharingEnabled");
+    expect(decoded).not.toHaveProperty("deviceHosts");
   });
 
   it("keeps the kept defaults when stale settings omit them", () => {
@@ -441,39 +447,15 @@ describe("ServerSettings environment icon", () => {
   });
 });
 
-const decodeDeviceHostSettings = Schema.decodeSync(ServerSettings);
+const decodeDeviceHostSettings = Schema.decodeUnknownSync(ServerSettings);
 
-// `deviceHosts` as it was decoded before EAS hosts existed: an SSH host needs a target.
-const decodeOlderDeviceHostSettings = Schema.decodeUnknownSync(
-  Schema.Struct({
-    deviceHosts: Schema.Array(Schema.Struct({ id: Schema.String, target: Schema.String })),
-  }),
-);
-
-it("keeps EAS hosts out of the SSH host list servers and clients before EAS hosts decode", () => {
+it("keeps EAS hosts beside an upstream SSH host list it no longer reads", () => {
   const settings = decodeDeviceHostSettings({
     deviceHosts: [{ id: "mini", label: "Mac mini", target: "user@mini" }],
     easDeviceHosts: [{ kind: "eas", id: "eas", label: "EAS Simulator" }],
   });
-  const wire = encodeServerSettings(settings);
-  expect(decodeOlderDeviceHostSettings(wire).deviceHosts).toEqual([
-    { id: "mini", target: "user@mini" },
-  ]);
   expect(settings.easDeviceHosts.map((host) => host.id)).toEqual(["eas"]);
-});
-
-it("validates remote device hosts and rejects ambiguous host ids", () => {
-  const host = { id: "mini", label: "Mac mini", target: "user@mini", port: 2222 };
-  // Hosts saved before EAS hosts existed have no `kind`; they are SSH hosts.
-  expect(decodeDeviceHostSettings({ deviceHosts: [host] }).deviceHosts).toEqual([
-    { kind: "ssh", ...host },
-  ]);
-  expect(() => decodeDeviceHostSettings({ deviceHosts: [host, host] })).toThrow();
-  expect(() => decodeDeviceHostSettings({ deviceHosts: [{ ...host, id: "local" }] })).toThrow();
-  expect(() =>
-    decodeDeviceHostSettings({ deviceHosts: [{ ...host, target: "-oProxyCommand=bad" }] }),
-  ).toThrow();
-  expect(() => decodeDeviceHostSettings({ deviceHosts: [{ ...host, port: 0 }] })).toThrow();
+  expect(encodeServerSettings(settings)).not.toHaveProperty("deviceHosts");
 });
 
 describe("ServerSettings project overrides across versions", () => {

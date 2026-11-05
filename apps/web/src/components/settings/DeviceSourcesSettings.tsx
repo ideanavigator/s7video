@@ -1,4 +1,3 @@
-import { REMOTE_ENVIRONMENTS_ENABLED } from "@t3tools/shared/remoteEnvironments";
 import { useAtomValue } from "@effect/atom-react";
 import { Fragment, useState, type ReactNode } from "react";
 import * as Cause from "effect/Cause";
@@ -13,7 +12,6 @@ import {
   type EnvironmentId,
   type ServerSettingsPatch,
   type SimlockDeviceHostConfig,
-  type SshDeviceHostConfig,
 } from "@t3tools/contracts";
 import { ChevronDownIcon, MoreVertical, PlusIcon } from "lucide-react";
 
@@ -29,8 +27,6 @@ import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { Spinner } from "../ui/spinner";
 import { toastManager } from "../ui/toast";
-import { DeviceHostEditor } from "./DeviceHostEditor";
-import { updateDeviceHosts, groupDeviceHosts } from "./deviceHostsSettings.logic";
 import { EasDeviceHostEditor } from "./EasDeviceHostEditor";
 import {
   easSessionLimits,
@@ -48,7 +44,6 @@ import {
   updateSimlockDeviceHosts,
   type SimlockTokenEntry,
 } from "./simlockDeviceHostsSettings.logic";
-import { useHostConnectionChecks } from "./useHostConnectionChecks";
 
 const deviceHostStatesAtom = environmentAtomList("web-device-host-states", (environmentId) =>
   deviceEnvironment.state({ environmentId, input: {} }),
@@ -84,21 +79,14 @@ interface SourceRow {
   readonly description: ReactNode;
   readonly environments: ReadonlyArray<SourceEnvironment>;
   /**
-   * One machine or account every environment reaches the same way (an SSH host, EAS, a Simlock
-   * pool), so its platforms are the same for all of them. Local simulators differ per machine.
+   * One account every environment reaches the same way (EAS, a Simlock pool), so its platforms
+   * are the same for all of them. Local simulators differ per machine.
    */
   readonly shared: boolean;
   readonly actions?: ReactNode;
 }
 
 type Editing =
-  | {
-      readonly kind: "ssh";
-      readonly host: SshDeviceHostConfig;
-      readonly original: SshDeviceHostConfig | null;
-      /** Limits the save to these environments, for a host that differs between them. */
-      readonly only?: ReadonlySet<EnvironmentId>;
-    }
   | {
       readonly kind: "eas";
       readonly host: EasDeviceHostConfig;
@@ -149,12 +137,6 @@ export function DeviceSourcesSettings(props: {
   const [busy, setBusy] = useState(false);
   const label = (environment: (typeof environments)[number]) =>
     settingsScopeEnvironmentLabel(environment, environments);
-  const targets = environments.map((environment) => ({
-    environmentId: environment.environmentId,
-    label: label(environment),
-    connected: environment.connection.phase === "connected",
-  }));
-  const { testConnection } = useHostConnectionChecks(targets);
   const ids = connectedEnvironments.map((environment) => environment.environmentId);
   const results = useAtomValue(deviceHostStatesAtom(environmentIdsKey(ids)));
   const members = connectedEnvironments.map((environment, index) => {
@@ -207,39 +189,6 @@ export function DeviceSourcesSettings(props: {
     if (failed.length === 0) return true;
     toastManager.add({ type: "error", title: failedTitle, description: failed.join("\n") });
     return false;
-  };
-
-  const saveSsh = async (
-    host: SshDeviceHostConfig,
-    remove: boolean,
-    original = host,
-    only?: ReadonlySet<EnvironmentId>,
-  ) => {
-    try {
-      const saved = await write(
-        members
-          .filter((member) => !only || only.has(member.environmentId))
-          .map((member) => ({
-            environmentId: member.environmentId,
-            patch: {
-              deviceHosts: updateDeviceHosts(
-                member.settings?.deviceHosts ?? [],
-                host,
-                remove,
-                original,
-              ),
-            },
-          })),
-        remove ? "Device host not removed everywhere" : "Device host not saved everywhere",
-      );
-      if (saved) setEditing(null);
-    } catch (error) {
-      toastManager.add({
-        type: "error",
-        title: "Device host not saved",
-        description: error instanceof Error ? error.message : String(error),
-      });
-    }
   };
 
   const saveEas = async (
@@ -296,37 +245,6 @@ export function DeviceSourcesSettings(props: {
       "Simlock host not removed everywhere",
     );
 
-  const [testing, setTesting] = useState<ReadonlySet<string>>(new Set());
-  const testSsh = async (host: SshDeviceHostConfig) => {
-    setTesting((current) => new Set(current).add(host.id));
-    const checked = await testConnection(host).finally(() =>
-      setTesting((current) => {
-        const next = new Set(current);
-        next.delete(host.id);
-        return next;
-      }),
-    );
-    if (!checked) return;
-    const failed = targets.filter((target) => checked[target.environmentId]?.status === "failed");
-    toastManager.add({
-      type: failed.length ? "error" : "success",
-      title: failed.length
-        ? `${host.label}: ${failed.length} of ${targets.length} environments failed`
-        : `${host.label}: connection checks passed`,
-      description: failed.length
-        ? failed
-            .map((target) => {
-              const result = checked[target.environmentId];
-              return `${target.label}: ${result?.status === "failed" ? result.error : "failed"}`;
-            })
-            .join("\n")
-        : "Connected or already available locally on each selected environment.",
-    });
-  };
-
-  const retry = (environmentId: EnvironmentId, hostId: string) =>
-    void list({ environmentId, input: { retryHostId: hostId } });
-
   const rowActions = (onEdit: () => void, onRemove: () => void, extra?: ReactNode) => (
     <>
       <Button size="sm" variant="outline" disabled={disabled} onClick={onEdit}>
@@ -381,64 +299,6 @@ export function DeviceSourcesSettings(props: {
       };
     }),
   });
-
-  const grouped = groupDeviceHosts(
-    members.map((member) => ({
-      environmentId: member.environmentId,
-      label: member.label,
-      hosts: member.settings?.deviceHosts ?? [],
-    })),
-  );
-  const sshGroups =
-    grouped ??
-    // Hosts that cannot be matched across environments stay one row per environment.
-    members.flatMap((member) =>
-      (member.settings?.deviceHosts ?? []).map((host) => ({
-        host,
-        members: [{ environmentId: member.environmentId, label: member.label, host }],
-      })),
-    );
-  for (const group of sshGroups) {
-    const host = group.host;
-    const holders = new Set(group.members.map((member) => member.environmentId));
-    rows.push({
-      key: `ssh:${host.id}:${group.members.map((member) => member.environmentId).join(",")}`,
-      shared: true,
-      title: host.label,
-      kind: "SSH",
-      description: host.target,
-      environments: active.map((member) => {
-        const held = group.members.find(
-          (candidate) => candidate.environmentId === member.environmentId,
-        );
-        if (!held)
-          return { environmentId: member.environmentId, label: member.label, added: false };
-        const status = testing.has(host.id)
-          ? ({ tone: "pending", label: "Testing connection" } as const)
-          : hostStatus(member.state, held.host.id);
-        return {
-          environmentId: member.environmentId,
-          label: member.label,
-          added: true,
-          platforms: hostPlatforms(member.state, held.host.id),
-          status:
-            status?.tone === "error" && member.state?.supportsHostRetry
-              ? {
-                  ...status,
-                  label: "Can't connect",
-                  action: { label: "Retry", run: () => retry(member.environmentId, held.host.id) },
-                }
-              : status,
-        };
-      }),
-      actions: rowActions(
-        () =>
-          setEditing({ kind: "ssh", host, original: host, ...(grouped ? {} : { only: holders }) }),
-        () => void saveSsh(host, true, host, holders),
-        <MenuItem onClick={() => void testSsh(host)}>Test connection</MenuItem>,
-      ),
-    });
-  }
 
   if (props.supportsEas) {
     const easHosts = new Map<string, EasDeviceHostConfig>();
@@ -526,19 +386,6 @@ export function DeviceSourcesSettings(props: {
         <ChevronDownIcon className="size-3.5" />
       </MenuTrigger>
       <MenuPopup align="end">
-        {REMOTE_ENVIRONMENTS_ENABLED ? (
-          <MenuItem
-            onClick={() =>
-              setEditing({
-                kind: "ssh",
-                host: { kind: "ssh", id: randomUUID(), label: "", target: "" },
-                original: null,
-              })
-            }
-          >
-            Machine over SSH
-          </MenuItem>
-        ) : null}
         {props.supportsEas ? (
           <MenuItem
             onClick={() =>
@@ -572,17 +419,7 @@ export function DeviceSourcesSettings(props: {
       {rows.map((row) => (
         <DeviceSourceRow key={row.key} row={row} />
       ))}
-      {editing?.kind === "ssh" ? (
-        <DeviceHostEditor
-          key={editing.host.id}
-          host={editing.host}
-          isNew={editing.original === null}
-          targets={targets}
-          busy={busy}
-          onSave={(host) => void saveSsh(host, false, editing.original ?? host, editing.only)}
-          onClose={() => setEditing(null)}
-        />
-      ) : editing?.kind === "eas" ? (
+      {editing?.kind === "eas" ? (
         <EasDeviceHostEditor
           key={editing.host.id}
           environmentId={editing.environmentId}

@@ -12,7 +12,6 @@ import {
   type AuthPairingCredentialResult,
   type AdvertisedEndpoint,
   type DesktopServerExposureState,
-  type DesktopWslState,
   type EnvironmentId,
   managedCapabilityDenial,
   resolveEnvironmentMachineKind,
@@ -25,13 +24,7 @@ import {
 import * as Cause from "effect/Cause";
 
 import { isLocalEnvironmentDisabled } from "../../localEnvironment";
-import {
-  applyWslEnableSelection,
-  isWslSettingsRowVisible,
-  missingTailscaleEndpointDescription,
-  resolveLocalVersionStatusLabel,
-  resolveTailscaleServeBaseUrl,
-} from "./ConnectionsSettings.logic";
+import { resolveLocalVersionStatusLabel } from "./ConnectionsSettings.logic";
 import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
 import { ManagedByOrganization } from "../ManagedPolicy";
 import { LocalEnvironmentSetting } from "./LocalEnvironmentSetting";
@@ -41,18 +34,6 @@ import { FoldedSettingsSection } from "./FoldedSettingsSection";
 import { LinkedEnvironmentsSettings } from "./LinkedEnvironmentsSettings";
 import { usePeerLinkHosts } from "~/state/peerLinks";
 import { LoadBalancingSettings } from "./LoadBalancingSettings";
-import { PullRequestRoutingSettings } from "./PullRequestRoutingSettings";
-import { Input } from "../ui/input";
-import {
-  Dialog,
-  DialogClose,
-  DialogFooter,
-  DialogDescription,
-  DialogHeader,
-  DialogPanel,
-  DialogPopup,
-  DialogTitle,
-} from "../ui/dialog";
 import { ScrollArea } from "../ui/scroll-area";
 import {
   AlertDialog,
@@ -64,7 +45,6 @@ import {
   AlertDialogTitle,
 } from "../ui/alert-dialog";
 import { Spinner } from "../ui/spinner";
-import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Menu, MenuPopup, MenuTrigger } from "../ui/menu";
 import { Switch } from "../ui/switch";
 import { stackedThreadToast, toastManager } from "../ui/toast";
@@ -93,7 +73,6 @@ import {
   desktopNetworkAccessStateAtom,
   refreshDesktopNetworkAccessState,
 } from "~/state/desktopNetworkAccess";
-import { desktopWslStateAtom, refreshDesktopWslState } from "~/state/desktopWslState";
 import { useDesktopUpdateState } from "~/state/desktopUpdate";
 import {
   type EnvironmentPresentation,
@@ -117,7 +96,6 @@ import {
   toDesktopPairingLinkRecord,
   toDesktopClientSessionRecord,
   selectPairingEndpoint,
-  isTailscaleHttpsEndpoint,
   endpointDefaultPreferenceKey,
 } from "./ConnectionsSettings.logic";
 import {
@@ -130,12 +108,7 @@ import { ITEM_ROW_CLASSNAME } from "./itemRows";
 import { EmptyRemoteEnvironments, SavedBackendListRow } from "./SavedEnvironmentRows";
 import { AddEnvironmentDialog } from "./AddEnvironmentDialog";
 
-const DEFAULT_TAILSCALE_SERVE_PORT = 443;
 const EMPTY_ADVERTISED_ENDPOINTS: ReadonlyArray<AdvertisedEndpoint> = [];
-
-// Colons are invalid in distro names, keeping picker sentinels collision-free.
-const BACKEND_VALUE_DEFAULT_WSL = "backend:default-wsl";
-const BACKEND_VALUE_WSL_OFF = "backend:wsl-off";
 
 // Subscribes on its own so desktop download progress does not re-render the page.
 function LocalVersionStatusLabel() {
@@ -243,22 +216,6 @@ export function ConnectionsSettings({ view }: { readonly view: "environments" | 
   const [removingSavedEnvironmentId, setRemovingSavedEnvironmentId] =
     useState<EnvironmentId | null>(null);
   const [isUpdatingDesktopServerExposure, setIsUpdatingDesktopServerExposure] = useState(false);
-  const [isUpdatingTailscaleServe, setIsUpdatingTailscaleServe] = useState(false);
-  const [isUpdatingWslBackend, setIsUpdatingWslBackend] = useState(false);
-  const [desktopWslMutationError, setDesktopWslMutationError] = useState<string | null>(null);
-  type PendingWslChange =
-    | { readonly kind: "disable"; readonly wasWslOnly: boolean }
-    | { readonly kind: "distro"; readonly nextDistro: string | null }
-    | { readonly kind: "enable"; readonly nextDistro: string | null }
-    | { readonly kind: "wsl-only"; readonly nextValue: boolean };
-  const [pendingWslChange, setPendingWslChange] = useState<PendingWslChange | null>(null);
-  const isWslConfirmDialogOpen = pendingWslChange !== null;
-  const [pendingTailscaleServeEndpoint, setPendingTailscaleServeEndpoint] =
-    useState<AdvertisedEndpoint | null>(null);
-  const [disableTailscaleServeDialogOpen, setDisableTailscaleServeDialogOpen] = useState(false);
-  const [tailscaleServePortInput, setTailscaleServePortInput] = useState(
-    String(DEFAULT_TAILSCALE_SERVE_PORT),
-  );
   const [pendingDesktopServerExposureMode, setPendingDesktopServerExposureMode] = useState<
     DesktopServerExposureState["mode"] | null
   >(null);
@@ -293,12 +250,6 @@ export function ConnectionsSettings({ view }: { readonly view: "environments" | 
   const desktopNetworkAccess = useEnvironmentQuery(
     showsAccess && canManageLocalBackend && desktopBridge ? desktopNetworkAccessStateAtom : null,
   );
-  const desktopWsl = useEnvironmentQuery(
-    showsAccess && canManageLocalBackend && desktopBridge ? desktopWslStateAtom : null,
-  );
-  const desktopWslState = desktopWsl.data;
-  const desktopWslError = desktopWslMutationError ?? desktopWsl.error;
-  const isLoadingWslState = desktopWsl.isPending && desktopWsl.data === null;
   const desktopServerExposureState = desktopNetworkAccess.data?.serverExposureState ?? null;
   const desktopAdvertisedEndpoints =
     desktopNetworkAccess.data?.advertisedEndpoints ?? EMPTY_ADVERTISED_ENDPOINTS;
@@ -329,20 +280,6 @@ export function ConnectionsSettings({ view }: { readonly view: "environments" | 
   const isLocalBackendNetworkAccessible = desktopBridge
     ? desktopServerExposureState?.mode === "network-accessible"
     : currentAuthPolicy === "remote-reachable";
-  const trimmedTailscaleServePortInput = tailscaleServePortInput.trim();
-  const parsedTailscaleServePort = Number(trimmedTailscaleServePortInput);
-  const isTailscaleServePortValid =
-    /^\d+$/u.test(trimmedTailscaleServePortInput) &&
-    Number.isInteger(parsedTailscaleServePort) &&
-    parsedTailscaleServePort >= 1 &&
-    parsedTailscaleServePort <= 65_535;
-
-  const pendingTailscaleServeBaseUrl = resolveTailscaleServeBaseUrl(
-    pendingTailscaleServeEndpoint,
-    parsedTailscaleServePort,
-    isTailscaleServePortValid,
-  );
-
   const handleDesktopServerExposureChange = async (checked: boolean) => {
     if (
       !desktopBridge ||
@@ -376,83 +313,6 @@ export function ConnectionsSettings({ view }: { readonly view: "environments" | 
     if (pendingDesktopServerExposureMode === null) return;
     const checked = pendingDesktopServerExposureMode === "network-accessible";
     void handleDesktopServerExposureChange(checked);
-  };
-
-  const handleConfirmTailscaleServeSetup = async () => {
-    if (
-      !desktopBridge ||
-      primaryEnvironmentId === null ||
-      !readEnvironmentScope(primaryEnvironmentId, AuthEnvironmentMaintainScope)
-    )
-      return;
-    if (!isTailscaleServePortValid) return;
-    setIsUpdatingTailscaleServe(true);
-    setDesktopServerExposureMutationError(null);
-    const settled = await settlePromise(async () => {
-      await desktopBridge.setTailscaleServeEnabled({
-        enabled: true,
-        port: parsedTailscaleServePort,
-      });
-      refreshDesktopNetworkAccessState();
-      setPendingTailscaleServeEndpoint(null);
-    });
-    if (settled._tag === "Failure") {
-      const error = Cause.squash(settled.cause);
-      const message =
-        error instanceof Error ? error.message : "Failed to configure Tailscale HTTPS.";
-      setDesktopServerExposureMutationError(message);
-      toastManager.add(
-        stackedThreadToast({
-          type: "error",
-          title: "Could not set up Tailscale HTTPS",
-          description: message,
-        }),
-      );
-    }
-    setIsUpdatingTailscaleServe(false);
-  };
-
-  const handleStartTailscaleServeSetup = (endpoint: AdvertisedEndpoint) => {
-    setTailscaleServePortInput(
-      String(desktopServerExposureState?.tailscaleServePort ?? DEFAULT_TAILSCALE_SERVE_PORT),
-    );
-    setPendingTailscaleServeEndpoint(endpoint);
-  };
-
-  const handleConfirmTailscaleServeDisable = async () => {
-    if (
-      !desktopBridge ||
-      primaryEnvironmentId === null ||
-      !readEnvironmentScope(primaryEnvironmentId, AuthEnvironmentMaintainScope)
-    )
-      return;
-    setIsUpdatingTailscaleServe(true);
-    setDesktopServerExposureMutationError(null);
-    const settled = await settlePromise(async () => {
-      await desktopBridge.setTailscaleServeEnabled({
-        enabled: false,
-        port: desktopServerExposureState?.tailscaleServePort ?? DEFAULT_TAILSCALE_SERVE_PORT,
-      });
-      refreshDesktopNetworkAccessState();
-      setDisableTailscaleServeDialogOpen(false);
-    });
-    if (settled._tag === "Failure") {
-      const error = Cause.squash(settled.cause);
-      const message = error instanceof Error ? error.message : "Failed to disable Tailscale HTTPS.";
-      setDesktopServerExposureMutationError(message);
-      toastManager.add(
-        stackedThreadToast({
-          type: "error",
-          title: "Could not disable Tailscale HTTPS",
-          description: message,
-        }),
-      );
-    }
-    setIsUpdatingTailscaleServe(false);
-  };
-
-  const handleStartTailscaleServeDisable = (_endpoint: AdvertisedEndpoint) => {
-    setDisableTailscaleServeDialogOpen(true);
   };
 
   const handleRevokeDesktopPairingLink = async (id: string) => {
@@ -589,23 +449,15 @@ export function ConnectionsSettings({ view }: { readonly view: "environments" | 
   };
 
   const visibleDesktopPairingLinks = desktopPairingLinks;
-  const tailscaleHttpsEndpoint = desktopAdvertisedEndpoints.find(isTailscaleHttpsEndpoint) ?? null;
   const visibleDesktopNetworkAdvertisedEndpoints = isLocalBackendNetworkAccessible
-    ? desktopAdvertisedEndpoints.filter((endpoint) => !isTailscaleHttpsEndpoint(endpoint))
+    ? desktopAdvertisedEndpoints
     : [];
-  const visibleDesktopAdvertisedEndpoints = tailscaleHttpsEndpoint
-    ? [...visibleDesktopNetworkAdvertisedEndpoints, tailscaleHttpsEndpoint]
-    : visibleDesktopNetworkAdvertisedEndpoints;
+  const visibleDesktopAdvertisedEndpoints = visibleDesktopNetworkAdvertisedEndpoints;
   const defaultDesktopNetworkAdvertisedEndpoint = selectPairingEndpoint(
     visibleDesktopNetworkAdvertisedEndpoints,
     defaultAdvertisedEndpointKey,
   );
-  const defaultDesktopAdvertisedEndpoint =
-    defaultDesktopNetworkAdvertisedEndpoint ??
-    selectPairingEndpoint(
-      tailscaleHttpsEndpoint ? [tailscaleHttpsEndpoint] : [],
-      defaultAdvertisedEndpointKey,
-    );
+  const defaultDesktopAdvertisedEndpoint = defaultDesktopNetworkAdvertisedEndpoint;
   const defaultDesktopAdvertisedEndpointKey = defaultDesktopAdvertisedEndpoint
     ? endpointDefaultPreferenceKey(defaultDesktopAdvertisedEndpoint)
     : null;
@@ -633,284 +485,10 @@ export function ConnectionsSettings({ view }: { readonly view: "environments" | 
               endpoint={endpoint}
               isDefault={endpointKey === defaultDesktopAdvertisedEndpointKey}
               onSetDefault={handleSetDefaultAdvertisedEndpoint}
-              onSetupTailscaleServe={handleStartTailscaleServeSetup}
-              onDisableTailscaleServe={handleStartTailscaleServeDisable}
-              isUpdatingTailscaleServe={isUpdatingTailscaleServe}
             />
           );
         })
       : null;
-  const applyWslSettingChange = async (apply: () => Promise<DesktopWslState>) => {
-    if (
-      !desktopBridge ||
-      primaryEnvironmentId === null ||
-      !readEnvironmentScope(primaryEnvironmentId, AuthEnvironmentMaintainScope)
-    )
-      return;
-    setIsUpdatingWslBackend(true);
-    setDesktopWslMutationError(null);
-    const settled = await settlePromise(async () => {
-      await apply();
-      refreshDesktopWslState();
-    });
-    if (settled._tag === "Failure") {
-      const error = Cause.squash(settled.cause);
-      const message = error instanceof Error ? error.message : "Failed to update WSL backend.";
-      setDesktopWslMutationError(message);
-      toastManager.add(
-        stackedThreadToast({
-          type: "error",
-          title: "Could not change WSL backend",
-          description: message,
-        }),
-      );
-      refreshDesktopWslState();
-    }
-    setIsUpdatingWslBackend(false);
-  };
-
-  const loadWslState = () => {
-    setDesktopWslMutationError(null);
-    refreshDesktopWslState();
-  };
-
-  const hasWslRegistrationToLose = environments.some((environment) =>
-    isDesktopLocalConnectionTarget(environment.entry.target),
-  );
-
-  const handleSelectWslMode = (value: string) => {
-    if (!desktopBridge || !desktopWslState) return;
-    const defaultDistroName =
-      desktopWslState.distros.find((distro) => distro.isDefault)?.name ?? null;
-    if (value === BACKEND_VALUE_WSL_OFF) {
-      // Unavailable WSL can remain wslOnly while disabled; switching to Windows must clear both.
-      if (!desktopWslState.enabled && !desktopWslState.wslOnly) return;
-      const wasWslOnly = desktopWslState.wslOnly;
-      if (hasWslRegistrationToLose || wasWslOnly) {
-        setPendingWslChange({ kind: "disable", wasWslOnly });
-        return;
-      }
-      void applyWslSettingChange(() => desktopBridge.setWslBackendEnabled(false));
-      return;
-    }
-    const nextDistro = value === BACKEND_VALUE_DEFAULT_WSL ? null : value;
-    const resolvedNext = nextDistro ?? defaultDistroName;
-    if (!desktopWslState.enabled) {
-      setPendingWslChange({ kind: "enable", nextDistro });
-      return;
-    }
-    const resolvedCurrent = desktopWslState.distro ?? defaultDistroName;
-    if (resolvedCurrent === resolvedNext) return;
-    if (hasWslRegistrationToLose || desktopWslState.wslOnly) {
-      setPendingWslChange({ kind: "distro", nextDistro });
-      return;
-    }
-    void applyWslSettingChange(() => desktopBridge.setWslDistro(nextDistro));
-  };
-
-  const handleConfirmEnableWsl = (mode: "both" | "wsl-only") => {
-    if (!desktopBridge || !pendingWslChange || pendingWslChange.kind !== "enable") return;
-    const nextDistro = pendingWslChange.nextDistro;
-    setPendingWslChange(null);
-    const persistedDistro = desktopWslState?.distro ?? null;
-    void applyWslSettingChange(() =>
-      applyWslEnableSelection({
-        bridge: desktopBridge,
-        mode,
-        nextDistro,
-        persistedDistro,
-      }),
-    );
-  };
-
-  const handleToggleWslOnly = (enabled: boolean) => {
-    if (!desktopBridge || !desktopWslState || desktopWslState.wslOnly === enabled) return;
-    setPendingWslChange({ kind: "wsl-only", nextValue: enabled });
-  };
-
-  const handleConfirmWslChange = () => {
-    if (!desktopBridge || !pendingWslChange) return;
-    const change = pendingWslChange;
-    if (change.kind === "enable") return;
-    setPendingWslChange(null);
-    if (change.kind === "disable") {
-      void applyWslSettingChange(async () => {
-        const next = await desktopBridge.setWslBackendEnabled(false);
-        if (change.wasWslOnly) {
-          return await desktopBridge.setWslOnly(false);
-        }
-        return next;
-      });
-      return;
-    }
-    if (change.kind === "distro") {
-      void applyWslSettingChange(() => desktopBridge.setWslDistro(change.nextDistro));
-      return;
-    }
-    void applyWslSettingChange(() => desktopBridge.setWslOnly(change.nextValue));
-  };
-
-  const renderWslRow = () => {
-    if (!desktopWslState) {
-      if (
-        isWslSettingsRowVisible({ state: null, error: desktopWslError }) &&
-        canManageLocalBackend
-      ) {
-        return (
-          <SettingsRow
-            {...searchableSetting("wsl-backend")}
-            description="Couldn't load the WSL backend state."
-            status={<span className="block text-destructive">{desktopWslError}</span>}
-            control={
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={loadWslState}
-                disabled={isLoadingWslState}
-              >
-                {isLoadingWslState ? "Retrying…" : "Retry"}
-              </Button>
-            }
-          />
-        );
-      }
-      return null;
-    }
-    if (!isWslSettingsRowVisible({ state: desktopWslState, error: desktopWslError })) {
-      return null;
-    }
-    if (!desktopWslState.available) {
-      return (
-        <SettingsRow
-          {...searchableSetting("wsl-backend")}
-          description="WSL is unavailable, so Windows is running instead. Turn WSL off to clear this preference."
-          status={
-            desktopWslError ? (
-              <span className="block text-destructive">{desktopWslError}</span>
-            ) : null
-          }
-          control={
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={isUpdatingWslBackend}
-              onClick={() => handleSelectWslMode(BACKEND_VALUE_WSL_OFF)}
-            >
-              Switch to Windows
-            </Button>
-          }
-        />
-      );
-    }
-    const defaultDistroName =
-      desktopWslState.distros.find((distro) => distro.isDefault)?.name ?? null;
-    const selectValue = !desktopWslState.enabled
-      ? BACKEND_VALUE_WSL_OFF
-      : (desktopWslState.distro ?? defaultDistroName ?? BACKEND_VALUE_DEFAULT_WSL);
-    const selectLabel =
-      selectValue === BACKEND_VALUE_WSL_OFF
-        ? "Off"
-        : selectValue === BACKEND_VALUE_DEFAULT_WSL
-          ? "Default distro"
-          : selectValue;
-    return (
-      <>
-        <SettingsRow
-          {...searchableSetting("wsl-backend")}
-          description="Run the selected WSL distro alongside Windows. Projects remain on their current filesystem."
-          status={
-            desktopWslError ? (
-              <span className="block text-destructive">{desktopWslError}</span>
-            ) : desktopWslState.preflightError ? (
-              <span className="block text-destructive">
-                WSL backend couldn't start: {desktopWslState.preflightError}
-              </span>
-            ) : null
-          }
-          control={
-            <Select
-              value={selectValue}
-              onValueChange={(value) => {
-                if (typeof value !== "string") return;
-                handleSelectWslMode(value);
-              }}
-            >
-              <SelectTrigger
-                size="sm"
-                className="w-full sm:w-56"
-                aria-label="WSL backend"
-                disabled={isUpdatingWslBackend}
-              >
-                <SelectValue>{selectLabel}</SelectValue>
-              </SelectTrigger>
-              <SelectPopup align="end" alignItemWithTrigger={false}>
-                <SelectItem hideIndicator value={BACKEND_VALUE_WSL_OFF}>
-                  Off
-                </SelectItem>
-                {desktopWslState.distros.length === 0 ? (
-                  <SelectItem hideIndicator value={BACKEND_VALUE_DEFAULT_WSL}>
-                    Default distro
-                  </SelectItem>
-                ) : (
-                  desktopWslState.distros.map((distro) => (
-                    <SelectItem hideIndicator key={distro.name} value={distro.name}>
-                      {distro.name}
-                      {distro.isDefault ? " (default)" : ""}
-                    </SelectItem>
-                  ))
-                )}
-              </SelectPopup>
-            </Select>
-          }
-        />
-        {desktopWslState.enabled ? (
-          <SettingsRow
-            title="WSL only"
-            description={`Run only the WSL backend. ${BRAND.app.productName} restarts when this changes.`}
-            className="bg-muted/20 pl-7 sm:pl-8"
-            control={
-              <Switch
-                checked={desktopWslState.wslOnly}
-                disabled={isUpdatingWslBackend}
-                onCheckedChange={(checked) => handleToggleWslOnly(checked)}
-                aria-label="Run WSL only"
-              />
-            }
-          />
-        ) : null}
-      </>
-    );
-  };
-
-  const renderTailscaleRow = () => (
-    <SettingsRow
-      title={searchableSetting("tailscale-https").title}
-      description={
-        tailscaleHttpsEndpoint
-          ? tailscaleHttpsEndpoint.status === "available"
-            ? tailscaleHttpsEndpoint.httpBaseUrl
-            : "Use Tailscale Serve to expose this backend through a MagicDNS HTTPS URL."
-          : missingTailscaleEndpointDescription(desktopServerExposureState)
-      }
-      control={
-        tailscaleHttpsEndpoint ? (
-          <Switch
-            checked={tailscaleHttpsEndpoint.status === "available"}
-            disabled={isUpdatingTailscaleServe}
-            onCheckedChange={(checked) => {
-              if (checked) {
-                handleStartTailscaleServeSetup(tailscaleHttpsEndpoint);
-                return;
-              }
-              handleStartTailscaleServeDisable(tailscaleHttpsEndpoint);
-            }}
-            aria-label="Enable Tailscale HTTPS"
-          />
-        ) : null
-      }
-      managed={tailscaleHttpsEndpoint?.status === "available" ? undefined : remoteClientsDenial}
-    />
-  );
   const renderAuthorizedClients = () => (
     <>
       {desktopAccessManagementError ? (
@@ -1101,8 +679,6 @@ export function ConnectionsSettings({ view }: { readonly view: "environments" | 
               <>
                 {renderNetworkAccessRow()}
                 {renderEndpointRows()}
-                {renderTailscaleRow()}
-                {renderWslRow()}
               </>
             ) : canManageLocalBackend ? (
               renderDisabledNetworkAccessRow()
@@ -1183,7 +759,7 @@ export function ConnectionsSettings({ view }: { readonly view: "environments" | 
                 <AlertDialogDescription>
                   {pendingDesktopServerExposureMode === "network-accessible"
                     ? `Let your other devices connect to ${BRAND.app.productName} over the network. Pair devices to give them access. ${BRAND.app.productName} will restart.`
-                    : `Devices connected over your local network will disconnect. Existing tunnels, such as Tailscale HTTPS, keep working. ${BRAND.app.productName} will restart.`}
+                    : `Devices connected over your local network will disconnect. ${BRAND.app.productName} will restart.`}
                 </AlertDialogDescription>
               </AlertDialogHeader>
               <AlertDialogFooter>
@@ -1214,224 +790,6 @@ export function ConnectionsSettings({ view }: { readonly view: "environments" | 
               </AlertDialogFooter>
             </AlertDialogPopup>
           </AlertDialog>
-          <AlertDialog
-            open={isWslConfirmDialogOpen && canManageLocalBackend}
-            onOpenChange={(open) => {
-              if (isUpdatingWslBackend) return;
-              if (!open) setPendingWslChange(null);
-            }}
-          >
-            <AlertDialogPopup>
-              <AlertDialogHeader>
-                <AlertDialogTitle>
-                  {pendingWslChange?.kind === "disable"
-                    ? pendingWslChange.wasWslOnly
-                      ? "Turn off WSL and switch back to Windows?"
-                      : "Disable WSL backend?"
-                    : pendingWslChange?.kind === "distro"
-                      ? "Switch WSL distro?"
-                      : pendingWslChange?.kind === "enable"
-                        ? "Start the WSL backend"
-                        : pendingWslChange?.nextValue
-                          ? "Run only the WSL backend?"
-                          : "Re-enable the Windows backend?"}
-                </AlertDialogTitle>
-                <AlertDialogDescription>
-                  {pendingWslChange?.kind === "disable"
-                    ? pendingWslChange.wasWslOnly
-                      ? `${BRAND.app.productName} will restart on the Windows backend. Threads and projects opened against WSL stay safe inside the distro and become available again when you re-enable WSL.`
-                      : `The WSL backend will stop. Threads and projects opened against WSL stay safe inside the distro, but they'll be unavailable in ${BRAND.app.productName} until you re-enable WSL.`
-                    : pendingWslChange?.kind === "distro"
-                      ? `${BRAND.app.productName} will restart the WSL backend on the new distro. Sessions still running on the current distro will be interrupted.`
-                      : pendingWslChange?.kind === "enable"
-                        ? "Run the WSL backend alongside the Windows one, or stop the Windows backend and use only WSL? You can change this later from Settings."
-                        : pendingWslChange?.nextValue
-                          ? `${BRAND.app.productName} will restart and start only the WSL backend. Your Windows-side projects won't be accessible until you turn this off again.`
-                          : `${BRAND.app.productName} will restart and bring the Windows backend back up alongside WSL.`}
-                </AlertDialogDescription>
-              </AlertDialogHeader>
-              <AlertDialogFooter>
-                <AlertDialogClose
-                  disabled={isUpdatingWslBackend}
-                  render={<Button variant="outline" disabled={isUpdatingWslBackend} />}
-                >
-                  Cancel
-                </AlertDialogClose>
-                {pendingWslChange?.kind === "enable" ? (
-                  <>
-                    <Button
-                      variant="outline"
-                      onClick={() => handleConfirmEnableWsl("wsl-only")}
-                      disabled={isUpdatingWslBackend || !canManageLocalBackend}
-                    >
-                      {isUpdatingWslBackend ? (
-                        <>
-                          <Spinner size="sm" />
-                          Applying…
-                        </>
-                      ) : (
-                        "Use only WSL"
-                      )}
-                    </Button>
-                    <Button
-                      variant="default"
-                      onClick={() => handleConfirmEnableWsl("both")}
-                      disabled={isUpdatingWslBackend || !canManageLocalBackend}
-                    >
-                      {isUpdatingWslBackend ? (
-                        <>
-                          <Spinner size="sm" />
-                          Applying…
-                        </>
-                      ) : (
-                        "Run both backends"
-                      )}
-                    </Button>
-                  </>
-                ) : (
-                  <Button
-                    variant={
-                      pendingWslChange?.kind === "disable" ||
-                      (pendingWslChange?.kind === "wsl-only" && pendingWslChange.nextValue)
-                        ? "destructive"
-                        : "default"
-                    }
-                    onClick={handleConfirmWslChange}
-                    disabled={isUpdatingWslBackend || !canManageLocalBackend}
-                  >
-                    {isUpdatingWslBackend ? (
-                      <>
-                        <Spinner size="sm" />
-                        Applying…
-                      </>
-                    ) : pendingWslChange?.kind === "disable" ? (
-                      pendingWslChange.wasWslOnly ? (
-                        "Switch to Windows"
-                      ) : (
-                        "Disable WSL"
-                      )
-                    ) : pendingWslChange?.kind === "distro" ? (
-                      "Switch distro"
-                    ) : pendingWslChange?.nextValue ? (
-                      "Restart and enable"
-                    ) : (
-                      "Restart and disable"
-                    )}
-                  </Button>
-                )}
-              </AlertDialogFooter>
-            </AlertDialogPopup>
-          </AlertDialog>
-          <AlertDialog
-            open={disableTailscaleServeDialogOpen && canManageLocalBackend}
-            onOpenChange={(open) => {
-              if (isUpdatingTailscaleServe) return;
-              setDisableTailscaleServeDialogOpen(open);
-            }}
-          >
-            <AlertDialogPopup>
-              <AlertDialogHeader>
-                <AlertDialogTitle>Disable Tailscale HTTPS?</AlertDialogTitle>
-                <AlertDialogDescription>
-                  {BRAND.app.productName} will restart the local backend without Tailscale Serve.
-                </AlertDialogDescription>
-              </AlertDialogHeader>
-              <AlertDialogFooter>
-                <AlertDialogClose
-                  disabled={isUpdatingTailscaleServe}
-                  render={<Button variant="outline" disabled={isUpdatingTailscaleServe} />}
-                >
-                  Cancel
-                </AlertDialogClose>
-                <Button
-                  variant="destructive"
-                  onClick={() => void handleConfirmTailscaleServeDisable()}
-                  disabled={isUpdatingTailscaleServe || !canManageLocalBackend}
-                >
-                  {isUpdatingTailscaleServe ? (
-                    <>
-                      <Spinner size="sm" />
-                      Restarting…
-                    </>
-                  ) : (
-                    "Restart and disable"
-                  )}
-                </Button>
-              </AlertDialogFooter>
-            </AlertDialogPopup>
-          </AlertDialog>
-          <Dialog
-            open={pendingTailscaleServeEndpoint !== null}
-            onOpenChange={(open) => {
-              if (isUpdatingTailscaleServe) return;
-              if (!open) setPendingTailscaleServeEndpoint(null);
-            }}
-          >
-            <DialogPopup className="max-w-md">
-              <DialogHeader>
-                <DialogTitle>Set up Tailscale HTTPS?</DialogTitle>
-                <DialogDescription>
-                  {BRAND.app.productName} will restart the local backend with Tailscale Serve
-                  enabled and ask Tailscale to proxy HTTPS traffic to this backend.
-                </DialogDescription>
-              </DialogHeader>
-              <DialogPanel>
-                <label className="block">
-                  <span className="text-sm font-medium text-foreground">HTTPS port</span>
-                  <Input
-                    className="mt-2"
-                    type="number"
-                    inputMode="numeric"
-                    min={1}
-                    max={65_535}
-                    step={1}
-                    value={tailscaleServePortInput}
-                    onChange={(event) => setTailscaleServePortInput(event.target.value)}
-                    disabled={isUpdatingTailscaleServe}
-                  />
-                </label>
-                {!isTailscaleServePortValid ? (
-                  <p className="mt-2 text-xs text-destructive">Enter a port from 1 to 65535.</p>
-                ) : null}
-                <div className="rounded-md border border-border/70 bg-muted/20 px-3 py-2">
-                  <p className="text-xs font-medium text-muted-foreground">HTTPS endpoint</p>
-                  <Tooltip>
-                    <TooltipTrigger
-                      render={
-                        <p className="mt-1 truncate text-sm text-foreground">
-                          {pendingTailscaleServeBaseUrl ?? "Pending MagicDNS endpoint"}
-                        </p>
-                      }
-                    />
-                    {pendingTailscaleServeBaseUrl ? (
-                      <TooltipPopup side="top">{pendingTailscaleServeBaseUrl}</TooltipPopup>
-                    ) : null}
-                  </Tooltip>
-                </div>
-              </DialogPanel>
-              <DialogFooter>
-                <DialogClose
-                  disabled={isUpdatingTailscaleServe}
-                  render={<Button variant="outline" disabled={isUpdatingTailscaleServe} />}
-                >
-                  Cancel
-                </DialogClose>
-                <Button
-                  onClick={() => void handleConfirmTailscaleServeSetup()}
-                  disabled={isUpdatingTailscaleServe || !isTailscaleServePortValid}
-                >
-                  {isUpdatingTailscaleServe ? (
-                    <>
-                      <Spinner size="sm" />
-                      Restarting…
-                    </>
-                  ) : (
-                    "Enable"
-                  )}
-                </Button>
-              </DialogFooter>
-            </DialogPopup>
-          </Dialog>
         </>
       ) : (
         <SettingsSection {...searchableSetting("connections-environment")}>
@@ -1465,7 +823,6 @@ export function ConnectionsSettings({ view }: { readonly view: "environments" | 
               open={addBackendDialogOpen}
               routeTarget={routeTarget}
               error={savedBackendError}
-              savedEnvironments={savedEnvironments}
               onOpenChange={handleAddBackendDialogOpenChange}
               onErrorChange={setSavedBackendError}
             />
@@ -1497,7 +854,6 @@ export function ConnectionsSettings({ view }: { readonly view: "environments" | 
         />
       ))}
       <LoadBalancingSettings environments={loadBalancingEnvironments} />
-      <PullRequestRoutingSettings environments={loadBalancingEnvironments} />
     </SettingsPageContainer>
   );
 }

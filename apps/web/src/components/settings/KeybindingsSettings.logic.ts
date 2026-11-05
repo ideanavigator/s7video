@@ -357,12 +357,18 @@ export function buildWhenVariableOptions(): ReadonlyArray<WhenVariableOption> {
   });
 }
 
+/** Pull request commands stay bound for upstream's panel but are not offered in Settings (S7V-018). */
+export const isSettingsKeybindingCommand = (command: KeybindingCommand): boolean =>
+  !command.startsWith("pullRequest.");
+
 export function buildKeybindingCommandOptions(
   keybindings: ResolvedKeybindingsConfig,
 ): ReadonlyArray<KeybindingCommandOption> {
-  const commands = new Set<KeybindingCommand>(STATIC_KEYBINDING_COMMANDS);
+  const commands = new Set<KeybindingCommand>(
+    STATIC_KEYBINDING_COMMANDS.filter(isSettingsKeybindingCommand),
+  );
   for (const binding of keybindings) {
-    commands.add(binding.command);
+    if (isSettingsKeybindingCommand(binding.command)) commands.add(binding.command);
   }
   return [...commands].toSorted((left, right) => compareCommands(left, right, commandLabel));
 }
@@ -375,7 +381,7 @@ export function commandLabel(command: KeybindingCommand): string {
   if (command === "composer.sendAndNewThread") return "Composer: Send and Start New Thread";
   if (command === "thread.steerQueuedMessage") return "Queue: Send First Queued Message";
   if (command === "thread.editQueuedMessage") return "Queue: Edit Last Queued Message";
-  if (command === "thread.copyReference") return "Pull Request: Copy Link or Thread";
+  if (command === "thread.copyReference") return "Thread: Copy Reference";
   const usageMetric = METRIC_OPTIONS.find((option) => option.command === command);
   if (usageMetric) return `Usage: ${usageMetric.label}`;
   const usagePeriod = WINDOW_OPTIONS.find((option) => option.command === command);

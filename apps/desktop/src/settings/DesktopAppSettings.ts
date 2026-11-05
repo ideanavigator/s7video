@@ -23,7 +23,6 @@ import {
   type LinuxPasswordStorePreference,
 } from "../linuxSecretStorage.ts";
 import { desktopUpdateChannelOf } from "@t3tools/shared/cliRelease";
-import { isValidDistroName } from "../wsl/wslPathParsing.ts";
 
 export interface DesktopSettings {
   readonly localEnvironmentEnabled: boolean;
@@ -31,14 +30,8 @@ export interface DesktopSettings {
   readonly mainWindowBounds: DesktopWindowBounds | null;
   readonly mainWindowMaximized: boolean;
   readonly serverExposureMode: DesktopServerExposureMode;
-  readonly tailscaleServeEnabled: boolean;
-  readonly tailscaleServePort: number;
   readonly updateChannel: DesktopUpdateChannel;
   readonly updateChannelConfiguredByUser: boolean;
-  readonly wslBackendEnabled: boolean;
-  readonly wslDistro: string | null;
-  // Requires restart because the pool chooses its primary spec at layer initialization.
-  readonly wslOnly: boolean;
 }
 
 export interface DesktopSettingsChange {
@@ -46,7 +39,6 @@ export interface DesktopSettingsChange {
   readonly changed: boolean;
 }
 
-const DEFAULT_TAILSCALE_SERVE_PORT = 443;
 const MIN_MAIN_WINDOW_SIZE = {
   width: 840,
   height: 620,
@@ -69,13 +61,8 @@ export const DEFAULT_DESKTOP_SETTINGS: DesktopSettings = {
   mainWindowBounds: null,
   mainWindowMaximized: false,
   serverExposureMode: "local-only",
-  tailscaleServeEnabled: false,
-  tailscaleServePort: DEFAULT_TAILSCALE_SERVE_PORT,
   updateChannel: "latest",
   updateChannelConfiguredByUser: false,
-  wslBackendEnabled: false,
-  wslDistro: null,
-  wslOnly: false,
 };
 
 const DesktopWindowBoundsDocument = Schema.Struct({
@@ -91,14 +78,8 @@ const DesktopSettingsDocument = Schema.Struct({
   mainWindowBounds: Schema.optionalKey(Schema.NullOr(DesktopWindowBoundsDocument)),
   mainWindowMaximized: Schema.optionalKey(Schema.Boolean),
   serverExposureMode: Schema.optionalKey(DesktopServerExposureModeSchema),
-  tailscaleServeEnabled: Schema.optionalKey(Schema.Boolean),
-  tailscaleServePort: Schema.optionalKey(Schema.Number),
   updateChannel: Schema.optionalKey(DesktopUpdateChannelSchema),
   updateChannelConfiguredByUser: Schema.optionalKey(Schema.Boolean),
-  wslBackendEnabled: Schema.optionalKey(Schema.Boolean),
-  wslMode: Schema.optionalKey(Schema.Literals(["local", "wsl"])),
-  wslDistro: Schema.optionalKey(Schema.NullOr(Schema.String)),
-  wslOnly: Schema.optionalKey(Schema.Boolean),
 });
 
 type DesktopSettingsDocument = typeof DesktopSettingsDocument.Type;
@@ -153,27 +134,9 @@ export class DesktopAppSettings extends Context.Service<
     readonly setServerExposureMode: (
       mode: DesktopServerExposureMode,
     ) => Effect.Effect<DesktopSettingsChange, DesktopSettingsWriteError>;
-    readonly setTailscaleServe: (input: {
-      readonly enabled: boolean;
-      readonly port: Option.Option<number>;
-    }) => Effect.Effect<DesktopSettingsChange, DesktopSettingsWriteError>;
     readonly setUpdateChannel: (
       channel: DesktopUpdateChannel,
     ) => Effect.Effect<DesktopSettingsChange, DesktopSettingsWriteError>;
-    readonly setWslBackendEnabled: (
-      enabled: boolean,
-    ) => Effect.Effect<DesktopSettingsChange, DesktopSettingsWriteError>;
-    readonly setWslDistro: (
-      distro: string | null,
-    ) => Effect.Effect<DesktopSettingsChange, DesktopSettingsWriteError>;
-    readonly setWslOnly: (
-      enabled: boolean,
-    ) => Effect.Effect<DesktopSettingsChange, DesktopSettingsWriteError>;
-    readonly applyWslWindowsFallback: Effect.Effect<
-      DesktopSettingsChange,
-      DesktopSettingsWriteError
-    >;
-    readonly applyWslWindowsFallbackInMemory: Effect.Effect<DesktopSettingsChange>;
   }
 >()("@t3tools/desktop/settings/DesktopAppSettings") {}
 
@@ -182,16 +145,6 @@ export function resolveDefaultDesktopSettings(appVersion: string): DesktopSettin
     ...DEFAULT_DESKTOP_SETTINGS,
     updateChannel: desktopUpdateChannelOf(appVersion),
   };
-}
-
-function normalizeTailscaleServePort(value: unknown): number {
-  return typeof value === "number" && Number.isInteger(value) && value >= 1 && value <= 65_535
-    ? value
-    : DEFAULT_TAILSCALE_SERVE_PORT;
-}
-
-function normalizeWslDistro(value: unknown): string | null {
-  return typeof value === "string" && isValidDistroName(value) ? value : null;
 }
 
 export function normalizeMainWindowBounds(value: unknown): DesktopWindowBounds | null {
@@ -210,10 +163,6 @@ function normalizeDesktopSettingsDocument(
     parsed.updateChannelConfiguredByUser === true ||
     (isLegacySettings && Option.contains(parsedUpdateChannel, "nightly"));
 
-  const wslBackendEnabled =
-    parsed.wslBackendEnabled === true ||
-    (parsed.wslBackendEnabled === undefined && parsed.wslMode === "wsl");
-
   return {
     localEnvironmentEnabled: parsed.localEnvironmentEnabled !== false,
     linuxPasswordStore: normalizeLinuxPasswordStorePreference(parsed.linuxPasswordStore),
@@ -221,15 +170,10 @@ function normalizeDesktopSettingsDocument(
     mainWindowMaximized: mainWindowBounds !== null && parsed.mainWindowMaximized === true,
     serverExposureMode:
       parsed.serverExposureMode === "network-accessible" ? "network-accessible" : "local-only",
-    tailscaleServeEnabled: parsed.tailscaleServeEnabled === true,
-    tailscaleServePort: normalizeTailscaleServePort(parsed.tailscaleServePort),
     updateChannel: updateChannelConfiguredByUser
       ? Option.getOrElse(parsedUpdateChannel, () => defaultSettings.updateChannel)
       : defaultSettings.updateChannel,
     updateChannelConfiguredByUser,
-    wslBackendEnabled,
-    wslDistro: normalizeWslDistro(parsed.wslDistro),
-    wslOnly: parsed.wslOnly === true,
   };
 }
 
@@ -255,26 +199,11 @@ function toDesktopSettingsDocument(
   if (settings.serverExposureMode !== defaults.serverExposureMode) {
     document.serverExposureMode = settings.serverExposureMode;
   }
-  if (settings.tailscaleServeEnabled !== defaults.tailscaleServeEnabled) {
-    document.tailscaleServeEnabled = settings.tailscaleServeEnabled;
-  }
-  if (settings.tailscaleServePort !== defaults.tailscaleServePort) {
-    document.tailscaleServePort = settings.tailscaleServePort;
-  }
   if (settings.updateChannel !== defaults.updateChannel) {
     document.updateChannel = settings.updateChannel;
   }
   if (settings.updateChannelConfiguredByUser !== defaults.updateChannelConfiguredByUser) {
     document.updateChannelConfiguredByUser = settings.updateChannelConfiguredByUser;
-  }
-  if (settings.wslBackendEnabled !== defaults.wslBackendEnabled) {
-    document.wslBackendEnabled = settings.wslBackendEnabled;
-  }
-  if (settings.wslDistro !== defaults.wslDistro) {
-    document.wslDistro = settings.wslDistro;
-  }
-  if (settings.wslOnly !== defaults.wslOnly) {
-    document.wslOnly = settings.wslOnly;
   }
 
   return document;
@@ -308,23 +237,6 @@ function setMainWindowBounds(
       };
 }
 
-function setTailscaleServe(
-  settings: DesktopSettings,
-  input: { readonly enabled: boolean; readonly port: Option.Option<number> },
-): DesktopSettings {
-  const port = Option.match(input.port, {
-    onNone: () => settings.tailscaleServePort,
-    onSome: normalizeTailscaleServePort,
-  });
-  return settings.tailscaleServeEnabled === input.enabled && settings.tailscaleServePort === port
-    ? settings
-    : {
-        ...settings,
-        tailscaleServeEnabled: input.enabled,
-        tailscaleServePort: port,
-      };
-}
-
 function setUpdateChannel(
   settings: DesktopSettings,
   requestedChannel: DesktopUpdateChannel,
@@ -338,42 +250,10 @@ function setUpdateChannel(
       };
 }
 
-function setWslBackendEnabled(settings: DesktopSettings, enabled: boolean): DesktopSettings {
-  return settings.wslBackendEnabled === enabled
-    ? settings
-    : {
-        ...settings,
-        wslBackendEnabled: enabled,
-      };
-}
-
-function setWslDistro(settings: DesktopSettings, distro: string | null): DesktopSettings {
-  const normalized = normalizeWslDistro(distro);
-  return settings.wslDistro === normalized
-    ? settings
-    : {
-        ...settings,
-        wslDistro: normalized,
-      };
-}
-
-function setWslOnly(settings: DesktopSettings, enabled: boolean): DesktopSettings {
-  return settings.wslOnly === enabled
-    ? settings
-    : {
-        ...settings,
-        wslOnly: enabled,
-      };
-}
-
 function setLocalEnvironmentEnabled(settings: DesktopSettings, enabled: boolean): DesktopSettings {
   return settings.localEnvironmentEnabled === enabled
     ? settings
     : { ...settings, localEnvironmentEnabled: enabled };
-}
-
-function applyWslWindowsFallback(settings: DesktopSettings): DesktopSettings {
-  return setWslOnly(setWslBackendEnabled(settings, false), false);
 }
 
 function readSettings(
@@ -472,12 +352,6 @@ export const make = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
   const settingsRef = yield* SynchronizedRef.make(environment.defaultDesktopSettings);
 
-  const updateInMemory = (update: (settings: DesktopSettings) => DesktopSettings) =>
-    SynchronizedRef.modify(settingsRef, (settings) => {
-      const nextSettings = update(settings);
-      return [settingsChange(nextSettings, nextSettings !== settings), nextSettings] as const;
-    });
-
   const persist = (
     update: (settings: DesktopSettings) => DesktopSettings,
   ): Effect.Effect<DesktopSettingsChange, DesktopSettingsWriteError> =>
@@ -539,30 +413,10 @@ export const make = Effect.gen(function* () {
 
       return yield* persist((settings) => setServerExposureMode(settings, mode));
     }),
-    setTailscaleServe: Effect.fn("desktop.settings.setTailscaleServe")(function* (input) {
-      yield* Effect.annotateCurrentSpan(input);
-
-      return yield* persist((settings) => setTailscaleServe(settings, input));
-    }),
     setUpdateChannel: Effect.fn("desktop.settings.setUpdateChannel")(function* (channel) {
       yield* Effect.annotateCurrentSpan({ channel });
 
       return yield* persist((settings) => setUpdateChannel(settings, channel));
-    }),
-    setWslBackendEnabled: Effect.fn("desktop.settings.setWslBackendEnabled")(function* (enabled) {
-      yield* Effect.annotateCurrentSpan({ enabled });
-
-      return yield* persist((settings) => setWslBackendEnabled(settings, enabled));
-    }),
-    setWslDistro: Effect.fn("desktop.settings.setWslDistro")(function* (distro) {
-      yield* Effect.annotateCurrentSpan({ distro: distro ?? null });
-
-      return yield* persist((settings) => setWslDistro(settings, distro));
-    }),
-    setWslOnly: Effect.fn("desktop.settings.setWslOnly")(function* (enabled) {
-      yield* Effect.annotateCurrentSpan({ enabled });
-
-      return yield* persist((settings) => setWslOnly(settings, enabled));
     }),
     setLocalEnvironmentEnabled: Effect.fn("desktop.settings.setLocalEnvironmentEnabled")(
       function* (enabled) {
@@ -570,12 +424,6 @@ export const make = Effect.gen(function* () {
 
         return yield* persist((settings) => setLocalEnvironmentEnabled(settings, enabled));
       },
-    ),
-    applyWslWindowsFallback: persist(applyWslWindowsFallback).pipe(
-      Effect.withSpan("desktop.settings.applyWslWindowsFallback"),
-    ),
-    applyWslWindowsFallbackInMemory: updateInMemory(applyWslWindowsFallback).pipe(
-      Effect.withSpan("desktop.settings.applyWslWindowsFallbackInMemory"),
     ),
   });
 });
@@ -612,30 +460,14 @@ export const layerTest = (initialSettings: DesktopSettings = DEFAULT_DESKTOP_SET
             return update((settings) => setServerExposureMode(settings, mode));
           },
         ),
-        setTailscaleServe: Effect.fn("DesktopAppSettings.setTailscaleServe")(function (input) {
-          return update((settings) => setTailscaleServe(settings, input));
-        }),
         setUpdateChannel: Effect.fn("DesktopAppSettings.setUpdateChannel")(function (channel) {
           return update((settings) => setUpdateChannel(settings, channel));
-        }),
-        setWslBackendEnabled: Effect.fn("DesktopAppSettings.setWslBackendEnabled")(
-          function (enabled) {
-            return update((settings) => setWslBackendEnabled(settings, enabled));
-          },
-        ),
-        setWslDistro: Effect.fn("DesktopAppSettings.setWslDistro")(function (distro) {
-          return update((settings) => setWslDistro(settings, distro));
-        }),
-        setWslOnly: Effect.fn("DesktopAppSettings.setWslOnly")(function (enabled) {
-          return update((settings) => setWslOnly(settings, enabled));
         }),
         setLocalEnvironmentEnabled: Effect.fn("DesktopAppSettings.setLocalEnvironmentEnabled")(
           function (enabled) {
             return update((settings) => setLocalEnvironmentEnabled(settings, enabled));
           },
         ),
-        applyWslWindowsFallback: update(applyWslWindowsFallback),
-        applyWslWindowsFallbackInMemory: update(applyWslWindowsFallback),
       });
     }),
   );

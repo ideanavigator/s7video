@@ -304,7 +304,7 @@ function LinkEnvironmentAction({ environmentId }: { readonly environmentId: Envi
                     // Machines found after typing began must not hide the address being typed.
                     if (choice === null) setChoice(ANOTHER_ADDRESS);
                   }}
-                  placeholder="https://box.example.ts.net"
+                  placeholder="https://studio.local"
                   disabled={busy}
                   autoFocus={machines.length === 0}
                   nativeInput
@@ -313,7 +313,7 @@ function LinkEnvironmentAction({ environmentId }: { readonly environmentId: Envi
                 {machine !== null ? (
                   <span className="block text-xs text-muted-foreground">
                     This app has no address for {machine.label} that another machine can reach.
-                    Enter its https or Tailscale address.
+                    Enter its https address.
                   </span>
                 ) : null}
               </label>

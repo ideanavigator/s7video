@@ -21,7 +21,6 @@ Two named volumes keep rebuilds fast and installs off the slow macOS/Windows bin
 
 - Windowed Electron development is host-only. Building and verifying the desktop bundle works fine in the container (CI does exactly that, headless); launching the app needs a display.
 - Mobile native builds are host-only (Xcode for iOS, Android SDK for Android). Typecheck, lint, and the mobile static checks run fine.
-- `vp run dev --share` needs a tailscale binary and a tailnet; not provisioned here.
 
 ## Prebuilds
 

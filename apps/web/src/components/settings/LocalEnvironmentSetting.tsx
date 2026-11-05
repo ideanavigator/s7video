@@ -43,8 +43,8 @@ export function LocalEnvironmentSetting() {
         {...searchableSetting("local-environment")}
         description={
           enabled
-            ? `Run agents on this computer. Turn off to use ${BRAND.app.productName} only with remote environments.`
-            : "Turned off. Agents only run in remote environments."
+            ? `Run agents on this computer. Turn off to use ${BRAND.app.productName} only with other computers on your network.`
+            : "Turned off. Agents only run on other computers on your network."
         }
         control={
           <Switch
@@ -70,7 +70,7 @@ export function LocalEnvironmentSetting() {
             </AlertDialogTitle>
             <AlertDialogDescription>
               {enabled
-                ? `${BRAND.app.productName} will restart without running a server on this computer. Any agents and terminals running here will stop, and other devices will no longer be able to connect to this computer. Your projects, history, and remote environments are unaffected.`
+                ? `${BRAND.app.productName} will restart without running a server on this computer. Any agents and terminals running here will stop, and other devices will no longer be able to connect to this computer. Your projects, history, and paired computers are unaffected.`
                 : `${BRAND.app.productName} will restart and start running a server on this computer again.`}
             </AlertDialogDescription>
           </AlertDialogHeader>

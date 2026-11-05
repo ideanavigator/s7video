@@ -134,7 +134,6 @@ const layerDeviceServiceMock = Layer.mock(DeviceService.DeviceService)({
     ),
   screenshot: () => Effect.succeed({ device, png }),
   close: () => Effect.void,
-  testHost: () => Effect.die("not used"),
   // As for an EAS device, agent-device knows the device by a different id than T3.
   agentTarget: () =>
     Effect.succeed({
