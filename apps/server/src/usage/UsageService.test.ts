@@ -1885,12 +1885,18 @@ describe("UsageService", () => {
       const codexHome = NodePath.join(home, "codex-account");
       const alias = NodePath.join(home, "codex-alias");
       const claudeHome = NodePath.join(home, "claude-account");
+      const brokenClaudeHome = NodePath.join(home, "claude-broken");
       yield* Effect.promise(async () => {
         await NodeFSP.writeFile(transcript, claudeLine(1, 5));
         await NodeFSP.mkdir(NodePath.join(claudeHome, "projects"), { recursive: true });
         await NodeFSP.writeFile(
           NodePath.join(claudeHome, "projects", "session.jsonl"),
           claudeLine(2, 7),
+        );
+        await NodeFSP.mkdir(NodePath.join(brokenClaudeHome, "projects"), { recursive: true });
+        await NodeFSP.writeFile(
+          NodePath.join(brokenClaudeHome, "projects", "session.jsonl"),
+          claudeLine(3, 1000),
         );
         await NodeFSP.mkdir(NodePath.join(codexHome, "sessions"), { recursive: true });
         await NodeFSP.symlink(codexHome, alias, "junction");
@@ -1925,6 +1931,14 @@ describe("UsageService", () => {
                   driver: ProviderDriverKind.make("claudeAgent"),
                   enabled: false,
                   environment: [{ name: "CLAUDE_CONFIG_DIR", value: claudeHome, sensitive: false }],
+                },
+                // An undecodable config skips only this instance; the scan still reports the others.
+                [ProviderInstanceId.make("claude-broken")]: {
+                  driver: ProviderDriverKind.make("claudeAgent"),
+                  config: { customModels: "not-a-list" },
+                  environment: [
+                    { name: "CLAUDE_CONFIG_DIR", value: brokenClaudeHome, sensitive: false },
+                  ],
                 },
                 [ProviderInstanceId.make("codex-work")]: {
                   driver: ProviderDriverKind.make("codex"),
