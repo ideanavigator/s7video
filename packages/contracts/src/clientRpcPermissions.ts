@@ -68,6 +68,10 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.peerLinksAnswerRequest]: AuthAccessWriteScope,
   // Cancelling stops an engine job (a transcription or export) that an agent or the user started.
   [WS_METHODS.engineJobsCancel]: AuthOrchestrationOperateScope,
+  // Edits rewrite the project's edit.json and move its undo history.
+  [WS_METHODS.editApply]: AuthOrchestrationOperateScope,
+  [WS_METHODS.editUndo]: AuthOrchestrationOperateScope,
+  [WS_METHODS.editRedo]: AuthOrchestrationOperateScope,
 } as const;
 export type ClientGuardedRpcTag = keyof typeof CLIENT_GUARDED_RPC_SCOPES;
 

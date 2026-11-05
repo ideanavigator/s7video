@@ -1,0 +1,128 @@
+{
+  "cases": [
+    {
+      "file": "01-empty.json",
+      "valid": true
+    },
+    {
+      "file": "02-single-clip.json",
+      "valid": true
+    },
+    {
+      "file": "03-silence-cut.json",
+      "valid": true
+    },
+    {
+      "file": "04-engine-b.json",
+      "valid": true
+    },
+    {
+      "file": "05-ntsc-2997.json",
+      "valid": true
+    },
+    {
+      "file": "06-reference-media.json",
+      "valid": true
+    },
+    {
+      "file": "07-caption-words.json",
+      "valid": true
+    },
+    {
+      "file": "08-text-overlay.json",
+      "valid": true
+    },
+    {
+      "file": "09-adjacent-items.json",
+      "valid": true
+    },
+    {
+      "file": "10-still-image-overlay.json",
+      "valid": true
+    },
+    {
+      "file": "11-overlap.json",
+      "valid": false,
+      "reason": "overlap",
+      "itemId": "v3"
+    },
+    {
+      "file": "12-unknown-media.json",
+      "valid": false,
+      "reason": "unknown-media",
+      "itemId": "v1"
+    },
+    {
+      "file": "13-source-range.json",
+      "valid": false,
+      "reason": "source-range",
+      "itemId": "v1"
+    },
+    {
+      "file": "14-float-frame.json",
+      "valid": false,
+      "reason": "frame",
+      "itemId": "v1"
+    },
+    {
+      "file": "15-negative-frame.json",
+      "valid": false,
+      "reason": "frame",
+      "itemId": "s2"
+    },
+    {
+      "file": "16-future-version.json",
+      "valid": false,
+      "reason": "version",
+      "itemId": null
+    },
+    {
+      "file": "17-duplicate-id.json",
+      "valid": false,
+      "reason": "duplicate-id",
+      "itemId": "a1"
+    },
+    {
+      "file": "18-unknown-property.json",
+      "valid": false,
+      "reason": "schema",
+      "itemId": "m1"
+    },
+    {
+      "file": "19-path-outside-project.json",
+      "valid": false,
+      "reason": "media-location",
+      "itemId": "cam"
+    },
+    {
+      "file": "20-word-outside-caption.json",
+      "valid": false,
+      "reason": "word-range",
+      "itemId": "t1"
+    },
+    {
+      "file": "21-fades-too-long.json",
+      "valid": false,
+      "reason": "fade-range",
+      "itemId": "m1"
+    },
+    {
+      "file": "22-overlay-media-and-text.json",
+      "valid": false,
+      "reason": "overlay-content",
+      "itemId": "o1"
+    },
+    {
+      "file": "23-zoom-out-of-range.json",
+      "valid": false,
+      "reason": "schema",
+      "itemId": "b1"
+    },
+    {
+      "file": "24-unknown-track-kind.json",
+      "valid": false,
+      "reason": "schema",
+      "itemId": "V1"
+    }
+  ]
+}

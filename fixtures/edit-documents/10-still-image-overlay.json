@@ -1,0 +1,42 @@
+{
+  "version": 1,
+  "fps": {
+    "num": 30,
+    "den": 1
+  },
+  "canvas": {
+    "width": 1080,
+    "height": 1920
+  },
+  "media": [
+    {
+      "id": "logo",
+      "kind": "image",
+      "path": "assets/logo.png",
+      "fingerprint": {
+        "sha256": "abababababababababababababababababababababababababababababababab",
+        "size": 3145728
+      },
+      "probe": {
+        "hasVideo": true,
+        "hasAudio": false
+      }
+    }
+  ],
+  "tracks": [
+    {
+      "kind": "overlay",
+      "id": "O1",
+      "items": [
+        {
+          "id": "o1",
+          "media": "logo",
+          "start": 0,
+          "duration": 100000
+        }
+      ]
+    }
+  ],
+  "markers": [],
+  "metadata": {}
+}

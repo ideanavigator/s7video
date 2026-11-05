@@ -1,0 +1,66 @@
+{
+  "version": 1,
+  "fps": {
+    "num": 30,
+    "den": 1
+  },
+  "canvas": {
+    "width": 1080,
+    "height": 1920
+  },
+  "media": [
+    {
+      "id": "cam",
+      "kind": "video",
+      "path": "assets/cam.mp4",
+      "fingerprint": {
+        "sha256": "abababababababababababababababababababababababababababababababab",
+        "size": 3145728
+      },
+      "probe": {
+        "hasVideo": true,
+        "hasAudio": true,
+        "durationFrames": 900
+      }
+    }
+  ],
+  "tracks": [
+    {
+      "kind": "video",
+      "id": "V1",
+      "role": "main",
+      "items": [
+        {
+          "id": "v1",
+          "media": "cam",
+          "start": 0,
+          "duration": 90,
+          "in": 0
+        },
+        {
+          "id": "v2",
+          "media": "cam",
+          "start": 90,
+          "duration": 60,
+          "in": 120
+        },
+        {
+          "id": "v3",
+          "media": "cam",
+          "start": 150,
+          "duration": 150,
+          "in": 200
+        },
+        {
+          "id": "v4",
+          "media": "cam",
+          "start": 300,
+          "duration": 300,
+          "in": 400
+        }
+      ]
+    }
+  ],
+  "markers": [],
+  "metadata": {}
+}

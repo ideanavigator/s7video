@@ -346,6 +346,14 @@ import {
   ProviderConsumeResetCreditResult,
 } from "./providerUsageLimits.ts";
 import { UsagePricing, UsageReadError, UsageSummary, UsageSummaryInput } from "./usage.ts";
+import { EditConflict, EditValidationError } from "./edit.ts";
+import {
+  EditApplyInput,
+  EditOpError,
+  EditProjectInput,
+  EditSnapshot,
+  EditUnavailableError,
+} from "./editOps.ts";
 import {
   StorageCleanupReport,
   DatabaseStorageStatus,
@@ -603,6 +611,13 @@ export const WS_METHODS = {
 
   engineJobsSubscribe: "engine.jobs.subscribe",
   engineJobsCancel: "engine.jobs.cancel",
+
+  // Edit document (S7V-024)
+  editGet: "edit.get",
+  editApply: "edit.apply",
+  editSubscribe: "edit.subscribe",
+  editUndo: "edit.undo",
+  editRedo: "edit.redo",
 } as const;
 
 const WsServerUpsertKeybindingRpc = Rpc.make(WS_METHODS.serverUpsertKeybinding, {
@@ -1960,6 +1975,40 @@ const WsEngineJobsCancelRpc = Rpc.make(WS_METHODS.engineJobsCancel, {
   error: EnvironmentAuthorizationError,
 });
 
+const EditRpcError = Schema.Union([EditUnavailableError, EnvironmentAuthorizationError]);
+const WsEditGetRpc = Rpc.make(WS_METHODS.editGet, {
+  payload: EditProjectInput,
+  success: EditSnapshot,
+  error: EditRpcError,
+});
+const WsEditApplyRpc = Rpc.make(WS_METHODS.editApply, {
+  payload: EditApplyInput,
+  success: EditSnapshot,
+  error: Schema.Union([
+    EditUnavailableError,
+    EditConflict,
+    EditValidationError,
+    EditOpError,
+    EnvironmentAuthorizationError,
+  ]),
+});
+const WsEditSubscribeRpc = Rpc.make(WS_METHODS.editSubscribe, {
+  payload: EditProjectInput,
+  success: EditSnapshot,
+  error: EditRpcError,
+  stream: true,
+});
+const WsEditUndoRpc = Rpc.make(WS_METHODS.editUndo, {
+  payload: EditProjectInput,
+  success: EditSnapshot,
+  error: EditRpcError,
+});
+const WsEditRedoRpc = Rpc.make(WS_METHODS.editRedo, {
+  payload: EditProjectInput,
+  success: EditSnapshot,
+  error: EditRpcError,
+});
+
 export const WsRpcGroup = RpcGroup.make(
   WsServerProbeRpc,
   WsServerGetConfigRpc,
@@ -2168,4 +2217,9 @@ export const WsRpcGroup = RpcGroup.make(
   WsOrchestrationV2SubscribeCommandOutputRpc,
   WsEngineJobsSubscribeRpc,
   WsEngineJobsCancelRpc,
+  WsEditGetRpc,
+  WsEditApplyRpc,
+  WsEditSubscribeRpc,
+  WsEditUndoRpc,
+  WsEditRedoRpc,
 ).middleware(RpcScopeAuthorization);

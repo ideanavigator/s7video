@@ -214,6 +214,7 @@ import * as ProjectEnrichmentService from "./project/ProjectEnrichmentService.ts
 import * as ProjectService from "./project/ProjectService.ts";
 import { threadWorkspaceRoot } from "./project/threadWorkspaceRoot.ts";
 import * as ManagedProjectFolders from "./project/ManagedProjectFolders.ts";
+import * as EditDocumentService from "./edit/EditDocumentService.ts";
 import * as ScratchThreadPromotion from "./project/ScratchThreadPromotion.ts";
 import { mutateProjectWithClone } from "./project/ProjectMutation.ts";
 import * as ProjectCloneTracker from "./project/ProjectCloneTracker.ts";
@@ -1279,6 +1280,7 @@ export const layerWsRpc = (
       const projectStore = yield* ProjectStore.ProjectStoreV2;
       const projectService = yield* ProjectService.ProjectService;
       const managedFolders = yield* ManagedProjectFolders.ManagedProjectFolders;
+      const editDocuments = yield* EditDocumentService.EditDocumentService;
       const scratchThreadPromotion = yield* ScratchThreadPromotion.ScratchThreadPromotion;
       const eventLoopMonitor = yield* EventLoopMonitor.EventLoopMonitor;
       const threadSearch = yield* ThreadSearch.ThreadSearch;
@@ -2718,6 +2720,15 @@ export const layerWsRpc = (
                 (cause) => new OrchestrationDispatchCommandError({ message: cause.message, cause }),
               ),
             ),
+        [WS_METHODS.editGet]: (input) => editDocuments.read(input.projectId),
+        [WS_METHODS.editApply]: (input) =>
+          editDocuments.apply(input.projectId, input.ops, {
+            origin: input.origin,
+            baseRevision: input.baseRevision,
+          }),
+        [WS_METHODS.editSubscribe]: (input) => editDocuments.subscribe(input.projectId),
+        [WS_METHODS.editUndo]: (input) => editDocuments.undo(input.projectId),
+        [WS_METHODS.editRedo]: (input) => editDocuments.redo(input.projectId),
         [WS_METHODS.projectsCreateFromThread]: (input) =>
           scratchThreadPromotion
             .promote(input)
