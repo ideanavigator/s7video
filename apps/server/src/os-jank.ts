@@ -7,6 +7,7 @@ import {
   resolveWindowsEnvironment,
   setWindowsPath,
 } from "@t3tools/shared/shell";
+import { defaultDataHome, guardDataHome } from "@t3tools/shared/dataHome";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -120,10 +121,13 @@ export const expandHomePath = Effect.fn(function* (input: string) {
   return input;
 });
 
+/** Dies rather than return T3 Code's `~/.t3`: s7video never touches another app's data. */
 export const resolveBaseDir = Effect.fn(function* (raw: string | undefined) {
   const { join, resolve } = yield* Path.Path;
-  if (!raw || raw.trim().length === 0) {
-    return join(yield* HostProcess.HomeDirectory, ".t3");
-  }
-  return resolve(yield* expandHomePath(raw.trim()));
+  const home = yield* HostProcess.HomeDirectory;
+  const baseDir =
+    !raw || raw.trim().length === 0
+      ? defaultDataHome(home, join)
+      : resolve(yield* expandHomePath(raw.trim()));
+  return yield* Effect.sync(() => guardDataHome(baseDir, resolve(home)));
 });

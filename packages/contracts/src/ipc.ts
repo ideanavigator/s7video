@@ -9,9 +9,7 @@ import type {
   BrowserImportSource,
   BrowserImportSourceId,
 } from "./browserImport.ts";
-import { AuthAccessTokenResult, AuthSessionState } from "./auth.ts";
 import { AdvertisedEndpoint } from "./remoteAccess.ts";
-import { ExecutionEnvironmentDescriptor } from "./environment.ts";
 import { type ClientSettings, type QuitConfirmationMode, SnapShotShortcut } from "./settings.ts";
 import type { EditorId } from "./editor.ts";
 import type { PreviewForwardedShortcut } from "./keybindings.ts";
@@ -367,8 +365,6 @@ export interface DesktopEnvironmentBootstrap {
   // Stable backend identity used to reopen routed projects.
   id: string;
   label: string;
-  // Actual distro for this run; id stays wsl:default when tracking the default.
-  runningDistro?: string | null;
   httpBaseUrl: string | null;
   wsBaseUrl: string | null;
   bootstrapToken?: string;
@@ -377,99 +373,9 @@ export interface DesktopEnvironmentBootstrap {
 export const DesktopEnvironmentBootstrapSchema = Schema.Struct({
   id: Schema.String,
   label: Schema.String,
-  runningDistro: Schema.optionalKey(Schema.NullOr(Schema.String)),
   httpBaseUrl: Schema.NullOr(Schema.String),
   wsBaseUrl: Schema.NullOr(Schema.String),
   bootstrapToken: Schema.optionalKey(Schema.String),
-});
-
-export const DesktopSshEnvironmentTargetSchema = Schema.Struct({
-  alias: Schema.String,
-  hostname: Schema.String,
-  username: Schema.NullOr(Schema.String),
-  port: Schema.NullOr(Schema.Number),
-});
-export type DesktopSshEnvironmentTarget = typeof DesktopSshEnvironmentTargetSchema.Type;
-
-export type DesktopSshHostSource = "ssh-config" | "known-hosts";
-export const DesktopSshHostSourceSchema = Schema.Literals(["ssh-config", "known-hosts"]);
-
-export interface DesktopDiscoveredSshHost extends DesktopSshEnvironmentTarget {
-  source: DesktopSshHostSource;
-}
-
-export const DesktopDiscoveredSshHostSchema = Schema.Struct({
-  alias: Schema.String,
-  hostname: Schema.String,
-  username: Schema.NullOr(Schema.String),
-  port: Schema.NullOr(Schema.Number),
-  source: DesktopSshHostSourceSchema,
-});
-
-export interface DesktopSshEnvironmentBootstrap {
-  target: DesktopSshEnvironmentTarget;
-  httpBaseUrl: string;
-  wsBaseUrl: string;
-  pairingToken: string | null;
-  remotePort?: number;
-  remoteServerKind?: "external" | "managed";
-}
-
-export const DesktopSshEnvironmentBootstrapSchema = Schema.Struct({
-  target: DesktopSshEnvironmentTargetSchema,
-  httpBaseUrl: Schema.String,
-  wsBaseUrl: Schema.String,
-  pairingToken: Schema.NullOr(Schema.String),
-  remotePort: Schema.optionalKey(Schema.Number),
-  remoteServerKind: Schema.optionalKey(Schema.Literals(["external", "managed"])),
-});
-
-export interface DesktopSshPasswordPromptRequest {
-  requestId: string;
-  destination: string;
-  username: string | null;
-  prompt: string;
-  expiresAt: string;
-}
-
-export const DesktopSshPasswordPromptCancelledType = "ssh-password-prompt-cancelled" as const;
-
-export const DesktopSshPasswordPromptCancelledResultSchema = Schema.Struct({
-  type: Schema.Literal(DesktopSshPasswordPromptCancelledType),
-  message: Schema.String,
-});
-
-export const DesktopSshEnvironmentEnsureOptionsSchema = Schema.Struct({
-  issuePairingToken: Schema.optionalKey(Schema.Boolean),
-});
-
-export const DesktopSshEnvironmentEnsureInputSchema = Schema.Struct({
-  target: DesktopSshEnvironmentTargetSchema,
-  options: Schema.optionalKey(DesktopSshEnvironmentEnsureOptionsSchema),
-});
-
-export const DesktopSshEnvironmentEnsureResultSchema = Schema.Union([
-  DesktopSshEnvironmentBootstrapSchema,
-  DesktopSshPasswordPromptCancelledResultSchema,
-]);
-
-export const DesktopSshHttpBaseUrlInputSchema = Schema.Struct({
-  httpBaseUrl: Schema.String,
-});
-
-export const DesktopSshBearerRequestInputSchema = Schema.Struct({
-  httpBaseUrl: Schema.String,
-  bearerToken: Schema.String,
-});
-
-export const DesktopSshBearerBootstrapInputSchema = Schema.Struct({
-  httpBaseUrl: Schema.String,
-  credential: Schema.String,
-});
-
-export const DesktopSshPasswordPromptResolutionInputSchema = Schema.Struct({
-  requestId: Schema.String,
-  password: Schema.NullOr(Schema.String),
 });
 
 export const PersistedSavedEnvironmentRecordSchema = Schema.Struct({
@@ -479,12 +385,6 @@ export const PersistedSavedEnvironmentRecordSchema = Schema.Struct({
   httpBaseUrl: Schema.String,
   createdAt: Schema.String,
   lastConnectedAt: Schema.NullOr(Schema.String),
-  desktopSsh: Schema.optionalKey(DesktopSshEnvironmentTargetSchema),
-  relayManaged: Schema.optionalKey(
-    Schema.Struct({
-      relayUrl: Schema.String,
-    }),
-  ),
 });
 export type PersistedSavedEnvironmentRecord = typeof PersistedSavedEnvironmentRecordSchema.Type;
 
@@ -499,16 +399,12 @@ export interface DesktopServerExposureState {
   mode: DesktopServerExposureMode;
   endpointUrl: string | null;
   advertisedHost: string | null;
-  tailscaleServeEnabled: boolean;
-  tailscaleServePort: number;
 }
 
 export const DesktopServerExposureStateSchema = Schema.Struct({
   mode: DesktopServerExposureModeSchema,
   endpointUrl: Schema.NullOr(Schema.String),
   advertisedHost: Schema.NullOr(Schema.String),
-  tailscaleServeEnabled: Schema.Boolean,
-  tailscaleServePort: Schema.Number,
 });
 
 export interface PickFolderOptions {
@@ -532,38 +428,6 @@ export const PickedThemeFileSchema = Schema.Struct({
   name: Schema.String,
   size: Schema.Number,
   text: Schema.String,
-});
-
-export interface DesktopWslDistro {
-  name: string;
-  isDefault: boolean;
-  version: 1 | 2;
-}
-
-export const DesktopWslDistroSchema = Schema.Struct({
-  name: Schema.String,
-  isDefault: Schema.Boolean,
-  version: Schema.Literals([1, 2]),
-});
-
-export interface DesktopWslState {
-  enabled: boolean;
-  // null means "track the current WSL default distro".
-  distro: string | null;
-  available: boolean;
-  wslOnly: boolean;
-  distros: readonly DesktopWslDistro[];
-  // Always null in wsl-only mode, which falls back to Windows with a dialog.
-  preflightError: string | null;
-}
-
-export const DesktopWslStateSchema = Schema.Struct({
-  enabled: Schema.Boolean,
-  distro: Schema.NullOr(Schema.String),
-  available: Schema.Boolean,
-  wslOnly: Schema.Boolean,
-  distros: Schema.Array(DesktopWslDistroSchema),
-  preflightError: Schema.NullOr(Schema.String),
 });
 
 export type DesktopPreviewNavStatus =
@@ -1019,12 +883,38 @@ export const DesktopMediaReadSchema = Schema.Struct({
 });
 export type DesktopMediaRead = typeof DesktopMediaReadSchema.Type;
 
+/** Same ceiling as the web app's HEIC preview and attachment checks. */
+const DESKTOP_HEIC_CONVERSION_MAX_BYTES = 50 * 1024 * 1024;
+/** Largest HEIC both the web app and the desktop converter will decode. */
+export const HEIC_DECODE_MAX_PIXELS = 64_000_000;
+
+export const DesktopHeicConversionFormatSchema = Schema.Literals(["image/jpeg", "image/png"]);
+export type DesktopHeicConversionFormat = typeof DesktopHeicConversionFormatSchema.Type;
+
+export const DesktopHeicConversionInputSchema = Schema.Struct({
+  data: Schema.Uint8Array.check(Schema.isMaxLength(DESKTOP_HEIC_CONVERSION_MAX_BYTES)),
+  format: DesktopHeicConversionFormatSchema,
+});
+export type DesktopHeicConversionInput = typeof DesktopHeicConversionInputSchema.Type;
+
+export const DesktopHeicConversionResultSchema = Schema.Union([
+  Schema.Struct({
+    ok: Schema.Literal(true),
+    data: Schema.Uint8Array,
+    mimeType: DesktopHeicConversionFormatSchema,
+  }),
+  Schema.Struct({
+    ok: Schema.Literal(false),
+    reason: Schema.Literals(["unsupported", "unreadable", "too-large"]),
+  }),
+]);
+export type DesktopHeicConversionResult = typeof DesktopHeicConversionResultSchema.Type;
+
 export const SystemSettingsPaneSchema = Schema.Literals(["full-disk-access"]);
 export type SystemSettingsPane = typeof SystemSettingsPaneSchema.Type;
 
 export interface DesktopBridge {
   getAppBranding: () => DesktopAppBranding | null;
-  getRelayTelemetryEnabled: () => boolean;
   getPathForFile: (file: File) => string;
   getClientPlatform: () => string;
   setNotificationBadge: (badge: { count: number; image: string | null }) => Promise<void>;
@@ -1051,8 +941,6 @@ export interface DesktopBridge {
   setClientSettings: (settings: ClientSettings) => Promise<void>;
   getConnectionCatalog: () => Promise<string | null>;
   setConnectionCatalog: (catalog: string) => Promise<boolean>;
-  discoverSshHosts: () => Promise<readonly DesktopDiscoveredSshHost[]>;
-  resolveSshHost: (alias: string) => Promise<DesktopSshEnvironmentTarget>;
   requestSnapShotPermissions: (includeAccessibility: boolean) => Promise<void>;
   getSnapShotState: () => Promise<DesktopSnapShotState>;
   setupSnapShot: (action: DesktopSnapShotSetupAction) => Promise<void>;
@@ -1071,30 +959,9 @@ export interface DesktopBridge {
   ) => Promise<void>;
   dismissSnapShotAnimation: (id: DesktopSnapShotId) => Promise<void>;
   acknowledgeSnapShot: (id: string) => Promise<void>;
-  ensureSshEnvironment: (
-    target: DesktopSshEnvironmentTarget,
-    options?: { issuePairingToken?: boolean },
-  ) => Promise<DesktopSshEnvironmentBootstrap>;
-  disconnectSshEnvironment: (target: DesktopSshEnvironmentTarget) => Promise<void>;
-  fetchSshEnvironmentDescriptor: (httpBaseUrl: string) => Promise<ExecutionEnvironmentDescriptor>;
-  bootstrapSshBearerSession: (
-    httpBaseUrl: string,
-    credential: string,
-  ) => Promise<AuthAccessTokenResult>;
-  fetchSshSessionState: (httpBaseUrl: string, bearerToken: string) => Promise<AuthSessionState>;
-  onSshPasswordPrompt: (listener: (request: DesktopSshPasswordPromptRequest) => void) => () => void;
-  resolveSshPasswordPrompt: (requestId: string, password: string | null) => Promise<void>;
   getServerExposureState: () => Promise<DesktopServerExposureState>;
   setServerExposureMode: (mode: DesktopServerExposureMode) => Promise<DesktopServerExposureState>;
-  setTailscaleServeEnabled: (input: {
-    readonly enabled: boolean;
-    readonly port?: number;
-  }) => Promise<DesktopServerExposureState>;
   getAdvertisedEndpoints: () => Promise<readonly AdvertisedEndpoint[]>;
-  getWslState: () => Promise<DesktopWslState>;
-  setWslBackendEnabled: (enabled: boolean) => Promise<DesktopWslState>;
-  setWslDistro: (distro: string | null) => Promise<DesktopWslState>;
-  setWslOnly: (enabled: boolean) => Promise<DesktopWslState>;
   pickFolder: (options?: PickFolderOptions) => Promise<string | null>;
   pickProjectFavicon: (initialPath?: string) => Promise<string | null>;
   pickThemeFiles: () => Promise<readonly PickedThemeFile[] | null>;
@@ -1108,6 +975,8 @@ export interface DesktopBridge {
   openExternal: (url: string) => Promise<boolean>;
   /** Reads http(s) media in the main process, outside renderer CORS and CSP; null on network failure. */
   readMedia: (url: string) => Promise<DesktopMediaRead | null>;
+  /** Decodes HEIC/HEIF with macOS ImageIO into an upright, sRGB JPEG or PNG. */
+  convertHeic: (input: DesktopHeicConversionInput) => Promise<DesktopHeicConversionResult>;
   openSystemSettings: (pane: SystemSettingsPane) => Promise<boolean>;
   checkSystemPermission: (pane: SystemSettingsPane) => Promise<boolean>;
   probeRemoteEditors: () => Promise<readonly EditorId[]>;

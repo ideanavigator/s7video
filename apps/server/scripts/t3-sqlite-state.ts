@@ -3,6 +3,7 @@
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeOS from "node:os";
+import { defaultDataHome, guardDataHome } from "@t3tools/shared/dataHome";
 import { fromJsonStringPretty } from "@t3tools/shared/schemaJson";
 import * as Console from "effect/Console";
 import * as DateTime from "effect/DateTime";
@@ -62,7 +63,7 @@ export class SqliteStateSharedHomeMutationError extends Schema.TaggedError<Sqlit
   {},
 ) {
   override get message(): string {
-    return "Refusing to mutate the shared ~/.t3 database. Use an isolated --base-dir.";
+    return "Refusing to mutate the shared s7video database. Use an isolated --base-dir.";
   }
 }
 
@@ -125,6 +126,8 @@ export interface RunSqliteStateInput {
 
 export interface RunSqliteStateOptions {
   readonly sharedHome?: string | undefined;
+  /** Home whose `.t3` (T3 Code's data) is refused. Defaults to the user's. */
+  readonly homeDirectory?: string | undefined;
 }
 
 const resolveSqlSource = Effect.fn("resolveSqliteStateSqlSource")(function* (
@@ -180,8 +183,14 @@ export const runSqliteState = Effect.fn("runSqliteState")(function* (
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const baseDir = path.resolve(input.baseDir);
-  const sharedHome = path.resolve(options.sharedHome ?? path.join(NodeOS.homedir(), ".t3"));
+  // Queries and exec both open the database; T3 Code's must never be opened at all.
+  const baseDir = guardDataHome(
+    path.resolve(input.baseDir),
+    options.homeDirectory ?? NodeOS.homedir(),
+  );
+  const sharedHome = path.resolve(
+    options.sharedHome ?? defaultDataHome(NodeOS.homedir(), path.join),
+  );
   const databasePath = path.join(baseDir, "userdata", "statev2.sqlite");
   const source = yield* resolveSqlSource(input.sql, input.file);
 

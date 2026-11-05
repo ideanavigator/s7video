@@ -1,3 +1,4 @@
+import { defaultDataHome, guardDataHome } from "@t3tools/shared/dataHome";
 import * as Option from "effect/Option";
 
 export type JoinPath = (first: string, ...segments: string[]) => string;
@@ -15,9 +16,10 @@ export function resolveDesktopBaseDir(input: {
   readonly joinPath: JoinPath;
   readonly t3Home: Option.Option<string>;
 }): string {
-  return Option.getOrElse(normalizeConfiguredBaseDir(input.t3Home), () =>
-    input.joinPath(input.homeDirectory, ".t3"),
+  const baseDir = Option.getOrElse(normalizeConfiguredBaseDir(input.t3Home), () =>
+    defaultDataHome(input.homeDirectory, input.joinPath),
   );
+  return guardDataHome(input.joinPath(baseDir), input.homeDirectory);
 }
 
 export function resolveDesktopStateDir(input: {

@@ -200,12 +200,6 @@ const override = Effect.fn("checkChanged.override")(function* (
   return value;
 });
 
-// Tests that read a doc; a changed doc has no test beside it to select them.
-export const docReaderTests = (files: ReadonlyArray<string>) =>
-  files.includes("docs/user/t3-connect-troubleshooting.md")
-    ? ["apps/server/src/cloud/ConnectReachability.test.ts"]
-    : [];
-
 const checkChanged = Effect.fn("checkChanged")(function* (input: {
   readonly ref: Option.Option<string>;
   readonly concurrency: Option.Option<number>;
@@ -325,7 +319,6 @@ const checkChanged = Effect.fn("checkChanged")(function* (input: {
       if (entry.startsWith(prefix) && TEST.test(entry)) tests.add(path.join(dir, entry));
     }
   }
-  for (const test of docReaderTests(files)) tests.add(test);
   // It reads files other than the ones beside it, so no changed file selects it.
   if (affected.includes("t3")) tests.add("apps/server/src/provider/AgentContextBudget.test.ts");
   const { vitestTests, nodeTests } = splitTests(tests);
@@ -344,14 +337,6 @@ const checkChanged = Effect.fn("checkChanged")(function* (input: {
         /\.tsx?$/.test(file) && !/\.(test|browser)\.tsx?$/.test(file) && !file.endsWith(".gen.ts"),
       // Web has only per-file cases.
       always: [],
-    },
-    {
-      test: "apps/mobile/src/reactCompilerCoverage.test.ts",
-      root: "apps/mobile/src/",
-      name: (file: string) => file.slice("apps/mobile/".length),
-      compiled: (file: string) => /\.tsx?$/.test(file) && !/\.(test\.tsx?|d\.ts)$/.test(file),
-      // The Metro, cache, and stale-allowlist cases check more than one file, deletions included.
-      always: ["^(?!.*compiles )"],
     },
   ].flatMap(({ test, root: appRoot, name, compiled, always }) => {
     const changed = files.filter((file) => file.startsWith(appRoot) && compiled(file));
@@ -392,7 +377,6 @@ const checkChanged = Effect.fn("checkChanged")(function* (input: {
       file === "pnpm-lock.yaml" ||
       file === ".pnpmfile.cjs" ||
       file.startsWith("patches/") ||
-      file.startsWith("apps/mobile/deps/") ||
       path.basename(file) === "package.json",
   );
 
@@ -419,7 +403,6 @@ const checkChanged = Effect.fn("checkChanged")(function* (input: {
     ).pipe(Effect.catch((error) => Effect.succeed({ ok: false, output: error.message })));
 
   // Resolve without the lockfile in a temp copy to preserve the working tree and lockfile.
-  // Copy mobile modules too: they are file: dependencies, not workspace packages.
   // Cached registry metadata limits this to patches stranded by local changes, not registry drift.
   const checkPatches = Effect.scoped(
     Effect.gen(function* () {
@@ -432,14 +415,7 @@ const checkChanged = Effect.fn("checkChanged")(function* (input: {
       yield* copy("package.json");
       yield* copy("pnpm-workspace.yaml");
       for (const pkg of packages) yield* copy(`${pkg.dir}/package.json`);
-      const modulesDir = "apps/mobile/modules";
-      if (yield* fs.exists(inRoot(modulesDir))) {
-        for (const entry of yield* fs.readDirectory(inRoot(modulesDir))) {
-          const manifest = `${modulesDir}/${entry}/package.json`;
-          if (yield* fs.exists(inRoot(manifest))) yield* copy(manifest);
-        }
-      }
-      for (const extra of ["apps/mobile/deps", "patches", ".pnpmfile.cjs"]) {
+      for (const extra of ["patches", ".pnpmfile.cjs"]) {
         if (yield* fs.exists(inRoot(extra))) yield* copy(extra);
       }
       const result = yield* vp(["install", "--lockfile-only", "--ignore-scripts"], temp);
@@ -456,9 +432,7 @@ const checkChanged = Effect.fn("checkChanged")(function* (input: {
   ).pipe(Effect.catch((error) => Effect.succeed({ ok: false, output: error.message })));
 
   // CI's Lint job checks that generated GraphQL operations match their sources.
-  const graphql = ["apps/server", "packages/source-control-github"].filter((dir) =>
-    files.some((file) => file.startsWith(`${dir}/`)),
-  );
+  const graphql = ["apps/server"].filter((dir) => files.some((file) => file.startsWith(`${dir}/`)));
   const filters = (names: ReadonlyArray<string>) => names.flatMap((name) => ["--filter", name]);
   const typecheckWorkers = Math.min(concurrency, affected.length);
   const command = (name: string, args: ReadonlyArray<string>) => ({ name, run: vp(args) });
@@ -550,7 +524,6 @@ const checkChanged = Effect.fn("checkChanged")(function* (input: {
     "full test suites": outputs.test || outputs.test_web || outputs.test_server,
     build: outputs.build,
     rust: outputs.rust,
-    "mobile native lint": outputs.mobile_native,
     "release smoke": outputs.release_smoke,
   }).flatMap(([job, runs]) => (runs ? [job] : []));
   if (ciOnly.length > 0) summary.push(`  CI also runs: ${ciOnly.join(", ")}`);

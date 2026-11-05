@@ -12,6 +12,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
+import * as Exit from "effect/Exit";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Sink from "effect/Sink";
@@ -21,6 +22,7 @@ import { ChildProcessSpawner } from "effect/process";
 import {
   checkPortAvailabilityOnHosts,
   createDevRunnerEnv,
+  DEFAULT_T3_HOME,
   findFirstAvailableOffset,
   resolveModePortOffsets,
   runDevRunnerWithInput,
@@ -64,13 +66,34 @@ const devServerInput = {
   port: 13_773,
   devUrl: undefined,
   dryRun: false,
-  share: false,
-  built: false,
   runArgs: ["--inspect", "secret-token-value"],
 } as const;
 
 it.layer(NodeServices.layer)("dev-runner", (it) => {
   describe("createDevRunnerEnv", () => {
+    it.effect("defaults to ~/.s7video and refuses T3 Code's ~/.t3", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        assert.equal(yield* DEFAULT_T3_HOME, path.join(NodeOS.homedir(), ".s7video"));
+        for (const t3Home of [path.join(NodeOS.homedir(), ".t3"), "~/.t3", "~/.t3/userdata"]) {
+          const exit = yield* createDevRunnerEnv({
+            mode: "dev:desktop",
+            baseEnv: {},
+            serverOffset: 0,
+            webOffset: 0,
+            t3Home,
+            browser: undefined,
+            autoBootstrapProjectFromCwd: undefined,
+            logWebSocketEvents: undefined,
+            host: undefined,
+            port: undefined,
+            devUrl: undefined,
+          }).pipe(Effect.exit);
+          assert.isTrue(Exit.isFailure(exit), t3Home);
+        }
+      }),
+    );
+
     it.effect("forwards the reusable auth token to web dev and removes it for desktop", () =>
       Effect.gen(function* () {
         const input = {
@@ -110,11 +133,11 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
         const byDefault = yield* createDevRunnerEnv({ ...input, baseEnv: {} });
         const optedIn = yield* createDevRunnerEnv({
           ...input,
-          baseEnv: { T3CODE_TELEMETRY_ENABLED: "true" },
+          baseEnv: { S7VIDEO_TELEMETRY_ENABLED: "true" },
         });
 
-        assert.equal(byDefault.T3CODE_TELEMETRY_ENABLED, "false");
-        assert.equal(optedIn.T3CODE_TELEMETRY_ENABLED, "true");
+        assert.equal(byDefault.S7VIDEO_TELEMETRY_ENABLED, "false");
+        assert.equal(optedIn.S7VIDEO_TELEMETRY_ENABLED, "true");
       }),
     );
 
@@ -392,11 +415,11 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
       });
     });
 
-    it.effect("ignores an ambient T3CODE_HOME when no home is resolved", () =>
+    it.effect("ignores an ambient S7VIDEO_HOME when no home is resolved", () =>
       Effect.gen(function* () {
         const env = yield* createDevRunnerEnv({
           mode: "dev",
-          baseEnv: { T3CODE_HOME: "/home/user/.t3" },
+          baseEnv: { S7VIDEO_HOME: "/home/user/.s7video" },
           serverOffset: 0,
           webOffset: 0,
           t3Home: undefined,
@@ -408,7 +431,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           devUrl: undefined,
         });
 
-        assert.equal(env.T3CODE_HOME, undefined);
+        assert.equal(env.S7VIDEO_HOME, undefined);
       }),
     );
 
@@ -430,7 +453,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
             devUrl: undefined,
           }).pipe(
             Effect.provideService(HostProcess.HomeDirectory, "/home/dev"),
-            Effect.map((env) => env.T3CODE_HOME),
+            Effect.map((env) => env.S7VIDEO_HOME),
           );
 
         assert.equal(yield* homeFor("~/t3-dev"), path.join("/home/dev", "t3-dev"));
@@ -467,149 +490,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
         assert.equal(error.mode, "dev");
         assert.equal(error.host, "192.168.1.10");
         assert.include(error.message, "0.0.0.0");
-        assert.include(error.message, "--share");
-      });
-    });
-
-    // A shared origin means a remote browser, where unbundled dev's
-    // per-module waterfall pays a tailnet round trip per import level. The
-    // runner defaults bundled dev on for the spawned stack, but only
-    // defaults: an explicit T3CODE_BUNDLED_DEV (even "0") must pass through.
-    describe("--share spawn wiring", () => {
-      const shareSpawned = (input: {
-        readonly ambientBundledDev?: string | undefined;
-        readonly built?: boolean;
-        readonly host?: string;
-      }) =>
-        Effect.gen(function* () {
-          let captured: Record<string, string | undefined> | undefined;
-          let vpArgs: ReadonlyArray<string> = [];
-          const tailscaleCalls: Array<ReadonlyArray<string>> = [];
-          const spawnerLayer = Layer.succeed(
-            ChildProcessSpawner.ChildProcessSpawner,
-            ChildProcessSpawner.make((command) => {
-              const spawned = command as unknown as {
-                readonly command: string;
-                readonly args: ReadonlyArray<string>;
-                readonly options?: { readonly env?: Record<string, string | undefined> };
-              };
-              if (spawned.command === "vp") {
-                captured = spawned.options?.env;
-                vpArgs = spawned.args;
-                return Effect.succeed(mockProcess(0));
-              }
-              tailscaleCalls.push(spawned.args);
-              return Effect.succeed(
-                ChildProcessSpawner.makeHandle({
-                  pid: ChildProcessSpawner.ProcessId(2),
-                  exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
-                  isRunning: Effect.succeed(false),
-                  kill: () => Effect.void,
-                  unref: Effect.succeed(Effect.void),
-                  stdin: Sink.drain,
-                  stdout: spawned.args.includes("status")
-                    ? Stream.make(
-                        new TextEncoder().encode(
-                          JSON.stringify({ Self: { DNSName: "host.example.ts.net." } }),
-                        ),
-                      )
-                    : Stream.empty,
-                  stderr: Stream.empty,
-                  all: Stream.empty,
-                  getInputFd: () => Sink.drain,
-                  getOutputFd: () => Stream.empty,
-                }),
-              );
-            }),
-          );
-
-          yield* runDevRunnerWithInput({
-            ...devServerInput,
-            mode: "dev",
-            port: undefined,
-            share: true,
-            built: input.built ?? false,
-            host: input.host,
-          }).pipe(
-            Effect.provide(Layer.mergeAll(emptyConfigLayer, netServiceLayer, spawnerLayer)),
-            Effect.provideService(HostProcess.Platform, "linux"),
-            Effect.provideService(
-              HostProcess.Environment,
-              input.ambientBundledDev === undefined
-                ? {}
-                : { T3CODE_BUNDLED_DEV: input.ambientBundledDev },
-            ),
-          );
-
-          return { env: captured, vpArgs, tailscaleCalls };
-        });
-
-      it.effect("keeps an explicit T3CODE_BUNDLED_DEV=0 opt-out", () =>
-        Effect.gen(function* () {
-          const { env } = yield* shareSpawned({ ambientBundledDev: "0" });
-          assert.equal(env?.T3CODE_BUNDLED_DEV, "0");
-        }),
-      );
-
-      it.effect("--built serves the backend on the web port's tailnet URL", () =>
-        Effect.gen(function* () {
-          const { env, vpArgs, tailscaleCalls } = yield* shareSpawned({ built: true });
-          assert.include(vpArgs, "dev:built");
-          assert.equal(env?.T3CODE_BUILT_DEV, "1");
-          assert.equal(env?.T3CODE_BUNDLED_DEV, undefined);
-          assert.equal(env?.VITE_DEV_SERVER_URL, `https://host.example.ts.net:${env?.PORT}/`);
-          const serve = tailscaleCalls.find((args) => args.includes("--bg"));
-          assert.deepEqual(serve?.slice(-2), [
-            `--https=${env?.PORT}`,
-            `http://127.0.0.1:${env?.T3CODE_PORT}`,
-          ]);
-        }),
-      );
-
-      it.effect("--built --host ::1 targets the backend's IPv6 loopback", () =>
-        Effect.gen(function* () {
-          const { env, tailscaleCalls } = yield* shareSpawned({ built: true, host: "::1" });
-          const serve = tailscaleCalls.find((args) => args.includes("--bg"));
-          assert.equal(serve?.at(-1), `http://[::1]:${env?.T3CODE_PORT}`);
-        }),
-      );
-
-      it.effect("without --built keeps Vite behind the tailnet URL", () =>
-        Effect.gen(function* () {
-          const { env, vpArgs, tailscaleCalls } = yield* shareSpawned({});
-          assert.include(vpArgs, "dev");
-          assert.notInclude(vpArgs, "dev:built");
-          assert.equal(env?.T3CODE_BUNDLED_DEV, "1");
-          const serve = tailscaleCalls.find((args) => args.includes("--bg"));
-          assert.equal(serve?.at(-1), `http://localhost:${env?.PORT}`);
-        }),
-      );
-    });
-
-    it.effect.each([
-      { mode: "dev", share: false },
-      { mode: "dev:web", share: true },
-      { mode: "dev:desktop", share: true },
-    ] as const)("rejects --built for $mode with share=$share", ({ mode, share }) => {
-      const spawnerLayer = Layer.succeed(
-        ChildProcessSpawner.ChildProcessSpawner,
-        ChildProcessSpawner.make(() => Effect.succeed(mockProcess(0))),
-      );
-
-      return Effect.gen(function* () {
-        const error = yield* runDevRunnerWithInput({
-          ...devServerInput,
-          mode,
-          port: undefined,
-          share,
-          built: true,
-        }).pipe(
-          Effect.provide(Layer.mergeAll(emptyConfigLayer, netServiceLayer, spawnerLayer)),
-          Effect.provideService(HostProcess.Platform, "linux"),
-          Effect.flip,
-        );
-
-        assert.equal(error._tag, "DevRunnerBuiltNeedsShareError");
+        assert.notInclude(error.message, "--share");
       });
     });
 
@@ -676,15 +557,15 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
             Effect.provide(Layer.mergeAll(emptyConfigLayer, netServiceLayer, spawnerLayer)),
             Effect.provideService(HostProcess.Platform, "linux"),
             Effect.provideService(HostProcess.WorkingDirectory, input.cwd),
-            // No ~/.t3 here, so these runs never seed from this machine's install.
+            // No ~/.s7video here, so these runs never seed from this machine's install.
             Effect.provideService(HostProcess.HomeDirectory, input.cwd),
             Effect.provideService(
               HostProcess.Environment,
-              input.ambientHome === undefined ? {} : { T3CODE_HOME: input.ambientHome },
+              input.ambientHome === undefined ? {} : { S7VIDEO_HOME: input.ambientHome },
             ),
           );
 
-          return captured?.T3CODE_HOME;
+          return captured?.S7VIDEO_HOME;
         });
 
       it.effect("prefers an explicit --home-dir over the worktree default", () =>
@@ -694,7 +575,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           const home = yield* spawnedHome({
             t3Home: "/tmp/explicit-home",
             cwd: root,
-            ambientHome: "/home/user/.t3",
+            ambientHome: "/home/user/.s7video",
           });
           assert.equal(home, path.resolve("/tmp/explicit-home"));
         }).pipe(Effect.scoped),
@@ -707,32 +588,32 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           const home = yield* spawnedHome({
             t3Home: "   ",
             cwd: root,
-            ambientHome: "/home/user/.t3",
+            ambientHome: "/home/user/.s7video",
           });
-          assert.equal(home, path.join(path.resolve(root), ".t3"));
+          assert.equal(home, path.join(path.resolve(root), ".s7video"));
         }).pipe(Effect.scoped),
       );
 
-      it.effect("prefers the worktree .t3 over an ambient T3CODE_HOME", () =>
+      it.effect("prefers the worktree data folder over an ambient S7VIDEO_HOME", () =>
         Effect.gen(function* () {
           const path = yield* Path.Path;
           const root = yield* makeWorktree;
           const home = yield* spawnedHome({
             t3Home: undefined,
             cwd: root,
-            ambientHome: "/home/user/.t3",
+            ambientHome: "/home/user/.s7video",
           });
-          assert.equal(home, path.join(path.resolve(root), ".t3"));
+          assert.equal(home, path.join(path.resolve(root), ".s7video"));
         }).pipe(Effect.scoped),
       );
 
-      it.effect("seeds a worktree database from ~/.t3 only when it has none", () =>
+      it.effect("seeds a worktree database from ~/.s7video only when it has none", () =>
         Effect.gen(function* () {
           const path = yield* Path.Path;
           const root = yield* makeWorktree;
           const home = path.join(root, "home");
-          NodeFS.mkdirSync(path.join(home, ".t3", "userdata"), { recursive: true });
-          NodeFS.writeFileSync(path.join(home, ".t3", "userdata", "statev2.sqlite"), "");
+          NodeFS.mkdirSync(path.join(home, ".s7video", "userdata"), { recursive: true });
+          NodeFS.writeFileSync(path.join(home, ".s7video", "userdata", "statev2.sqlite"), "");
 
           const spawnedArgs = (seed: boolean | undefined) =>
             Effect.gen(function* () {
@@ -760,11 +641,11 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
 
           assert.deepStrictEqual(yield* spawnedArgs(false), []);
           const [seedArgs] = yield* spawnedArgs(undefined);
-          assert.includeMembers([...(seedArgs ?? [])], ["--base-dir", path.join(root, ".t3")]);
+          assert.includeMembers([...(seedArgs ?? [])], ["--base-dir", path.join(root, ".s7video")]);
 
           // Either database means the worktree already has data.
           for (const name of ["state.sqlite", "statev2.sqlite"]) {
-            const file = path.join(root, ".t3", "userdata", name);
+            const file = path.join(root, ".s7video", "userdata", name);
             NodeFS.mkdirSync(path.dirname(file), { recursive: true });
             NodeFS.writeFileSync(file, "");
             assert.deepStrictEqual(yield* spawnedArgs(undefined), []);
@@ -785,7 +666,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
             const path = yield* Path.Path;
             const root = yield* makeWorktree;
             const home = path.join(root, "home");
-            const source = path.join(home, ".t3", "userdata", "statev2.sqlite");
+            const source = path.join(home, ".s7video", "userdata", "statev2.sqlite");
             NodeFS.mkdirSync(path.dirname(source), { recursive: true });
             NodeFS.writeFileSync(source, "");
             const spawned: Array<ReadonlyArray<string>> = [];
@@ -847,15 +728,15 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           }).pipe(Effect.scoped),
       );
 
-      it.effect("falls back to an ambient T3CODE_HOME outside a worktree", () =>
+      it.effect("falls back to an ambient S7VIDEO_HOME outside a worktree", () =>
         Effect.gen(function* () {
           const path = yield* Path.Path;
           const home = yield* spawnedHome({
             t3Home: undefined,
             cwd: NodeOS.tmpdir(),
-            ambientHome: "/home/user/.t3",
+            ambientHome: "/home/user/.s7video",
           });
-          assert.equal(home, path.resolve("/home/user/.t3"));
+          assert.equal(home, path.resolve("/home/user/.s7video"));
         }),
       );
     });

@@ -1,0 +1,4 @@
+interface:
+  display_name: "App Testing"
+  short_description: "Test web and desktop in the Browser panel"
+  default_prompt: "Use $test-app to verify the affected web or desktop flow through the Browser panel."

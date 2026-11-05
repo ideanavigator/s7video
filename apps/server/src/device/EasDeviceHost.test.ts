@@ -590,7 +590,7 @@ describe("EAS Simulator host", () => {
       let agentFails = false;
       const expo = fakeExpo({ failAgent: () => agentFails });
       const host = yield* makeHost(expo, config(), yield* Scope.make());
-      const service = yield* DeviceService.makeWithHosts(new Map([["eas", host]]), undefined, () =>
+      const service = yield* DeviceService.makeWithHosts(new Map([["eas", host]]), () =>
         Effect.succeed("/eas-agent.json"),
       );
       const first = ThreadId.make("first");

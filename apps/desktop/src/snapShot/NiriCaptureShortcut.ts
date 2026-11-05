@@ -1,4 +1,5 @@
 // @effect-diagnostics globalTimers:off -- Bound session-bus registration at a native callback boundary.
+import { BRAND } from "@t3tools/shared/brand";
 import { Message, MessageType, NameFlag, RequestNameReply, sessionBus } from "dbus-next";
 
 import {
@@ -54,7 +55,9 @@ export async function startNiriCaptureShortcut(
       }),
     ]);
     if (result !== RequestNameReply.PRIMARY_OWNER)
-      throw new Error("Another T3 Code instance already owns the capture shortcut.");
+      throw new Error(
+        `Another ${BRAND.app.productName} instance already owns the capture shortcut.`,
+      );
     return close;
   } catch (error) {
     close();

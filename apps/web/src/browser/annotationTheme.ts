@@ -1,3 +1,4 @@
+import { BRAND } from "@t3tools/shared/brand";
 import type { DesktopPreviewAnnotationTheme } from "@t3tools/contracts";
 
 const readVariable = (styles: CSSStyleDeclaration, name: string, fallback: string): string =>
@@ -13,7 +14,7 @@ export function readPreviewAnnotationTheme(): DesktopPreviewAnnotationTheme {
     foreground: readVariable(styles, "--contrast-foreground", "oklch(0.269 0 0)"),
     popover: readVariable(styles, "--popover", "white"),
     popoverForeground: readVariable(styles, "--contrast-popover-foreground", "oklch(0.269 0 0)"),
-    primary: readVariable(styles, "--primary", "oklch(0.488 0.217 264)"),
+    primary: readVariable(styles, "--primary", BRAND.theme.light.colors.accent),
     primaryForeground: readVariable(styles, "--primary-foreground", "white"),
     muted: readVariable(styles, "--muted", "rgb(0 0 0 / 4%)"),
     mutedForeground: readVariable(styles, "--contrast-muted-foreground", "oklch(0.556 0 0)"),
@@ -21,7 +22,7 @@ export function readPreviewAnnotationTheme(): DesktopPreviewAnnotationTheme {
     accentForeground: readVariable(styles, "--contrast-accent-foreground", "oklch(0.269 0 0)"),
     border: readVariable(styles, "--contrast-border", "rgb(0 0 0 / 8%)"),
     input: readVariable(styles, "--contrast-input", "rgb(0 0 0 / 10%)"),
-    ring: readVariable(styles, "--ring", "oklch(0.488 0.217 264)"),
+    ring: readVariable(styles, "--ring", BRAND.theme.light.colors.focus),
     fontSans: readVariable(styles, "--font-sans", styles.fontFamily || "system-ui, sans-serif"),
     fontMono: readVariable(styles, "--font-mono", "ui-monospace, monospace"),
   };

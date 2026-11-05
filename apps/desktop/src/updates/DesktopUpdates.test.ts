@@ -588,8 +588,8 @@ describe("DesktopUpdates", () => {
       } satisfies DesktopBackendPool.DesktopBackendInstance;
     };
     const primary = makeInstance(DesktopBackendPool.PRIMARY_INSTANCE_ID, false);
-    const wsl = makeInstance(DesktopBackendPool.BackendInstanceId("wsl:default"), true);
-    const harness = makeHarness({ backendInstances: [primary, wsl] });
+    const secondary = makeInstance(DesktopBackendPool.BackendInstanceId("secondary"), true);
+    const harness = makeHarness({ backendInstances: [primary, secondary] });
 
     return Effect.scoped(
       Effect.gen(function* () {
@@ -599,17 +599,17 @@ describe("DesktopUpdates", () => {
         yield* flushCallbacks;
 
         yield* updates.install;
-        assert.sameMembers(stops, [primary.id, wsl.id]);
-        assert.isFalse((yield* wsl.snapshot).desiredRunning);
+        assert.sameMembers(stops, [primary.id, secondary.id]);
+        assert.isFalse((yield* secondary.snapshot).desiredRunning);
         const { changes } = yield* updates.subscribe;
         const recovered = yield* Stream.runHead(changes).pipe(Effect.forkChild);
         yield* flushCallbacks;
         harness.emit("error", new Error("native installer refused"));
         assert.equal(Option.getOrThrow(yield* Fiber.join(recovered)).errorContext, "install");
 
-        assert.deepEqual(starts, [wsl.id]);
+        assert.deepEqual(starts, [secondary.id]);
         assert.isFalse((yield* primary.snapshot).desiredRunning);
-        assert.isTrue((yield* wsl.snapshot).desiredRunning);
+        assert.isTrue((yield* secondary.snapshot).desiredRunning);
       }),
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });
@@ -966,7 +966,7 @@ describe("describeUpdateErrorCause", () => {
 });
 
 describe("DesktopUpdates under a managed policy", () => {
-  const message = "Example Corp manages T3 Code updates.";
+  const message = "Example Corp manages updates for this app.";
   const managed = (
     policy: Partial<DesktopUpdatePolicy.UpdatePolicy>,
   ): DesktopUpdatePolicy.UpdatePolicy => ({

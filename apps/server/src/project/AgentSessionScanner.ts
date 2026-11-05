@@ -1,5 +1,6 @@
 import * as NodeOS from "node:os";
 
+import { BRAND } from "@t3tools/shared/brand";
 import {
   AgentSessionScanError,
   ClaudeSettings,
@@ -34,7 +35,6 @@ import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import { resolveCodexHomeLayout } from "../provider/Drivers/CodexHomeLayout.ts";
 import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
-import { resolvePiSessionsDir } from "@t3tools/provider-pi/server/usage";
 import * as ServerSettings from "../serverSettings.ts";
 import { sourceControlDefinitions } from "../sourceControl/sourceControlDefinitions.ts";
 import {
@@ -321,6 +321,21 @@ function parseCodexThreadNames(contents: string): ReadonlyMap<string, string> {
 function deriveTitle(source: AgentSessionSource, text: string): string | undefined {
   const request = source === "codex" ? text.replace(CODEX_TITLE_PREAMBLE, "") : text;
   return request.trim().split("\n")[0]?.slice(0, 100).trim() || undefined;
+}
+
+/** Where Pi stores session JSONL files for an instance environment, matching Pi's own lookup. */
+function resolvePiSessionsDir(
+  environment: NodeJS.ProcessEnv,
+  home: string,
+  path: Path.Path,
+): string {
+  const sessionDir = environment.PI_CODING_AGENT_SESSION_DIR?.trim();
+  if (sessionDir) return path.resolve(expandHomePath(sessionDir, home));
+  const agentDir = environment.PI_CODING_AGENT_DIR?.trim();
+  return path.resolve(
+    agentDir ? expandHomePath(agentDir, home) : path.join(home, ".pi", "agent"),
+    "sessions",
+  );
 }
 
 // Pi keeps abandoned branches in the file; its active branch runs from the last entry to the root.
@@ -637,6 +652,8 @@ function isT3ManagedWorktree(
   const normalized = normalizeForWorktreeMatch(candidatePath, caseFold);
   return (
     normalized.startsWith(normalizeForWorktreeMatch(worktreesDir, caseFold)) ||
+    normalized.includes(`/${BRAND.app.homeDir}/worktrees/`) ||
+    // T3 Code's worktrees hold its own sessions; never import them.
     normalized.includes("/.t3/worktrees/")
   );
 }

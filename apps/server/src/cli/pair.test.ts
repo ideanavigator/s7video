@@ -1,3 +1,4 @@
+import { BRAND } from "@t3tools/shared/brand";
 // @effect-diagnostics nodeBuiltinImport:off - CLI integration exercises Node HTTP and filesystem boundaries.
 import * as NodeHttp from "node:http";
 import * as NodeFS from "node:fs";
@@ -8,16 +9,12 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { AuthStandardClientScopes, ORCHESTRATION_PROTOCOL_VERSION } from "@t3tools/contracts";
 import * as NetService from "@t3tools/shared/Net";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import { assert, describe, expect, it } from "@effect/vitest";
+import { assert, describe, it } from "@effect/vitest";
 import * as Cause from "effect/Cause";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
-import * as Sink from "effect/Sink";
-import * as Stream from "effect/Stream";
-import { FetchHttpClient } from "effect/http";
-import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import * as TestClock from "effect/testing/TestClock";
 import * as TestConsole from "effect/testing/TestConsole";
 import { Command, CliError } from "effect/cli";
@@ -31,43 +28,12 @@ import * as ServiceLauncherClient from "../cloud/serviceLauncherClient.ts";
 import {
   makePersistedServerRuntimeState,
   persistServerRuntimeState,
-  type PersistedServerRuntimeState,
 } from "../serverRuntimeState.ts";
-import { DevServerNotProxiableError, resolveTailscaleLocalTarget } from "./pair.ts";
 
 import packageJson from "../../package.json" with { type: "json" };
 import { buildPairingAppLink } from "@t3tools/shared/remote";
 
 const layerCliRuntime = Layer.mergeAll(NodeServices.layer, NetService.layer);
-
-const baseState = {
-  version: 1,
-  pid: 123,
-  port: 3_773,
-  origin: "http://127.0.0.1:3773",
-  startedAt: "2026-06-20T00:00:00.000Z",
-} as const satisfies PersistedServerRuntimeState;
-
-describe("pair tailscale local target", () => {
-  it("proxies the dev web port for dev servers", () => {
-    expect(resolveTailscaleLocalTarget({ ...baseState, devUrl: "http://localhost:5733/" })).toEqual(
-      { localPort: 5_733 },
-    );
-    // tailscale serve defaults to loopback, so non-loopback dev servers need an explicit target.
-    expect(
-      resolveTailscaleLocalTarget({ ...baseState, devUrl: "http://192.168.1.10:5733/" }),
-    ).toEqual({ localPort: 5_733, localHost: "192.168.1.10" });
-    expect(
-      resolveTailscaleLocalTarget({ ...baseState, devUrl: "http://[fd7a:115c::1]:5733/" }),
-    ).toEqual({ localPort: 5_733, localHost: "[fd7a:115c::1]" });
-  });
-
-  it("rejects HTTPS dev URLs, which tailscale serve cannot proxy", () => {
-    expect(
-      resolveTailscaleLocalTarget({ ...baseState, devUrl: "https://localhost:5733/" }),
-    ).toBeInstanceOf(DevServerNotProxiableError);
-  });
-});
 
 const runCli = (args: ReadonlyArray<string>) => Command.runWith(cli, { version: "0.0.0" })(args);
 
@@ -123,75 +89,7 @@ const withDescriptorServer = <A, E, R>(
     (server) => Effect.sync(() => server.close()),
   );
 
-describe("t3 pair", () => {
-  it.effect("publishes an IPv6-only server through Tailscale Serve when pairing", () =>
-    withDescriptorServer(
-      (origin) =>
-        Effect.gen(function* () {
-          const fetch = yield* FetchHttpClient.Fetch;
-          let serving = false;
-          const spawner = ChildProcessSpawner.make((command) =>
-            Effect.gen(function* () {
-              if (!ChildProcess.isStandardCommand(command))
-                return yield* Effect.die("Unexpected pipeline");
-              if (command.args[0] === "serve") {
-                const target = command.args.at(-1)!;
-                const descriptor = yield* Effect.promise(async () =>
-                  (await fetch(new URL("/.well-known/t3/environment", target))).json(),
-                );
-                expect(descriptor).toEqual(testDescriptor);
-                serving = true;
-              }
-              return ChildProcessSpawner.makeHandle({
-                pid: ChildProcessSpawner.ProcessId(1),
-                exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
-                isRunning: Effect.succeed(false),
-                kill: () => Effect.void,
-                unref: Effect.succeed(Effect.void),
-                stdin: Sink.drain,
-                stdout: Stream.make(
-                  new TextEncoder().encode('{"Self":{"DNSName":"pair-test.tail.ts.net."}}'),
-                ),
-                stderr: Stream.empty,
-                all: Stream.empty,
-                getInputFd: () => Sink.drain,
-                getOutputFd: () => Stream.empty,
-              });
-            }),
-          );
-
-          const baseDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-pair-ipv6-test-"));
-          yield* persistServerRuntimeState({
-            path: NodePath.join(baseDir, "userdata", "server-runtime.json"),
-            state: yield* makePersistedServerRuntimeState({
-              config: { host: "::1", devUrl: undefined },
-              port: Number(new URL(origin).port),
-            }),
-          });
-          const output = yield* captureStdout(
-            runCli(["pair", "--base-dir", baseDir, "--tailscale"]).pipe(
-              Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-              Effect.provideService(HostProcess.Platform, "linux"),
-              Effect.provideService(FetchHttpClient.Fetch, async (input, init) => {
-                if (String(input).startsWith(origin)) return fetch(input, init);
-                assert.equal(
-                  String(input),
-                  "https://pair-test.tail.ts.net/.well-known/t3/environment",
-                );
-                return serving
-                  ? Response.json(testDescriptor)
-                  : new Response(null, { status: 503 });
-              }),
-            ),
-          );
-
-          expect(serving).toBe(true);
-          assert.include(output, "Pairing URL: https://pair-test.tail.ts.net/pair#token=");
-        }),
-      "::1",
-    ).pipe(Effect.provide(NodeServices.layer)),
-  );
-
+describe(`${BRAND.app.cliName} pair`, () => {
   it.effect("mints a token and prints a QR pairing URL for a live server", () =>
     withDescriptorServer((origin) =>
       Effect.gen(function* () {
@@ -225,7 +123,7 @@ describe("t3 pair", () => {
           readonly scopes: ReadonlyArray<string>;
         }>;
         assert.equal(credentials.length, 1);
-        assert.equal(credentials[0]?.label, "t3 pair");
+        assert.equal(credentials[0]?.label, `${BRAND.app.cliName} pair`);
         assert.deepEqual(credentials[0]?.scopes, AuthStandardClientScopes);
       }),
     ).pipe(
@@ -267,50 +165,6 @@ describe("t3 pair", () => {
     ).pipe(Effect.provide(NodeServices.layer)),
   );
 
-  it.effect("refuses --tailscale before turning on Serve when the policy keeps clients local", () =>
-    withDescriptorServer((origin) =>
-      Effect.gen(function* () {
-        const baseDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-pair-policy-test-"));
-        const policyPath = NodePath.join(baseDir, "policy.json");
-        NodeFS.writeFileSync(
-          policyPath,
-          JSON.stringify({
-            schemaVersion: 1,
-            organization: "Example Corp",
-            limits: { clients: ["desktop", "local-browser"] },
-          }),
-        );
-        yield* persistServerRuntimeState({
-          path: NodePath.join(baseDir, "userdata", "server-runtime.json"),
-          state: yield* makePersistedServerRuntimeState({
-            config: { host: "127.0.0.1", devUrl: undefined },
-            port: Number(new URL(origin).port),
-          }),
-        });
-
-        const error = yield* provideCliTestLayers(
-          runCli(["pair", "--base-dir", baseDir, "--tailscale"]).pipe(
-            Effect.provideService(
-              ChildProcessSpawner.ChildProcessSpawner,
-              ChildProcessSpawner.make(() => Effect.die("tailscale must not run")),
-            ),
-            Effect.provide(
-              ConfigProvider.layer(
-                ConfigProvider.fromEnv({ env: { T3CODE_DEV_MANAGED_POLICY_PATH: policyPath } }),
-              ),
-            ),
-            Effect.flip,
-          ),
-        );
-
-        assert.include(
-          String(error),
-          "Example Corp's policy does not allow remote clients, so Tailscale Serve cannot be turned on.",
-        );
-      }),
-    ).pipe(Effect.provide(NodeServices.layer)),
-  );
-
   it.effect("ignores runtime state whose recorded pid is no longer alive", () =>
     withDescriptorServer((origin) =>
       Effect.gen(function* () {
@@ -332,7 +186,7 @@ describe("t3 pair", () => {
         const rendered = String(
           typeof error === "object" && error !== null && "cause" in error ? error.cause : error,
         );
-        assert.include(rendered, "No running T3 Code server found.");
+        assert.include(rendered, "No running s7video server found.");
       }),
     ).pipe(Effect.provide(NodeServices.layer)),
   );
@@ -362,13 +216,13 @@ describe("t3 pair", () => {
           runCli(["pair"]).pipe(
             Effect.provideService(HostProcess.WorkingDirectory, worktree),
             Effect.provide(
-              ConfigProvider.layer(ConfigProvider.fromEnv({ env: { T3CODE_HOME: sharedHome } })),
+              ConfigProvider.layer(ConfigProvider.fromEnv({ env: { S7VIDEO_HOME: sharedHome } })),
             ),
             Effect.flip,
           ),
         );
 
-        assert.include(String(error), "No running T3 Code server found.");
+        assert.include(String(error), "No running s7video server found.");
         assert.notInclude(String(error), sharedHome);
         assert.deepEqual(NodeFS.readdirSync(NodePath.join(sharedHome, "userdata")), [
           "server-runtime.json",
@@ -403,63 +257,11 @@ describe("t3 pair", () => {
           ]);
           assert.isTrue(Exit.isFailure(exit));
           if (Exit.isFailure(exit)) {
-            assert.include(String(Cause.squash(exit.cause)), "t3@0.0.45 pair");
+            assert.include(String(Cause.squash(exit.cause)), "`s7video pair` from s7video 0.0.45");
           }
         }),
       "127.0.0.1",
       { ...testDescriptor, serverVersion: "0.0.45", orchestrationProtocolVersion: 1 },
-    ).pipe(Effect.provide(NodeServices.layer)),
-  );
-
-  // Without the capability `tailscale serve` blocks on an enablement URL, so
-  // pairing must stop at status instead of spawning it.
-  it.effect("explains a tailnet without HTTPS serve instead of running tailscale serve", () =>
-    withDescriptorServer((origin) =>
-      Effect.gen(function* () {
-        const baseDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-pair-ts-test-"));
-        yield* persistServerRuntimeState({
-          path: NodePath.join(baseDir, "userdata", "server-runtime.json"),
-          state: yield* makePersistedServerRuntimeState({
-            config: { host: "127.0.0.1", devUrl: undefined },
-            port: Number(new URL(origin).port),
-          }),
-        });
-        const tailscaleCalls: Array<ReadonlyArray<string>> = [];
-        const spawner = ChildProcessSpawner.make((command) => {
-          const { args } = command as unknown as { readonly args: ReadonlyArray<string> };
-          tailscaleCalls.push(args);
-          const stdout =
-            args[0] === "status"
-              ? `{"Self":{"DNSName":"pair-test.invalid.","CapMap":{"funnel":null}}}`
-              : "";
-          return Effect.succeed(
-            ChildProcessSpawner.makeHandle({
-              pid: ChildProcessSpawner.ProcessId(1),
-              exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(args[0] === "status" ? 0 : 1)),
-              isRunning: Effect.succeed(false),
-              kill: () => Effect.void,
-              unref: Effect.succeed(Effect.void),
-              stdin: Sink.drain,
-              stdout: Stream.make(new TextEncoder().encode(stdout)),
-              stderr: Stream.empty,
-              all: Stream.empty,
-              getInputFd: () => Sink.drain,
-              getOutputFd: () => Stream.empty,
-            }),
-          );
-        });
-
-        const error = yield* provideCliTestLayers(
-          runCli(["pair", "--base-dir", baseDir, "--tailscale"]).pipe(
-            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-            Effect.flip,
-          ),
-        );
-
-        assert.include(String(error), "Tailscale Serve is not enabled on your tailnet.");
-        assert.include(String(error), "https://login.tailscale.com/admin/dns");
-        assert.deepEqual(tailscaleCalls, [["status", "--json"]]);
-      }),
     ).pipe(Effect.provide(NodeServices.layer)),
   );
 });
@@ -523,7 +325,7 @@ describe("auth scope options", () => {
       if (!CliError.isCliError(error) || error._tag !== "ShowHelp") {
         assert.fail(`Expected ShowHelp, got ${String(error)}`);
       }
-      assert.deepEqual(error.commandPath, ["t3", ...command]);
+      assert.deepEqual(error.commandPath, ["s7video", ...command]);
       const scopeError = error.errors[0];
       if (scopeError?._tag !== "InvalidValue") {
         assert.fail(`Expected InvalidValue, got ${String(scopeError?._tag)}`);

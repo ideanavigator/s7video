@@ -29,7 +29,6 @@ import { waitForHttpReady as waitForHttpReadyShared } from "@t3tools/shared/http
 import * as DesktopObservability from "../app/DesktopObservability.ts";
 import * as DesktopTelemetryPublisher from "../telemetry/DesktopTelemetryPublisher.ts";
 import * as DesktopBrowserHost from "../preview/DesktopBrowserHost.ts";
-import * as DesktopWslEnvironment from "../wsl/DesktopWslEnvironment.ts";
 
 const INITIAL_RESTART_DELAY = Duration.millis(500);
 const MAX_RESTART_DELAY = Duration.seconds(10);
@@ -66,15 +65,12 @@ export type DesktopBackendBootstrapDelivery = "fd3" | "stdin";
 export interface DesktopBackendStartConfig extends BackendProcessContext {
   readonly args: ReadonlyArray<string>;
   readonly env: Record<string, string | undefined>;
-  /** False passes env verbatim, preventing the Windows T3CODE_HOME from leaking into WSL. */
   readonly extendEnv: boolean;
   readonly bootstrap: DesktopBackendBootstrapValue;
   readonly bootstrapDelivery: DesktopBackendBootstrapDelivery;
   readonly httpBaseUrl: URL;
   readonly captureOutput: boolean;
   readonly preflightFailure: Option.Option<PreflightFailure>;
-  readonly runningDistro?: string;
-  readonly wslRuntimeId?: string;
 }
 
 export interface PreflightFailure {
@@ -441,7 +437,6 @@ export const runBackendProcess = Effect.fn("runBackendProcess")(function* (
     stderr: options.captureOutput ? "pipe" : "inherit",
     killSignal: "SIGTERM",
     forceKillAfter: DEFAULT_BACKEND_TERMINATE_GRACE,
-    // wsl.exe drops extra file descriptors; deliver its bootstrap via stdin.
     ...(options.bootstrapDelivery === "fd3" ? { additionalFds } : {}),
   });
 
@@ -617,7 +612,6 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
   | DesktopObservability.DesktopBackendOutputLogFactory
   | DesktopTelemetryPublisher.DesktopTelemetryPublisher
   | DesktopBrowserHost.DesktopBrowserHost
-  | DesktopWslEnvironment.DesktopWslEnvironment
   | Scope.Scope
 > {
   const parentScope = yield* Scope.Scope;
@@ -626,7 +620,6 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
   const backendOutputLog = yield* backendOutputLogFactory.forInstance(spec.id);
   const desktopTelemetryPublisher = yield* DesktopTelemetryPublisher.DesktopTelemetryPublisher;
   const desktopBrowserHost = yield* DesktopBrowserHost.DesktopBrowserHost;
-  const wslEnvironment = yield* DesktopWslEnvironment.DesktopWslEnvironment;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const httpClient = yield* HttpClient.HttpClient;
   const state = yield* SubscriptionRef.make(initialState);
@@ -930,15 +923,6 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
             }
 
             yield* spec.onReady?.(config.value.httpBaseUrl) ?? Effect.void;
-            if (
-              config.value.runningDistro !== undefined &&
-              config.value.wslRuntimeId !== undefined
-            ) {
-              yield* wslEnvironment.pruneRuntimes(
-                config.value.runningDistro,
-                config.value.wslRuntimeId,
-              );
-            }
           }),
           onReadinessFailure: Effect.fn("desktop.backendInstance.onReadinessFailure")(
             function* (error) {

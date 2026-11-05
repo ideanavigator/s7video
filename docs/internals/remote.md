@@ -60,7 +60,7 @@ headless machines. It listens on every IPv4 interface and closes each
 connection unless both addresses of the direct peer are loopback, private, or
 tailnet IPv4. That keeps a VPS's public address closed, including a cloud VM
 whose public address is NATed to a private interface. It is not a firewall:
-T3 Connect and Tailscale Serve reach the server over loopback by design, and a
+a reverse proxy on this machine reaches the server over loopback, and a
 proxy that rewrites the source address looks private. One listener per address would
 miss a DHCP change, and the wildcard keeps the reported addresses current.
 
@@ -154,18 +154,9 @@ parameter would disclose it to the wrong origin.
 
 ## Access and process ownership are different
 
-Tailscale supplies an endpoint for ordinary pairing, so it needs no separate
-environment type. Authentication remains the environment's responsibility for
-every route. See [environment authentication](./environment-auth.md) and the
-[T3 Connect trust boundary](./t3-connect.md).
-
-SSH can launch a server as well as forward a port. Desktop main owns that
-lifecycle because it can spawn SSH and handle authentication prompts. The
-renderer uses the forwarded endpoint through the shared connection runtime.
-[SSH cleanup](../../packages/ssh/src/tunnel.ts) stops a remote server only if the
-launcher owns it; a server it discovered already running must survive a client
-disconnect. Reconnection restores the forward before opening the application
-transport.
+Every route is ordinary pairing: s7video has no SSH, WSL or Tailscale Serve environment type
+(S7V-018). Authentication remains the environment's responsibility for every route. See
+[environment authentication](./environment-auth.md).
 
 Remote servers can outlive several client releases. Clients must use advertised
 capabilities and handle their absence, rather than assume their own version
@@ -178,9 +169,9 @@ resulting disconnect.
 Desktop normally launches its own primary server, but the desktop setting `localEnvironmentEnabled`
 (`apps/desktop/src/settings/DesktopAppSettings.ts`) turns that off. Changing it relaunches the app;
 no local state is deleted. On the next start the main process skips port selection, server exposure,
-and the primary and WSL backends, and opens the window right away. The renderer sees this through
+and the primary backend, and opens the window right away. The renderer sees this through
 `desktopBridge.getLocalEnvironmentEnabled()`: `readPrimaryEnvironmentTarget` returns null, so primary
-auth and platform-managed discovery are skipped and only saved environments (pairing, relay, SSH)
+auth and platform-managed discovery are skipped and only saved environments paired over the network
 connect. This is possible because the desktop renderer is not served by the backend: the `t3code://`
 scheme serves the bundled client from disk (Vite in development) and API traffic always goes to the
 environment's own URL.

@@ -1,4 +1,4 @@
-import { useAuth } from "@clerk/react";
+import { BRAND } from "@t3tools/shared/brand";
 import { useAtomValue } from "@effect/atom-react";
 import type {
   AgentSessionProjectCandidate,
@@ -9,6 +9,7 @@ import type {
   ServerConfig,
   ServerProvider,
 } from "@t3tools/contracts";
+import type { EnvironmentConnectionPresentation } from "@t3tools/client-runtime/connection";
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   isAtomCommandInterrupted,
@@ -29,7 +30,6 @@ import {
   ArrowRightIcon,
   CheckIcon,
   ChevronRightIcon,
-  CloudIcon,
   LinkIcon,
   MonitorIcon,
   TerminalIcon,
@@ -38,9 +38,7 @@ import { useEffect, useRef, useState } from "react";
 
 import { TYPOGRAPHY_ADVANCED_STORAGE_KEY } from "../../appearanceFonts";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
-import { hasCloudPublicConfig } from "../../cloud/publicConfig";
 import { PRIVACY_POLICY_URL } from "../../legalLinks";
-import { useT3ConnectAuthPrompt } from "../clerk/useT3ConnectAuthPrompt";
 import { completeOnboarding } from "../../onboarding/firstRun";
 import {
   groupOnboardingProjects,
@@ -66,10 +64,7 @@ import {
   managedTelemetryOffMessage,
   usePrimaryManagedPolicy,
 } from "../../state/managedPolicy";
-import {
-  isOnboardingRelayEnvironment,
-  resolveOnboardingSetup,
-} from "../../onboarding/targetEnvironment.logic";
+import { resolveOnboardingSetup } from "../../onboarding/targetEnvironment.logic";
 import { useProjectScans } from "../../onboarding/useProjectScans";
 import { projectEnvironment } from "../../state/projects";
 import { serverEnvironment } from "../../state/server";
@@ -88,8 +83,6 @@ import { AddManagedCodexAccountDialog, CodexSetupSection } from "../settings/Cod
 import { readCodexSetupMode } from "../settings/CodexSetupSection.logic";
 import { buildProviderInstanceUpdatePatch } from "../settings/SettingsPanels.logic";
 import { TerminalViewport } from "../ThreadTerminalDrawer";
-import { CloudEnvironmentConnectRows } from "../cloud/CloudEnvironmentConnectList";
-import { presentSavedCloudEnvironmentConnection } from "../cloud/cloudEnvironmentConnectionPresentation";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { T3Wordmark } from "../T3Wordmark";
 import { Alert, AlertDescription } from "../ui/alert";
@@ -239,9 +232,13 @@ export function WelcomeWizard({
         initialFocus={() => document.getElementById("onboarding-pairing-url") ?? true}
       >
         <WizardHeader
-          title="Set up T3 Code"
+          title={`Set up ${BRAND.app.productName}`}
           identity={
-            <div className="flex items-baseline gap-1.5" role="img" aria-label="T3 Code">
+            <div
+              className="flex items-baseline gap-1.5"
+              role="img"
+              aria-label={`${BRAND.app.productName}`}
+            >
               <T3Wordmark className="h-4 w-auto shrink-0" aria-hidden />
               <span className="text-2xl font-medium tracking-tight text-muted-foreground">
                 Code
@@ -263,18 +260,9 @@ export function WelcomeWizard({
         <WizardPanel holdHeight={isLoadingProjects}>
           {step === "connection" ? (
             <ConnectionStep
-              expandPairingInitially={!localAvailable && !hasCloudPublicConfig()}
+              expandPairingInitially={!localAvailable}
               selectedIds={selectedIds}
-              autoSelectedComputers={autoSelectedComputers}
               onSelectionChange={setSelection}
-              onToggleEnvironment={(environmentId, checked) =>
-                setSelection((current) => {
-                  const next = new Set(current ?? selectedIds);
-                  if (checked) next.add(environmentId);
-                  else next.delete(environmentId);
-                  return next;
-                })
-              }
               onContinue={() =>
                 startSetup(resolveOnboardingSetup(environments, selectedIds).environmentIds)
               }
@@ -302,28 +290,20 @@ export function WelcomeWizard({
 }
 
 function ConnectionStep({
-  autoSelectedComputers,
   expandPairingInitially,
   selectedIds,
   onSelectionChange,
-  onToggleEnvironment,
   onContinue,
   onPaired,
 }: {
-  readonly autoSelectedComputers: Set<EnvironmentId>;
   readonly expandPairingInitially: boolean;
   readonly selectedIds: ReadonlySet<EnvironmentId>;
   readonly onSelectionChange: (ids: ReadonlySet<EnvironmentId>) => void;
-  readonly onToggleEnvironment: (environmentId: EnvironmentId, checked: boolean) => void;
   readonly onContinue: () => void;
   readonly onPaired: (environmentId: EnvironmentId) => void;
 }) {
   const { environments } = useEnvironments();
   const telemetryOff = managedTelemetryOffMessage(usePrimaryManagedPolicy());
-  const cloudEnabled = hasCloudPublicConfig();
-  const directEnvironments = environments.filter(
-    (environment) => !cloudEnabled || !isOnboardingRelayEnvironment(environment),
-  );
   const [pairingOpen, setPairingOpen] = useState(expandPairingInitially);
   const [isPairing, setIsPairing] = useState(false);
   const { ready, skippedIds } = resolveOnboardingSetup(environments, selectedIds);
@@ -349,10 +329,10 @@ function ConnectionStep({
       <p className="mt-2.5 text-sm leading-relaxed text-muted-foreground">
         Choose one or more computers. We’ll set up agents and projects on each.
       </p>
-      {directEnvironments.length > 0 ? (
+      {environments.length > 0 ? (
         <fieldset className="mt-5 space-y-2">
           <legend className="sr-only">Computers to set up</legend>
-          {directEnvironments.map((environment) => (
+          {environments.map((environment) => (
             <label
               key={environment.environmentId}
               className="flex cursor-pointer items-center gap-3 rounded-lg border border-border bg-background px-3 py-3"
@@ -375,7 +355,7 @@ function ConnectionStep({
                   <span className="shrink-0 text-xs text-muted-foreground">
                     {!environment.entry.enabled && environment.connection.phase !== "unsupported"
                       ? "Off"
-                      : presentSavedCloudEnvironmentConnection(environment.connection).buttonLabel}
+                      : connectionPhaseLabel(environment.connection.phase)}
                   </span>
                 </span>
                 {environment.displayUrl ? (
@@ -394,14 +374,6 @@ function ConnectionStep({
         </fieldset>
       ) : null}
       <div className="mt-4 space-y-2">
-        {cloudEnabled ? (
-          <ConnectAccountOption
-            autoSelectedComputers={autoSelectedComputers}
-            disabled={isPairing}
-            selectedIds={selectedIds}
-            onToggleEnvironment={onToggleEnvironment}
-          />
-        ) : null}
         <div className="rounded-lg border border-border bg-background">
           <Collapsible open={pairingOpen} onOpenChange={setPairingOpen}>
             <CollapsibleTrigger
@@ -444,9 +416,9 @@ function ConnectionStep({
       ) : null}
       <div className="mt-6 flex flex-col-reverse gap-4 sm:flex-row sm:items-center sm:justify-between sm:gap-6">
         <p className="min-w-0 text-xs leading-relaxed text-muted-foreground">
-          {telemetryOff ?? "T3 Code collects anonymous usage data to help us improve it."} To read
-          more about how your data is used{telemetryOff === undefined ? " and how to opt out" : ""},
-          see our{" "}
+          {telemetryOff ??
+            `${BRAND.app.productName} sends no usage data unless you turn it on in Settings.`}{" "}
+          To read more about how your data is used, see our{" "}
           <a
             className="underline underline-offset-2 hover:text-foreground"
             href={PRIVACY_POLICY_URL}
@@ -472,84 +444,23 @@ function ConnectionStep({
   );
 }
 
-function ConnectAccountOption({
-  autoSelectedComputers,
-  disabled,
-  selectedIds,
-  onToggleEnvironment,
-}: {
-  readonly autoSelectedComputers: Set<EnvironmentId>;
-  readonly disabled: boolean;
-  readonly selectedIds: ReadonlySet<EnvironmentId>;
-  readonly onToggleEnvironment: (environmentId: EnvironmentId, checked: boolean) => void;
-}) {
-  const { environments } = useEnvironments();
-  const { isLoaded, isSignedIn } = useAuth({ treatPendingAsSignedOut: false });
-  const { openAuthPrompt } = useT3ConnectAuthPrompt();
-  const [expanded, setExpanded] = useState(true);
-  const [discoveryReady, setDiscoveryReady] = useState(false);
-  const onDiscoveryReady = () => setDiscoveryReady(true);
-
-  return (
-    <div className="rounded-lg border border-border bg-background">
-      <Collapsible open={expanded && !!isSignedIn && discoveryReady} onOpenChange={setExpanded}>
-        <CollapsibleTrigger
-          disabled={disabled || !isLoaded}
-          onClick={(event) => {
-            if (!isSignedIn) {
-              event.preventDefault();
-              setExpanded(true);
-              openAuthPrompt();
-            }
-          }}
-          render={
-            <Button variant="ghost" size="sm-multiline" className="min-h-14 w-full justify-start" />
-          }
-        >
-          <CloudIcon className="size-4 text-muted-foreground" />
-          <span className="flex-1 text-left">T3 Connect</span>
-          <span className="text-xs text-muted-foreground">
-            {!isLoaded
-              ? "Loading sign-in…"
-              : !isSignedIn
-                ? "Sign in"
-                : !discoveryReady
-                  ? "Loading computers…"
-                  : null}
-          </span>
-          <ChevronRightIcon
-            className={cn("size-4 text-muted-foreground", expanded && isSignedIn && "rotate-90")}
-          />
-        </CollapsibleTrigger>
-        <CollapsiblePanel keepMounted>
-          <div className="px-3 pb-3">
-            <div className="mb-3 space-y-1.5">
-              {isSignedIn ? (
-                <CloudEnvironmentConnectRows
-                  primaryEnvironmentId={null}
-                  savedEnvironments={environments}
-                  showSavedEnvironments
-                  onDiscoveryReady={onDiscoveryReady}
-                  selection={{ selectedIds, onChange: onToggleEnvironment, autoSelectedComputers }}
-                  refreshWhileEmpty
-                  empty={
-                    <p className="py-3 text-sm text-muted-foreground">No computers linked yet.</p>
-                  }
-                />
-              ) : null}
-            </div>
-            <p className="text-sm text-muted-foreground">
-              Run this on each computer you want to connect.
-            </p>
-            <CommandBlock command="npx t3 connect" className="mt-3" />
-            <p className="mt-3 text-xs text-muted-foreground">
-              Keep T3 Code running. Select the computers you want to set up above.
-            </p>
-          </div>
-        </CollapsiblePanel>
-      </Collapsible>
-    </div>
-  );
+function connectionPhaseLabel(phase: EnvironmentConnectionPresentation["phase"]): string {
+  switch (phase) {
+    case "connected":
+      return "Connected";
+    case "connecting":
+      return "Connecting…";
+    case "reconnecting":
+      return "Reconnecting…";
+    case "unsupported":
+      return "Client not supported";
+    case "error":
+      return "Connection failed";
+    case "offline":
+      return "Offline";
+    case "available":
+      return "Not connected";
+  }
 }
 
 function PairingForm({
@@ -649,13 +560,10 @@ function PairingForm({
           </div>
           <CollapsiblePanel>
             <p className="pt-3 text-sm text-muted-foreground">
-              On the computer with your code, start T3 Code or run{" "}
-              <code className="font-mono">npx t3 serve</code>, then run:
+              On the computer with your code, start {BRAND.app.productName} or run{" "}
+              <code className="font-mono">{BRAND.app.cliName} serve</code>, then run:
             </p>
-            <CommandBlock command="npx t3 pair" className="mt-2" />
-            <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
-              On a tailnet, run <code className="font-mono">npx t3 pair --tailscale</code> instead.
-            </p>
+            <CommandBlock command={`${BRAND.app.cliName} pair`} className="mt-2" />
           </CollapsiblePanel>
         </Collapsible>
       </form>

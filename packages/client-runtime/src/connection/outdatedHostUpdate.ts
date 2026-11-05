@@ -1,3 +1,4 @@
+import { BRAND } from "@t3tools/shared/brand";
 import {
   ORCHESTRATION_PROTOCOL_VERSION,
   type EnvironmentId,
@@ -23,16 +24,9 @@ import * as Socket from "effect/socket/Socket";
 import { fetchRemoteEnvironmentDescriptor } from "../environment/descriptor.ts";
 import { makeWsRpcProtocolClient, PING_TIMEOUT } from "../rpc/protocol.ts";
 import { isLegacyUpdateHandoffLoss, resolveServerUpdateProgressResult } from "../state/server.ts";
-import * as RelayEnvironmentDiscovery from "../relay/discovery.ts";
 import * as ConnectionResolver from "./resolver.ts";
 import * as EnvironmentRegistry from "./registry.ts";
-import {
-  connectionRoutes,
-  hasRelayRoute,
-  routeEntry,
-  routeHttpBaseUrl,
-  usableRoutes,
-} from "./routes.ts";
+import { connectionRoutes, routeEntry, routeHttpBaseUrl, usableRoutes } from "./routes.ts";
 
 // A v1 host restarting into v2 runs migrations before its descriptor answers again.
 const OUTDATED_HOST_RESTART_TIMEOUT = Duration.minutes(4);
@@ -82,13 +76,7 @@ export const updateOutdatedHost = Effect.fn("clientRuntime.connection.updateOutd
     const webSocketConstructor = yield* Socket.WebSocketConstructor;
     const httpClient = yield* HttpClient.HttpClient;
     const { entry, prepared, descriptor } = yield* reachOutdatedHost(environmentId);
-    // Discovery still holds the old relay descriptor and would re-block the
-    // environment from it, so replace that before clearing the block.
     const switchBackOn = Effect.gen(function* () {
-      if (hasRelayRoute(entry)) {
-        const discovery = yield* RelayEnvironmentDiscovery.RelayEnvironmentDiscovery;
-        yield* discovery.refresh;
-      }
       yield* registry.setCompatibility(environmentId, null);
       yield* registry.setEnabled(environmentId, true);
     });
@@ -108,7 +96,7 @@ export const updateOutdatedHost = Effect.fn("clientRuntime.connection.updateOutd
     ) {
       return yield* new OutdatedHostUpdateError({
         environmentId,
-        message: `Update T3 Code on ${descriptor.label} manually; it cannot update itself.`,
+        message: `Update ${BRAND.app.productName} on ${descriptor.label} manually; it cannot update itself.`,
       });
     }
 
@@ -229,7 +217,7 @@ export const updateOutdatedHost = Effect.fn("clientRuntime.connection.updateOutd
     if (Option.isNone(resumed)) {
       return yield* new OutdatedHostUpdateError({
         environmentId,
-        message: `${descriptor.label} did not come back on a compatible T3 Code version.`,
+        message: `${descriptor.label} did not come back on a compatible ${BRAND.app.productName} version.`,
       });
     }
 

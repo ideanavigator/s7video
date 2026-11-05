@@ -1,6 +1,7 @@
 export const CLIENT_NAMES = [
-  "com.t3tools.T3Code.SnapShot",
-  "com.t3tools.T3Code.Development.SnapShot",
+  // The desktop's Linux app id plus `.SnapShot` (see brandIdentity); edit for a white-label build.
+  "app.s7video.desktop.SnapShot",
+  "app.s7video.desktop.dev.SnapShot",
 ];
 
 export function isWaylandSession(meta) {

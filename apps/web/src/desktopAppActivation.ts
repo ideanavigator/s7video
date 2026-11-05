@@ -1,3 +1,4 @@
+import { BRAND } from "@t3tools/shared/brand";
 import type {
   DesktopAppActivationFailure,
   DesktopAppActivationRequest,
@@ -85,7 +86,7 @@ export async function handleDesktopAppActivationRequest(
       return failure(
         request.requestId,
         "project-create-failed",
-        errorMessage(error, "T3 Code could not add the project."),
+        errorMessage(error, `${BRAND.app.productName} could not add the project.`),
       );
     }
   }
@@ -99,7 +100,7 @@ export async function handleDesktopAppActivationRequest(
       return failure(
         request.requestId,
         "thread-open-failed",
-        "T3 Code could not open a new thread for the project.",
+        `${BRAND.app.productName} could not open a new thread for the project.`,
       );
     }
     return {
@@ -113,7 +114,7 @@ export async function handleDesktopAppActivationRequest(
     return failure(
       request.requestId,
       "thread-open-failed",
-      errorMessage(error, "T3 Code could not open a new thread for the project."),
+      errorMessage(error, `${BRAND.app.productName} could not open a new thread for the project.`),
     );
   }
 }

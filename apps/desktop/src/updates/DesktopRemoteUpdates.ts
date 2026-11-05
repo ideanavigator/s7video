@@ -187,7 +187,7 @@ export const listen: Effect.Effect<
         // toward Stable never offers an older build outside a guarded switch.
         if (request.channel !== undefined) {
           // A reinstall restarts every backend, but the requesting server checked only its own
-          // database. A WSL backend keeps its own, so cross tracks only where all can be checked.
+          // database. A secondary backend keeps its own, so cross tracks only where all can be checked.
           const current = yield* updates.getState;
           if (
             desktopUpdateChannelOf(current.currentVersion) !== request.channel &&
@@ -198,7 +198,7 @@ export const listen: Effect.Effect<
               {
                 outcome: "failed",
                 reason:
-                  "This desktop app also runs WSL backends, whose databases a remote switch cannot check. Switch it on that machine.",
+                  "This desktop app also runs other local backends, whose databases a remote switch cannot check. Switch it on that machine.",
               },
               request.requestId,
             );

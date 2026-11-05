@@ -3,6 +3,7 @@
  * user's own session there, so a link card can be answered without fetching a code by hand.
  * It carries exactly what an agent sign-in with the chosen access needs.
  */
+import { BRAND } from "@t3tools/shared/brand";
 import { type AuthMcpClientAccess, mcpClientScopes } from "@t3tools/contracts";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
@@ -11,16 +12,14 @@ import * as Option from "effect/Option";
 import type { Atom } from "effect/reactivity";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 
-import * as RemoteEnvironmentAuthorization from "../authorization/service.ts";
 import type { PreparedConnection } from "../connection/model.ts";
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
-import * as ManagedRelay from "../relay/managedRelay.ts";
 import { executeAuthenticatedEnvironmentHttpRequest } from "./environmentHttpAuth.ts";
 import { createEnvironmentCommand } from "./runtime.ts";
 
 const MINT_TIMEOUT_MS = 8_000;
-const PEER_PAIRING_CODE_LABEL = "T3 Code link";
+const PEER_PAIRING_CODE_LABEL = `${BRAND.app.productName} link`;
 
 /** Minting failed; the user can still paste a code from the other environment. */
 export class PeerPairingCodeError extends Data.TaggedError("PeerPairingCodeError")<{
@@ -38,16 +37,9 @@ const mintPeerPairingCode = Effect.fn("clientRuntime.state.mintPeerPairingCode")
   prepared: PreparedConnection,
   access: AuthMcpClientAccess,
 ): Effect.fn.Return<string, PeerPairingCodeError, HttpClient.HttpClient> {
-  const signer = yield* Effect.serviceOption(ManagedRelay.ManagedRelayDpopSigner);
-  const remoteAuthorization = yield* Effect.serviceOption(
-    RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization,
-  );
   const minted = yield* executeAuthenticatedEnvironmentHttpRequest({
     prepared,
-    signer,
-    remoteAuthorization,
     group: "auth",
-    method: "POST",
     url: (urls) => urls.pairingCredential(),
     timeoutMs: MINT_TIMEOUT_MS,
     request: ({ client, headers }) =>

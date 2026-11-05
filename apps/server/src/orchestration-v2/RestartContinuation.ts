@@ -1,3 +1,4 @@
+import { BRAND } from "@t3tools/shared/brand";
 import { runRanAfter } from "@t3tools/shared/orchestrationV2ThreadError";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
@@ -316,8 +317,8 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
           source: { kind: "system" },
           outcome: "updated",
           summary: note.settled
-            ? "T3 Code restarted and stopped background work"
-            : "T3 Code restarted and resumed this turn",
+            ? `${BRAND.app.productName} restarted and stopped background work`
+            : `${BRAND.app.productName} restarted and resumed this turn`,
           detail: text,
         },
         attachments: [],

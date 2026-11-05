@@ -26,7 +26,6 @@ import {
   type ThreadId,
   type ThreadEnvMode,
   type UploadChatAttachment,
-  type GuestMessageId,
 } from "@t3tools/contracts";
 import { derivePendingBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
@@ -435,45 +434,6 @@ export const deleteThread = Effect.fn("EnvironmentCommands.deleteThread")(functi
     commandId: yield* allocateCommandId(input),
     threadId: input.threadId,
     ...(input.onlyIfUnused === undefined ? {} : { onlyIfUnused: input.onlyIfUnused }),
-  });
-});
-
-export type CloseGuestShareInput = ThreadCommandInput;
-export const closeGuestShare = Effect.fn("EnvironmentCommands.closeGuestShare")(function* (
-  input: CloseGuestShareInput,
-) {
-  return yield* simpleThreadCommand("thread.guest-share.close", input);
-});
-
-export interface ResolveGuestMessageInput extends ThreadCommandInput {
-  readonly guestMessageId: GuestMessageId;
-  readonly decision: "send" | "dismiss";
-  readonly creationSource?: "web" | "mobile";
-}
-/** Send runs the guest's text as a normal turn; the server supplies the text, not the client. */
-export const resolveGuestMessage = Effect.fn("EnvironmentCommands.resolveGuestMessage")(function* (
-  input: ResolveGuestMessageInput,
-) {
-  const commandId = yield* allocateCommandId(input);
-  if (input.decision === "dismiss") {
-    return yield* dispatch({
-      type: "thread.guest-message.dismiss",
-      commandId,
-      threadId: input.threadId,
-      guestMessageId: input.guestMessageId,
-    });
-  }
-  return yield* dispatch({
-    type: "message.dispatch",
-    commandId,
-    threadId: input.threadId,
-    messageId: MessageId.make(commandId),
-    guestMessageId: input.guestMessageId,
-    text: "",
-    attachments: [],
-    dispatchMode: { type: "queue_after_active" },
-    createdBy: "user",
-    creationSource: input.creationSource ?? "web",
   });
 });
 

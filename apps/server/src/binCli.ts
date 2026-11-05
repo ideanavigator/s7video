@@ -1,10 +1,11 @@
+import { BRAND } from "@t3tools/shared/brand";
 import { doctorCommand } from "./cli/doctor.ts";
 import { policyCommand } from "./cli/policy.ts";
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import { Argument, Command } from "effect/cli";
+import { Command } from "effect/cli";
 import * as CliError from "effect/cli/CliError";
 
 import * as NetService from "@t3tools/shared/Net";
@@ -15,7 +16,6 @@ import { environmentCommand } from "./cli/environment.ts";
 import { appCommand } from "./cli/app.ts";
 import { browserCommand } from "./cli/browser.ts";
 import { pairCommand } from "./cli/pair.ts";
-import { hasCloudPublicConfig } from "./cloud/publicConfig.ts";
 import { extendConnectionAttemptTimeout, keepOutboundFetchOnHttp1 } from "./outboundHttp.ts";
 import { sharedServerCommandFlags } from "./cli/config.ts";
 import { projectCommand } from "./cli/project.ts";
@@ -31,45 +31,21 @@ import { servicePreflightCommand } from "./cli/servicePreflight.ts";
 import { themeCommand } from "./cli/theme.ts";
 import { traceCommand } from "./cli/trace.ts";
 import { triageCommand } from "./cli/triage.ts";
-import { connectCommand, statusCommand, upCommand } from "./cli/up.ts";
+import { statusCommand, upCommand } from "./cli/up.ts";
 
 const layerCliRuntime = Layer.mergeAll(NodeServices.layer, NetService.layer);
 
-const connectPublicConfigMissingMessage =
-  "T3 Connect commands are unavailable: this build is missing T3 Connect public configuration.";
-
-class ConnectPublicConfigMissingError extends CliError.UserError {
-  override get message() {
-    return connectPublicConfigMissingMessage;
-  }
-}
-
-const connectUnavailableCommand = Command.make("connect", {
-  command: Argument.String("command").pipe(Argument.variadic),
-}).pipe(
-  Command.withDescription("T3 Connect is unavailable in builds without public configuration."),
-  Command.unlisted,
-  Command.withHandler(() =>
-    Effect.fail(
-      new CliError.ShowHelp({
-        commandPath: ["t3", "connect"],
-        errors: [new ConnectPublicConfigMissingError({ cause: connectPublicConfigMissingMessage })],
-      }),
-    ),
-  ),
-);
-
-export const makeCli = ({ cloudEnabled = hasCloudPublicConfig } = {}) =>
-  Command.make("t3", { ...sharedServerCommandFlags }).pipe(
+export const makeCli = () =>
+  Command.make(BRAND.app.cliName, { ...sharedServerCommandFlags }).pipe(
     Command.withDescription(
-      "Run T3 Code in this terminal and open it in your browser. To use it from your other devices, run `t3 up`.",
+      `Run ${BRAND.app.productName} in this terminal and open it in your browser. To use it from your other devices, run \`${BRAND.app.cliName} up\`.`,
     ),
     Command.withHandler(runDefaultServerCommand),
     Command.withSubcommands([
       Command.make("help").pipe(
         Command.withDescription("Show command help."),
         Command.withHandler(() =>
-          Effect.fail(new CliError.ShowHelp({ commandPath: ["t3"], errors: [] })),
+          Effect.fail(new CliError.ShowHelp({ commandPath: [BRAND.app.cliName], errors: [] })),
         ),
       ),
       acpMcpBridgeCommand,
@@ -98,7 +74,6 @@ export const makeCli = ({ cloudEnabled = hasCloudPublicConfig } = {}) =>
       doctorCommand,
       policyCommand,
       triageCommand,
-      cloudEnabled ? connectCommand : connectUnavailableCommand,
     ]),
   );
 

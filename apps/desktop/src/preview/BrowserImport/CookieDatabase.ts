@@ -1,3 +1,4 @@
+import { BRAND } from "@t3tools/shared/brand";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -46,7 +47,7 @@ export const bareHost = (host: string): string => (host.startsWith(".") ? host.s
 /** Copy before reading to avoid live WAL writes and never open the source browser database for writing. */
 export const snapshotCookieDatabase = Effect.fn("CookieDatabase.snapshotCookieDatabase")(function* (
   cookiePath: string,
-  tempPrefix = "t3code-cookie-import-",
+  tempPrefix = `${BRAND.app.id}-cookie-import-`,
 ) {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;

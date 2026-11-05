@@ -1,6 +1,8 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -89,5 +91,34 @@ it.layer(NodeServices.layer)("t3-sqlite-state", (it) => {
         ).pipe(Effect.flip);
         assert.equal(aliasError._tag, "SqliteStateSharedHomeMutationError");
       }),
+  );
+
+  it.effect.each(["query", "exec"] as const)(
+    "refuses to %s a database inside a fake home's .t3 and leaves it untouched",
+    (operation) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-sqlite-state-home-" });
+        const upstreamBase = path.join(home, ".t3");
+        yield* createFixtureDatabase(upstreamBase);
+        const databasePath = path.join(upstreamBase, "userdata", "statev2.sqlite");
+        const before = yield* fs.readFile(databasePath);
+
+        const exit = yield* runSqliteState(
+          { operation, baseDir: upstreamBase, sql: "DELETE FROM fixtures" },
+          { homeDirectory: home },
+        ).pipe(Effect.exit);
+
+        assert.isTrue(Exit.isFailure(exit));
+        if (Exit.isFailure(exit)) {
+          assert.match(String(Cause.squash(exit.cause)), /T3 Code's data folder/);
+        }
+        assert.deepEqual([...(yield* fs.readFile(databasePath))], [...before]);
+        assert.deepEqual(
+          (yield* fs.readDirectory(path.join(upstreamBase, "userdata"))).toSorted(),
+          ["statev2.sqlite"],
+        );
+      }).pipe(Effect.scoped),
   );
 });

@@ -1,3 +1,4 @@
+import { BRAND } from "@t3tools/shared/brand";
 import {
   AntigravitySettings,
   CodexSettings,
@@ -82,15 +83,14 @@ export const makeProviderInstallation = Effect.fn("makeProviderInstallation")(fu
       return yield* new ProviderSetupError({
         instanceId,
         operation,
-        detail: "Choose managed setup to install Codex in T3 Code.",
+        detail: `Choose managed setup to install Codex in ${BRAND.app.productName}.`,
       });
     }
     if (managedOnly && config.binaryPath && (!isCodex || config.binaryPath !== "codex")) {
       return yield* new ProviderSetupError({
         instanceId,
         operation,
-        detail:
-          "This instance uses a custom executable. Clear its binary path to manage installation in T3 Code.",
+        detail: `This instance uses a custom executable. Clear its binary path to manage installation in ${BRAND.app.productName}.`,
       });
     }
     return { installation, driver: instance.driverKind };

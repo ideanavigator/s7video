@@ -1,6 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Niri exposes its compositor API through a local Unix socket.
 // @effect-diagnostics globalTimers:off -- Bound native socket operations outside Effect fibers.
 
+import { BRAND } from "@t3tools/shared/brand";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeNet from "node:net";
 import * as NodeOS from "node:os";
@@ -173,7 +174,9 @@ async function activateNiriWindow(path: string, title: string, signal: AbortSign
         (window) => window.pid === process.pid && window.title === title,
       );
       if (matches.length > 1)
-        throw new Error("More than one T3 Code window matches the capture destination.");
+        throw new Error(
+          `More than one ${BRAND.app.productName} window matches the capture destination.`,
+        );
       return matches[0];
     });
     connection.send("EventStream");

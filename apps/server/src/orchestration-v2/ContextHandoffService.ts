@@ -1,3 +1,4 @@
+import { BRAND } from "@t3tools/shared/brand";
 import {
   type OrchestrationV2AppThread,
   OrchestrationV2ContextHandoff,
@@ -293,8 +294,7 @@ function makeLegacyImportSummary(items: ReadonlyArray<OrchestrationV2TurnItem>):
         return [];
     }
   });
-  const header =
-    "Imported conversation history from the previous T3 Code orchestrator. Use it as context; do not repeat it unless the user asks.";
+  const header = `Imported conversation history from the previous ${BRAND.app.productName} orchestrator. Use it as context; do not repeat it unless the user asks.`;
   const maxChars = 32_000;
   const selected: Array<string> = [];
   let remaining = maxChars - header.length - 2;

@@ -139,10 +139,6 @@
       "types": "./src/t3ToolSummary.ts",
       "default": "./src/t3ToolSummary.ts"
     },
-    "./relay": {
-      "types": "./src/relay/index.ts",
-      "default": "./src/relay/index.ts"
-    },
     "./state/auth": {
       "types": "./src/state/auth.ts",
       "default": "./src/state/auth.ts"
@@ -254,10 +250,6 @@
     "./state/project-grouping": {
       "types": "./src/state/projectGrouping.ts",
       "default": "./src/state/projectGrouping.ts"
-    },
-    "./state/relay": {
-      "types": "./src/state/relayDiscovery.ts",
-      "default": "./src/state/relayDiscovery.ts"
     },
     "./state/review": {
       "types": "./src/state/review.ts",
@@ -529,12 +521,6 @@
     "@t3tools/contracts": "workspace:*",
     "@t3tools/provider-acp-registry": "workspace:*",
     "@t3tools/provider-core": "workspace:*",
-    "@t3tools/provider-cursor": "workspace:*",
-    "@t3tools/provider-fx": "workspace:*",
-    "@t3tools/provider-grok": "workspace:*",
-    "@t3tools/provider-muse": "workspace:*",
-    "@t3tools/provider-opencode": "workspace:*",
-    "@t3tools/provider-pi": "workspace:*",
     "@t3tools/shared": "workspace:*",
     "@t3tools/source-control-core": "workspace:*",
     "@t3tools/source-control-definitions": "workspace:*",

@@ -90,7 +90,7 @@ export function AddUsageLimitSourceDialog({
               <Label htmlFor="usage-source-url">Hub URL</Label>
               <Input
                 id="usage-source-url"
-                placeholder="https://hub.example.ts.net:8318"
+                placeholder="https://hub.local:8318"
                 value={url}
                 onChange={(event) => setUrl(event.target.value)}
                 autoFocus

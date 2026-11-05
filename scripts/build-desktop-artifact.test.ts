@@ -29,17 +29,11 @@ import {
   parseWslRuntimeArchiveMembers,
   readWorkspaceConfig,
   createBuildConfig,
-  DESKTOP_FILE_EXCLUSIONS,
-  InvalidMacPasskeyRpDomainError,
-  InvalidMacPasskeyPublishableKeyError,
+  renderLinuxMetainfo,
+  MAC_ENTITLEMENTS,
   UnsupportedDesktopBuildArchitectureError,
-  MacPasskeySigningConfigurationResolutionError,
-  MissingMacPasskeyProvisioningProfileError,
   packWindowsServerAsar,
   preflightWindowsDesktopBuild,
-  renderMacPasskeyEntitlements,
-  resolveMacWebAuthnEntitlements,
-  resolveMacPasskeySigningConfiguration,
   resolveMergedStageDependencies,
   resolveBuildOptions,
   stageWslRuntimeArchive,
@@ -54,9 +48,7 @@ import {
   WindowsPrimaryNativeProbeError,
   WindowsDesktopBuildPrerequisitesMissingError,
   WindowsPackagedPayloadValidationError,
-  stageCursorSdkPlatformPackages,
   WINDOWS_PACKAGED_PAYLOAD_FILE_LIMIT,
-  WINDOWS_SERVER_ASAR_IGNORE_GLOBS,
   WINDOWS_SERVER_ASAR_RESOURCE,
   WSL_RUNTIME_ARCHIVE_EXTRA_RESOURCE,
   WSL_RUNTIME_ARCHIVE_HASH_EXTRA_RESOURCE,
@@ -226,7 +218,7 @@ const makeMacPayloadFixture = Effect.fn("test.makeMacPayloadFixture")(function* 
   yield* fs.writeFileString(serverEntryPath, input.serverEntrySource ?? "console.log('server');\n");
 
   const stageDistDir = path.join(tempDir, "dist");
-  const resourcesDir = path.join(stageDistDir, "mac-arm64/T3 Code.app/Contents/Resources");
+  const resourcesDir = path.join(stageDistDir, "mac-arm64/s7video.app/Contents/Resources");
   yield* fs.makeDirectory(resourcesDir, { recursive: true });
   yield* Effect.promise(() =>
     createPackageWithOptions(sourceDir, path.join(resourcesDir, "app.asar"), {}),
@@ -496,6 +488,42 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     }),
   );
 
+  it.effect("ships no update feed when the brand config names no release repository", () =>
+    Effect.gen(function* () {
+      const release = yield* createBuildConfig(
+        "mac",
+        "dmg",
+        "0.0.33",
+        false,
+        false,
+        undefined,
+        undefined,
+      );
+      assert.isNull(release.publish);
+      assert.strictEqual(release.appId, "app.s7video.desktop");
+      assert.strictEqual(release.productName, "s7video (Beta)");
+      const protocols = (release.mac as { protocols: ReadonlyArray<{ schemes: string[] }> })
+        .protocols;
+      assert.deepStrictEqual(protocols[0]?.schemes, ["s7video", "s7video-dev"]);
+    }).pipe(
+      // CI sets GITHUB_REPOSITORY; it must not turn a feed on by itself.
+      Effect.provide(
+        ConfigProvider.layer(
+          ConfigProvider.fromEnv({ env: { GITHUB_REPOSITORY: "ideanavigator/s7video" } }),
+        ),
+      ),
+    ),
+  );
+
+  it("renders Linux metadata from the brand config", () => {
+    const metainfo = renderLinuxMetainfo();
+    assert.include(metainfo, "<id>app.s7video.desktop</id>");
+    assert.include(metainfo, "<name>s7video</name>");
+    assert.include(metainfo, "https://github.com/ideanavigator/s7video/issues");
+    assert.notInclude(metainfo, "t3.codes");
+    assert.notInclude(metainfo, "pingdotgg");
+  });
+
   it.effect("omits update feeds for pull request preview builds", () =>
     Effect.gen(function* () {
       const preview = yield* createBuildConfig(
@@ -532,15 +560,15 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       assert.deepStrictEqual(release.publish, [
         {
           provider: "github",
-          owner: "pingdotgg",
-          repo: "t3code",
+          owner: "example",
+          repo: "app",
           releaseType: "release",
         },
       ]);
     }).pipe(
       Effect.provide(
         ConfigProvider.layer(
-          ConfigProvider.fromEnv({ env: { GITHUB_REPOSITORY: "pingdotgg/t3code" } }),
+          ConfigProvider.fromEnv({ env: { T3CODE_DESKTOP_UPDATE_REPOSITORY: "example/app" } }),
         ),
       ),
     ),
@@ -570,10 +598,8 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       resolveMergedStageDependencies({
         platform: "mac",
         serverDependencies: {
-          "@cursor/sdk": "1.0.22",
           "@anthropic-ai/claude-agent-sdk": "^0.3.170",
           "@ff-labs/fff-node": "0.9.4",
-          "@opencode-ai/sdk": "^1.3.15",
           "@pierre/diffs": "1.3.0",
           "node-pty": "1.1.0",
         },
@@ -585,7 +611,6 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         fffNodeVersion: "0.9.4",
       }),
       {
-        "@cursor/sdk": "1.0.22",
         "@ff-labs/fff-node": "0.9.4",
         "node-pty": "1.1.0",
         "@napi-rs/keyring": "1.3.0",
@@ -611,58 +636,6 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       },
     );
   });
-
-  it.effect("ships Cursor platform assets outside asar for spawning and native loading", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-cursor-helpers-" });
-        const nodeModules = path.join(root, "node_modules");
-        const destination = path.join(root, "resources/node_modules/@cursor");
-        const cursorDirectory = symlinksSupported
-          ? path.join(root, "store/@cursor")
-          : path.join(nodeModules, "@cursor");
-        yield* fs.makeDirectory(path.join(cursorDirectory, "sdk"), { recursive: true });
-        if (symlinksSupported) {
-          yield* fs.makeDirectory(path.join(nodeModules, "@cursor"), { recursive: true });
-          yield* fs.symlink(
-            path.join(cursorDirectory, "sdk"),
-            path.join(nodeModules, "@cursor/sdk"),
-          );
-        }
-        const helpers = [
-          "sdk-darwin-arm64/bin/rg",
-          "sdk-darwin-arm64/bin/cursorsandbox",
-          "sdk-darwin-arm64/vendor/tree-sitter/index.js",
-          "sdk-darwin-arm64/vendor/tree-sitter/binding.node",
-          "sdk-darwin-arm64/vendor/tree-sitter-bash/binding.node",
-          "sdk-darwin-arm64/package.json",
-          "sdk-win32-x64/bin/rg.exe",
-        ];
-        for (const helper of helpers) {
-          const source = path.join(cursorDirectory, helper);
-          yield* fs.makeDirectory(path.dirname(source), { recursive: true });
-          yield* fs.writeFileString(source, "fixture helper", { mode: 0o755 });
-        }
-        yield* stageCursorSdkPlatformPackages(nodeModules, destination);
-        for (const helper of helpers) {
-          assert.equal(yield* fs.readFileString(path.join(destination, helper)), "fixture helper");
-          const packagedPath = `node_modules/@cursor/${helper}`;
-          assert.isTrue(
-            DESKTOP_FILE_EXCLUSIONS.some((glob) =>
-              NodePath.matchesGlob(packagedPath, glob.slice(1)),
-            ),
-          );
-          assert.isTrue(
-            WINDOWS_SERVER_ASAR_IGNORE_GLOBS.some((glob) =>
-              NodePath.matchesGlob(packagedPath, glob),
-            ),
-          );
-        }
-      }),
-    ),
-  );
 
   it.effect("unpacks target Windows natives while excluding the other architecture", () =>
     Effect.scoped(
@@ -1351,7 +1324,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const stageDistDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-mac-payload-test-" });
-        yield* fs.makeDirectory(`${stageDistDir}/mac-arm64/T3 Code.app/Contents/Resources`, {
+        yield* fs.makeDirectory(`${stageDistDir}/mac-arm64/s7video.app/Contents/Resources`, {
           recursive: true,
         });
         const error = yield* validateMacPackagedPayload({ stageDistDir }).pipe(Effect.flip);
@@ -1385,183 +1358,42 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     ),
   );
 
-  it("derives macOS passkey signing configuration from the Clerk publishable key", () => {
-    const configuration = resolveMacPasskeySigningConfiguration({
-      T3CODE_APPLE_TEAM_ID: "abc1234567",
-      T3CODE_MACOS_PROVISIONING_PROFILE: "/tmp/t3code.provisionprofile",
-      T3CODE_CLERK_PUBLISHABLE_KEY: `pk_test_${btoa("example.clerk.accounts.dev$")}`,
-    });
+  it.effect("signs macOS with hardened-runtime entitlements and no passkey claims", () =>
+    Effect.gen(function* () {
+      const config = yield* createBuildConfig(
+        "mac",
+        "dmg",
+        "0.0.33",
+        true,
+        false,
+        undefined,
+        "/stage/entitlements.mac.plist",
+      );
+      const mac = config.mac as Record<string, unknown>;
+      assert.equal(mac.entitlements, "/stage/entitlements.mac.plist");
+      assert.notProperty(mac, "provisioningProfile");
 
-    assert.deepStrictEqual(configuration, {
-      appId: "com.t3tools.t3code",
-      teamId: "ABC1234567",
-      rpDomains: ["example.clerk.accounts.dev"],
-      provisioningProfilePath: "/tmp/t3code.provisionprofile",
-    });
-  });
-
-  it("normalizes explicit macOS passkey RP domains and renders required entitlements", () => {
-    const configuration = resolveMacPasskeySigningConfiguration({
-      T3CODE_APPLE_TEAM_ID: "ABC1234567",
-      T3CODE_MACOS_PROVISIONING_PROFILE: "/tmp/t3code.provisionprofile",
-      T3CODE_CLERK_PASSKEY_RP_DOMAINS:
-        " Clerk.Example.com,example.clerk.accounts.dev,clerk.example.com ",
-    });
-    const entitlements = renderMacPasskeyEntitlements(configuration, {
-      touchIdKeychainAccessGroup: undefined,
-      browserPasskeys: false,
-    });
-
-    assert.deepStrictEqual(configuration.rpDomains, [
-      "clerk.example.com",
-      "example.clerk.accounts.dev",
-    ]);
-    assert.include(entitlements, "<string>ABC1234567.com.t3tools.t3code</string>");
-    assert.include(entitlements, "<string>webcredentials:clerk.example.com</string>");
-    assert.include(entitlements, "<string>webcredentials:example.clerk.accounts.dev</string>");
-    assert.include(entitlements, "<key>com.apple.security.cs.allow-jit</key>");
-    assert.match(entitlements, /<key>com\.apple\.security\.device\.camera<\/key>\s*<true\/>/u);
-    assert.match(entitlements, /<key>com\.apple\.security\.device\.audio-input<\/key>\s*<true\/>/u);
-    assert.notInclude(entitlements, "keychain-access-groups");
-    assert.notInclude(entitlements, "com.apple.developer.web-browser.public-key-credential");
-  });
-
-  it("grants in-app browser passkey entitlements only when the provisioning profile does", () => {
-    const configuration = { appId: "com.t3tools.t3code", teamId: "ABC1234567" };
-    const profile = (entitlements: string, outside = "") =>
-      `0\x82\x1f\x9a\x06\t*\x86H<?xml version="1.0"?><plist version="1.0"><dict>${outside}<key>Entitlements</key><dict>${entitlements}</dict></dict></plist>\x00\x01`;
-    const teamWildcardGroups = `<key>keychain-access-groups</key>
-      <array>
-        <string>ABC1234567.*</string>
-        <string>com.apple.token</string>
-      </array>`;
-
-    assert.deepStrictEqual(resolveMacWebAuthnEntitlements(profile(""), configuration), {
-      touchIdKeychainAccessGroup: undefined,
-      browserPasskeys: false,
-    });
-    assert.deepStrictEqual(
-      resolveMacWebAuthnEntitlements(
-        profile("<key>keychain-access-groups</key><array><string>OTHERTEAM1.*</string></array>"),
-        configuration,
-      ),
-      { touchIdKeychainAccessGroup: undefined, browserPasskeys: false },
-    );
-    assert.deepStrictEqual(
-      resolveMacWebAuthnEntitlements(
-        profile(
-          `<!-- ${teamWildcardGroups}
-          <key>com.apple.developer.web-browser.public-key-credential</key><true/> -->
-          <key>com.apple.developer.web-browser.public-key-credential</key><false/>`,
-          teamWildcardGroups,
+      assert.include(MAC_ENTITLEMENTS, "<key>com.apple.security.cs.allow-jit</key>");
+      assert.match(
+        MAC_ENTITLEMENTS,
+        /<key>com\.apple\.security\.device\.camera<\/key>\s*<true\/>/u,
+      );
+      assert.match(
+        MAC_ENTITLEMENTS,
+        /<key>com\.apple\.security\.device\.audio-input<\/key>\s*<true\/>/u,
+      );
+      assert.notInclude(MAC_ENTITLEMENTS, "com.apple.developer.");
+      assert.notInclude(MAC_ENTITLEMENTS, "com.apple.application-identifier");
+      assert.notInclude(MAC_ENTITLEMENTS, "keychain-access-groups");
+      assert.notInclude(MAC_ENTITLEMENTS, "webcredentials:");
+    }).pipe(
+      Effect.provide(
+        ConfigProvider.layer(
+          ConfigProvider.fromEnv({ env: { T3CODE_DESKTOP_UPDATE_REPOSITORY: "example/app" } }),
         ),
-        configuration,
       ),
-      { touchIdKeychainAccessGroup: undefined, browserPasskeys: false },
-    );
-    assert.deepStrictEqual(
-      resolveMacWebAuthnEntitlements(
-        profile(
-          `${teamWildcardGroups}
-          <key>com.apple.developer.web-browser.public-key-credential</key>
-          <true/>`,
-        ),
-        configuration,
-      ),
-      {
-        touchIdKeychainAccessGroup: "ABC1234567.com.t3tools.t3code.webauthn",
-        browserPasskeys: true,
-      },
-    );
-
-    const entitlements = renderMacPasskeyEntitlements(
-      { ...configuration, rpDomains: ["clerk.example.com"], provisioningProfilePath: "" },
-      resolveMacWebAuthnEntitlements(
-        profile(
-          `${teamWildcardGroups}<key>com.apple.developer.web-browser.public-key-credential</key><true/>`,
-        ),
-        configuration,
-      ),
-    );
-    assert.match(
-      entitlements,
-      /<key>keychain-access-groups<\/key>\s*<array>\s*<string>ABC1234567\.com\.t3tools\.t3code\.webauthn<\/string>\s*<\/array>/u,
-    );
-    assert.match(
-      entitlements,
-      /<key>com\.apple\.developer\.web-browser\.public-key-credential<\/key>\s*<true\/>/u,
-    );
-  });
-
-  it("rejects incomplete macOS passkey signing configuration", () => {
-    const captureError = (env: Readonly<Record<string, string | undefined>>) => {
-      try {
-        resolveMacPasskeySigningConfiguration(env);
-      } catch (error) {
-        return error;
-      }
-      return assert.fail("Expected passkey signing configuration to fail.");
-    };
-
-    const missingProfileError = captureError({
-      T3CODE_APPLE_TEAM_ID: "ABC1234567",
-      T3CODE_CLERK_PASSKEY_RP_DOMAINS: "example.clerk.accounts.dev",
-    });
-    assert.instanceOf(missingProfileError, MissingMacPasskeyProvisioningProfileError);
-    assert.equal(
-      missingProfileError.message,
-      "T3CODE_MACOS_PROVISIONING_PROFILE must point to an Associated Domains provisioning profile.",
-    );
-
-    const unsafeDomain =
-      "https://domain-user:domain-secret@example.clerk.accounts.dev/path?token=query-secret";
-    const invalidDomainError = captureError({
-      T3CODE_APPLE_TEAM_ID: "ABC1234567",
-      T3CODE_MACOS_PROVISIONING_PROFILE: "/tmp/t3code.provisionprofile",
-      T3CODE_CLERK_PASSKEY_RP_DOMAINS: unsafeDomain,
-    });
-    assert.instanceOf(invalidDomainError, InvalidMacPasskeyRpDomainError);
-    assert.equal(invalidDomainError.reason, "scheme-not-allowed");
-    assert.equal(invalidDomainError.inputLength, unsafeDomain.length);
-    assert.equal(invalidDomainError.message, "Invalid passkey RP domain (scheme-not-allowed).");
-    assert.notProperty(invalidDomainError, "domain");
-    assert.notProperty(invalidDomainError, "cause");
-    const serializedInvalidDomainError = JSON.stringify(invalidDomainError);
-    assert.notInclude(serializedInvalidDomainError, unsafeDomain);
-    assert.notInclude(serializedInvalidDomainError, "domain-user");
-    assert.notInclude(serializedInvalidDomainError, "domain-secret");
-    assert.notInclude(serializedInvalidDomainError, "query-secret");
-    assert.throws(
-      () =>
-        resolveMacPasskeySigningConfiguration({
-          T3CODE_APPLE_TEAM_ID: "ABC1234567",
-          T3CODE_MACOS_PROVISIONING_PROFILE: "/tmp/t3code.provisionprofile",
-          T3CODE_CLERK_PASSKEY_RP_DOMAINS: "example.clerk.accounts.dev:8443",
-        }),
-      /Invalid passkey RP domain/u,
-    );
-    const invalidPublishableKeyError = captureError({
-      T3CODE_APPLE_TEAM_ID: "ABC1234567",
-      T3CODE_MACOS_PROVISIONING_PROFILE: "/tmp/t3code.provisionprofile",
-      T3CODE_CLERK_PUBLISHABLE_KEY: "pk_test_%",
-    });
-    assert.instanceOf(invalidPublishableKeyError, InvalidMacPasskeyPublishableKeyError);
-    assert.ok(invalidPublishableKeyError.cause);
-    assert.equal(invalidPublishableKeyError.message, "T3CODE_CLERK_PUBLISHABLE_KEY is invalid.");
-    assert.notProperty(invalidPublishableKeyError, "publishableKey");
-    assert.notInclude(invalidPublishableKeyError.message, "pk_test_%");
-  });
-
-  it("wraps unknown passkey signing configuration defects without copying cause text", () => {
-    const secret = "pk_test_do-not-retain";
-    const cause = new Error(secret);
-    const error = MacPasskeySigningConfigurationResolutionError.fromCause(cause);
-
-    assert.instanceOf(error, MacPasskeySigningConfigurationResolutionError);
-    assert.strictEqual(error.cause, cause);
-    assert.equal(error.message, "Failed to resolve macOS passkey signing configuration.");
-    assert.notInclude(error.message, secret);
-  });
+    ),
+  );
 
   it.effect("signs Windows builds with signtool on Windows and the jsign hook elsewhere", () =>
     Effect.gen(function* () {
@@ -1757,7 +1589,7 @@ it.effect("preserves packaged app directories from the dir target", () =>
     const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-dir-artifact-" });
     const stage = path.join(root, "stage");
     const output = path.join(root, "output");
-    const app = path.join("mac-arm64", "T3 Code.app", "Contents");
+    const app = path.join("mac-arm64", "s7video.app", "Contents");
     yield* fs.makeDirectory(path.join(stage, app), { recursive: true });
     yield* fs.writeFileString(path.join(stage, app, "Info.plist"), "built-app");
     yield* fs.writeFileString(path.join(stage, "builder-debug.yml"), "debug");
@@ -1787,7 +1619,7 @@ it.effect.skipIf(!symlinksSupported)("preserves relative links when replacing di
     const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-dir-artifact-links-" });
     const stage = path.join(root, "stage");
     const output = path.join(root, "output");
-    const app = path.join("mac-arm64", "T3 Code.app", "Contents");
+    const app = path.join("mac-arm64", "s7video.app", "Contents");
     yield* fs.makeDirectory(path.join(stage, app), { recursive: true });
     yield* fs.writeFileString(path.join(stage, app, "Info.plist"), "built-app");
     yield* fs.symlink("Info.plist", path.join(stage, app, "Current"));

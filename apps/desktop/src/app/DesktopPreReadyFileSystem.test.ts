@@ -6,13 +6,13 @@ import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 
 import * as DesktopPreReadyFileSystem from "./DesktopPreReadyFileSystem.ts";
-import * as DesktopUserData from "./DesktopUserData.ts";
 
-const resolveWindowsUserData = (appDataDirectory: string) =>
-  DesktopUserData.resolveUserDataPath({
-    appDataDirectory,
-    isDevelopment: false,
-    platform: "win32",
+// Profile resolution no longer probes the disk (s7video never reads T3 Code's profiles), so the
+// pre-ready file system is exercised directly.
+const probeProfile = (appDataDirectory: string) =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    return yield* fileSystem.exists(`${appDataDirectory}/s7video/Local State`);
   }).pipe(Effect.provide(DesktopPreReadyFileSystem.layer));
 
 it.layer(NodeServices.layer)("DesktopPreReadyFileSystem", (it) => {
@@ -21,11 +21,11 @@ it.layer(NodeServices.layer)("DesktopPreReadyFileSystem", (it) => {
     () =>
       Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;
-        const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-pre-ready-fs-" });
+        const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: "s7video-pre-ready-fs-" });
         yield* fileSystem.chmod(root, 0o000);
         yield* Effect.addFinalizer(() => fileSystem.chmod(root, 0o700).pipe(Effect.orDie));
 
-        const exit = yield* Effect.exit(resolveWindowsUserData(root));
+        const exit = yield* Effect.exit(probeProfile(root));
 
         assert.isTrue(Exit.isFailure(exit));
       }),

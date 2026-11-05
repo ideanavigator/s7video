@@ -1,3 +1,4 @@
+import { BRAND } from "@t3tools/shared/brand";
 import * as Context from "effect/Context";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
@@ -104,8 +105,6 @@ export class ServerConfig extends Context.Service<
     readonly resourceMonitorPath?: string | undefined;
     readonly autoBootstrapProjectFromCwd: boolean;
     readonly logWebSocketEvents: boolean;
-    readonly tailscaleServeEnabled: boolean;
-    readonly tailscaleServePort: number;
   }
 >()("t3/config/ServerConfig") {
   static readonly layerTest = (
@@ -120,10 +119,10 @@ export const otlpResource = (
   config: Pick<ServerConfig["Service"], "mode" | "otelEnvironment">,
   hostName: string,
 ) => ({
-  serviceName: "t3code-server",
+  serviceName: `${BRAND.app.id}-server`,
   serviceVersion: packageJson.version,
   attributes: {
-    "service.namespace": "t3code",
+    "service.namespace": BRAND.app.id,
     "service.runtime": "t3-server",
     "t3code.server.managed_by": config.mode === "desktop" ? "desktop" : "standalone",
     "service.instance.id": processServiceInstanceId(config.otelEnvironment.resourceAttributes),
@@ -245,8 +244,6 @@ const makeTest = Effect.fn("ServerConfig.makeTest")(function* (
     mode: "web",
     autoBootstrapProjectFromCwd: false,
     logWebSocketEvents: false,
-    tailscaleServeEnabled: false,
-    tailscaleServePort: 443,
     port: 0,
     host: undefined,
     desktopBootstrapToken: undefined,

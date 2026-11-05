@@ -358,7 +358,7 @@ it.layer(
       updateCommand: null,
       canUpdate: false,
       message:
-        "Version 2.1.117 is out. T3 Code runs /Applications/Tool.app/Contents/Resources/bin/package-tool; update it with the app or tool that installed it.",
+        "Version 2.1.117 is out. s7video runs /Applications/Tool.app/Contents/Resources/bin/package-tool; update it with the app or tool that installed it.",
     });
   });
 

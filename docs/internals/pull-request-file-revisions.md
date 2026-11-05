@@ -7,7 +7,7 @@ one. No type distinguishes those meanings and no single file states the whole pa
 this page is for.
 
 The failure is on record rather than hypothetical. The interface doc above
-[GitLab's `getFileRevisions`](../../packages/source-control-gitlab/src/server/GitLabPullRequestCli.ts) once said
+GitLab's `getFileRevisions` (upstream T3 Code) once said
 the opposite of the code beneath it, because it described a missing path the way the layer below
 means it. Anything written against that reading would treat a version the host declined to give as
 a file the change request deleted, which reports every file a reader has cleared as changed across
@@ -24,13 +24,13 @@ the provider never got to look at. Absence below the boundary does not survive i
 
 What "never got to look at" is belongs to the host, and the contract cannot know any of them:
 
-- [Azure DevOps](../../packages/source-control-azure-devops/src/server/AzureDevOpsPullRequestProvider.ts) reads every
+- Azure DevOps (upstream T3 Code) reads every
   version off one iteration listing, so a change too long to follow to its end leaves the paths
   past that point out.
-- [Bitbucket](../../packages/source-control-bitbucket/src/server/BitbucketPullRequestApi.ts) reads them off the
+- Bitbucket (upstream T3 Code) reads them off the
   pull request's own patch, the only place it states a file's version, so a patch cut short at the
   byte ceiling leaves the paths past the cut out.
-- [GitLab](../../packages/source-control-gitlab/src/server/GitLabPullRequestCli.ts) asks in batches, so a batch
+- GitLab (upstream T3 Code) asks in batches, so a batch
   it could not read leaves that batch's paths out.
 
 Those three facts stay with their providers. The contract states only that absence means the read

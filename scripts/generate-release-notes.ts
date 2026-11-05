@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import { BRAND } from "@t3tools/shared/brand";
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Config from "effect/Config";
@@ -20,7 +21,7 @@ const PULL_REQUEST_NUMBER = /\(#(\d+)\)$/;
 const PULL_REQUEST_BODY_LIMIT = 300;
 const SUMMARY_MODEL = "gpt-6.1-terra";
 
-const SUMMARY_INSTRUCTIONS = `Write up to 7 bullet points for the T3 Code update popover. Cover web, desktop, and server. Mobile has its own release notes.
+const SUMMARY_INSTRUCTIONS = `Write up to 7 bullet points for the ${BRAND.app.productName} update popover. Cover web, desktop, and server. Mobile has its own release notes.
 
 Give a feature a bullet only when it lets users do something they could not do before, removes a real limitation they hit in normal use, or cuts meaningful steps or wait time from a common task. Judge the outcome, regardless of the commit prefix. A new setting, a large diff, or support for one more edge case is not enough.
 

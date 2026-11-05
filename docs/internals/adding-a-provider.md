@@ -26,8 +26,8 @@ capabilities, never the driver kind.
   falls back, for example to portable context handoff for forks. A capability left on that fails
   at runtime is a bug.
 - **Permission modes.** Offer only modes the provider enforces natively, through
-  `supportedRuntimeModes` in the provider presentation ([Grok](../../packages/provider-grok/src/server/status.ts)
-  and [Pi](../../packages/provider-pi/src/server/status.ts) are examples). Do not imitate a missing
+  `supportedRuntimeModes` in the provider presentation (Grok (upstream T3 Code)
+  and Pi (upstream T3 Code) are examples). Do not imitate a missing
   mode by answering approvals in T3: T3's check is weaker than the agent's own enforcement. The
   server runs an unoffered stored mode as Supervised
   ([`RuntimePolicy.ts`](../../apps/server/src/orchestration-v2/RuntimePolicy.ts)).
@@ -104,7 +104,7 @@ produce catches them.
 ## Where a driver plugs in
 
 A provider lives in its own `packages/provider-<name>` package, with
-[Pi](../../packages/provider-pi) as the reference. Drivers not moved yet still live in
+[ACP registry](../../packages/provider-acp-registry) as the reference in this fork. Drivers not moved yet still live in
 [`provider/Drivers`](../../apps/server/src/provider/Drivers).
 
 - **Package exports.** `./settings` holds the instance settings schema, built with

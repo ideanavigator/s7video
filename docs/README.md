@@ -1,6 +1,8 @@
-# T3 Code docs
+# s7video docs
 
-## Using T3 Code
+The user guides below come from T3 Code and still use its name in places.
+
+## Using the app
 
 - [Install T3 Code](./user/install.md)
 - [Messages and context](./user/composer.md)
@@ -19,20 +21,19 @@
 - [Usage and limits](./user/usage.md)
 - [Product usage data](./user/telemetry.md)
 - [Remote access](./user/remote-access.md)
-- [Guest links](./user/guest-links.md)
-- [T3 Connect troubleshooting](./user/t3-connect-troubleshooting.md)
 - [Outside agents (MCP)](./user/outside-agents.md)
 - [Running in the background](./user/background-service.md)
 - [Updating T3 Code](./user/updating.md)
 - [Triage an issue](./user/triage.md)
-- Provider guides: [Codex](./user/providers-codex.md) · [Claude](./user/providers-claude.md) · [OpenCode](./user/providers-opencode.md) · [Antigravity](./user/providers-antigravity.md) · [Pi](./user/providers-pi.md) · [Muse Code](./user/providers-muse.md) · [fx](./user/providers-fx.md)
+- Provider guides: [Codex](./user/providers-codex.md) · [Claude](./user/providers-claude.md) · [Antigravity](./user/providers-antigravity.md) · [ACP agents](./user/providers-acp.md)
 
 ---
 
-## Working on T3 Code
+## Working on s7video
 
-Start with the [development runbook](./operations/development.md) and
-[contribution policy](../CONTRIBUTING.md).
+Start with the [development runbook](./operations/development.md), the
+[contribution guide](../CONTRIBUTING.md), the [agent rules](../AGENTS.md) and the
+[engineering standards](./engineering/README.md). How work is planned: [planning.md](./planning.md).
 
 Internal notes preserve architectural decisions, constraints, and implementation traps that the
 source alone does not explain. Most code changes do not need an internal documentation update. Follow the
@@ -50,10 +51,7 @@ source alone does not explain. Most code changes do not need an internal documen
 - [Resource telemetry](./internals/resource-telemetry.md)
 - [Product analytics](./internals/product-analytics.md)
 - [Environment auth](./internals/environment-auth.md)
-- [T3 Connect](./internals/t3-connect.md)
 - [Assistant citations](./internals/assistant-citations.md)
-- [Mobile navigation](./internals/mobile-navigation.md)
-- [Mobile development lifecycle](./internals/mobile-development.md)
 - [Terminal runtime](./internals/terminal-runtime.md)
 - [Devices](./internals/devices.md)
 - [Voice input](./internals/voice-input.md)
@@ -61,8 +59,5 @@ source alone does not explain. Most code changes do not need an internal documen
 ### Runbooks
 
 - [Development and local builds](./operations/development.md)
-- [T3 Connect setup](./operations/connect-setup.md)
 - [Release](./operations/release.md)
 - [Observability](./operations/observability.md)
-- [Relay observability](./operations/relay-observability.md)
-- [Mobile app store screenshots](./operations/mobile-app-store-screenshots.md)

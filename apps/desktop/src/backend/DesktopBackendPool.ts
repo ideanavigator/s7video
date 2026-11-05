@@ -1,3 +1,4 @@
+import { BRAND } from "@t3tools/shared/brand";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -17,11 +18,9 @@ import * as DesktopBackendConfiguration from "./DesktopBackendConfiguration.ts";
 import * as DesktopBackendManager from "./DesktopBackendManager.ts";
 import * as DesktopObservability from "../app/DesktopObservability.ts";
 import * as DesktopState from "../app/DesktopState.ts";
-import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopTelemetryPublisher from "../telemetry/DesktopTelemetryPublisher.ts";
 import * as DesktopBrowserHost from "../preview/DesktopBrowserHost.ts";
 import * as DesktopWindow from "../window/DesktopWindow.ts";
-import * as DesktopWslEnvironment from "../wsl/DesktopWslEnvironment.ts";
 import * as ElectronDialog from "../electron/ElectronDialog.ts";
 import * as ElectronApp from "../electron/ElectronApp.ts";
 
@@ -75,8 +74,7 @@ export type BackendInstanceFactoryRequirements =
   | HttpClient.HttpClient
   | DesktopObservability.DesktopBackendOutputLogFactory
   | DesktopTelemetryPublisher.DesktopTelemetryPublisher
-  | DesktopBrowserHost.DesktopBrowserHost
-  | DesktopWslEnvironment.DesktopWslEnvironment;
+  | DesktopBrowserHost.DesktopBrowserHost;
 
 interface ActiveRegisteredInstance {
   readonly _tag: "Active";
@@ -107,51 +105,10 @@ export const layer = Layer.effect(
     const desktopWindow = yield* DesktopWindow.DesktopWindow;
     const electronDialog = yield* ElectronDialog.ElectronDialog;
     const electronApp = yield* ElectronApp.ElectronApp;
-    const appSettings = yield* DesktopAppSettings.DesktopAppSettings;
     const { primaryBackendStartup } = yield* DesktopState.DesktopState;
     // Parent instance scopes to the pool so shutdown runs stop finalizers before the OS kills backends.
     const layerScope = yield* Scope.Scope;
     const factoryContext = yield* Effect.context<BackendInstanceFactoryRequirements>();
-
-    // Persist fatal Windows fallbacks; transient transport failures must preserve the user's WSL preference.
-    const handlePrimaryPreflightFailure = Effect.fn("desktop.backendPool.primaryPreflightFailed")(
-      function* (failure: DesktopBackendManager.PreflightFailure) {
-        const { reason, fatal } = failure;
-        if (!fatal) {
-          yield* logBackendPoolWarning(
-            "primary WSL preflight retry window exhausted; using Windows for this launch",
-            { reason },
-          );
-          yield* electronDialog.showErrorBox(
-            "WSL backend is still unavailable",
-            `${reason}\n\nT3 Code will use the Windows backend for this launch and retry WSL the next time the app starts.`,
-          );
-          yield* appSettings.applyWslWindowsFallbackInMemory;
-          return true;
-        }
-
-        yield* logBackendPoolWarning("primary WSL preflight failed; falling back to Windows", {
-          reason,
-        });
-        yield* electronDialog.showErrorBox(
-          "WSL backend couldn't start",
-          `${reason}\n\nFalling back to the Windows backend so T3 Code can open. Re-enable the WSL backend from Settings > Sharing & access once the WSL distro is fixed.`,
-        );
-        // Clear wslOnly too so enabling WSL cannot restore a failed mode.
-        // Keep the in-memory fallback if persistence fails.
-        yield* appSettings.applyWslWindowsFallback.pipe(
-          Effect.catch((error) =>
-            logBackendPoolWarning(
-              "failed to persist Windows fallback after WSL preflight failure",
-              {
-                error: error.message,
-              },
-            ).pipe(Effect.andThen(appSettings.applyWslWindowsFallbackInMemory)),
-          ),
-        );
-        return true;
-      },
-    );
 
     const primary = yield* DesktopBackendManager.makeBackendInstance({
       id: DesktopBackendManager.PRIMARY_INSTANCE_ID,
@@ -172,12 +129,11 @@ export const layer = Layer.effect(
       onStartupFailure: (failure) =>
         SubscriptionRef.set(primaryBackendStartup, { _tag: "Failing", ...failure }),
       onShutdown: () => desktopWindow.handleBackendNotReady,
-      onPreflightFailed: handlePrimaryPreflightFailure,
       onStateDirOwned: () =>
         electronDialog
           .showErrorBox(
             "This T3 home is unavailable",
-            "Another T3 Code server, such as the background service, is using this data directory, or an older background service is set up for it. Stop that server or try `t3 update`. If the older launcher cannot update, run `t3 service uninstall` and optionally reinstall with `t3 service install` from a current CLI. Use `npx t3@latest` if `t3` is missing or outdated, and pass `--base-dir` with the service's T3 home to each command. Then reopen T3 Code. You can also set a separate T3CODE_HOME and pair with the running server.",
+            `Another ${BRAND.app.productName} server, such as the background service, is using this data directory, or an older background service is set up for it. Stop that server or try \`${BRAND.app.cliName} update\`. If the older launcher cannot update, run \`${BRAND.app.cliName} service uninstall\` and optionally reinstall with \`${BRAND.app.cliName} service install\` from a current CLI. Update \`${BRAND.app.cliName}\` if it is missing or outdated, and pass \`--base-dir\` with the service's T3 home to each command. Then reopen ${BRAND.app.productName}. You can also set a separate S7VIDEO_HOME and pair with the running server.`,
           )
           .pipe(Effect.andThen(electronApp.quit)),
     });

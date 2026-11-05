@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off
+import { BRAND } from "@t3tools/shared/brand";
 import * as NodeFS from "node:fs";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
@@ -251,7 +252,7 @@ it("rebuilds the template from this checkout and sends a child T3's task prompt"
     `Main prompt.\n - Primary working directory: /home/user/app\n\n${t3SystemAppend("claude-sonnet-5-5")}`,
   ]);
   // The eval offers the device tools, so Claude's append carries the device block.
-  assert.include(t3SystemAppend("claude-sonnet-5-5"), "## T3 Code devices");
+  assert.include(t3SystemAppend("claude-sonnet-5-5"), `## ${BRAND.app.productName} devices`);
   assert.equal(base.environment.cwd, "/home/user/app");
   assert.include(system[2], "model named Sonnet 5.5. The exact model ID is claude-sonnet-5-5.");
   const deferred = system[2]?.split("Load them first:\n")[1]?.split("\n\n")[0]?.split("\n") ?? [];
@@ -379,30 +380,6 @@ it("answers simple mocked commands itself and gives the simulator the sample's h
     history?.text,
     '<call>Bash {"command":"git push"}</call>\n<output>\npushed\n</output>\n\nNew call:\n<call>Bash {"command":"git push && gh pr create --fill"}</call>',
   );
-});
-
-it("links a PR a shell command created, as T3 does, but not one it only read", () => {
-  const base = buildBase(template, { model: "claude-sonnet-5-5", keepUserInstructions: false });
-  const bash = (command: string, result: string) => ({ tool: "Bash", input: { command }, result });
-  const sample = makeSample(
-    {
-      ...childCase,
-      setup: {
-        ...childCase.setup,
-        priorTurns: [
-          {
-            role: "assistant",
-            toolCalls: [
-              bash("gh pr create --fill", "https://github.com/acme/app/pull/124"),
-              bash("gh pr view 123 --json url -q .url", "https://github.com/acme/app/pull/123"),
-            ],
-          },
-        ],
-      },
-    },
-    base,
-  );
-  assert.deepEqual([...sample.linked], ["https://github.com/acme/app/pull/124"]);
 });
 
 it("reads the tool output from the simulator's JSON reply", () => {

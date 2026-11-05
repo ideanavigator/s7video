@@ -1,3 +1,4 @@
+import { BRAND } from "@t3tools/shared/brand";
 import type {
   EnvironmentId,
   ServerConfig,
@@ -73,7 +74,7 @@ export function resolveVersionMismatch(
   return {
     clientVersion: normalizedClientVersion,
     serverVersion: normalizedServerVersion,
-    hint: "Version mismatch. Try syncing the client and server to the same T3 Code version.",
+    hint: `Version mismatch. Try syncing the client and server to the same ${BRAND.app.productName} version.`,
   };
 }
 
@@ -98,14 +99,17 @@ export function supportsDesktopAppUpdate(
 export function manualServerUpdateCommand(
   targetVersion: string,
   installation?: ServerInstallation,
+  packageName: string = BRAND.updates.npmPackage,
 ): string {
+  // No published npm package: an npm or npx hint would install someone else's package.
+  if (packageName === "") return `${BRAND.app.cliName} update ${targetVersion}`;
   if (installation?.kind === "npm-global") {
     const prefix = `'${installation.prefix.replaceAll("'", "'\\''")}'`;
-    return `npm install --global --prefix ${prefix} t3@${targetVersion}`;
+    return `npm install --global --prefix ${prefix} ${packageName}@${targetVersion}`;
   }
   const runner =
     installation?.kind === "pnpm-dlx" ? "pnpm dlx" : installation?.kind === "bunx" ? "bunx" : "npx";
-  return `${runner} t3@${targetVersion}`;
+  return `${runner} ${packageName}@${targetVersion}`;
 }
 
 export function buildVersionMismatchDismissalKey(

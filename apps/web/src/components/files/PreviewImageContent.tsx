@@ -9,14 +9,15 @@ export default function PreviewImageContent(props: {
   readonly src: string;
   readonly name: string;
   readonly mimeType?: string;
-  readonly onError?: () => void;
+  readonly onError?: (message: string) => void;
 }) {
-  const [failed, setFailed] = useState(false);
+  const [failure, setFailure] = useState<string | null>(null);
   const [expanded, setExpanded] = useState(false);
   const [natural, setNatural] = useState({ width: 0, height: 0 });
   const [viewport, setViewport] = useState({ width: 0, height: 0 });
   const [zoom, setZoom] = useState<number | null>(null);
   const ref = useRef<HTMLDivElement>(null);
+  const decodeFailure = useRef<string | null>(null);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Measure the image viewport before paint and observe resizes to keep fit-to-view scaling accurate.
   useLayoutEffect(() => {
     const node = ref.current;
@@ -34,7 +35,7 @@ export default function PreviewImageContent(props: {
     : 1;
   const scale = zoom ?? fit;
   const changeZoom = (factor: number) => setZoom(Math.max(0.05, Math.min(8, scale * factor)));
-  if (failed) return <FileSurfaceFailure message="Unable to load image." />;
+  if (failure !== null) return <FileSurfaceFailure message={failure} />;
   return (
     <>
       <div className="flex min-h-10 shrink-0 flex-wrap items-center justify-between gap-2 border-b border-border/60 px-3 py-1 text-xs text-muted-foreground">
@@ -106,9 +107,13 @@ export default function PreviewImageContent(props: {
                   height: event.currentTarget.naturalHeight,
                 })
               }
+              onDecodeError={(message) => {
+                decodeFailure.current = message;
+              }}
               onError={() => {
-                setFailed(true);
-                props.onError?.();
+                const message = decodeFailure.current ?? "Unable to load image.";
+                setFailure(message);
+                props.onError?.(message);
               }}
             />
           </button>

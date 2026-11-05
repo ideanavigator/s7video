@@ -26,13 +26,13 @@ describe("orchestration protocol compatibility", () => {
     ).toBeNull();
 
     const socketUrl = new URL(
-      appendOrchestrationProtocol("wss://host.test/ws?wsTicket=secret&connectionMethod=relay"),
+      appendOrchestrationProtocol("wss://host.test/ws?wsTicket=secret&connectionMethod=direct"),
     );
     expect(socketUrl.searchParams.get("orchestrationProtocol")).toBe(
       String(ORCHESTRATION_PROTOCOL_VERSION),
     );
     expect(socketUrl.searchParams.get("wsTicket")).toBe("secret");
-    expect(socketUrl.searchParams.get("connectionMethod")).toBe("relay");
+    expect(socketUrl.searchParams.get("connectionMethod")).toBe("direct");
   });
 
   it("treats missing metadata as protocol 1", () => {

@@ -1,3 +1,4 @@
+import { BRAND } from "@t3tools/shared/brand";
 import { DeviceHostUpdates } from "../device/DeviceHostUpdates";
 import { DeviceToolVersions } from "../device/DeviceToolVersions";
 import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";
@@ -642,7 +643,7 @@ function BrowserRecordingFrameRateSetting({ disabled }: { readonly disabled: boo
 
 const LINK_TARGET_LABELS: Readonly<Record<BrowserLinkTarget, string>> = {
   system: "Your default browser",
-  app: "T3 Code",
+  app: `${BRAND.app.productName}`,
 };
 
 function BrowserLinkTargetSetting({ disabled }: { readonly disabled: boolean }) {
@@ -769,35 +770,6 @@ function BrowserSearchEngineSetting() {
         />
       ) : null}
     </>
-  );
-}
-
-export function PullRequestLinksOpenInAppSetting() {
-  const openInApp = useClientSettings((settings) => settings.pullRequestLinksOpenInApp);
-  const updateSettings = useUpdatePrimarySettings();
-
-  return (
-    <SettingsRow
-      {...searchableSetting("pull-request-links-open-in-app")}
-      description="Clicking a pull request link opens it in T3 Code. Turn off to open pull request links like any other link, on your git host."
-      resetAction={
-        openInApp ? null : (
-          <SettingResetButton
-            label="open pull requests in T3 Code"
-            onClick={() => updateSettings({ pullRequestLinksOpenInApp: true })}
-          />
-        )
-      }
-      control={
-        <Switch
-          checked={openInApp}
-          onCheckedChange={(checked) =>
-            updateSettings({ pullRequestLinksOpenInApp: Boolean(checked) })
-          }
-          aria-label="Open pull requests in T3 Code"
-        />
-      }
-    />
   );
 }
 

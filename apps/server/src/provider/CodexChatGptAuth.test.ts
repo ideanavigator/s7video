@@ -224,6 +224,8 @@ const makeHarnessFor = Effect.fnUntraced(function* (
           }),
     flush: Effect.void,
     recordOwners: () => Effect.void,
+    recordServerOwners: Effect.void,
+    usageData: Effect.succeed({ available: false }),
   });
   const auth = yield* makeCodexChatGptAuth({
     instanceId,
@@ -582,7 +584,7 @@ it.effect(
           "state",
         ]);
         assert.strictEqual(first.searchParams.get("client_id"), "dynamic_agent_client");
-        assert.strictEqual(first.searchParams.get("agent_name_hint"), "T3 Code");
+        assert.strictEqual(first.searchParams.get("agent_name_hint"), "s7video");
         assert.strictEqual(first.searchParams.get("response_type"), "code");
         assert.strictEqual(
           first.searchParams.get("scope"),

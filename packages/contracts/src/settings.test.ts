@@ -148,6 +148,52 @@ it("drops a hand-edited non-string hidden tag and keeps the rest of the settings
   expect(settings.hideTaggedThreads).toBe(true);
 });
 
+describe("ServerSettings from upstream T3 Code", () => {
+  // s7video removed these drivers, hosts and secret providers (S7V-002); old settings must still load.
+  const stale = {
+    worktreesDirectory: "/work",
+    providerInstances: {
+      cursor: { driver: "cursor", enabled: true, config: { binaryPath: "cursor-agent" } },
+      grok: { driver: "grok", config: {} },
+      opencode: { driver: "opencode", config: { serverUrl: "http://localhost:4096" } },
+      pi: { driver: "pi", enabled: true },
+      muse: { driver: "muse" },
+      fx: { driver: "fx" },
+    },
+    sourceControlHosts: { github: { enabled: true }, "gitlab.example.com": { enabled: false } },
+    secretProviders: { personal: { kind: "one_password", label: "Personal", config: {} } },
+    cursorKeychainUsageEnabled: true,
+    // Guest links went with T3 Connect (S7V-015).
+    guestSharingEnabled: true,
+    // SSH device hosts went with remote environments (S7V-018), even ones a newer check rejects.
+    deviceHosts: [
+      { id: "mini", label: "Mac mini", target: "user@mini", port: 2222 },
+      { id: "mini", label: "Duplicate", target: "-oProxyCommand=bad" },
+    ],
+  };
+
+  it("decodes settings that name removed providers and hosts without failing", () => {
+    const decoded = decodeServerSettings(stale);
+    expect(decoded.worktreesDirectory).toBe("/work");
+    expect(Object.keys(decoded.providerInstances).sort()).toEqual(
+      ["cursor", "fx", "grok", "muse", "opencode", "pi"].sort(),
+    );
+    expect(decoded.providerInstances[ProviderInstanceId.make("cursor")]?.driver).toBe("cursor");
+    expect(encodeServerSettings(decoded).sourceControlHosts).toEqual(stale.sourceControlHosts);
+    expect(encodeServerSettings(decoded).secretProviders).toEqual(stale.secretProviders);
+    expect(decoded).not.toHaveProperty("guestSharingEnabled");
+    expect(decoded).not.toHaveProperty("deviceHosts");
+  });
+
+  it("keeps the kept defaults when stale settings omit them", () => {
+    const decoded = decodeServerSettings(stale);
+    for (const instanceId of ["codex", "claudeAgent"]) {
+      expect(decoded.providerInstances[ProviderInstanceId.make(instanceId)]).toBeUndefined();
+    }
+    expect(decoded.observability).toEqual(DEFAULT_SERVER_SETTINGS.observability);
+  });
+});
+
 describe("ServerSettings secret providers", () => {
   const onePassword = (account: string) => ({
     kind: "one_password",
@@ -401,39 +447,15 @@ describe("ServerSettings environment icon", () => {
   });
 });
 
-const decodeDeviceHostSettings = Schema.decodeSync(ServerSettings);
+const decodeDeviceHostSettings = Schema.decodeUnknownSync(ServerSettings);
 
-// `deviceHosts` as it was decoded before EAS hosts existed: an SSH host needs a target.
-const decodeOlderDeviceHostSettings = Schema.decodeUnknownSync(
-  Schema.Struct({
-    deviceHosts: Schema.Array(Schema.Struct({ id: Schema.String, target: Schema.String })),
-  }),
-);
-
-it("keeps EAS hosts out of the SSH host list servers and clients before EAS hosts decode", () => {
+it("keeps EAS hosts beside an upstream SSH host list it no longer reads", () => {
   const settings = decodeDeviceHostSettings({
     deviceHosts: [{ id: "mini", label: "Mac mini", target: "user@mini" }],
     easDeviceHosts: [{ kind: "eas", id: "eas", label: "EAS Simulator" }],
   });
-  const wire = encodeServerSettings(settings);
-  expect(decodeOlderDeviceHostSettings(wire).deviceHosts).toEqual([
-    { id: "mini", target: "user@mini" },
-  ]);
   expect(settings.easDeviceHosts.map((host) => host.id)).toEqual(["eas"]);
-});
-
-it("validates remote device hosts and rejects ambiguous host ids", () => {
-  const host = { id: "mini", label: "Mac mini", target: "user@mini", port: 2222 };
-  // Hosts saved before EAS hosts existed have no `kind`; they are SSH hosts.
-  expect(decodeDeviceHostSettings({ deviceHosts: [host] }).deviceHosts).toEqual([
-    { kind: "ssh", ...host },
-  ]);
-  expect(() => decodeDeviceHostSettings({ deviceHosts: [host, host] })).toThrow();
-  expect(() => decodeDeviceHostSettings({ deviceHosts: [{ ...host, id: "local" }] })).toThrow();
-  expect(() =>
-    decodeDeviceHostSettings({ deviceHosts: [{ ...host, target: "-oProxyCommand=bad" }] }),
-  ).toThrow();
-  expect(() => decodeDeviceHostSettings({ deviceHosts: [{ ...host, port: 0 }] })).toThrow();
+  expect(encodeServerSettings(settings)).not.toHaveProperty("deviceHosts");
 });
 
 describe("ServerSettings project overrides across versions", () => {

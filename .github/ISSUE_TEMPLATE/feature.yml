@@ -1,0 +1,57 @@
+# SPDX-FileCopyrightText: 2026 s7video contributors
+# SPDX-License-Identifier: MIT
+name: Feature request
+description: Suggest a new capability or an improvement to s7video.
+title: "[Feature]: "
+labels:
+  - enhancement
+  - needs-triage
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Ideas are welcome. A maintainer reads each request and, if it fits the plan, turns it into
+        a ticket and links it here. Please do not start building until a ticket is linked; see
+        docs/planning.md.
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched existing issues and did not find the same request.
+          required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What are you trying to do, and what gets in the way today? Describe it from the creator's point of view.
+      placeholder: When I edit a talking-head video I have to ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you would like
+      description: How it could work. Rough is fine.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives and workarounds
+      description: Other ways you considered, or how you handle it today.
+
+  - type: dropdown
+    id: contribute
+    attributes:
+      label: Would you like to build it?
+      options:
+        - No, just suggesting
+        - Yes, once a ticket is ready
+        - Maybe, with guidance
+    validations:
+      required: true

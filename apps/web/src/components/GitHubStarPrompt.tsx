@@ -1,3 +1,4 @@
+import { BRAND, BRAND_GITHUB_REPOSITORY } from "@t3tools/shared/brand";
 import { type EnvironmentId, SourceControlProviderKind } from "@t3tools/contracts";
 import { runAtomCommand } from "@t3tools/client-runtime/state/runtime";
 import * as Schema from "effect/Schema";
@@ -12,7 +13,7 @@ import { toastManager } from "./ui/toast";
 // Separate keys so a count written by another tab can never undo a dismissal.
 const SENT_KEY = "t3code:github-star-prompt:sent";
 const DISMISSED_KEY = "t3code:github-star-prompt:dismissed";
-const REPOSITORY = "pingdotgg/t3code";
+const REPOSITORY = BRAND_GITHUB_REPOSITORY;
 const PROMPTS_BEFORE_ASKING = 5;
 
 let shownThisSession = false;
@@ -24,10 +25,10 @@ function dismiss() {
 }
 
 // Every close path, including both buttons, runs `onClose`, which saves the dismissal.
-function showStarPrompt() {
+function showStarPrompt(repository: string) {
   const close = () => toastManager.close(id);
   const id = toastManager.add({
-    title: "Enjoying T3 Code?",
+    title: `Enjoying ${BRAND.app.productName}?`,
     description: "Give us a star on GitHub to let us know!",
     timeout: 0,
     onClose: dismiss,
@@ -36,7 +37,7 @@ function showStarPrompt() {
       onClick: () => {
         close();
         void readLocalApi()
-          ?.shell.openExternal(`https://github.com/${REPOSITORY}`)
+          ?.shell.openExternal(`https://github.com/${repository}`)
           .catch(() => undefined);
       },
     },
@@ -50,7 +51,7 @@ function showStarPrompt() {
 }
 
 // The server's GitHub account stands in for the user's; it may not be theirs on a shared server.
-async function alreadyStarred(environmentId: EnvironmentId) {
+async function alreadyStarred(environmentId: EnvironmentId, repository: string) {
   const result = await runAtomCommand(
     appAtomRegistry,
     sourceControlEnvironment.checkStarred,
@@ -59,7 +60,7 @@ async function alreadyStarred(environmentId: EnvironmentId) {
       input: {
         provider: SourceControlProviderKind.make("github"),
         host: "github.com",
-        repository: REPOSITORY,
+        repository,
       },
     },
     { label: "check GitHub star", reportFailure: false, reportDefect: false },
@@ -72,7 +73,8 @@ async function alreadyStarred(environmentId: EnvironmentId) {
  * unless the environment's GitHub account already starred the repo.
  */
 export async function recordPromptSent(environmentId: EnvironmentId): Promise<void> {
-  if (shownThisSession) return;
+  // A build whose repository is not on GitHub has nothing to star.
+  if (shownThisSession || REPOSITORY === null) return;
   try {
     if (getLocalStorageItem(DISMISSED_KEY, Schema.Boolean)) return;
     const sent = (getLocalStorageItem(SENT_KEY, Schema.Number) ?? 0) + 1;
@@ -83,7 +85,7 @@ export async function recordPromptSent(environmentId: EnvironmentId): Promise<vo
     return;
   }
   shownThisSession = true;
-  const starred = await alreadyStarred(environmentId);
+  const starred = await alreadyStarred(environmentId, REPOSITORY);
   if (starred === undefined) return;
   if (starred) return dismiss();
   try {
@@ -92,5 +94,5 @@ export async function recordPromptSent(environmentId: EnvironmentId): Promise<vo
   } catch {
     return;
   }
-  showStarPrompt();
+  showStarPrompt(REPOSITORY);
 }

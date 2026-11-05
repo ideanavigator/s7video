@@ -70,7 +70,7 @@ T3CODE_HOST=127.0.0.1
 
 Use `KEY=VALUE` entries, quoting values that contain spaces or `#`. Values are
 literal: shell commands and variable expansion are not evaluated. Entries
-override the inherited service environment, except for `PATH`, `T3CODE_HOME`,
+override the inherited service environment, except for `PATH`, `S7VIDEO_HOME`,
 `T3_BOOT_SERVICE_UNIT`, and `T3_SERVICE_LAUNCHER_CONTEXT` (including case variants).
 
 Run `t3 service restart` after changing the file. Changes apply when the service
@@ -155,9 +155,6 @@ longer starts at login. If agent work cannot access Desktop, Documents, or
 Downloads, it may need Full Disk Access for the `t3` executable listed in
 `ProgramArguments` in
 `~/Library/LaunchAgents/com.t3tools.t3code.service.plist`.
-
-For failures after signing in to T3 Connect, see
-[connection troubleshooting](./t3-connect-troubleshooting.md).
 
 ## Reclaim database space
 

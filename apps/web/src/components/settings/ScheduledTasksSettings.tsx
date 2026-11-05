@@ -1,3 +1,4 @@
+import { BRAND } from "@t3tools/shared/brand";
 import { useAtomValue } from "@effect/atom-react";
 import { connectionStatusTitle } from "@t3tools/client-runtime/connection";
 import { AsyncResult } from "effect/reactivity";
@@ -48,10 +49,9 @@ import { formatRelativeTime } from "../../timestampFormat";
 import { useEnvironmentSettings } from "../../hooks/useSettings";
 import { getCustomModelOptionsByInstance } from "../../modelSelection";
 import { providerInstanceEntriesFor } from "../../providerInstances";
-import { usePrimaryCloudLinkState } from "../../cloud/primaryCloudLinkState";
 import { requestConfirmDialog } from "../../confirmDialog";
 import { webhookAddress } from "@t3tools/client-runtime/webhook-address";
-import { Link, useNavigate } from "@tanstack/react-router";
+import { useNavigate } from "@tanstack/react-router";
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { useNowMinute } from "../../hooks/useNowMinute";
 import {
@@ -1090,23 +1090,7 @@ function WebhookEndpointField({
         </Button>
       </div>
       {note !== null ? <p className="text-xs text-muted-foreground">{note}</p> : null}
-      {endpoint.url !== null ? <WebhookDeliveryMode environmentId={environmentId} /> : null}
     </div>
-  );
-}
-
-function WebhookDeliveryMode({ environmentId }: { readonly environmentId: EnvironmentId }) {
-  const cloudLink = usePrimaryCloudLinkState();
-  if (cloudLink.target?.environmentId !== environmentId || cloudLink.data === null) return null;
-  return (
-    <p className="text-xs text-muted-foreground">
-      {cloudLink.data.holdWebhooksWhileOffline
-        ? "Held for up to 24 hours while this environment is offline. "
-        : "Forwarded live. Requests fail while this environment is offline. "}
-      <Link to="/settings/access" className="underline underline-offset-2">
-        Change in Sharing & access
-      </Link>
-    </p>
   );
 }
 
@@ -1324,7 +1308,7 @@ function ScheduledTaskEditorForm({
     if (schedule.type === "once" && !offersOnce) {
       reportFailure(
         "Once is not available here",
-        "This environment runs an older T3 Code. Update it to schedule a one-time task, or pick another schedule.",
+        `This environment runs an older ${BRAND.app.productName}. Update it to schedule a one-time task, or pick another schedule.`,
       );
       return;
     }

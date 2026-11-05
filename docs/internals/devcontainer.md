@@ -11,7 +11,7 @@
 
 ## State and safety
 
-`T3CODE_HOME` points at the workspace's gitignored `.t3`, so all runtime state stays inside the container workspace, mirroring the worktree default. There is no live install to damage inside a container, but the test-data rule from AGENTS.md still holds: copy data in, never point at shared state.
+`S7VIDEO_HOME` points at the workspace's gitignored `.t3`, so all runtime state stays inside the container workspace, mirroring the worktree default. There is no live install to damage inside a container, but the test-data rule from AGENTS.md still holds: copy data in, never point at shared state.
 
 ## Caching
 
@@ -21,7 +21,6 @@ Two named volumes keep rebuilds fast and installs off the slow macOS/Windows bin
 
 - Windowed Electron development is host-only. Building and verifying the desktop bundle works fine in the container (CI does exactly that, headless); launching the app needs a display.
 - Mobile native builds are host-only (Xcode for iOS, Android SDK for Android). Typecheck, lint, and the mobile static checks run fine.
-- `vp run dev --share` needs a tailscale binary and a tailnet; not provisioned here.
 
 ## Prebuilds
 

@@ -16,12 +16,14 @@ import { hydrateImagesFromPersisted } from "../composerDraftStore";
 import { resizeSnapShotSource } from "./snapShotSource";
 
 const mocks = vi.hoisted(() => ({
-  heicTo: vi.fn(),
+  convertHeic: vi.fn(),
 }));
 
-vi.mock("heic-to/csp", () => ({
-  heicTo: mocks.heicTo,
-}));
+function stubDesktopBridge() {
+  vi.stubGlobal("window", { desktopBridge: { convertHeic: mocks.convertHeic } });
+}
+
+const jpegConversion = (bytes: Uint8Array) => ({ ok: true, data: bytes, mimeType: "image/jpeg" });
 
 const originalCreateImageBitmap = globalThis.createImageBitmap;
 const originalOffscreenCanvas = globalThis.OffscreenCanvas;
@@ -135,7 +137,7 @@ function stubCanvasPipeline(
 }
 
 afterEach(() => {
-  mocks.heicTo.mockReset();
+  mocks.convertHeic.mockReset();
   vi.unstubAllGlobals();
   globalThis.createImageBitmap = originalCreateImageBitmap;
   globalThis.OffscreenCanvas = originalOffscreenCanvas;
@@ -263,22 +265,20 @@ describe("composer image thumbnails", () => {
 });
 
 describe("HEIC attachment preparation", () => {
-  it("converts a HEIC photo with a missing MIME type into a named JPEG", async () => {
+  it("converts HEIC to JPEG through the desktop bridge and keeps the file name", async () => {
+    stubDesktopBridge();
     const original = makeHeicFile({
       name: "IMG_1234.HEIC",
       type: "",
       lastModified: 123,
     });
-    mocks.heicTo.mockResolvedValueOnce(
-      new Blob([new Uint8Array([4, 5, 6, 7])], { type: "image/jpeg" }),
-    );
+    mocks.convertHeic.mockResolvedValueOnce(jpegConversion(new Uint8Array([4, 5, 6, 7])));
 
     const result = await prepareImageForAttachment(original, 1024);
 
-    expect(mocks.heicTo).toHaveBeenCalledWith({
-      blob: original,
-      type: "image/jpeg",
-      quality: 0.92,
+    expect(mocks.convertHeic).toHaveBeenCalledWith({
+      data: new Uint8Array(await original.arrayBuffer()),
+      format: "image/jpeg",
     });
     expect(result.ok && result.file.name).toBe("IMG_1234.jpg");
     expect(result.ok && result.file.type).toBe("image/jpeg");
@@ -288,14 +288,13 @@ describe("HEIC attachment preparation", () => {
   });
 
   it("compresses JPEG intermediates above the source safety ceiling", async () => {
+    stubDesktopBridge();
     const original = makeHeicFile({
       name: "large.heic",
       type: "image/heic",
     });
-    mocks.heicTo.mockResolvedValueOnce(
-      new Blob([new Uint8Array(MAX_COMPRESSIBLE_SOURCE_BYTES + 1)], {
-        type: "image/jpeg",
-      }),
+    mocks.convertHeic.mockResolvedValueOnce(
+      jpegConversion(new Uint8Array(MAX_COMPRESSIBLE_SOURCE_BYTES + 1)),
     );
     const { close } = stubCanvasPipeline(() => 200_000);
 
@@ -307,17 +306,52 @@ describe("HEIC attachment preparation", () => {
     expect(close).toHaveBeenCalled();
   });
 
-  it("rejects oversized HEIC dimensions before loading the decoder", async () => {
+  it("asks for a JPEG instead of decoding when there is no desktop bridge", async () => {
+    mocks.convertHeic.mockResolvedValue(jpegConversion(new Uint8Array([1])));
+
+    expect(await prepareImageForAttachment(makeHeicFile(), 1024)).toEqual({
+      ok: false,
+      reason: "unsupported-heic",
+    });
+    expect(mocks.convertHeic).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { name: "a corrupt photo", convert: async () => ({ ok: false, reason: "unreadable" }) },
+    { name: "a rejected IPC call", convert: async () => Promise.reject(new Error("IPC failed")) },
+  ])("reports $name as unreadable", async ({ convert }) => {
+    stubDesktopBridge();
+    mocks.convertHeic.mockImplementationOnce(convert);
+
+    expect(await prepareImageForAttachment(makeHeicFile(), 1024)).toEqual({
+      ok: false,
+      reason: "unreadable",
+    });
+  });
+
+  it("passes on the desktop app's too-large verdict", async () => {
+    stubDesktopBridge();
+    mocks.convertHeic.mockResolvedValueOnce({ ok: false, reason: "too-large" });
+
+    expect(await prepareImageForAttachment(makeHeicFile(), 1024)).toEqual({
+      ok: false,
+      reason: "too-large",
+    });
+  });
+
+  it("rejects oversized HEIC dimensions before decoding", async () => {
+    stubDesktopBridge();
     const original = makeHeicFile({ width: 16_000, height: 4001 });
 
     expect(await prepareImageForAttachment(original, 1024)).toEqual({
       ok: false,
       reason: "too-large",
     });
-    expect(mocks.heicTo).not.toHaveBeenCalled();
+    expect(mocks.convertHeic).not.toHaveBeenCalled();
   });
 
-  it("rejects unsafe HEIC sources before loading the decoder", async () => {
+  it("rejects HEIC over 50 MB before decoding", async () => {
+    stubDesktopBridge();
     const original = new File(["photo"], "large.heic", { type: "image/heic" });
     Object.defineProperty(original, "size", { value: MAX_COMPRESSIBLE_SOURCE_BYTES + 1 });
 
@@ -325,7 +359,7 @@ describe("HEIC attachment preparation", () => {
       ok: false,
       reason: "too-large",
     });
-    expect(mocks.heicTo).not.toHaveBeenCalled();
+    expect(mocks.convertHeic).not.toHaveBeenCalled();
   });
 });
 

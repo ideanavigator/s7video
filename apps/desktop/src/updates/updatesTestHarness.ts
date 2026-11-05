@@ -40,8 +40,8 @@ export interface UpdatesHarnessOptions {
   readonly appVersion?: string;
   /** Starts from in-memory settings with this track saved, as after a restart. */
   readonly savedChannel?: DesktopAppSettings.DesktopSettings["updateChannel"];
-  /** Adds a WSL backend beside the primary, as on a Windows host with WSL enabled. */
-  readonly wslBackend?: boolean;
+  /** Adds a second local backend beside the primary. */
+  readonly secondaryBackend?: boolean;
 }
 
 export function makeHarness(options: UpdatesHarnessOptions = {}) {
@@ -159,13 +159,13 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
   };
   const layerBackend = DesktopBackendPool.layerTest(
     options.backendInstances ??
-      (options.wslBackend
+      (options.secondaryBackend
         ? [
             stubBackendInstance,
             {
               ...stubBackendInstance,
-              id: DesktopBackendPool.BackendInstanceId("wsl:Ubuntu"),
-              label: Effect.succeed("Ubuntu"),
+              id: DesktopBackendPool.BackendInstanceId("secondary"),
+              label: Effect.succeed("Secondary"),
             },
           ]
         : [stubBackendInstance]),
@@ -186,7 +186,7 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
       Layer.mergeAll(
         NodeServices.layer,
         DesktopConfig.layerTest({
-          T3CODE_HOME: `/tmp/t3-desktop-updates-test-${process.pid}`,
+          S7VIDEO_HOME: `/tmp/t3-desktop-updates-test-${process.pid}`,
           T3CODE_DESKTOP_MOCK_UPDATES: "true",
           T3CODE_DESKTOP_MOCK_UPDATE_SERVER_PORT: "4141",
           ...options.env,
@@ -209,7 +209,6 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
           load: Effect.sync(() => testSettings),
           setMainWindowBounds: () => Effect.die("unexpected main window bounds update"),
           setServerExposureMode: () => Effect.die("unexpected server exposure update"),
-          setTailscaleServe: () => Effect.die("unexpected Tailscale Serve update"),
           setUpdateChannel: (channel) =>
             setUpdateChannelError
               ? Effect.fail(setUpdateChannelError)
@@ -226,12 +225,7 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
                     }),
                   ),
                 ),
-          setWslBackendEnabled: () => Effect.die("unexpected WSL backend toggle"),
-          setWslDistro: () => Effect.die("unexpected WSL distro change"),
           setLocalEnvironmentEnabled: () => Effect.die("unexpected local environment toggle"),
-          setWslOnly: () => Effect.die("unexpected WSL-only toggle"),
-          applyWslWindowsFallback: Effect.die("unexpected WSL Windows fallback"),
-          applyWslWindowsFallbackInMemory: Effect.die("unexpected WSL Windows fallback"),
         } satisfies DesktopAppSettings.DesktopAppSettings["Service"])
       : DesktopAppSettings.layer;
 
@@ -281,7 +275,7 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
     Layer.provideMerge(layerSettings),
     Layer.provideMerge(
       DesktopConfig.layerTest({
-        T3CODE_HOME: `/tmp/t3-desktop-updates-test-${process.pid}`,
+        S7VIDEO_HOME: `/tmp/t3-desktop-updates-test-${process.pid}`,
         T3CODE_DESKTOP_MOCK_UPDATES: "true",
         T3CODE_DESKTOP_MOCK_UPDATE_SERVER_PORT: "4141",
         ...options.env,

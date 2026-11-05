@@ -1,0 +1,13 @@
+# SPDX-FileCopyrightText: 2026 s7video contributors
+# SPDX-License-Identifier: MIT
+#
+# Code owners are asked to review pull requests that touch their paths.
+# Maintainers are listed in GOVERNANCE.md; keep the two in sync.
+
+*                       @shashwat-aditya
+
+# Licences, policies and governance
+/LICENSE                @shashwat-aditya
+/*.md                   @shashwat-aditya
+/third-party-licenses/  @shashwat-aditya
+/.github/               @shashwat-aditya

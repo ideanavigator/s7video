@@ -13,8 +13,8 @@ import {
   type HtmlRenderReference,
 } from "@t3tools/shared/htmlRender";
 import {
-  T3_CODE_DARK_THEME_COLORS,
-  T3_CODE_LIGHT_THEME_COLORS,
+  DEFAULT_DARK_THEME_COLORS,
+  DEFAULT_LIGHT_THEME_COLORS,
   type ThemeAppearance,
 } from "@t3tools/shared/themePalettes";
 import * as Context from "effect/Context";
@@ -326,7 +326,7 @@ const MAX_CONCURRENT_BROWSERS = 2;
 const MEASURE_TIMEOUT = "6 seconds";
 
 const MEASURE_FRAGMENT = htmlRenderThemeFragment(
-  htmlRenderTheme(T3_CODE_DARK_THEME_COLORS, "dark", HTML_RENDER_MEASURE_FONTS),
+  htmlRenderTheme(DEFAULT_DARK_THEME_COLORS, "dark", HTML_RENDER_MEASURE_FONTS),
 );
 
 const make = Effect.gen(function* () {
@@ -473,7 +473,7 @@ const make = Effect.gen(function* () {
     const inlined = yield* inline(input.html);
     const executable = yield* previewBrowser.executable;
     const theme = htmlRenderTheme(
-      appearance === "light" ? T3_CODE_LIGHT_THEME_COLORS : T3_CODE_DARK_THEME_COLORS,
+      appearance === "light" ? DEFAULT_LIGHT_THEME_COLORS : DEFAULT_DARK_THEME_COLORS,
       appearance,
       HTML_RENDER_MEASURE_FONTS,
     );

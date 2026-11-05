@@ -1,20 +1,14 @@
 import "vite-plus/test/config";
 import { defaultInclude, defineConfig } from "vite-plus";
 
+import { brandConfigPlugin, loadBrandConfig } from "../../scripts/lib/brand-config.ts";
 import { isDesktopRuntimeExternalDependency } from "../../scripts/lib/desktop-external-packages.ts";
-import { loadRepoEnv } from "../../scripts/lib/public-config.ts";
-
-const repoEnv = loadRepoEnv();
 
 // Install only bundle externals; the server bundle already carries its dependency tree.
 const isMainProcessExternal = (id: string) =>
   id === "electron" || id.startsWith("electron/") || isDesktopRuntimeExternalDependency(id);
+const brand = (await loadBrandConfig()).config;
 const shouldLaunchElectronAfterPack = process.env.T3CODE_DESKTOP_DEV === "1";
-const publicConfigDefine = {
-  __T3CODE_BUILD_CLERK_PUBLISHABLE_KEY__: JSON.stringify(
-    repoEnv.T3CODE_CLERK_PUBLISHABLE_KEY?.trim() ?? "",
-  ),
-};
 
 export default defineConfig({
   run: {
@@ -51,11 +45,11 @@ export default defineConfig({
   pack: [
     {
       format: "cjs",
+      plugins: [brandConfigPlugin()],
       outDir: "dist-electron",
       dts: false,
       sourcemap: true,
       outExtensions: () => ({ js: ".cjs" }),
-      define: publicConfigDefine,
       outputOptions: { codeSplitting: false },
       entry: ["src/main.ts"],
       clean: true,
@@ -68,11 +62,11 @@ export default defineConfig({
     },
     {
       format: "cjs",
+      plugins: [brandConfigPlugin()],
       outDir: "dist-electron",
       dts: false,
       sourcemap: true,
       outExtensions: () => ({ js: ".cjs" }),
-      define: publicConfigDefine,
       entry: [
         "src/electron/WindowsForegroundFocusWorker.ts",
         "src/snapShot/GlobalShiftShortcutWorker.ts",
@@ -89,11 +83,13 @@ export default defineConfig({
     {
       // boot.cjs requires the other two at runtime, so all three stay separate files.
       format: "cjs",
+      plugins: [brandConfigPlugin()],
       outDir: "dist-electron",
       dts: false,
       sourcemap: true,
       outExtensions: () => ({ js: ".cjs" }),
       entry: ["src/boot.ts", "src/compileCache.ts", "src/serverCompileCache.ts"],
+      define: { __S7VIDEO_APP_ID__: JSON.stringify(brand.app.id) },
       clean: false,
       deps: {
         neverBundle: (id) => id === "./main.cjs" || id === "./compileCache.cjs",
@@ -101,19 +97,16 @@ export default defineConfig({
     },
     {
       format: "cjs",
+      plugins: [brandConfigPlugin()],
       outDir: "dist-electron",
       dts: false,
       sourcemap: true,
       outExtensions: () => ({ js: ".cjs" }),
-      define: publicConfigDefine,
       entry: ["src/preload.ts"],
-      deps: {
-        // Sandboxed preloads cannot resolve imports inside ASAR; bundle Clerk's bridge.
-        alwaysBundle: (id) => id === "@clerk/electron" || id.startsWith("@clerk/electron/"),
-      },
     },
     {
       format: "cjs",
+      plugins: [brandConfigPlugin()],
       outDir: "dist-electron",
       dts: false,
       sourcemap: true,
@@ -125,6 +118,7 @@ export default defineConfig({
     },
     {
       format: "cjs",
+      plugins: [brandConfigPlugin()],
       outDir: "dist-electron",
       dts: false,
       sourcemap: true,
@@ -134,6 +128,7 @@ export default defineConfig({
     {
       // Sandboxed preloads must be self-contained, without shared runtime chunks.
       format: "cjs",
+      plugins: [brandConfigPlugin()],
       outDir: "dist-electron",
       dts: false,
       sourcemap: true,

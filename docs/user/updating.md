@@ -115,8 +115,7 @@ t3 update <client-version>
 Replace `<client-version>` with the version shown in the notice. The command
 asks before restarting the background service; if you decline, run
 `t3 service restart` when you are ready. For a server you started by hand,
-stop it and start it again afterwards with your usual options such as `--host`
-or `--tailscale-serve`.
+stop it and start it again afterwards with your usual options such as `--host`.
 
 If you run the server with `npx` rather than an installed `t3`, there is
 nothing to update on the host: stop the server and relaunch it as

@@ -1,3 +1,4 @@
+import { brandIdentityFor } from "@t3tools/shared/brand";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -12,12 +13,9 @@ import * as Scope from "effect/Scope";
 
 import * as Electron from "electron";
 
-export const DESKTOP_HOST = "app";
-const DESKTOP_PRODUCTION_SCHEME = "t3code";
-const DESKTOP_DEVELOPMENT_SCHEME = "t3code-dev";
-
+const DESKTOP_HOST = "app";
 export function getDesktopScheme(isDevelopment: boolean): string {
-  return isDevelopment ? DESKTOP_DEVELOPMENT_SCHEME : DESKTOP_PRODUCTION_SCHEME;
+  return brandIdentityFor(isDevelopment).protocol;
 }
 
 function getDesktopOrigin(isDevelopment: boolean): string {
@@ -54,7 +52,6 @@ export class ElectronProtocolUnregistrationError extends Schema.TaggedError<Elec
 
 export type DesktopProtocolRegistrationInput = {
   readonly scheme: string;
-  readonly clerkFrontendApiHostname: string | undefined;
 } & ({ readonly targetOrigin: URL } | { readonly assetDirectory: string });
 
 export class ElectronProtocol extends Context.Service<
@@ -67,16 +64,7 @@ export class ElectronProtocol extends Context.Service<
 >()("@t3tools/desktop/electron/ElectronProtocol") {}
 
 function makeDesktopContentSecurityPolicy(input: DesktopProtocolRegistrationInput): string {
-  const clerkOrigin = input.clerkFrontendApiHostname
-    ? `https://${input.clerkFrontendApiHostname}`
-    : undefined;
-  const scriptSources = [
-    "'self'",
-    "'unsafe-inline'",
-    "'wasm-unsafe-eval'",
-    ...(clerkOrigin ? [clerkOrigin] : []),
-    "https://challenges.cloudflare.com",
-  ];
+  const scriptSources = ["'self'", "'unsafe-inline'", "'wasm-unsafe-eval'"];
 
   // User-configured environment origins are unknown here, so allow supported network schemes.
   // GLTFLoader fetches embedded textures through blob URLs.
@@ -111,7 +99,7 @@ function withContentSecurityPolicy(response: Response, policy: string): Response
 function registerDesktopSchemePrivilegesSync(): void {
   Electron.protocol.registerSchemesAsPrivileged([
     {
-      scheme: DESKTOP_PRODUCTION_SCHEME,
+      scheme: getDesktopScheme(false),
       privileges: {
         standard: true,
         secure: true,
@@ -123,7 +111,7 @@ function registerDesktopSchemePrivilegesSync(): void {
       },
     },
     {
-      scheme: DESKTOP_DEVELOPMENT_SCHEME,
+      scheme: getDesktopScheme(true),
       privileges: {
         standard: true,
         secure: true,

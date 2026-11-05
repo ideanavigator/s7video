@@ -1,3 +1,4 @@
+import { BRAND } from "@t3tools/shared/brand";
 import { useAtomValue } from "@effect/atom-react";
 import { linkRequestFailureMessage } from "@t3tools/client-runtime/link-request";
 import {
@@ -74,7 +75,7 @@ export function LinkedEnvironmentsSettings({
       ) : links.data.links.length === 0 ? (
         <SettingsRow
           title="No linked environments"
-          description="Link another machine running T3 Code, such as a VPS, so agents here can launch and drive threads there."
+          description={`Link another machine running ${BRAND.app.productName}, such as a VPS, so agents here can launch and drive threads there.`}
         />
       ) : (
         links.data.links.map((link) => (
@@ -103,7 +104,7 @@ function LinkedEnvironmentRow({
   const [busy, setBusy] = useState(false);
   const forget = async () => {
     const confirmed = await (requestConfirmDialog(
-      `Forget ${link.label}? Agents here stop working there. Revoke "T3 Code · …" in ${link.label}'s Connections to end the session there too.`,
+      `Forget ${link.label}? Agents here stop working there. Revoke "${BRAND.app.productName} · …" in ${link.label}'s Connections to end the session there too.`,
       { variant: "destructive" },
     ) ?? Promise.resolve(false));
     if (!confirmed) return;
@@ -303,7 +304,7 @@ function LinkEnvironmentAction({ environmentId }: { readonly environmentId: Envi
                     // Machines found after typing began must not hide the address being typed.
                     if (choice === null) setChoice(ANOTHER_ADDRESS);
                   }}
-                  placeholder="https://box.example.ts.net"
+                  placeholder="https://studio.local"
                   disabled={busy}
                   autoFocus={machines.length === 0}
                   nativeInput
@@ -312,7 +313,7 @@ function LinkEnvironmentAction({ environmentId }: { readonly environmentId: Envi
                 {machine !== null ? (
                   <span className="block text-xs text-muted-foreground">
                     This app has no address for {machine.label} that another machine can reach.
-                    Enter its https or Tailscale address.
+                    Enter its https address.
                   </span>
                 ) : null}
               </label>
@@ -325,7 +326,7 @@ function LinkEnvironmentAction({ environmentId }: { readonly environmentId: Envi
                   onChange={(event) => setPairingCode(event.target.value)}
                   placeholder={
                     machine === null
-                      ? "From that environment's Connections, or t3 pair there"
+                      ? `From that environment's Connections, or ${BRAND.app.cliName} pair there`
                       : "Paste the code"
                   }
                   disabled={busy}

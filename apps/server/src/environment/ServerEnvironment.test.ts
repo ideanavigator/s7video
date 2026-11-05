@@ -6,19 +6,42 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 
 import { DEFAULT_SIGNAL_EXPORT } from "@t3tools/shared/observability";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as OtelEnvironment from "@t3tools/shared/otelEnvironment";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
-import {
-  PUBLISH_AGENT_ACTIVITY_SECRET,
-  RELAY_ENVIRONMENT_CREDENTIAL_SECRET,
-  RELAY_URL_SECRET,
-} from "../cloud/config.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "./ServerEnvironment.ts";
+
+// What T3 Connect stored in an upstream T3 Code secret store.
+const STALE_CLOUD_SECRETS = [
+  ["cloud-relay-url", "https://relay.stale.example"],
+  ["cloud-relay-issuer", "https://issuer.stale.example"],
+  ["cloud-relay-environment-credential", "stale-environment-credential"],
+  ["cloud-mint-ed25519-public-key", "stale-mint-public-key"],
+  ["cloud-endpoint-runtime-config", '{"tunnelName":"stale-tunnel-0123456789abcdef"}'],
+  ["cloud-endpoint-confirmed-origin", "stale-confirmed-origin"],
+  ["cloud-linked-user-id", "user_stale_cloud_id"],
+  ["cloud-publish-agent-activity", "true"],
+  ["cloud-hold-webhooks-while-offline", "true"],
+  ["cloud-link-ed25519-key-pair", "stale-link-key-pair"],
+] as const;
+
+// Every secret name and name prefix T3 Connect used; a source mentioning one reads a retired secret.
+const RETIRED_SECRET_NAMES = [
+  ...STALE_CLOUD_SECRETS.map(([name]) => name),
+  "cloud-link-revoked",
+  "cloud-link-ed25519-private-key",
+  "cloud-link-ed25519-public-key",
+  "cloud-cli-oauth-token",
+  "cloud-cli-desired-link",
+  "cloud-mint-jti-",
+  "cloud-health-",
+];
+const RETIRED_SECRET_REFERENCE = new RegExp(`["'\`](${RETIRED_SECRET_NAMES.join("|")})`);
 
 const layerServerEnvironment = (baseDir: string) =>
   ServerEnvironment.layer.pipe(
@@ -60,8 +83,6 @@ const makeServerConfig = Effect.fn(function* (baseDir: string) {
     mode: "web",
     autoBootstrapProjectFromCwd: false,
     logWebSocketEvents: false,
-    tailscaleServeEnabled: false,
-    tailscaleServePort: 443,
     port: 0,
     host: undefined,
     desktopBootstrapToken: undefined,
@@ -228,11 +249,11 @@ it.layer(NodeServices.layer)("ServerEnvironmentLive", (it) => {
     }),
   );
 
-  it.effect("reports agent activity publishing from the current secret state", () =>
+  it.effect("ignores T3 Connect secrets left in the secret store", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const baseDir = yield* fileSystem.makeTempDirectoryScoped({
-        prefix: "t3-server-environment-publish-test-",
+        prefix: "t3-server-environment-stale-cloud-test-",
       });
       const layerTest = Layer.mergeAll(
         ServerEnvironment.layer.pipe(Layer.provide(ServerSecretStore.layer)),
@@ -242,28 +263,36 @@ it.layer(NodeServices.layer)("ServerEnvironmentLive", (it) => {
       yield* Effect.gen(function* () {
         const secrets = yield* ServerSecretStore.ServerSecretStore;
         const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
-        const encode = (value: string) => new TextEncoder().encode(value);
-
-        const unlinked = yield* serverEnvironment.getDescriptor;
-        expect(unlinked.capabilities.agentActivityPublishing).toBe(false);
-
-        yield* secrets.set(PUBLISH_AGENT_ACTIVITY_SECRET, encode("true"));
-        const withoutLink = yield* serverEnvironment.getDescriptor;
-        expect(withoutLink.capabilities.agentActivityPublishing).toBe(false);
-
-        yield* secrets.set(RELAY_URL_SECRET, encode(""));
-        yield* secrets.set(RELAY_ENVIRONMENT_CREDENTIAL_SECRET, encode("credential"));
-        const emptyUrl = yield* serverEnvironment.getDescriptor;
-        expect(emptyUrl.capabilities.agentActivityPublishing).toBe(false);
-
-        yield* secrets.set(RELAY_URL_SECRET, encode("https://relay.example"));
-        const linked = yield* serverEnvironment.getDescriptor;
-        expect(linked.capabilities.agentActivityPublishing).toBe(true);
-
-        yield* secrets.set(PUBLISH_AGENT_ACTIVITY_SECRET, encode("false"));
-        const disabled = yield* serverEnvironment.getDescriptor;
-        expect(disabled.capabilities.agentActivityPublishing).toBe(false);
+        const before = yield* serverEnvironment.getDescriptor;
+        for (const [name, value] of STALE_CLOUD_SECRETS) {
+          yield* secrets.set(name, new TextEncoder().encode(value));
+        }
+        const after = yield* serverEnvironment.getDescriptor;
+        expect(after).toEqual(before);
+        expect(after.capabilities.agentActivityPublishing).toBe(false);
+        const serialized = JSON.stringify(after);
+        for (const [, value] of STALE_CLOUD_SECRETS) {
+          if (value !== "true") expect(serialized).not.toContain(value);
+        }
       }).pipe(Effect.provide(layerTest));
+    }),
+  );
+
+  // Nothing reads them, so a stale relay URL or credential can never start a connection.
+  it.effect("has no server module that reads a T3 Connect secret", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const srcDir = path.resolve(import.meta.dirname, "..");
+      const sources = (yield* fileSystem.readDirectory(srcDir, { recursive: true })).filter(
+        (file) => file.endsWith(".ts") && !file.endsWith(".test.ts"),
+      );
+      const readers: Array<string> = [];
+      for (const file of sources) {
+        const text = yield* fileSystem.readFileString(path.join(srcDir, file));
+        if (RETIRED_SECRET_REFERENCE.test(text)) readers.push(file);
+      }
+      expect(readers).toEqual([]);
     }),
   );
 });

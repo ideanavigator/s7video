@@ -60,7 +60,6 @@ function routesList(routes: ReadonlyArray<ConnectionRoute>) {
     environmentId: ENVIRONMENT_ID,
     label: "Desk",
     displayUrl: null,
-    relayManaged: false,
     entry,
     connection: { phase: "available", error: null, traceId: null },
     serverConfig: null,
@@ -75,7 +74,7 @@ it("shows a route added after a reorder was saved, once another route is removed
   await userEvent.keyboard("{ArrowDown}");
   await userEvent.keyboard(" ");
   await expect
-    .element(screen.getByRole("button", { name: "Reorder Tailscale, position 1" }))
+    .element(screen.getByRole("button", { name: "Reorder Private network, position 1" }))
     .toBeVisible();
 
   await screen.rerender(routesList([TAILNET, LAN]));

@@ -1,3 +1,4 @@
+import { BRAND } from "@t3tools/shared/brand";
 import {
   ClientSettingsSchema,
   type ClientSettingsPatch,
@@ -475,7 +476,7 @@ export async function persistScopedSettingsPatch(
       return [
         {
           ...environment,
-          message: "This environment does not support this setting. Update T3 Code on it.",
+          message: `This environment does not support this setting. Update ${BRAND.app.productName} on it.`,
         },
       ];
     }

@@ -43,6 +43,7 @@ import {
   inheritComposerImageThumbnail,
   prepareImageForAttachment,
 } from "../../lib/imageCompression";
+import { HEIC_CONVERT_FIRST_MESSAGE } from "../../lib/desktopHeic";
 import { requestConfirmDialog } from "~/confirmDialog";
 import { toastManager } from "../ui/toast";
 import { type RefObject, useRef } from "react";
@@ -266,9 +267,11 @@ export function useComposerAttachmentIntake(input: {
       if (!result.ok) {
         compressionErrors.set(
           id,
-          result.reason === "unreadable"
-            ? `'${file.name}' could not be read as an image.`
-            : `'${file.name}' is too large to attach, even after compression.`,
+          result.reason === "unsupported-heic"
+            ? `Could not attach '${file.name}'. ${HEIC_CONVERT_FIRST_MESSAGE}`
+            : result.reason === "unreadable"
+              ? `'${file.name}' could not be read as an image.`
+              : `'${file.name}' is too large to attach, even after compression.`,
         );
         continue;
       }

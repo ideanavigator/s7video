@@ -1,3 +1,4 @@
+import { BRAND } from "@t3tools/shared/brand";
 import * as NetService from "@t3tools/shared/Net";
 import {
   OtlpHeadersFromString,
@@ -43,7 +44,7 @@ const hostFlag = Flag.String("host").pipe(
 );
 export const baseDirFlag = Flag.String("base-dir").pipe(
   Flag.withDescription(
-    "Explicit T3 Code data directory; runtime state is stored under userdata (equivalent to T3CODE_HOME).",
+    `Explicit ${BRAND.app.productName} data directory; runtime state is stored under userdata (equivalent to S7VIDEO_HOME).`,
   ),
   Flag.optional,
 );
@@ -72,17 +73,6 @@ const logWebSocketEventsFlag = Flag.Boolean("log-websocket-events").pipe(
     "Emit server-side logs for outbound WebSocket push traffic (equivalent to T3CODE_LOG_WS_EVENTS).",
   ),
   Flag.withAlias("log-ws-events"),
-  Flag.optional,
-);
-const tailscaleServeFlag = Flag.Boolean("tailscale-serve").pipe(
-  Flag.withDescription(
-    "Configure Tailscale Serve to expose this backend over HTTPS on the Tailnet.",
-  ),
-  Flag.optional,
-);
-const tailscaleServePortFlag = Flag.Int("tailscale-serve-port").pipe(
-  Flag.withSchema(PortSchema),
-  Flag.withDescription("HTTPS port for Tailscale Serve when --tailscale-serve is enabled."),
   Flag.optional,
 );
 const lanFlag = Flag.Boolean("lan").pipe(
@@ -136,7 +126,7 @@ const EnvServerConfig = Config.all({
   ),
   port: Config.Port("T3CODE_PORT").pipe(Config.option, Config.map(Option.getOrUndefined)),
   host: Config.String("T3CODE_HOST").pipe(Config.option, Config.map(Option.getOrUndefined)),
-  t3Home: Config.String("T3CODE_HOME").pipe(Config.option, Config.map(Option.getOrUndefined)),
+  t3Home: Config.String("S7VIDEO_HOME").pipe(Config.option, Config.map(Option.getOrUndefined)),
   devUrl: Config.URL("VITE_DEV_SERVER_URL").pipe(Config.option, Config.map(Option.getOrUndefined)),
   devAllowedOrigins: Config.String("T3CODE_DEV_ALLOWED_ORIGINS").pipe(
     Config.withDefault(""),
@@ -160,14 +150,6 @@ const EnvServerConfig = Config.all({
     Config.map(Option.getOrUndefined),
   ),
   logWebSocketEvents: Config.Boolean("T3CODE_LOG_WS_EVENTS").pipe(
-    Config.option,
-    Config.map(Option.getOrUndefined),
-  ),
-  tailscaleServeEnabled: Config.Boolean("T3CODE_TAILSCALE_SERVE").pipe(
-    Config.option,
-    Config.map(Option.getOrUndefined),
-  ),
-  tailscaleServePort: Config.Port("T3CODE_TAILSCALE_SERVE_PORT").pipe(
     Config.option,
     Config.map(Option.getOrUndefined),
   ),
@@ -205,8 +187,6 @@ export interface CliServerFlags {
   readonly bootstrapFd: Option.Option<number>;
   readonly autoBootstrapProjectFromCwd: Option.Option<boolean>;
   readonly logWebSocketEvents: Option.Option<boolean>;
-  readonly tailscaleServeEnabled: Option.Option<boolean>;
-  readonly tailscaleServePort: Option.Option<number>;
   readonly lan: Option.Option<boolean>;
 }
 
@@ -240,8 +220,6 @@ export const sharedServerCommandFlags = {
   bootstrapFd: bootstrapFdFlag,
   autoBootstrapProjectFromCwd: autoBootstrapProjectFromCwdFlag,
   logWebSocketEvents: logWebSocketEventsFlag,
-  tailscaleServeEnabled: tailscaleServeFlag,
-  tailscaleServePort: tailscaleServePortFlag,
   lan: lanFlag,
 } as const;
 
@@ -284,8 +262,6 @@ export const resolveServerConfig = Effect.fn("config.resolveServerConfig")(funct
     bootstrapFd: flags.bootstrapFd ?? Option.none(),
     autoBootstrapProjectFromCwd: flags.autoBootstrapProjectFromCwd ?? Option.none(),
     logWebSocketEvents: flags.logWebSocketEvents ?? Option.none(),
-    tailscaleServeEnabled: flags.tailscaleServeEnabled ?? Option.none(),
-    tailscaleServePort: flags.tailscaleServePort ?? Option.none(),
     lan: flags.lan ?? Option.none(),
   } satisfies CliServerFlags;
   const bootstrapFd = Option.getOrUndefined(normalizedFlags.bootstrapFd) ?? env.bootstrapFd;
@@ -352,7 +328,7 @@ export const resolveServerConfig = Effect.fn("config.resolveServerConfig")(funct
       isProcessAlive(runtime.value.pid)
     ) {
       return yield* new CliError.UserError({
-        cause: `A T3 Code server is already running for ${baseDir} (pid ${runtime.value.pid}, ${runtime.value.origin}). Connect to that server, stop it before starting another, or use a different --base-dir.`,
+        cause: `A ${BRAND.app.productName} server is already running for ${baseDir} (pid ${runtime.value.pid}, ${runtime.value.origin}). Connect to that server, stop it before starting another, or use a different --base-dir.`,
       });
     }
   }
@@ -397,22 +373,6 @@ export const resolveServerConfig = Effect.fn("config.resolveServerConfig")(funct
       Option.fromUndefinedOr(env.logWebSocketEvents),
     ),
     () => Boolean(devUrl),
-  );
-  const tailscaleServeEnabled = Option.getOrElse(
-    resolveOptionPrecedence(
-      normalizedFlags.tailscaleServeEnabled,
-      Option.fromUndefinedOr(env.tailscaleServeEnabled),
-      Option.fromUndefinedOr(bootstrap?.tailscaleServeEnabled),
-    ),
-    () => false,
-  );
-  const tailscaleServePort = Option.getOrElse(
-    resolveOptionPrecedence(
-      normalizedFlags.tailscaleServePort,
-      Option.fromUndefinedOr(env.tailscaleServePort),
-      Option.fromUndefinedOr(bootstrap?.tailscaleServePort),
-    ),
-    () => 443,
   );
   const staticDir = devUrl ? undefined : yield* ServerConfig.resolveStaticDir();
   const explicitHost = resolveOptionPrecedence(
@@ -517,8 +477,6 @@ export const resolveServerConfig = Effect.fn("config.resolveServerConfig")(funct
     resourceMonitorPath,
     autoBootstrapProjectFromCwd,
     logWebSocketEvents,
-    tailscaleServeEnabled,
-    tailscaleServePort,
   };
 
   return config;
@@ -541,8 +499,6 @@ export const resolveCliAuthConfig = (
       bootstrapFd: Option.none(),
       autoBootstrapProjectFromCwd: Option.none(),
       logWebSocketEvents: Option.none(),
-      tailscaleServeEnabled: Option.none(),
-      tailscaleServePort: Option.none(),
       lan: Option.none(),
     },
     cliLogLevel,

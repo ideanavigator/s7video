@@ -19,7 +19,6 @@ const emptyCatalog = {
   targets: [],
   profiles: [],
   credentials: [],
-  remoteDpopTokens: [],
   disabledEnvironmentIds: [],
 } as const;
 const decodeCatalog = Schema.decodeUnknownSync(Schema.fromJsonString(ConnectionCatalogDocument));
@@ -45,6 +44,41 @@ describe("ConnectionStorage.makeCatalogStore", () => {
       expect(quarantined).toEqual(["{not-json"]);
       expect(writes).toHaveLength(1);
       expect(decodeCatalog(writes[0]!)).toEqual(emptyCatalog);
+    }),
+  );
+
+  it.effect("reads an upstream catalog without writing to it", () =>
+    Effect.gen(function* () {
+      // Until S7V-003 the catalog file is shared with an installed T3 Code.
+      const writes: string[] = [];
+      const upstream = JSON.stringify({
+        ...emptyCatalog,
+        targets: [{ _tag: "RelayConnectionTarget", environmentId: "environment-1", label: "Mac" }],
+        remoteDpopTokens: [
+          {
+            environmentId: "environment-1",
+            label: "Mac",
+            endpoint: {
+              httpBaseUrl: "https://environment-1.t3.codes",
+              wsBaseUrl: "wss://environment-1.t3.codes",
+              providerKind: "cloudflare_tunnel",
+            },
+            accessToken: "stale-dpop-access-token",
+            expiresAtEpochMs: 1_000_000,
+            dpopThumbprint: "stale-thumbprint",
+          },
+        ],
+      });
+      const backend = {
+        read: Effect.succeed(upstream),
+        write: (raw: string) => Effect.sync(() => writes.push(raw)),
+      };
+
+      const store = yield* ConnectionStorage.makeCatalogStore(backend);
+      expect(yield* store.read).toEqual(emptyCatalog);
+      const restarted = yield* ConnectionStorage.makeCatalogStore(backend);
+      expect(yield* restarted.read).toEqual(emptyCatalog);
+      expect(writes).toEqual([]);
     }),
   );
 

@@ -1,3 +1,4 @@
+import { BRAND } from "@t3tools/shared/brand";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -99,6 +100,8 @@ export const make = Effect.gen(function* () {
       applicationName: environment.displayName,
       applicationVersion: environment.appVersion,
       version: Option.getOrElse(commitHash, () => "unknown"),
+      credits: `Based on ${BRAND.credits.upstreamName} (${BRAND.credits.upstreamUrl}), ${BRAND.credits.license} licence.`,
+      website: BRAND.urls.homepage,
     });
 
     if (environment.platform === "win32") {

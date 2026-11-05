@@ -49,7 +49,6 @@ import { SNAP_SHOT_EVENT_CHANNEL } from "../ipc/channels.ts";
 import * as DesktopServerExposure from "../backend/DesktopServerExposure.ts";
 import * as DesktopWindow from "./DesktopWindow.ts";
 import * as PreviewManager from "../preview/Manager.ts";
-import * as PreviewPasskeys from "../preview/Passkeys.ts";
 
 const environmentInput = {
   dirname: "/repo/apps/desktop/dist-electron",
@@ -71,7 +70,7 @@ function makeFakeBrowserWindow() {
     copyImageAt: vi.fn(),
     focus: vi.fn(),
     isDestroyed: vi.fn(() => false),
-    getURL: vi.fn(() => "t3code-dev://app/"),
+    getURL: vi.fn(() => "s7video-dev://app/"),
     getZoomLevel: vi.fn(() => zoomLevel),
     getZoomFactor: vi.fn(() => 1.2 ** zoomLevel),
     setZoomLevel: vi.fn((level: number) => {
@@ -179,12 +178,9 @@ const layerDesktopServerExposure = Layer.succeed(DesktopServerExposure.DesktopSe
     port: 3773,
     bindHost: "127.0.0.1",
     httpBaseUrl: new URL("http://127.0.0.1:3773"),
-    tailscaleServeEnabled: false,
-    tailscaleServePort: 443,
   }),
   configureFromSettings: () => Effect.die("unexpected configureFromSettings"),
   setMode: () => Effect.die("unexpected setMode"),
-  setTailscaleServeEnabled: () => Effect.die("unexpected setTailscaleServeEnabled"),
   getAdvertisedEndpoints: Effect.die("unexpected getAdvertisedEndpoints"),
 } satisfies DesktopServerExposure.DesktopServerExposure["Service"]);
 
@@ -262,14 +258,8 @@ function layerTest(input: {
         return { settings: desktopSettings, changed };
       }),
     setServerExposureMode: () => Effect.die("unexpected server exposure update"),
-    setTailscaleServe: () => Effect.die("unexpected Tailscale Serve update"),
     setUpdateChannel: () => Effect.die("unexpected update channel change"),
-    setWslBackendEnabled: () => Effect.die("unexpected WSL backend toggle"),
-    setWslDistro: () => Effect.die("unexpected WSL distro change"),
-    setWslOnly: () => Effect.die("unexpected WSL-only toggle"),
     setLocalEnvironmentEnabled: () => Effect.die("unexpected local environment toggle"),
-    applyWslWindowsFallback: Effect.die("unexpected WSL Windows fallback"),
-    applyWslWindowsFallbackInMemory: Effect.die("unexpected WSL Windows fallback"),
   } satisfies DesktopAppSettings.DesktopAppSettings["Service"]);
 
   const layerElectronWindow = Layer.succeed(ElectronWindow.ElectronWindow, {
@@ -330,11 +320,6 @@ function layerTest(input: {
         } satisfies ElectronShell.ElectronShell["Service"]),
         layerElectronTheme,
         layerElectronWindow,
-        Layer.mock(PreviewPasskeys.PreviewPasskeys)({
-          bridgeEnabled: false,
-          installSessionHandlers: () => {},
-          attachGuest: () => () => {},
-        }),
         Layer.mock(PreviewManager.PreviewManager)({
           getBrowserSession: () => Effect.succeed({} as Electron.Session),
           setMainWindow: input.setPreviewMainWindow ?? (() => Effect.void),
@@ -440,11 +425,6 @@ const makeSplashScenario = (createOutcomes: readonly (Electron.BrowserWindow | n
           } satisfies ElectronShell.ElectronShell["Service"]),
           layerElectronTheme,
           Layer.succeed(ElectronWindow.ElectronWindow, electronWindowShape),
-          Layer.mock(PreviewPasskeys.PreviewPasskeys)({
-            bridgeEnabled: false,
-            installSessionHandlers: () => {},
-            attachGuest: () => () => {},
-          }),
           Layer.mock(PreviewManager.PreviewManager)({
             getBrowserSession: () => Effect.succeed({} as Electron.Session),
             setMainWindow: () => Effect.void,
@@ -480,7 +460,7 @@ describe("DesktopWindow", () => {
   });
 
   it("rejects renderer navigations whose origin only serializes as null", () => {
-    for (const applicationUrl of ["t3code://app/", "t3code-dev://app/"]) {
+    for (const applicationUrl of ["s7video://app/", "s7video-dev://app/"]) {
       assert.isTrue(
         DesktopWindow.isSameOriginRendererNavigation({
           applicationUrl,
@@ -490,21 +470,21 @@ describe("DesktopWindow", () => {
       );
     }
     for (const navigationUrl of [
-      "t3code://other/",
-      "t3code://app.example/",
-      "t3code://app:8080/",
-      "t3code://user@other/",
+      "s7video://other/",
+      "s7video://app.example/",
+      "s7video://app:8080/",
+      "s7video://user@other/",
       "t3code:app",
-      "t3code-dev://app/",
+      "s7video-dev://app/",
       "file:///etc/passwd",
       "data:text/html,<p>hi</p>",
       "javascript:alert(1)",
       "about:blank",
-      "blob:t3code://app/0b5e2c4a",
+      "blob:s7video://app/0b5e2c4a",
     ]) {
       assert.isFalse(
         DesktopWindow.isSameOriginRendererNavigation({
-          applicationUrl: "t3code://app/",
+          applicationUrl: "s7video://app/",
           navigationUrl,
         }),
         navigationUrl,
@@ -1126,9 +1106,9 @@ describe("DesktopWindow", () => {
           return yield* Effect.die("will-navigate listener was not registered");
         }
         for (const [url, expectedPrevented] of [
-          ["t3code-dev://app/threads?id=1#latest", false],
-          ["t3code-dev://other/", true],
-          ["t3code://app/", true],
+          ["s7video-dev://app/threads?id=1#latest", false],
+          ["s7video-dev://other/", true],
+          ["s7video://app/", true],
         ] as const) {
           const preventDefault = vi.fn();
           willNavigate({ preventDefault }, url);
@@ -1198,7 +1178,7 @@ describe("DesktopWindow", () => {
         createCount,
         mainWindow,
         onReveal: () => {
-          foreground = "T3 Code";
+          foreground = "s7video";
           operations.push("reveal");
         },
       });
@@ -1211,7 +1191,7 @@ describe("DesktopWindow", () => {
         operations.length = 0;
         foreground = "Discord";
         yield* desktopWindow.dispatchSnapShotEvent({ type: "started", id: captureOne });
-        assert.equal(foreground, "T3 Code");
+        assert.equal(foreground, "s7video");
         foreground = "Explorer";
         yield* desktopWindow.dispatchSnapShotEvent({ type: "ready", id: captureOne });
         yield* desktopWindow.dispatchSnapShotEvent({ type: "failed", id: captureTwo });

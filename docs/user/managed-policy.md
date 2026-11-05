@@ -204,19 +204,12 @@ Without `remote`, the server listens only on a loopback address, creates no pair
 signs out devices that paired earlier. It does not start with a host other than a loopback
 address or `localhost`. The [background service](./background-service.md) listens on private
 networks by default, so set `T3CODE_HOST=127.0.0.1` in its `service.env`. The desktop app starts
-with network access and Tailscale Serve off, whatever the user chose. That also turns off
+with network access off, whatever the user chose. That also turns off
 T3 Connect. To keep other remote access but turn off T3 Connect alone, set `"connect": false`.
 
-When it starts, the server also turns off each Tailscale Serve route, HTTPS or TCP, that forwards
-to it, such as one `t3 pair --tailscale` set up, and leaves other routes alone. It does not start
-while such a route stays on, or while Tailscale's answer cannot be read; the error names the
-command that turns the route off. A route whose target is a name, such as `localhost` or another
-machine on the same port, also stops it, since a name can resolve to this server; change the route
-or T3 Code's port. If Tailscale is installed but does not answer, as on a Mac where it was never set up, the
-server does not start until Tailscale is set up or removed. It does start when Tailscale is not
-installed, not running, or
-logged out, since nothing forwards then; a route Tailscale kept returns when Tailscale runs again,
-so restart T3 Code after that.
+s7video does not set up Tailscale Serve and no longer checks for Serve routes (S7V-018). Like any
+other port forward, a Serve route set up outside s7video can still front a loopback-only server, and
+the policy does not block it; devices that use it still have to pair.
 
 ### Other capabilities
 
@@ -224,9 +217,9 @@ so restart T3 Code after that.
   but do not run, and cannot be turned back on. Users can still edit or delete them.
 - `browserCookieImport: false`: users cannot import cookies from another browser into T3 Code's
   browser.
-- `telemetry: false`: the server and desktop app send no [product usage data](./telemetry.md) or
-  relay connection traces. A policy cannot turn them on. A browser that opens the server, such as
-  app.t3.codes, still sends its own relay traces.
+- `telemetry: false`: the server sends no [product usage data](./telemetry.md), even if a user
+  switched it on, and Settings offers no switch. A policy cannot turn usage data on: a `settings`
+  entry for `shareUsageData` is refused, because sharing is each user's choice.
 
 ### Providers
 
@@ -260,9 +253,7 @@ The policy controls what T3 Code does. Agents run through each provider's own CL
 own configuration, such as `~/.claude`, and which a user can also run outside T3 Code. To restrict
 those CLIs, use their own managed configuration, such as Claude Code's managed settings.
 
-On a managed Windows machine, the desktop app does not run a WSL environment. A T3 Code server a
-user starts inside WSL reads `/etc/t3code/policy.json` in that distro, not the Windows policy.
-Deploy the policy file there too if your users run T3 Code in WSL.
+s7video runs on Apple Silicon Macs only and has no WSL backend.
 
 Without `remote`, T3 Code does not expose the server, but a user can still forward its local port
 with other tools.

@@ -1,6 +1,7 @@
 // @effect-diagnostics globalTimers:off -- D-Bus deadlines run at a native async boundary.
 // @effect-diagnostics nodeBuiltinImport:off -- Read the portal file through one bounded file descriptor at the native adapter boundary.
 
+import { BRAND } from "@t3tools/shared/brand";
 import * as NodeCrypto from "node:crypto";
 import {
   DBusError,
@@ -304,7 +305,9 @@ class LinuxCaptureConnection {
       this.bus.requestName(`${appId}.SnapShot`, NameFlag.DO_NOT_QUEUE),
     );
     if (result !== RequestNameReply.PRIMARY_OWNER) {
-      throw new Error("Another T3 Code instance is capturing a window. Try again.");
+      throw new Error(
+        `Another ${BRAND.app.productName} instance is capturing a window. Try again.`,
+      );
     }
     const withFeedback = this.feedbackAvailable && options !== undefined;
     const reply = await this.call({

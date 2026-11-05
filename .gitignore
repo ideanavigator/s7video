@@ -16,6 +16,7 @@ build/
 release/
 release-mock/
 .t3
+.s7video
 .idea/
 apps/web/.playwright
 apps/web/playwright-report
@@ -41,7 +42,6 @@ artifacts/mobile-behavior/
 .github/pr-assets/
 native/**/target/
 node_modules/
-.alchemy/
 *.log
 .env*
 !.env.example

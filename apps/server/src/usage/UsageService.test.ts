@@ -17,18 +17,15 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   UsageDay,
-  type UsageSource,
   type UsageSummary,
   type UsageSummaryInput,
 } from "@t3tools/contracts";
-import * as Duration from "effect/Duration";
 import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
-import * as Context from "effect/Context";
 import * as Layer from "effect/Layer";
 import * as Scheduler from "effect/Scheduler";
 import * as Schema from "effect/Schema";
@@ -40,30 +37,14 @@ import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as Sqlite from "../persistence/Sqlite.ts";
 import * as CodexUsageHistory from "./CodexUsageHistory.ts";
-import * as CursorAccountReader from "@t3tools/provider-cursor/server/CursorAccountReader";
-import * as CursorKeychain from "@t3tools/provider-cursor/server/CursorKeychain";
-import * as CursorUsageAccounts from "@t3tools/provider-cursor/server/CursorUsageAccounts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as AntigravityUsage from "../provider/Drivers/AntigravityUsage.ts";
 import * as ProviderHostLive from "../provider/ProviderHostLive.ts";
-import { totalTokens, type UsageRecord } from "@t3tools/provider-core/server/usage";
 import * as UsageService from "./UsageService.ts";
-import * as MuseSdk from "../../../../packages/provider-muse/src/server/sdk.ts";
-import { MuseUsageHome } from "@t3tools/provider-muse/server";
 import { makeScanCacheWriter, SCAN_CACHE_FILE_NAME } from "./usageScanCache.ts";
 
 vi.mock("node:fs/promises", { spy: true });
-vi.mock("../../../../packages/provider-muse/src/server/sdk.ts", async (importOriginal) => ({
-  ...(await importOriginal<typeof MuseSdk>()),
-  createMuseSdkHostEffect: vi.fn(() =>
-    Effect.try(() => {
-      throw new Error("Muse is not installed in this test");
-    }),
-  ),
-}));
-
-const encodeUnknownJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 const encodeUnknownJsonString = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 const decodeUnknownJsonString = Schema.decodeSync(Schema.fromJsonString(Schema.Unknown));
 
@@ -119,23 +100,6 @@ const setup = Effect.gen(function* () {
   };
 });
 
-const layerCursorUsageAccounts = <E, R>(
-  reader: Layer.Layer<CursorAccountReader.CursorAccountReader, E, R>,
-) => Layer.fresh(CursorUsageAccounts.layer).pipe(Layer.provide(reader));
-
-const makeWithCursor = (read: CursorAccountReader.CursorAccountReader["Service"]["read"]) =>
-  Effect.gen(function* () {
-    const context = yield* Layer.build(
-      layerCursorUsageAccounts(Layer.succeed(CursorAccountReader.CursorAccountReader, { read })),
-    );
-    const accounts = Context.get(context, CursorUsageAccounts.CursorUsageAccounts);
-    const service = yield* UsageService.make.pipe(Effect.provideContext(context));
-    return {
-      ...service,
-      awaitPersisted: Effect.andThen(service.awaitPersisted, accounts.awaitPersisted),
-    };
-  });
-
 const layerService = (input: {
   readonly prefix: string;
   readonly home: string;
@@ -150,11 +114,7 @@ const layerService = (input: {
   readonly platform?: NodeJS.Platform;
   readonly hostname?: string;
 }) =>
-  layerCursorUsageAccounts(
-    CursorAccountReader.layer.pipe(Layer.provide(CursorKeychain.layer)),
-  ).pipe(
-    Layer.provideMerge(AntigravityUsage.layer),
-    Layer.provideMerge(MuseUsageHome.layer),
+  AntigravityUsage.layer.pipe(
     Layer.provideMerge(ProviderHostLive.layer),
     Layer.provideMerge(CodexUsageHistory.layer.pipe(Layer.provideMerge(Sqlite.layerMemory))),
     Layer.provideMerge(Layer.mock(BackgroundPolicy.BackgroundPolicy)({})),
@@ -189,9 +149,6 @@ const layerService = (input: {
     Layer.provideMerge(
       Layer.succeed(HostProcess.Environment, {
         HOME: input.home,
-        GROK_HOME: NodePath.join(input.home, "grok"),
-        PI_CODING_AGENT_DIR: NodePath.join(input.home, "pi"),
-        OPENCODE_DATA_DIR: NodePath.join(input.home, "opencode"),
         ANTIGRAVITY_DATA_DIR: NodePath.join(input.home, "antigravity"),
         XDG_CONFIG_HOME: NodePath.join(input.home, "config"),
         APPDATA: NodePath.join(input.home, "config"),
@@ -227,63 +184,6 @@ const replaceFile = (path: string, content: string) =>
 
 function totalOutputTokens(summary: { buckets: readonly { totals: { outputTokens: number } }[] }) {
   return summary.buckets.reduce((sum, bucket) => sum + bucket.totals.outputTokens, 0);
-}
-
-const CURSOR_NOW = Date.parse("2026-08-02T12:00:00Z");
-const HOUR_MS = 60 * 60 * 1000;
-
-function makeFakeCursor() {
-  const state = {
-    accountKey: "account-a",
-    events: [] as { readonly timestampMs: number; readonly outputTokens: number }[],
-    error: null as string | null,
-    gate: undefined as Deferred.Deferred<void> | undefined,
-    calls: [] as { readonly sinceMs: number; readonly untilMs: number }[],
-  };
-  const read = (_credential: unknown, sinceMs: number, untilMs: number) =>
-    Effect.gen(function* () {
-      state.calls.push({ sinceMs, untilMs });
-      if (state.gate !== undefined) yield* Deferred.await(state.gate);
-      const { accountKey, error } = state;
-      if (error !== null) return { accountKey, records: [], missing: false, error };
-      const occurrences = new Map<string, number>();
-      const records = state.events
-        .filter(({ timestampMs }) => timestampMs >= sinceMs && timestampMs <= untilMs)
-        .map(({ timestampMs, outputTokens }): UsageRecord => {
-          const key = `${timestampMs}:${outputTokens}`;
-          const occurrence = occurrences.get(key) ?? 0;
-          occurrences.set(key, occurrence + 1);
-          return {
-            provider: "cursor",
-            timestampMs,
-            model: "claude-fable-5",
-            sessionId: "conversation-1",
-            totals: {
-              uncachedInputTokens: 0,
-              cachedInputTokens: 0,
-              cacheCreationTokens: 0,
-              outputTokens,
-              reasoningTokens: 0,
-            },
-            reportedCostUsd: null,
-            speed: "standard",
-            dedupeKey: `cursor-account:${accountKey}:${key}:${occurrence}`,
-          };
-        });
-      return { accountKey, records, missing: false, error: null };
-    });
-  return { state, read };
-}
-
-const writeCursorLogin = (home: string) =>
-  Effect.promise(async () => {
-    const authPath = NodePath.join(home, "config", "cursor", "auth.json");
-    await NodeFSP.mkdir(NodePath.dirname(authPath), { recursive: true });
-    await NodeFSP.writeFile(authPath, "{}");
-  });
-
-function cursorSource(summary: { readonly sources: readonly UsageSource[] }) {
-  return summary.sources.find((source) => source.fingerprint.provider === "cursor");
 }
 
 const seedCodexHistory = (input: {
@@ -779,538 +679,6 @@ describe("UsageService", () => {
       }).pipe(Effect.scoped),
   );
 
-  it.live(
-    "reads Pi per-model usage and auxiliary costs once across forks and repeated entries",
-    () =>
-      Effect.gen(function* () {
-        const { home, settings } = yield* setup;
-        const dir = NodePath.join(home, "pi", "sessions", "project");
-        const usage = {
-          input: 10,
-          output: 5,
-          cacheRead: 20,
-          cacheWrite: 3,
-          reasoning: 2,
-          totalTokens: 38,
-          cost: { input: 0.1, output: 0.2, cacheRead: 0.3, cacheWrite: 0.4, total: 1 },
-        };
-        const parent = {
-          type: "message",
-          id: "a123abcd",
-          parentId: null,
-          timestamp: "2026-08-01T10:00:00Z",
-          message: {
-            role: "assistant",
-            provider: "anthropic",
-            model: "requested-model",
-            responseModel: "actual-model",
-            usage,
-          },
-        };
-        const auxiliary = [
-          {
-            type: "message",
-            id: "tool",
-            message: { role: "toolResult", toolName: "classify", usage },
-          },
-          {
-            type: "message",
-            id: "image",
-            message: {
-              role: "toolResult",
-              toolName: "image",
-              usage: { ...usage, input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-            },
-          },
-          { type: "compaction", id: "compact", usage },
-          { type: "branch_summary", id: "summary", usage },
-        ].map((entry) => ({ ...entry, timestamp: "2026-08-01T11:00:00Z" }));
-        yield* Effect.promise(async () => {
-          await NodeFSP.mkdir(dir, { recursive: true });
-          await NodeFSP.writeFile(
-            NodePath.join(dir, "parent.jsonl"),
-            [
-              { type: "session", id: "parent" },
-              parent,
-              ...auxiliary,
-              {
-                type: "usage",
-                id: "warm",
-                timestamp: "2026-08-01T12:00:00Z",
-                kind: "cache_warm",
-                provider: "openai",
-                model: "actual-model",
-                usage: { ...usage, cost: { ...usage.cost, total: 0 } },
-              },
-            ]
-              .map((line) => encodeUnknownJsonString(line))
-              .join("\n") + "\n",
-          );
-          await NodeFSP.writeFile(
-            NodePath.join(dir, "fork.jsonl"),
-            [
-              { type: "session", id: "fork", parentSession: NodePath.join(dir, "parent.jsonl") },
-              { ...parent, parentId: "relinked" },
-              parent,
-              ...auxiliary,
-              {
-                ...parent,
-                timestamp: "2026-08-01T13:00:00Z",
-                message: { ...parent.message, provider: "openai", responseModel: "another-model" },
-              },
-              { type: "get_session_stats", usage: { ...usage, cost: { total: 1000 } } },
-            ]
-              .map((line) => encodeUnknownJsonString(line))
-              .join("\n") + "\n",
-          );
-        });
-        yield* Effect.gen(function* () {
-          const service = yield* UsageService.make;
-          const first = yield* service.readSummary(WINDOW);
-          const pi = first.buckets.filter((bucket) => bucket.provider === "pi");
-          assert.strictEqual(
-            pi.reduce((total, bucket) => total + bucket.costUsd, 0),
-            44,
-          );
-          assert.strictEqual(
-            pi.reduce((total, bucket) => total + totalTokens(bucket.totals), 0),
-            228,
-          );
-          assert.deepStrictEqual(pi.map((bucket) => bucket.model).sort(), [
-            "Tools/summaries",
-            "anthropic/actual-model",
-            "openai/actual-model",
-            "openai/another-model",
-          ]);
-          const assistant = pi.find((bucket) => bucket.model === "anthropic/actual-model");
-          assert.deepStrictEqual(assistant?.totals, {
-            uncachedInputTokens: 10,
-            outputTokens: 5,
-            cachedInputTokens: 20,
-            cacheCreationTokens: 3,
-            reasoningTokens: 2,
-          });
-          assert.strictEqual(assistant?.costSource, "providerReported");
-          assert.approximately(assistant?.categoryCostUsd?.input ?? NaN, 10 / 38, 1e-6);
-          assert.approximately(assistant?.categoryCostUsd?.cacheRead ?? NaN, 2 / 38, 1e-6);
-          assert.approximately(assistant?.categoryCostUsd?.cacheWrite ?? NaN, 6 / 38, 1e-6);
-          assert.approximately(assistant?.categoryCostUsd?.output ?? NaN, 20 / 38, 1e-6);
-          assert.strictEqual(assistant?.cacheSavingsUsd, 18);
-          const warm = pi.find((bucket) => bucket.model === "openai/actual-model");
-          assert.strictEqual(warm?.costSource, "modelPriced");
-          assert.strictEqual(warm?.costUsd, 38);
-          assert.deepStrictEqual(warm?.categoryCostUsd, {
-            input: 10,
-            cacheRead: 2,
-            cacheWrite: 6,
-            output: 20,
-          });
-          assert.strictEqual(warm?.cacheSavingsUsd, 18);
-          assert.strictEqual(
-            first.sources.filter((source) => source.fingerprint.provider === "pi").length,
-            1,
-          );
-          yield* Effect.promise(() =>
-            NodeFSP.appendFile(
-              NodePath.join(dir, "fork.jsonl"),
-              encodeUnknownJsonString({
-                ...parent,
-                id: "new",
-                timestamp: "2026-08-01T14:00:00Z",
-                message: { ...parent.message, responseModel: "latest-model" },
-              }) + "\n",
-            ),
-          );
-          const grown = yield* service.readSummary(WINDOW);
-          assert.strictEqual(
-            grown.buckets
-              .filter((bucket) => bucket.provider === "pi")
-              .reduce((total, bucket) => total + bucket.costUsd, 0),
-            45,
-          );
-          yield* service.awaitPersisted;
-          const restarted = yield* UsageService.make;
-          assert.deepStrictEqual((yield* restarted.readSummary(WINDOW)).buckets, grown.buckets);
-        }).pipe(
-          Effect.scoped,
-          Effect.provide(
-            layerService({
-              prefix: "usage-pi-fork",
-              home,
-              ratesDocument: {
-                "actual-model": {
-                  input_cost_per_token: 1,
-                  output_cost_per_token: 4,
-                  cache_read_input_token_cost: 0.1,
-                  cache_creation_input_token_cost: 2,
-                },
-              },
-              settings: {
-                ...settings,
-                providerInstances: {
-                  ...settings.providerInstances,
-                  [ProviderInstanceId.make("pi-extra")]: {
-                    driver: ProviderDriverKind.make("pi"),
-                    enabled: false,
-                    environment: [
-                      {
-                        name: "PI_CODING_AGENT_DIR",
-                        value: NodePath.join(home, "pi"),
-                        sensitive: false,
-                      },
-                    ],
-                  },
-                },
-              },
-            }),
-          ),
-        );
-      }).pipe(Effect.scoped),
-  );
-
-  it.live(
-    "reads Muse inference history once, persists appended usage, and reprices unknown models",
-    () =>
-      Effect.gen(function* () {
-        const { home, settings } = yield* setup;
-        const museHome = NodePath.join(home, "configured-data", "muse");
-        const dir = NodePath.join(museHome, "sessions", "2026", "08", "01", "parent");
-        const child = NodePath.join(dir, "subagent", "child");
-        const entry = (
-          id: string,
-          sessionId = "parent",
-          timestamp = "2026-08-01T00:00:00Z",
-          model = "muse-unknown",
-        ) => ({
-          schema_version: 1,
-          record_type: "event",
-          payload_type: "runtime.session",
-          payload_schema_version: 1,
-          id,
-          recorded_at: Date.parse(timestamp) * 1000 + 999,
-          stream: { kind: "session", id: sessionId },
-          payload: {
-            source_run_record_id: id,
-            event: {
-              kind: "model_completed",
-              model,
-              usage: {
-                input_tokens: 100,
-                cached_tokens: 60,
-                cache_read_tokens: 60,
-                cache_write_tokens: 10,
-                output_tokens: 20,
-                reasoning_tokens: 8,
-              },
-            },
-          },
-        });
-        const parent = entry("inference-1");
-        const review = {
-          ...entry("review", "child"),
-          payload_schema_version: 3,
-          payload: {
-            event: {
-              ...parent.payload.event,
-              kind: "automated_review_completed",
-              model: { model_id: "priced-model" },
-              usage: {
-                input_tokens: 100,
-                cached_input_tokens: 60,
-                output_tokens: 20,
-                reasoning_tokens: 8,
-              },
-            },
-          },
-        };
-        yield* Effect.promise(async () => {
-          await NodeFSP.mkdir(child, { recursive: true });
-          await NodeFSP.writeFile(
-            NodePath.join(dir, "session.jsonl"),
-            [
-              parent,
-              parent,
-              {
-                ...parent,
-                payload: { event: { ...parent.payload.event, kind: "workflow_completed" } },
-              },
-              { ...parent, payload_type: "goal_usage_attribution" },
-              entry("before", "parent", "2026-07-31T23:59:59.999Z"),
-              entry("after", "parent", "2026-08-02T00:00:00Z"),
-            ]
-              .map((line) => encodeUnknownJsonString(line))
-              .join("\n") + "\n{broken}\n",
-          );
-          await NodeFSP.writeFile(
-            NodePath.join(child, "session.jsonl"),
-            [
-              { ...parent, id: "copied-envelope", stream: { kind: "session", id: "child" } },
-              entry("child-inference", "child"),
-              review,
-            ]
-              .map((line) => encodeUnknownJsonString(line))
-              .join("\n") + "\n",
-          );
-          await NodeFSP.writeFile(
-            NodePath.join(child, "telemetry.jsonl"),
-            encodeUnknownJsonString(entry("not-a-session")) + "\n",
-          );
-        });
-        using _create = vi.spyOn(MuseSdk, "createMuseSdkHostEffect").mockImplementation((options) =>
-          Effect.succeed({
-            initializeResult: {
-              grantedCapabilities: [],
-              museHome: NodePath.join(options.environment?.XDG_DATA_HOME ?? home, "muse"),
-            },
-            close: async () => {},
-          } as unknown as MuseSdk.MuseSdkHost),
-        );
-        yield* Effect.gen(function* () {
-          const service = yield* UsageService.make;
-          const window = {
-            timeZone: "UTC",
-            sinceDay: UsageDay.make("2026-08-01"),
-            untilDay: UsageDay.make("2026-08-01"),
-          };
-          const muse = (summary: UsageSummary) =>
-            summary.buckets.filter((bucket) => bucket.provider === "muse");
-          const first = yield* service.readSummary(window);
-          const buckets = muse(first);
-          assert.strictEqual(
-            buckets.reduce((sum, b) => sum + b.records, 0),
-            3,
-          );
-          assert.strictEqual(
-            buckets.reduce((sum, b) => sum + totalTokens(b.totals), 0),
-            360,
-          );
-          const unknown = buckets.find((b) => b.model === "muse-unknown");
-          assert.strictEqual(unknown?.costSource, "unpriced");
-          assert.strictEqual(unknown?.unpricedRecords, 2);
-          assert.deepStrictEqual(unknown?.totals, {
-            uncachedInputTokens: 60,
-            cachedInputTokens: 120,
-            cacheCreationTokens: 20,
-            outputTokens: 40,
-            reasoningTokens: 16,
-          });
-          const priced = buckets.find((b) => b.model === "priced-model");
-          assert.strictEqual(priced?.costSource, "modelPriced");
-          assert.closeTo(priced?.costUsd ?? NaN, 0.000172, 1e-12);
-          assert.closeTo(priced?.cacheSavingsUsd ?? NaN, 0.000108, 1e-12);
-          const sources = first.sources.filter((source) => source.fingerprint.provider === "muse");
-          assert.strictEqual(sources.length, 1);
-          assert.strictEqual(sources[0]?.scannedFiles, 2);
-          assert.strictEqual(sources[0]?.distinctSessions, 2);
-          const local = muse(
-            yield* service.readSummary({ ...window, timeZone: "America/Los_Angeles" }),
-          );
-          assert.strictEqual(
-            local.reduce((sum, b) => sum + b.records, 0),
-            1,
-          );
-          assert.strictEqual(local[0]?.day, "2026-08-01");
-          const hourly = muse(
-            yield* service.readSummary({
-              ...window,
-              resolution: "hour",
-              sinceTime: "2026-08-01T00:00:00.000Z",
-              untilTime: "2026-08-02T00:00:00.000Z",
-            }),
-          );
-          assert.strictEqual(
-            hourly.reduce((sum, b) => sum + b.records, 0),
-            3,
-          );
-          const appended = encodeUnknownJsonString(entry("appended", "child"));
-          const file = NodePath.join(child, "session.jsonl");
-          yield* Effect.promise(() => NodeFSP.appendFile(file, appended.slice(0, -10)));
-          assert.deepStrictEqual(muse(yield* service.readSummary(window)), buckets);
-          yield* service.awaitPersisted;
-          const restarted = yield* UsageService.make;
-          yield* Effect.promise(() => NodeFSP.appendFile(file, appended.slice(-10) + "\n"));
-          const grown = muse(yield* restarted.readSummary(window));
-          assert.strictEqual(
-            grown.reduce((sum, b) => sum + b.records, 0),
-            4,
-          );
-          assert.strictEqual(
-            grown.reduce((sum, b) => sum + totalTokens(b.totals), 0),
-            480,
-          );
-          const settingsService = yield* ServerSettings.ServerSettingsService;
-          yield* settingsService.updateSettings({
-            usagePriceOverrides: {
-              "muse-unknown": {
-                inputCostPerMillionTokens: 2,
-                outputCostPerMillionTokens: 4,
-                cacheReadCostPerMillionTokens: 0.2,
-                cacheWriteCostPerMillionTokens: 1,
-              },
-            },
-          });
-          const repriced = muse(yield* restarted.readSummary(window)).find(
-            (b) => b.model === "muse-unknown",
-          );
-          assert.strictEqual(repriced?.unpricedRecords, 0);
-          assert.closeTo(repriced?.costUsd ?? NaN, 0.000486, 1e-12);
-        }).pipe(
-          Effect.scoped,
-          Effect.provide(
-            layerService({
-              prefix: "usage-muse",
-              home,
-              environment: { XDG_DATA_HOME: NodePath.dirname(museHome) },
-              settings: {
-                ...settings,
-                providerInstances: {
-                  ...settings.providerInstances,
-                  [ProviderInstanceId.make("muse")]: {
-                    driver: ProviderDriverKind.make("muse"),
-                    enabled: false,
-                  },
-                  [ProviderInstanceId.make("muse-alias")]: {
-                    driver: ProviderDriverKind.make("muse"),
-                    enabled: false,
-                  },
-                },
-              },
-              ratesDocument: {
-                "priced-model": {
-                  input_cost_per_token: 0.000002,
-                  output_cost_per_token: 0.000004,
-                  cache_read_input_token_cost: 0.0000002,
-                  cache_creation_input_token_cost: 0.0000002,
-                },
-              },
-            }),
-          ),
-        );
-      }).pipe(Effect.scoped),
-  );
-
-  it.live("reports missing Pi history and skips malformed records without losing valid usage", () =>
-    Effect.gen(function* () {
-      const { home, settings } = yield* setup;
-      yield* Effect.gen(function* () {
-        const service = yield* UsageService.make;
-        const missing = yield* service.readSummary(WINDOW);
-        assert.strictEqual(
-          missing.sources.find((source) => source.fingerprint.provider === "pi")?.status,
-          "missing",
-        );
-        const dir = NodePath.join(home, "pi", "sessions");
-        yield* Effect.promise(async () => {
-          await NodeFSP.mkdir(dir, { recursive: true });
-          await NodeFSP.writeFile(
-            NodePath.join(dir, "session.jsonl"),
-            [
-              "{broken",
-              "null",
-              encodeUnknownJsonString({ type: "session", id: "valid" }),
-              encodeUnknownJsonString({
-                type: "message",
-                id: "bad",
-                timestamp: "invalid",
-                message: {
-                  role: "assistant",
-                  provider: "openai",
-                  model: "model",
-                  usage: { input: 100 },
-                },
-              }),
-              encodeUnknownJsonString({
-                type: "message",
-                id: "valid",
-                timestamp: "2026-08-01T10:00:00Z",
-                message: {
-                  role: "assistant",
-                  provider: "openai",
-                  model: "model",
-                  usage: {
-                    input: -1,
-                    cacheRead: "100",
-                    output: 7,
-                    reasoning: 50,
-                    cost: { total: -1 },
-                  },
-                },
-              }),
-            ].join("\n") + "\n",
-          );
-        });
-        const summary = yield* service.readSummary(WINDOW);
-        const pi = summary.buckets.filter((bucket) => bucket.provider === "pi");
-        assert.strictEqual(pi.length, 1);
-        assert.strictEqual(pi[0] && totalTokens(pi[0].totals), 7);
-        assert.strictEqual(pi[0]?.totals.reasoningTokens, 7);
-        assert.strictEqual(pi[0]?.costSource, "unpriced");
-      }).pipe(
-        Effect.scoped,
-        Effect.provide(layerService({ prefix: "usage-pi-malformed", home, settings })),
-      );
-    }).pipe(Effect.scoped),
-  );
-
-  it.live("discovers Pi history in its default home and directory overrides", () =>
-    Effect.gen(function* () {
-      const { home, settings } = yield* setup;
-      for (const [agentDir, sessionDir, relativeDir] of [
-        [undefined, undefined, ".pi/agent/sessions"],
-        ["~/custom-pi", undefined, "custom-pi/sessions"],
-        ["~/ignored-pi", "~/custom-sessions", "custom-sessions"],
-        ["~/ignored-pi", NodePath.join(home, "absolute-sessions"), "absolute-sessions"],
-      ] as const) {
-        const dir = NodePath.join(home, relativeDir);
-        yield* Effect.promise(async () => {
-          await NodeFSP.mkdir(dir, { recursive: true });
-          await NodeFSP.writeFile(
-            NodePath.join(dir, "session.jsonl"),
-            [
-              { type: "session", id: relativeDir },
-              {
-                type: "usage",
-                id: "warm",
-                timestamp: "2026-08-01T10:00:00Z",
-                provider: "openai",
-                model: "model",
-                usage: { input: 7 },
-              },
-            ]
-              .map((line) => encodeUnknownJsonString(line))
-              .join("\n") + "\n",
-          );
-        });
-        yield* Effect.gen(function* () {
-          const service = yield* UsageService.make;
-          const summary = yield* service.readSummary(WINDOW);
-          const pi = summary.buckets.filter((bucket) => bucket.provider === "pi");
-          assert.strictEqual(pi.length, 1);
-          assert.strictEqual(pi[0]?.totals.uncachedInputTokens, 7);
-          assert.strictEqual(
-            summary.sources.find((source) => source.fingerprint.provider === "pi")?.fingerprint
-              .resolvedHomePath,
-            dir,
-          );
-        }).pipe(
-          Effect.scoped,
-          Effect.provide(
-            layerService({
-              prefix: "usage-pi-" + relativeDir.replaceAll("/", "-"),
-              home,
-              settings,
-              environment: {
-                PI_CODING_AGENT_DIR: agentDir,
-                PI_CODING_AGENT_SESSION_DIR: sessionDir,
-              },
-            }),
-          ),
-          Effect.provideService(HostProcess.HomeDirectory, home),
-        );
-      }
-    }).pipe(Effect.scoped),
-  );
-
   it.live("reads shared managed default and disabled extra account history once", () =>
     Effect.gen(function* () {
       const { home, settings } = yield* setup;
@@ -1391,351 +759,6 @@ describe("UsageService", () => {
     }).pipe(Effect.scoped),
   );
 
-  it.live("keeps Cursor credential errors visible when a saved login cannot be read", () =>
-    Effect.gen(function* () {
-      const { settings, home } = yield* setup;
-      const authPath = NodePath.join(home, "config", "cursor", "auth.json");
-      yield* Effect.promise(async () => {
-        await NodeFSP.mkdir(NodePath.dirname(authPath), { recursive: true });
-        await NodeFSP.writeFile(authPath, "invalid json");
-      });
-      const service = yield* UsageService.make.pipe(
-        Effect.provide(
-          layerService({ prefix: "usage-service-cursor-invalid-login", home, settings }),
-        ),
-      );
-      const summary = yield* service.readSummary({ ...WINDOW, awaitRefresh: true });
-      const cursor = summary.sources.find((source) => source.fingerprint.provider === "cursor");
-      assert.strictEqual(cursor?.message, "Cursor credentials could not be read.");
-    }).pipe(Effect.scoped),
-  );
-
-  it.live("restores the Cursor account cache after a restart", () =>
-    Effect.gen(function* () {
-      const { settings, home } = yield* setup;
-      yield* writeCursorLogin(home);
-      yield* TestClock.setTime(CURSOR_NOW);
-      const before = makeFakeCursor();
-      before.state.events = [
-        { timestampMs: CURSOR_NOW - 30 * HOUR_MS, outputTokens: 5 },
-        { timestampMs: CURSOR_NOW - 3 * HOUR_MS, outputTokens: 7 },
-      ];
-      yield* Effect.gen(function* () {
-        const first = yield* makeWithCursor(before.read);
-        const original = yield* first.readSummary({ ...WINDOW, awaitRefresh: true });
-        yield* first.awaitPersisted;
-
-        const after = makeFakeCursor();
-        after.state.events = before.state.events;
-        const restarted = yield* makeWithCursor(after.read);
-        const restored = yield* restarted.readSummary(WINDOW);
-        assert.isUndefined(cursorSource(restored)?.refreshing);
-        assert.deepStrictEqual(restored.buckets, original.buckets);
-        assert.deepStrictEqual(cursorSource(restored), cursorSource(original));
-        assert.strictEqual(after.state.calls.length, 0);
-
-        yield* TestClock.adjust(Duration.minutes(2));
-        const refreshed = yield* restarted.readSummary({ ...WINDOW, awaitRefresh: true });
-        assert.deepStrictEqual(refreshed.buckets, original.buckets);
-        assert.deepStrictEqual(after.state.calls, [
-          { sinceMs: CURSOR_NOW - HOUR_MS, untilMs: CURSOR_NOW + 2 * 60 * 1000 },
-        ]);
-      }).pipe(
-        Effect.provide(layerService({ prefix: "usage-service-cursor-restart", home, settings })),
-      );
-    }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
-  );
-
-  it.live("does not read the macOS Cursor Keychain before account usage is enabled", () =>
-    Effect.gen(function* () {
-      const { settings, home } = yield* setup;
-      const service = yield* UsageService.make.pipe(
-        Effect.provide(
-          layerService({
-            prefix: "usage-service-cursor-keychain-disabled",
-            home,
-            settings,
-            platform: "darwin",
-            environment: {},
-          }),
-        ),
-      );
-      const summary = yield* service.readSummary(WINDOW);
-      const cursor = summary.sources.find((source) => source.fingerprint.provider === "cursor");
-      assert.strictEqual(cursor?.status, "missing");
-      assert.strictEqual(cursor?.action, "enableCursorKeychain");
-    }).pipe(Effect.scoped),
-  );
-
-  it.effect("ignores a stale macOS Keychain login when Cursor is not installed", () =>
-    Effect.gen(function* () {
-      const { settings, home } = yield* setup;
-      const cursor = makeFakeCursor();
-      cursor.state.error = "Sign in to Cursor again to read account usage.";
-      const readCursorSource = Effect.gen(function* () {
-        const service = yield* makeWithCursor(cursor.read);
-        const summary = yield* service.readSummary({ ...WINDOW, awaitRefresh: true });
-        return cursorSource(summary);
-      }).pipe(
-        Effect.provide(
-          layerService({
-            prefix: "usage-service-cursor-keychain-uninstalled",
-            home,
-            settings: { ...settings, cursorKeychainUsageEnabled: true },
-            platform: "darwin",
-            environment: {},
-          }),
-        ),
-      );
-
-      assert.isUndefined(yield* readCursorSource);
-      assert.lengthOf(cursor.state.calls, 0);
-
-      yield* Effect.promise(() => NodeFSP.mkdir(NodePath.join(home, ".cursor")));
-      const installed = yield* readCursorSource;
-      assert.strictEqual(installed?.message, "Sign in to Cursor again to read account usage.");
-      assert.lengthOf(cursor.state.calls, 1);
-    }).pipe(Effect.scoped),
-  );
-
-  it.live("ignores stale Cursor file logins when the active credential store differs", () =>
-    Effect.gen(function* () {
-      const { settings, home } = yield* setup;
-      for (const [index, testCase] of [
-        {
-          platform: "darwin" as const,
-          environment: { AGENT_CLI_CREDENTIAL_STORE: "memory" },
-          authPath: [".cursor", "auth.json"],
-        },
-        {
-          platform: "linux" as const,
-          environment: { AGENT_CLI_CREDENTIAL_STORE: "memory" },
-          authPath: ["config", "cursor", "auth.json"],
-        },
-        {
-          platform: "linux" as const,
-          environment: { CURSOR_API_KEY: "different-account" },
-          authPath: ["config", "cursor", "auth.json"],
-        },
-      ].entries()) {
-        const authPath = NodePath.join(home, ...testCase.authPath);
-        yield* Effect.promise(async () => {
-          await NodeFSP.mkdir(NodePath.dirname(authPath), { recursive: true });
-          await NodeFSP.writeFile(
-            authPath,
-            encodeUnknownJsonString({ accessToken: "stale-token" }),
-          );
-        });
-        const service = yield* UsageService.make.pipe(
-          Effect.provide(
-            layerService({
-              prefix: `usage-service-cursor-store-${index}`,
-              home,
-              settings,
-              platform: testCase.platform,
-              environment: testCase.environment,
-            }),
-          ),
-        );
-        const summary = yield* service.readSummary(WINDOW);
-        const cursor = summary.sources.find((source) => source.fingerprint.provider === "cursor");
-        assert.strictEqual(cursor?.status, "missing");
-        assert.include(cursor?.message ?? "", "Cursor CLI login");
-        assert.isFalse(summary.buckets.some((bucket) => bucket.provider === "cursor"));
-      }
-    }).pipe(Effect.scoped),
-  );
-
-  it.live(
-    "includes OpenCode history but does not substitute desktop usage for an unavailable Cursor account",
-    () =>
-      Effect.gen(function* () {
-        const { settings, home } = yield* setup;
-        const root = NodePath.join(home, "opencode");
-        const message = yield* encodeUnknownJson({
-          id: "msg_1",
-          sessionID: "session-1",
-          role: "assistant",
-          modelID: "example-model",
-          time: { created: Date.parse("2026-08-01T10:00:00Z") },
-          tokens: { input: 10, output: 5, reasoning: 2, cache: { read: 20, write: 3 } },
-        });
-        const bubble = yield* encodeUnknownJson({
-          type: 2,
-          createdAt: "2026-08-01T10:00:00Z",
-          modelInfo: { modelName: "example-model" },
-          tokenCount: { inputTokens: 100, outputTokens: 20 },
-        });
-        yield* Effect.promise(async () => {
-          const directory = NodePath.join(root, "storage", "message", "session-1");
-          await NodeFSP.mkdir(directory, { recursive: true });
-          await NodeFSP.writeFile(NodePath.join(directory, "msg_1.json"), message);
-          const desktop = NodePath.join(home, "config", "Cursor", "User", "globalStorage");
-          await NodeFSP.mkdir(desktop, { recursive: true });
-          const db = new NodeSqlite.DatabaseSync(NodePath.join(desktop, "state.vscdb"));
-          try {
-            db.exec("CREATE TABLE cursorDiskKV (key TEXT, value TEXT)");
-            db.prepare("INSERT INTO cursorDiskKV VALUES (?, ?)").run(
-              "bubbleId:session:assistant",
-              bubble,
-            );
-          } finally {
-            db.close();
-          }
-        });
-        const service = yield* UsageService.make.pipe(
-          Effect.provide(layerService({ prefix: "usage-service-opencode", home, settings })),
-        );
-        const summary = yield* service.readSummary(WINDOW);
-        assert.strictEqual(summary.buckets[0]?.provider, "opencode");
-        assert.isFalse(summary.buckets.some((bucket) => bucket.provider === "cursor"));
-        assert.isFalse(summary.sources.some((source) => source.fingerprint.provider === "cursor"));
-        assert.strictEqual(
-          summary.buckets[0]?.sourcePath,
-          yield* Effect.promise(() => NodeFSP.realpath(root)),
-        );
-        assert.strictEqual(summary.buckets[0]?.totals.outputTokens, 7);
-        assert.strictEqual(
-          summary.sources.find((source) => source.fingerprint.provider === "opencode")
-            ?.distinctSessions,
-          1,
-        );
-      }).pipe(Effect.scoped),
-  );
-
-  it.live("includes host and merged OpenCode instance histories once across list aliases", () =>
-    Effect.gen(function* () {
-      const { settings, home } = yield* setup;
-      const hostRoot = NodePath.join(home, "opencode");
-      const instanceRoot = NodePath.join(home, "opencode-work");
-      const alias = NodePath.join(home, "opencode-alias");
-      const dataHome = NodePath.join(home, "data");
-      const xdgRoot = NodePath.join(dataHome, "opencode");
-      const histories = [
-        { root: hostRoot, id: "host", output: 5 },
-        { root: instanceRoot, id: "work", output: 7 },
-        { root: xdgRoot, id: "xdg", output: 11 },
-      ];
-      yield* Effect.promise(async () => {
-        for (const { root, id, output } of histories) {
-          const directory = NodePath.join(root, "storage", "message", "session-1");
-          await NodeFSP.mkdir(directory, { recursive: true });
-          await NodeFSP.writeFile(
-            NodePath.join(directory, `${id}.json`),
-            encodeUnknownJsonString({
-              role: "assistant",
-              modelID: "example-model",
-              time: { created: Date.parse("2026-08-01T10:00:00Z") },
-              tokens: { input: 10, output },
-            }),
-          );
-        }
-        await NodeFSP.symlink(instanceRoot, alias, "junction");
-      });
-      const service = yield* UsageService.make.pipe(
-        Effect.provide(
-          layerService({
-            prefix: "usage-service-opencode-instances",
-            home,
-            environment: { XDG_DATA_HOME: dataHome },
-            settings: {
-              ...settings,
-              providerInstances: {
-                ...settings.providerInstances,
-                [ProviderInstanceId.make("opencode-work")]: {
-                  driver: ProviderDriverKind.make("opencode"),
-                  environment: [
-                    {
-                      name: "OPENCODE_DATA_DIR",
-                      value: ` ${instanceRoot}, ${alias} `,
-                      sensitive: false,
-                    },
-                  ],
-                },
-                [ProviderInstanceId.make("opencode-xdg")]: {
-                  driver: ProviderDriverKind.make("opencode"),
-                  environment: [{ name: "OPENCODE_DATA_DIR", value: "", sensitive: false }],
-                },
-              },
-            },
-          }),
-        ),
-      );
-      const summary = yield* service.readSummary(WINDOW);
-      const sources = summary.sources.filter(
-        (source) => source.fingerprint.provider === "opencode",
-      );
-      const expectedRoots = yield* Effect.promise(() =>
-        Promise.all(histories.map(({ root }) => NodeFSP.realpath(root))),
-      );
-      assert.deepStrictEqual(
-        sources.map((source) => source.fingerprint.resolvedHomePath).sort(),
-        expectedRoots.sort(),
-      );
-      assert.deepStrictEqual(
-        summary.buckets
-          .filter((bucket) => bucket.provider === "opencode")
-          .map((bucket) => bucket.totals.outputTokens)
-          .sort((a, b) => a - b),
-        [5, 7, 11],
-      );
-    }).pipe(Effect.scoped),
-  );
-
-  it.live("counts aliased OpenCode and Antigravity directories once", () =>
-    Effect.gen(function* () {
-      const { settings, home } = yield* setup;
-      const opencode = NodePath.join(home, "opencode-store");
-      const opencodeAlias = NodePath.join(home, "opencode-alias");
-      const conversations = NodePath.join(home, "antigravity-conversations");
-      const antigravityA = NodePath.join(home, "antigravity-a");
-      const antigravityB = NodePath.join(home, "antigravity-b");
-      yield* Effect.promise(async () => {
-        await NodeFSP.mkdir(opencode);
-        await NodeFSP.symlink(opencode, opencodeAlias, "junction");
-        await NodeFSP.mkdir(conversations);
-        await NodeFSP.mkdir(antigravityA);
-        await NodeFSP.mkdir(antigravityB);
-        await NodeFSP.symlink(
-          conversations,
-          NodePath.join(antigravityA, "conversations"),
-          "junction",
-        );
-        await NodeFSP.symlink(
-          conversations,
-          NodePath.join(antigravityB, "conversations"),
-          "junction",
-        );
-      });
-      const service = yield* UsageService.make.pipe(
-        Effect.provide(
-          layerService({
-            prefix: "usage-service-aliased-roots-test",
-            home,
-            settings,
-            environment: {
-              OPENCODE_DATA_DIR: `${opencode},${opencodeAlias}`,
-              ANTIGRAVITY_DATA_DIR: `${antigravityA},${antigravityB}`,
-            },
-          }),
-        ),
-      );
-      const summary = yield* service.readSummary(WINDOW);
-      const sourcesFor = (provider: "opencode" | "antigravity") =>
-        summary.sources.filter((source) => source.fingerprint.provider === provider);
-      assert.strictEqual(sourcesFor("opencode").length, 1);
-      assert.strictEqual(sourcesFor("antigravity").length, 1);
-      assert.strictEqual(
-        sourcesFor("opencode")[0]?.fingerprint.resolvedHomePath,
-        yield* Effect.promise(() => NodeFSP.realpath(opencode)),
-      );
-      assert.strictEqual(
-        sourcesFor("antigravity")[0]?.fingerprint.resolvedHomePath,
-        yield* Effect.promise(() => NodeFSP.realpath(conversations)),
-      );
-    }).pipe(Effect.scoped),
-  );
-
   it.live("reads Antigravity history from each instance's data directory", () =>
     Effect.gen(function* () {
       const { settings, home } = yield* setup;
@@ -1804,124 +827,6 @@ describe("UsageService", () => {
           outputTokens,
         );
       }
-    }).pipe(Effect.scoped),
-  );
-
-  it.live("reads configured and disabled accounts once across shared and aliased homes", () =>
-    Effect.gen(function* () {
-      const { transcript, settings, home } = yield* setup;
-      const codexHome = NodePath.join(home, "codex-account");
-      const alias = NodePath.join(home, "codex-alias");
-      const claudeHome = NodePath.join(home, "claude-account");
-      const grokHome = NodePath.join(home, "grok-account");
-      yield* Effect.promise(async () => {
-        await NodeFSP.writeFile(transcript, claudeLine(1, 5));
-        await NodeFSP.mkdir(NodePath.join(claudeHome, "projects"), { recursive: true });
-        await NodeFSP.writeFile(
-          NodePath.join(claudeHome, "projects", "session.jsonl"),
-          claudeLine(2, 7),
-        );
-        await NodeFSP.mkdir(NodePath.join(codexHome, "sessions"), { recursive: true });
-        await NodeFSP.symlink(codexHome, alias, "junction");
-        await NodeFSP.writeFile(
-          NodePath.join(codexHome, "sessions", "rollout.jsonl"),
-          [
-            { type: "session_meta", payload: { id: "codex-account-session" } },
-            { type: "turn_context", payload: { model: "gpt-5.6-sol" } },
-            ...[11, 12, 11].map((outputTokens) => ({
-              type: "event_msg",
-              timestamp: "2026-08-01T10:00:00Z",
-              payload: {
-                type: "token_count",
-                info: { last_token_usage: { input_tokens: 10, output_tokens: outputTokens } },
-              },
-            })),
-          ]
-            .map((line) => encodeUnknownJsonString(line))
-            .join("\n") + "\n",
-        );
-        await NodeFSP.mkdir(NodePath.join(grokHome, "sessions", "session"), { recursive: true });
-        await NodeFSP.writeFile(
-          NodePath.join(grokHome, "sessions", "session", "updates.jsonl"),
-          encodeUnknownJsonString({
-            timestamp: Date.parse("2026-08-01T10:00:00Z") / 1000,
-            method: "_x.ai/session/update",
-            params: {
-              sessionId: "grok-account-session",
-              update: {
-                sessionUpdate: "turn_completed",
-                prompt_id: "prompt-1",
-                usage: { inputTokens: 10, outputTokens: 13 },
-              },
-            },
-          }) + "\n",
-        );
-      });
-      const service = yield* UsageService.make.pipe(
-        Effect.provide(
-          layerService({
-            prefix: "usage-service-accounts-test",
-            home,
-            settings: {
-              ...settings,
-              providerInstances: {
-                ...settings.providerInstances,
-                [ProviderInstanceId.make("claude-work")]: {
-                  driver: ProviderDriverKind.make("claudeAgent"),
-                  enabled: false,
-                  environment: [{ name: "CLAUDE_CONFIG_DIR", value: claudeHome, sensitive: false }],
-                },
-                [ProviderInstanceId.make("codex-work")]: {
-                  driver: ProviderDriverKind.make("codex"),
-                  environment: [{ name: "CODEX_HOME", value: codexHome, sensitive: false }],
-                },
-                [ProviderInstanceId.make("codex-alias")]: {
-                  driver: ProviderDriverKind.make("codex"),
-                  config: { homePath: alias },
-                },
-                [ProviderInstanceId.make("codex-shadow")]: {
-                  driver: ProviderDriverKind.make("codex"),
-                  config: { homePath: codexHome, shadowHomePath: NodePath.join(home, "shadow") },
-                  environment: [
-                    { name: "CODEX_HOME", value: NodePath.join(home, "ignored"), sensitive: false },
-                  ],
-                },
-                [ProviderInstanceId.make("grok-work")]: {
-                  driver: ProviderDriverKind.make("grok"),
-                  config: { customModels: "not-a-list" },
-                  environment: [{ name: "GROK_HOME", value: grokHome, sensitive: false }],
-                },
-              },
-            },
-          }),
-        ),
-      );
-      const summary = yield* service.readSummary(WINDOW);
-      assert.strictEqual(totalOutputTokens(summary), 59);
-      yield* Effect.promise(() =>
-        NodeFSP.rename(
-          NodePath.join(codexHome, "sessions", "rollout.jsonl"),
-          NodePath.join(codexHome, "sessions", "moved.jsonl"),
-        ),
-      );
-      const moved = yield* service.readSummary(WINDOW);
-      assert.deepStrictEqual(moved.buckets, summary.buckets);
-      yield* Effect.promise(() =>
-        NodeFSP.rm(NodePath.join(codexHome, "sessions"), { recursive: true }),
-      );
-      const removed = yield* service.readSummary(WINDOW);
-      assert.deepStrictEqual(removed.buckets, summary.buckets);
-
-      const sources = summary.sources.filter((source) => source.status === "ok");
-      assert.strictEqual(sources.length, 4);
-      assert.strictEqual(
-        sources.reduce((sum, source) => sum + source.scannedFiles, 0),
-        4,
-      );
-      assert.strictEqual(
-        sources.filter((source) => source.fingerprint.provider === "codex").length,
-        1,
-      );
     }).pipe(Effect.scoped),
   );
 
@@ -2004,52 +909,6 @@ describe("UsageService", () => {
               },
             }),
           ),
-        );
-      }).pipe(Effect.scoped),
-  );
-
-  it.live(
-    "uses inherited home variables when explicit default accounts have no home settings",
-    () =>
-      Effect.gen(function* () {
-        const { transcript, settings, home } = yield* setup;
-        yield* Effect.promise(() => NodeFSP.writeFile(transcript, claudeLine(1, 5)));
-        const service = yield* UsageService.make.pipe(
-          Effect.provide(
-            layerService({
-              prefix: "usage-service-inherited-homes-test",
-              home,
-              environment: {
-                CODEX_HOME: NodePath.join(home, "inherited-codex"),
-                CLAUDE_CONFIG_DIR: NodePath.join(home, "claude"),
-              },
-              settings: {
-                ...settings,
-                providerInstances: {
-                  [ProviderInstanceId.make("codex")]: {
-                    driver: ProviderDriverKind.make("codex"),
-                    config: {},
-                  },
-                  [ProviderInstanceId.make("claudeAgent")]: {
-                    driver: ProviderDriverKind.make("claudeAgent"),
-                    config: {},
-                  },
-                },
-              },
-            }),
-          ),
-        );
-        const summary = yield* service.readSummary(WINDOW);
-        assert.strictEqual(totalOutputTokens(summary), 5);
-        assert.strictEqual(
-          summary.sources.find((source) => source.fingerprint.provider === "codex")?.fingerprint
-            .resolvedHomePath,
-          NodePath.join(home, "inherited-codex", "sessions"),
-        );
-        assert.strictEqual(
-          summary.sources.find((source) => source.fingerprint.provider === "grok")?.fingerprint
-            .resolvedHomePath,
-          NodePath.join(home, "grok", "sessions"),
         );
       }).pipe(Effect.scoped),
   );
@@ -2975,6 +1834,157 @@ describe("UsageService", () => {
       assert.isUndefined(
         orphanedAt,
         `interruption left the next matching request pending at scheduler check ${orphanedAt}`,
+      );
+    }).pipe(Effect.scoped),
+  );
+
+  it.live(
+    "uses inherited home variables when explicit default accounts have no home settings",
+    () =>
+      Effect.gen(function* () {
+        const { transcript, settings, home } = yield* setup;
+        yield* Effect.promise(() => NodeFSP.writeFile(transcript, claudeLine(1, 5)));
+        const service = yield* UsageService.make.pipe(
+          Effect.provide(
+            layerService({
+              prefix: "usage-service-inherited-homes-test",
+              home,
+              environment: {
+                CODEX_HOME: NodePath.join(home, "inherited-codex"),
+                CLAUDE_CONFIG_DIR: NodePath.join(home, "claude"),
+              },
+              settings: {
+                ...settings,
+                providerInstances: {
+                  [ProviderInstanceId.make("codex")]: {
+                    driver: ProviderDriverKind.make("codex"),
+                    config: {},
+                  },
+                  [ProviderInstanceId.make("claudeAgent")]: {
+                    driver: ProviderDriverKind.make("claudeAgent"),
+                    config: {},
+                  },
+                },
+              },
+            }),
+          ),
+        );
+        const summary = yield* service.readSummary(WINDOW);
+        assert.strictEqual(totalOutputTokens(summary), 5);
+        assert.strictEqual(
+          summary.sources.find((source) => source.fingerprint.provider === "codex")?.fingerprint
+            .resolvedHomePath,
+          NodePath.join(home, "inherited-codex", "sessions"),
+        );
+      }).pipe(Effect.scoped),
+  );
+
+  it.live("reads configured and disabled accounts once across shared and aliased homes", () =>
+    Effect.gen(function* () {
+      const { transcript, settings, home } = yield* setup;
+      const codexHome = NodePath.join(home, "codex-account");
+      const alias = NodePath.join(home, "codex-alias");
+      const claudeHome = NodePath.join(home, "claude-account");
+      const brokenClaudeHome = NodePath.join(home, "claude-broken");
+      yield* Effect.promise(async () => {
+        await NodeFSP.writeFile(transcript, claudeLine(1, 5));
+        await NodeFSP.mkdir(NodePath.join(claudeHome, "projects"), { recursive: true });
+        await NodeFSP.writeFile(
+          NodePath.join(claudeHome, "projects", "session.jsonl"),
+          claudeLine(2, 7),
+        );
+        await NodeFSP.mkdir(NodePath.join(brokenClaudeHome, "projects"), { recursive: true });
+        await NodeFSP.writeFile(
+          NodePath.join(brokenClaudeHome, "projects", "session.jsonl"),
+          claudeLine(3, 1000),
+        );
+        await NodeFSP.mkdir(NodePath.join(codexHome, "sessions"), { recursive: true });
+        await NodeFSP.symlink(codexHome, alias, "junction");
+        await NodeFSP.writeFile(
+          NodePath.join(codexHome, "sessions", "rollout.jsonl"),
+          [
+            { type: "session_meta", payload: { id: "codex-account-session" } },
+            { type: "turn_context", payload: { model: "gpt-5.6-sol" } },
+            ...[11, 12, 11].map((outputTokens) => ({
+              type: "event_msg",
+              timestamp: "2026-08-01T10:00:00Z",
+              payload: {
+                type: "token_count",
+                info: { last_token_usage: { input_tokens: 10, output_tokens: outputTokens } },
+              },
+            })),
+          ]
+            .map((line) => encodeUnknownJsonString(line))
+            .join("\n") + "\n",
+        );
+      });
+      const service = yield* UsageService.make.pipe(
+        Effect.provide(
+          layerService({
+            prefix: "usage-service-accounts-test",
+            home,
+            settings: {
+              ...settings,
+              providerInstances: {
+                ...settings.providerInstances,
+                [ProviderInstanceId.make("claude-work")]: {
+                  driver: ProviderDriverKind.make("claudeAgent"),
+                  enabled: false,
+                  environment: [{ name: "CLAUDE_CONFIG_DIR", value: claudeHome, sensitive: false }],
+                },
+                // An undecodable config skips only this instance; the scan still reports the others.
+                [ProviderInstanceId.make("claude-broken")]: {
+                  driver: ProviderDriverKind.make("claudeAgent"),
+                  config: { customModels: "not-a-list" },
+                  environment: [
+                    { name: "CLAUDE_CONFIG_DIR", value: brokenClaudeHome, sensitive: false },
+                  ],
+                },
+                [ProviderInstanceId.make("codex-work")]: {
+                  driver: ProviderDriverKind.make("codex"),
+                  environment: [{ name: "CODEX_HOME", value: codexHome, sensitive: false }],
+                },
+                [ProviderInstanceId.make("codex-alias")]: {
+                  driver: ProviderDriverKind.make("codex"),
+                  config: { homePath: alias },
+                },
+                [ProviderInstanceId.make("codex-shadow")]: {
+                  driver: ProviderDriverKind.make("codex"),
+                  config: { homePath: codexHome, shadowHomePath: NodePath.join(home, "shadow") },
+                  environment: [
+                    { name: "CODEX_HOME", value: NodePath.join(home, "ignored"), sensitive: false },
+                  ],
+                },
+              },
+            },
+          }),
+        ),
+      );
+      const summary = yield* service.readSummary(WINDOW);
+      assert.strictEqual(totalOutputTokens(summary), 46);
+      yield* Effect.promise(() =>
+        NodeFSP.rename(
+          NodePath.join(codexHome, "sessions", "rollout.jsonl"),
+          NodePath.join(codexHome, "sessions", "moved.jsonl"),
+        ),
+      );
+      const moved = yield* service.readSummary(WINDOW);
+      assert.deepStrictEqual(moved.buckets, summary.buckets);
+      yield* Effect.promise(() =>
+        NodeFSP.rm(NodePath.join(codexHome, "sessions"), { recursive: true }),
+      );
+      const removed = yield* service.readSummary(WINDOW);
+      assert.deepStrictEqual(removed.buckets, summary.buckets);
+
+      const sources = summary.sources.filter((source) => source.status === "ok");
+      assert.strictEqual(sources.length, 3);
+      assert.strictEqual(
+        sources.reduce((sum, source) => sum + source.scannedFiles, 0),
+        3,
+      );
+      assert.strictEqual(
+        sources.filter((source) => source.fingerprint.provider === "codex").length,
+        1,
       );
     }).pipe(Effect.scoped),
   );
