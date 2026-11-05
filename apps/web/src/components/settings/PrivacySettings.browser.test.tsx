@@ -41,17 +41,19 @@ describe("PrivacySettingsPanel", () => {
   it("offers the switch off by default and says what would be sent", async () => {
     state.usageData = { available: true };
     await using screen = await render(<PrivacySettingsPanel />);
-    const toggle = screen.getByRole("switch", { name: "Share anonymous usage data" });
+    const toggle = screen.getByRole("switch", { name: "Share pseudonymous usage data" });
     await expect.element(toggle).not.toBeChecked();
     await expect.element(toggle).toBeEnabled();
-    await expect.element(screen.getByText(/Never prompts, replies, files/)).toBeVisible();
+    await expect
+      .element(screen.getByText(/one-way hashes of the OpenAI and Claude accounts/))
+      .toBeVisible();
   });
 
   it("locks the switch while an environment variable decides", async () => {
     state.usageData = { available: true, variable: "S7VIDEO_TELEMETRY_ENABLED" };
     await using screen = await render(<PrivacySettingsPanel />);
     await expect
-      .element(screen.getByRole("switch", { name: "Share anonymous usage data" }))
+      .element(screen.getByRole("switch", { name: "Share pseudonymous usage data" }))
       .toBeDisabled();
     await expect.element(screen.getByText(/Set by S7VIDEO_TELEMETRY_ENABLED/)).toBeVisible();
   });

@@ -720,7 +720,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "share-usage-data",
-    title: "Share anonymous usage data",
+    title: "Share pseudonymous usage data",
     to: "/settings/privacy",
     scope: "environment",
     searchTerms: ["telemetry analytics usage data tracking opt in privacy"],

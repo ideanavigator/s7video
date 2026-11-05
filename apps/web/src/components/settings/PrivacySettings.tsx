@@ -52,7 +52,7 @@ function ShareUsageDataRow({ variable }: { readonly variable: string | undefined
       {...searchableSetting("share-usage-data")}
       serverScoped
       settingKeys={["shareUsageData"]}
-      description="Sends product events, such as which agent and model ran, how turns ended, how long they took and token counts, with a random installation ID. Never prompts, replies, files, footage, transcripts or paths."
+      description="Sends pseudonymous product events, such as which agent, model, features and tools were used, how turns ended, how long they took and token counts. Events carry a random installation ID and one-way hashes of the OpenAI and Claude accounts you are signed in to and of each connecting device. Never prompts, replies, files, footage, transcripts or paths."
       status={variable === undefined ? undefined : `Set by ${variable} in the environment.`}
       resetAction={
         shareUsageData !== DEFAULT_UNIFIED_SETTINGS.shareUsageData ? (
@@ -70,7 +70,7 @@ function ShareUsageDataRow({ variable }: { readonly variable: string | undefined
           checked={shareUsageData}
           disabled={variable !== undefined}
           onCheckedChange={(checked) => updateSettings({ shareUsageData: Boolean(checked) })}
-          aria-label="Share anonymous usage data"
+          aria-label="Share pseudonymous usage data"
         />
       }
     />
