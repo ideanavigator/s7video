@@ -17,6 +17,11 @@ import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 
+import {
+  parseThreadSegmentFromAttachmentId,
+  toSafeThreadAttachmentSegment,
+} from "../attachmentStore.ts";
+import * as ServerConfig from "../config.ts";
 import * as EditDocumentService from "../edit/EditDocumentService.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
@@ -28,6 +33,9 @@ const failure = (code: OrchestratorMcpFailure["code"], message: string) =>
   new OrchestratorMcpFailure({ code, message });
 
 const notInProject = () => failure("invalid_request", NOT_IN_PROJECT);
+
+export const NOT_SHARED =
+  "Only a file the user shared in this thread can be imported. Ask them to attach it or add it in Assets.";
 
 export interface VideoProject {
   readonly projectId: ProjectId;
@@ -146,4 +154,37 @@ export const resolveMedia = Effect.fn("VideoProjectScope.resolveMedia")(function
     label: byId?.id ?? (isInside(real) ? path.relative(root, real) : real),
     fps: byId?.probe.fps,
   } satisfies ScopedMedia;
+});
+
+/**
+ * A file the agent may import: one attached to this thread's messages, or one already inside the
+ * project folder. Anything else is refused without saying whether it exists.
+ */
+export const resolveSharedFile = Effect.fn("VideoProjectScope.resolveSharedFile")(function* (
+  project: VideoProject,
+  requested: string,
+) {
+  const scope = yield* McpInvocationContext.requireThreadMcpCapability("video").pipe(
+    Effect.mapError(() => failure("invalid_request", NOT_SHARED)),
+  );
+  const config = yield* ServerConfig.ServerConfig;
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const notShared = () => failure("invalid_request", NOT_SHARED);
+  if (!path.isAbsolute(requested)) return yield* notShared();
+  const realPathOf = (candidate: string) =>
+    fileSystem.realPath(candidate).pipe(Effect.option, Effect.map(Option.getOrUndefined));
+  const real = yield* realPathOf(requested);
+  if (real === undefined) return yield* notShared();
+  const attachments = yield* realPathOf(config.attachmentsDir);
+  const attachmentId = path.basename(real).split(".")[0] ?? "";
+  const segment = toSafeThreadAttachmentSegment(scope.thread.threadId);
+  const sharedHere =
+    attachments !== undefined &&
+    path.dirname(real) === attachments &&
+    segment !== null &&
+    parseThreadSegmentFromAttachmentId(attachmentId) === segment;
+  const inProject = real.startsWith(project.root + path.sep);
+  if (!sharedHere && !inProject) return yield* notShared();
+  return real;
 });

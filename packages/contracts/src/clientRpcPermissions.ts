@@ -2,6 +2,7 @@ import * as Schema from "effect/Schema";
 import { GitPreparePullRequestThreadInput } from "./git.ts";
 import {
   AuthAccessWriteScope,
+  AuthFilesystemReadScope,
   AuthOrchestrationOperateScope,
   AuthPreviewOperateScope,
   AuthSettingsWriteScope,
@@ -78,10 +79,22 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.transcribeRun]: AuthOrchestrationOperateScope,
   [WS_METHODS.transcribeModelsDownload]: AuthOrchestrationOperateScope,
   [WS_METHODS.transcribeModelsDismiss]: AuthOrchestrationOperateScope,
+  // Imports read any file on this machine and write into the project's edit.json and assets/,
+  // so they also need filesystem read (added in clientRpcRequiredScopes).
+  [WS_METHODS.mediaImportPlan]: AuthOrchestrationOperateScope,
+  [WS_METHODS.mediaImport]: AuthOrchestrationOperateScope,
+  [WS_METHODS.mediaRelink]: AuthOrchestrationOperateScope,
 } as const;
 export type ClientGuardedRpcTag = keyof typeof CLIENT_GUARDED_RPC_SCOPES;
 
 const decodePrepareThread = Schema.decodeUnknownSync(GitPreparePullRequestThreadInput);
+
+/** These take a path on the host and read the file there, like the filesystem browser. */
+const MEDIA_HOST_PATH_METHODS: ReadonlySet<string> = new Set([
+  WS_METHODS.mediaImportPlan,
+  WS_METHODS.mediaImport,
+  WS_METHODS.mediaRelink,
+]);
 
 export function clientRpcRequiredScopes(
   method: string,
@@ -91,6 +104,9 @@ export function clientRpcRequiredScopes(
     const payload = decodePrepareThread(input);
     if (payload.mode === "worktree" && payload.threadId !== undefined)
       return [AuthSourceControlWriteScope, AuthOrchestrationOperateScope];
+  }
+  if (MEDIA_HOST_PATH_METHODS.has(method)) {
+    return [AuthOrchestrationOperateScope, AuthFilesystemReadScope];
   }
   return Object.hasOwn(CLIENT_GUARDED_RPC_SCOPES, method)
     ? [CLIENT_GUARDED_RPC_SCOPES[method as ClientGuardedRpcTag]]

@@ -27,6 +27,7 @@ import * as ServerConfig from "../../../config.ts";
 import * as EditDocumentService from "../../../edit/EditDocumentService.ts";
 import * as EngineService from "../../../engine/EngineService.ts";
 import * as ExportService from "../../../export/ExportService.ts";
+import * as MediaLibraryService from "../../../media/MediaLibraryService.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../../../project/ProjectService.ts";
 import * as TranscriptService from "../../../transcript/TranscriptService.ts";
@@ -135,6 +136,7 @@ describe.skipIf(!available)("video-frame-tool golden", () => {
           metadata: {},
         },
       };
+      const config = ServerConfig.layerTest(work, { prefix: "video-frame-golden-" });
       const tools = McpHttpServer.layerVideoToolkit.pipe(
         Layer.provideMerge(McpServer.McpServer.layer),
         Layer.provide(
@@ -150,10 +152,9 @@ describe.skipIf(!available)("video-frame-tool golden", () => {
               read: () => Effect.succeed(snapshot),
             }),
             Layer.mock(ExportService.ExportService)({}),
-            EngineService.layer.pipe(
-              Layer.provide(ServerConfig.layerTest(work, { prefix: "video-frame-golden-" })),
-            ),
+            EngineService.layer.pipe(Layer.provideMerge(config)),
             Layer.mock(TranscriptService.TranscriptService)({}),
+            Layer.mock(MediaLibraryService.MediaLibraryService)({}),
           ),
         ),
         Layer.provide(NodeServices.layer),

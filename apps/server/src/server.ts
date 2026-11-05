@@ -91,6 +91,7 @@ import * as ManagedLimits from "./policy/managedLimits.ts";
 import * as ManagedPolicy from "./policy/ManagedPolicy.ts";
 import * as ProjectEnrichmentService from "./project/ProjectEnrichmentService.ts";
 import * as NativeAppIconResolver from "./assets/NativeAppIconResolver.ts";
+import * as MediaLibraryService from "./media/MediaLibraryService.ts";
 import * as AntigravityInstallation from "./provider/AntigravityInstallation.ts";
 import * as CodexInstallation from "./provider/CodexInstallation.ts";
 import * as ProviderInstanceRegistry from "./provider/ProviderInstanceRegistry.ts";
@@ -586,8 +587,10 @@ const layerRuntimeCoreDependencies = layerRuntimeCoreDependenciesBase.pipe(
   Layer.provideMerge(ServerSecretStore.layer),
 );
 
-// Export and transcription resolve projects and their edit documents, so they sit above both.
-const layerRuntimeDependencies = Layer.mergeAll(ExportService.layer, TranscriptService.layer).pipe(
+// Export and transcription resolve projects and their edit documents, so they sit above both;
+// imports and the project-media asset route share one library (S7V-025).
+const layerRuntimeDependencies = MediaLibraryService.layer.pipe(
+  Layer.provideMerge(Layer.mergeAll(ExportService.layer, TranscriptService.layer)),
   Layer.provideMerge(layerEditDocument),
   Layer.provideMerge(layerRuntimeCoreDependencies),
 

@@ -34,20 +34,21 @@ import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
+import * as ServerConfig from "../../../config.ts";
 import * as EditDocumentService from "../../../edit/EditDocumentService.ts";
 import * as EngineService from "../../../engine/EngineService.ts";
 import * as ExportService from "../../../export/ExportService.ts";
+import * as MediaLibraryService from "../../../media/MediaLibraryService.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../../../project/ProjectService.ts";
-import * as ServerConfig from "../../../config.ts";
 import * as ServerSettings from "../../../serverSettings.ts";
 import * as TranscriptService from "../../../transcript/TranscriptService.ts";
 import * as McpHttpServer from "../../McpHttpServer.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpSessionRegistry from "../../McpSessionRegistry.ts";
 import * as McpToolAccessTestkit from "../../McpToolAccess.testkit.ts";
-import { NOT_IN_PROJECT } from "../../VideoProjectScope.ts";
-import { editDurationFrames } from "./handlers.ts";
+import { NOT_IN_PROJECT, NOT_SHARED } from "../../VideoProjectScope.ts";
+import { editDurationFrames, NO_ROOM_TO_COPY } from "./handlers.ts";
 import { VideoToolkit } from "./tools.ts";
 
 const environmentId = EnvironmentId.make("environment-video-test");
@@ -150,6 +151,12 @@ interface Fixture {
   readonly engine: { failNextProbe: boolean; modelsReady: boolean };
   readonly started: Array<{ readonly kind: string; readonly projectId: ProjectId | undefined }>;
   readonly documents: Map<ProjectId, EditDocument>;
+  /** The server's chat attachment folder, with one file shared in thread A and one in B. */
+  readonly attachmentsDir: string;
+  readonly sharedInA: string;
+  readonly sharedInB: string;
+  readonly imports: Array<{ sourcePath: string; mode: string; origin: string | undefined }>;
+  diskShort: boolean;
 }
 
 const makeFixture = (): Fixture => {
@@ -164,6 +171,18 @@ const makeFixture = (): Fixture => {
   NodeFS.writeFileSync(NodePath.join(rootB, "assets", "other.mp4"), "other");
   NodeFS.writeFileSync(NodePath.join(outside, "secret.mp4"), "secret");
   NodeFS.writeFileSync(NodePath.join(outside, "imported.mov"), "imported");
+  const attachmentsDir = NodePath.join(base, "state", "attachments");
+  NodeFS.mkdirSync(attachmentsDir, { recursive: true });
+  const sharedInA = NodePath.join(
+    attachmentsDir,
+    `${threadA}-5b8c0f3e-2a8d-4f7e-9c1a-0d2e3f4a5b6c.m4a`,
+  );
+  const sharedInB = NodePath.join(
+    attachmentsDir,
+    `${threadB}-6c9d1a4f-3b9e-4a8f-8d2b-1e3f4a5b6c7d.m4a`,
+  );
+  NodeFS.writeFileSync(sharedInA, "sound");
+  NodeFS.writeFileSync(sharedInB, "sound");
   NodeFS.symlinkSync(
     NodePath.join(outside, "secret.mp4"),
     NodePath.join(rootA, "assets", "link.mp4"),
@@ -192,6 +211,11 @@ const makeFixture = (): Fixture => {
     engine: { failNextProbe: false, modelsReady: true },
     started: [],
     documents,
+    attachmentsDir,
+    sharedInA,
+    sharedInB,
+    imports: [],
+    diskShort: false,
   };
 };
 
@@ -236,6 +260,28 @@ const layerFor = (fixture: Fixture, cancelSignal: Deferred.Deferred<string>) => 
   });
   return Layer.mergeAll(
     exportService,
+    Layer.mock(MediaLibraryService.MediaLibraryService)({
+      plan: (input) =>
+        Effect.succeed(
+          fixture.diskShort
+            ? {
+                suggestedMode: "reference",
+                reason: "A copy needs 1.0 GB and should leave 15.0 GB free.",
+                totalBytes: input.sourcePaths.length,
+                freeBytes: 0,
+              }
+            : { suggestedMode: "copy", totalBytes: input.sourcePaths.length, freeBytes: 1e12 },
+        ),
+      import: (input) =>
+        Effect.sync(() => {
+          fixture.imports.push({
+            sourcePath: input.sourcePath,
+            mode: input.mode,
+            origin: input.origin,
+          });
+          return { mediaId: "shared-sound" };
+        }),
+    }),
     Layer.mock(ThreadManagementService.ThreadManagementService)({
       getThreadShell: (threadId) =>
         Effect.succeed({
@@ -315,7 +361,16 @@ const layerFor = (fixture: Fixture, cancelSignal: Deferred.Deferred<string>) => 
 const layerWithTranscripts = (fixture: Fixture, cancelSignal: Deferred.Deferred<string>) =>
   TranscriptService.layerWith({ totalMemoryBytes: 36 * 1024 ** 3 }).pipe(
     Layer.provideMerge(layerFor(fixture, cancelSignal)),
-    Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "video-transcript-" })),
+    // The test config, with chat attachments in the fixture's folder for video_import.
+    Layer.provideMerge(
+      Layer.effect(
+        ServerConfig.ServerConfig,
+        Effect.gen(function* () {
+          const config = yield* ServerConfig.ServerConfig;
+          return { ...config, attachmentsDir: fixture.attachmentsDir };
+        }),
+      ).pipe(Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "video-transcript-" }))),
+    ),
   );
 
 const withTools = <A, E>(
@@ -372,7 +427,7 @@ const textOf = (result: McpSchema.CallToolResult) =>
   result.content.map((entry) => (entry.type === "text" ? entry.text : `[${entry.type}]`));
 
 describe("video toolkit", () => {
-  it.effect("video toolkit lists six tools with video_ names", () =>
+  it.effect("video toolkit lists its tools with video_ names", () =>
     withTools(({ server }) =>
       Effect.sync(() => {
         const tools = server.tools.map(({ tool }) => tool);
@@ -380,6 +435,7 @@ describe("video toolkit", () => {
           "video_edit_read",
           "video_export",
           "video_frame",
+          "video_import",
           "video_job_cancel",
           "video_job_status",
           "video_probe",
@@ -399,6 +455,56 @@ describe("video toolkit", () => {
         expect(described.video_export).toContain("job");
         expect(described.video_transcribe).toContain("Transcribe");
         expect(described.video_transcript_read).toContain("transcript");
+      }),
+    ),
+  );
+
+  it.effect("video_import imports a file the user shared in this thread", () =>
+    withTools(({ fixture, call }) =>
+      Effect.gen(function* () {
+        const result = yield* call(threadA, "video_import", { path: fixture.sharedInA });
+        expect(result.isError).toBe(false);
+        expect(result.structuredContent).toEqual({ media: "shared-sound" });
+        // A file already in the project folder may be imported too.
+        const inProject = NodePath.join(fixture.rootA, "assets", "clip.mp4");
+        const local = yield* call(threadA, "video_import", { path: inProject });
+        expect(local.isError).toBe(false);
+        expect(fixture.imports).toEqual([
+          { sourcePath: fixture.sharedInA, mode: "copy", origin: "agent" },
+          { sourcePath: inProject, mode: "copy", origin: "agent" },
+        ]);
+      }),
+    ),
+  );
+
+  it.effect("video_import refuses to copy when the disk is short", () =>
+    withTools(({ fixture, call }) =>
+      Effect.gen(function* () {
+        fixture.diskShort = true;
+        const result = yield* call(threadA, "video_import", { path: fixture.sharedInA });
+        expect(result.isError).toBe(true);
+        expect(textOf(result)).toEqual([NO_ROOM_TO_COPY]);
+        expect(fixture.imports).toEqual([]);
+      }),
+    ),
+  );
+
+  it.effect("video_import refuses an arbitrary path and other threads' files", () =>
+    withTools(({ fixture, call }) =>
+      Effect.gen(function* () {
+        for (const path of [
+          NodePath.join(fixture.outside, "secret.mp4"),
+          NodePath.join(fixture.outside, "nothing-here.mp4"),
+          fixture.sharedInB,
+          NodePath.basename(fixture.sharedInA),
+          // A symlink inside the project that leads outside it.
+          NodePath.join(fixture.rootA, "assets", "link.mp4"),
+        ]) {
+          const result = yield* call(threadA, "video_import", { path });
+          expect(result.isError, path).toBe(true);
+          expect(textOf(result), path).toEqual([NOT_SHARED]);
+        }
+        expect(fixture.imports).toEqual([]);
       }),
     ),
   );
@@ -638,6 +744,7 @@ describe("video toolkit", () => {
           ["video_export", {}],
           ["video_transcribe", { media: "cam" }],
           ["video_transcript_read", { media: "cam" }],
+          ["video_import", { path: "/tmp/x.mp4" }],
         ] as const) {
           // A hidden tool is not callable at all: the server answers as for an unknown tool.
           const error = yield* call(threadA, tool, args, ["orchestration"]).pipe(Effect.flip);
@@ -646,6 +753,7 @@ describe("video toolkit", () => {
         expect(fixture.calls).toEqual([]);
         expect(fixture.cancelled).toEqual([]);
         expect(fixture.exports).toEqual([]);
+        expect(fixture.imports).toEqual([]);
       }),
     ),
   );
@@ -873,6 +981,7 @@ it.effect("should hide tools without the video capability", () =>
         ),
         Layer.provide(layerFor(fixture, cancelSignal)),
         Layer.provide(Layer.mock(TranscriptService.TranscriptService)({})),
+        Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "video-tools-list-" })),
         Layer.provide(
           Layer.mock(McpSessionRegistry.McpSessionRegistry)({
             resolve: (presented) => Effect.succeed(tokens.get(presented)),
@@ -918,6 +1027,7 @@ it.effect("should hide tools without the video capability", () =>
         "video_edit_read",
         "video_export",
         "video_frame",
+        "video_import",
         "video_job_cancel",
         "video_job_status",
         "video_probe",

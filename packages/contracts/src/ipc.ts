@@ -965,6 +965,8 @@ export interface DesktopBridge {
   pickFolder: (options?: PickFolderOptions) => Promise<string | null>;
   pickProjectFavicon: (initialPath?: string) => Promise<string | null>;
   pickThemeFiles: () => Promise<readonly PickedThemeFile[] | null>;
+  /** Absolute paths of the video and audio files picked; empty when cancelled. */
+  pickMediaFiles: (options: { multiple: boolean }) => Promise<readonly string[]>;
   setTheme: (theme: DesktopTheme) => Promise<void>;
   showContextMenu: <T extends string>(
     items: readonly ContextMenuItem<T>[],

@@ -95,6 +95,53 @@ export const MediaFrameResult = Schema.Struct({
 });
 export type MediaFrameResult = typeof MediaFrameResult.Type;
 
+export const MediaThumbnailInput = Schema.Struct({
+  path: TrimmedNonEmptyString,
+  /** Where the JPEG is written, replacing any file there. */
+  outputPath: TrimmedNonEmptyString,
+  /** Counted from the video's first frame at `rate`. */
+  frame: NonNegativeInt,
+  rate: EngineRational,
+  maxWidth: Schema.optional(Schema.Int.check(Schema.isBetween({ minimum: 16, maximum: 1920 }))),
+});
+export type MediaThumbnailInput = typeof MediaThumbnailInput.Type;
+
+export const MediaThumbnailResult = Schema.Struct({ path: Schema.String });
+export type MediaThumbnailResult = typeof MediaThumbnailResult.Type;
+
+export const MediaKeyframesInput = Schema.Struct({ path: TrimmedNonEmptyString });
+export type MediaKeyframesInput = typeof MediaKeyframesInput.Type;
+
+/** The longest keyframe gap over the first 10 s and 5 s mid-file, read from packet flags. */
+export const MediaKeyframesResult = Schema.Struct({
+  timeBase: EngineRational,
+  maxGapTicks: NonNegativeInt,
+  keyframes: NonNegativeInt,
+  scannedTicks: NonNegativeInt,
+});
+export type MediaKeyframesResult = typeof MediaKeyframesResult.Type;
+
+/** A preview copy that keeps every source timestamp; runs as a job. */
+export const MediaProxyInput = Schema.Struct({
+  path: TrimmedNonEmptyString,
+  outputPath: TrimmedNonEmptyString,
+  rate: EngineRational,
+  timeBase: EngineRational,
+  durationFrames: PositiveInt,
+  color: Schema.optional(
+    Schema.Struct({
+      primaries: Schema.optional(NullableString),
+      transfer: Schema.optional(NullableString),
+      space: Schema.optional(NullableString),
+      range: Schema.optional(NullableString),
+    }),
+  ),
+});
+export type MediaProxyInput = typeof MediaProxyInput.Type;
+
+export const MediaProxyResult = Schema.Struct({ path: Schema.String });
+export type MediaProxyResult = typeof MediaProxyResult.Type;
+
 export const EngineJobCancelResult = Schema.Struct({ cancelled: Schema.Boolean });
 
 /** `export.render`'s reply: the finished MP4 (S7V-028). Loudness is null for a silent export. */
@@ -118,6 +165,9 @@ export const ENGINE_RESPONSE_SCHEMAS = {
   "engine.ping": EnginePingResult,
   "media.probe": MediaProbeResult,
   "media.frame": MediaFrameResult,
+  "media.thumbnail": MediaThumbnailResult,
+  "media.keyframes": MediaKeyframesResult,
+  "media.proxy": MediaProxyResult,
   "job.cancel": EngineJobCancelResult,
   "export.render": ExportRenderResult,
 } as const;

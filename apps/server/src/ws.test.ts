@@ -68,6 +68,7 @@ import * as ProjectCloneTracker from "./project/ProjectCloneTracker.ts";
 import * as EngineService from "./engine/EngineService.ts";
 import * as ExportService from "./export/ExportService.ts";
 import * as TranscriptService from "./transcript/TranscriptService.ts";
+import * as MediaLibraryService from "./media/MediaLibraryService.ts";
 import * as ProjectSetupScriptRunner from "./project/ProjectSetupScriptRunner.ts";
 import * as ProviderAuthService from "./provider/ProviderAuthService.ts";
 import * as ProviderInstanceRegistry from "./provider/ProviderInstanceRegistry.ts";
@@ -565,6 +566,7 @@ const layerUnusedConfigRpcServices = Layer.mergeAll(
   Layer.mock(ProcessDiagnostics.ProcessDiagnostics)({}),
   Layer.mock(ProcessResourceMonitor.ProcessResourceMonitor)({}),
   Layer.mock(ProjectCloneTracker.ProjectCloneTracker)({}),
+  Layer.mock(MediaLibraryService.MediaLibraryService)({}),
   Layer.mock(EngineService.EngineService)({}),
   Layer.mock(ExportService.ExportService)({}),
   Layer.mock(TranscriptService.TranscriptService)({}),

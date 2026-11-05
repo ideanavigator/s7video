@@ -17,6 +17,7 @@ import * as EditDocumentService from "../../../edit/EditDocumentService.ts";
 import { layerEditTest } from "../../../edit/editHarness.testkit.ts";
 import * as EngineService from "../../../engine/EngineService.ts";
 import * as ExportService from "../../../export/ExportService.ts";
+import * as MediaLibraryService from "../../../media/MediaLibraryService.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as ManagedProjectFolders from "../../../project/ManagedProjectFolders.ts";
 import * as TranscriptService from "../../../transcript/TranscriptService.ts";
@@ -79,6 +80,7 @@ describe.runIf(ENABLED)("video_edit_read timing", () => {
           Layer.provide(Layer.mock(EngineService.EngineService)({})),
           Layer.provide(Layer.mock(ExportService.ExportService)({})),
           Layer.provide(Layer.mock(TranscriptService.TranscriptService)({})),
+          Layer.provide(Layer.mock(MediaLibraryService.MediaLibraryService)({})),
         );
         const durations: number[] = [];
         yield* Effect.gen(function* () {

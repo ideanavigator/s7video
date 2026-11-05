@@ -410,6 +410,24 @@ it.effect("denies manual cleanup before the handler without settings permission"
   }).pipe(Effect.scoped),
 );
 
+it("lets readers follow the media library but only operators import or relink", () => {
+  for (const method of [WS_METHODS.mediaList, WS_METHODS.mediaSubscribe]) {
+    expect(requiredScopeForRpcMethod(method)).toBe(AuthOrchestrationReadScope);
+  }
+  for (const method of [
+    WS_METHODS.mediaImportPlan,
+    WS_METHODS.mediaImport,
+    WS_METHODS.mediaRelink,
+  ]) {
+    expect(requiredScopeForRpcMethod(method)).toBe(AuthOrchestrationOperateScope);
+    // They read files at host paths, so filesystem read is required as well.
+    expect(clientRpcRequiredScopes(method, undefined)).toEqual([
+      AuthOrchestrationOperateScope,
+      AuthFilesystemReadScope,
+    ]);
+  }
+});
+
 it("lets readers load and follow an edit but only operators change or undo it", () => {
   for (const method of [WS_METHODS.editGet, WS_METHODS.editSubscribe]) {
     expect(requiredScopeForRpcMethod(method)).toBe(AuthOrchestrationReadScope);
@@ -446,6 +464,38 @@ it.effect("denies edit undo before the handler without operate permission", () =
         Effect.flip,
       ),
     ).toMatchObject({ requiredPermission: AuthOrchestrationOperateScope });
+    expect(handled).toBe(false);
+  }).pipe(Effect.scoped),
+);
+
+it.effect("denies a media import without filesystem read, even to an operator", () =>
+  Effect.gen(function* () {
+    const group = WsRpcGroup.omit(
+      ...[...WsRpcGroup.requests.keys()].filter(
+        (tag): tag is Exclude<keyof typeof RPC_REQUIRED_SCOPES, typeof WS_METHODS.mediaImport> =>
+          tag !== WS_METHODS.mediaImport,
+      ),
+    );
+    let handled = false;
+    const client = yield* RpcTest.makeClient(group).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          group.toLayerHandler(WS_METHODS.mediaImport, () =>
+            Effect.sync(() => {
+              handled = true;
+            }).pipe(Effect.andThen(Effect.never)),
+          ),
+          RpcAuthorization.layer([AuthOrchestrationReadScope, AuthOrchestrationOperateScope]),
+        ),
+      ),
+    );
+    expect(
+      yield* client[WS_METHODS.mediaImport]({
+        projectId: ProjectId.make("project"),
+        sourcePath: "/Users/me/clip.mp4",
+        mode: "copy",
+      }).pipe(Effect.flip),
+    ).toMatchObject({ requiredPermission: AuthFilesystemReadScope });
     expect(handled).toBe(false);
   }).pipe(Effect.scoped),
 );
