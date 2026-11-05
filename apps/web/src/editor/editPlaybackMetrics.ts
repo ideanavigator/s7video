@@ -19,6 +19,7 @@ export interface SkipSummary {
   readonly p95Ms: number;
   readonly maxMs: number;
   readonly maxLandedOffFrames: number;
+  readonly maxFrozenFrames: number;
   readonly skipsFrozenOverOneFrame: number;
   readonly cutFramesShown: number;
 }
@@ -43,6 +44,7 @@ export function summarizeSkips(from: ReadonlyArray<SkipSample> = samples): SkipS
     p95Ms: at(0.95),
     maxMs: times.at(-1) ?? 0,
     maxLandedOffFrames: Math.max(0, ...from.map((sample) => Math.abs(sample.landedOffFrames))),
+    maxFrozenFrames: Math.max(0, ...from.map((sample) => sample.frozenFrames)),
     skipsFrozenOverOneFrame: from.filter((sample) => sample.frozenFrames > 1).length,
     cutFramesShown: from.reduce((total, sample) => total + sample.cutFramesShown, 0),
   };

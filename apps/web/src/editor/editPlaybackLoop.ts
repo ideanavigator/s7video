@@ -136,6 +136,8 @@ export function createPlaybackLoop(video: LoopVideo, events: PlaybackLoopEvents)
     seekToTimelineFrame: (frame) => {
       if (plan === null || plan.segments.length === 0) return;
       const clamped = Math.max(0, Math.min(frame, plan.durationFrames - 1));
+      // A user seek replaces any skip still in flight, which would otherwise land over it.
+      pending = null;
       seekSource(sourceFrameOf(plan.segments, clamped));
     },
     timelineFrame: () => (plan === null ? 0 : timelineFrameOf(plan.segments, sourceFrame())),
