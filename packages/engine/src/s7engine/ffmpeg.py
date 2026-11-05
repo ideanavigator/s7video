@@ -26,7 +26,12 @@ def tool_path(tool: str) -> str:
     return path
 
 
-def run_tool(tool: str, args: list[str], job: JobContext, timeout: float = 120) -> bytes:
+# Under the server's 30 s quick-call timeout, so a slow file fails with a reason instead of
+# looking like a hung engine. Long jobs pass their own limit.
+QUICK_TOOL_TIMEOUT = 25.0
+
+
+def run_tool(tool: str, args: list[str], job: JobContext, timeout: float = QUICK_TOOL_TIMEOUT) -> bytes:
     """Runs a tool to completion and returns its stdout; a cancelled job stops it at once."""
     process = subprocess.Popen(
         [tool_path(tool), *args],

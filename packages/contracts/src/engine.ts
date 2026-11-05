@@ -197,7 +197,7 @@ export class EngineError extends Schema.TaggedError<EngineError>()("EngineError"
       case "crashed":
         return `The video engine stopped during ${this.method}. It restarts on the next call; try again.`;
       case "timeout":
-        return `The video engine did not answer ${this.method} in time. It restarts on the next call; try again.`;
+        return `The video engine did not answer ${this.method} in time. Try again; a stuck engine restarts on its own.`;
       case "rpc_error":
         return `The video engine rejected ${this.method}: ${this.rpcMessage ?? "unknown error"}.`;
       case "cancelled":

@@ -63,7 +63,9 @@ describe("engine contracts", () => {
       "The video engine rejected media.frame: file not found.",
     );
     expect(message("cancelled")).toContain("cancelled");
-    expect(message("timeout")).toContain("try again");
+    expect(message("timeout")).toBe(
+      "The video engine did not answer media.frame in time. Try again; a stuck engine restarts on its own.",
+    );
     expect(message("start_failed")).toContain("Try again");
   });
 });

@@ -43,7 +43,10 @@ import {
 
 export interface EngineServiceOptions {
   readonly startTimeout?: Duration.Input;
-  /** Per-call timeout for quick methods; jobs have none and are cancelled instead. */
+  /**
+   * Per-call timeout for quick methods; jobs have none and are cancelled instead. The engine
+   * stops its own tools after 25 s, so a quick call normally fails with a reason before this.
+   */
   readonly callTimeout?: Duration.Input;
   /** Tool paths from settings, ahead of S7VIDEO_* variables and the usual install folders. */
   readonly tools?: Partial<Record<EngineTool, string>>;
@@ -80,6 +83,7 @@ export class EngineService extends Context.Service<
 const CALL_TIMEOUT = "30 seconds";
 const START_TIMEOUT = "30 seconds";
 const CANCEL_TIMEOUT = "5 seconds";
+const HEALTH_TIMEOUT = "5 seconds";
 
 interface Running {
   readonly process: EngineProcess.EngineProcess;
@@ -107,6 +111,9 @@ const make = Effect.fn("EngineService.make")(function* (options: EngineServiceOp
       return Scope.close(running.scope, Exit.void);
     });
 
+  const stopProcess = (process: EngineProcess.EngineProcess) =>
+    Effect.suspend(() => (current?.process === process ? stop(current) : Effect.void));
+
   const spawn = Effect.gen(function* () {
     const env = yield* HostProcess.Environment;
     const homeDir = yield* HostProcess.HomeDirectory;
@@ -116,9 +123,10 @@ const make = Effect.fn("EngineService.make")(function* (options: EngineServiceOp
       homeDir,
     });
     const projectDir = yield* resolveEngineProjectDir(env);
-    const scope = yield* Scope.make();
+    // A child of the service scope: shutdown reaps an engine even while it is still starting.
+    const scope = yield* Scope.fork(serviceScope);
     const startedAt = yield* Clock.currentTimeMillis;
-    const process = yield* EngineProcess.start({
+    const running = yield* EngineProcess.start({
       uv: tools.uv,
       args: engineCommandArgs(projectDir),
       cwd: projectDir,
@@ -136,30 +144,49 @@ const make = Effect.fn("EngineService.make")(function* (options: EngineServiceOp
       ...(options.signalGroup ? { signalGroup: options.signalGroup } : {}),
     }).pipe(
       Scope.provide(scope),
-      Effect.tapError(() => Scope.close(scope, Exit.void)),
+      // Runs uninterruptibly: a failed or interrupted start is reaped, a successful one is
+      // recorded before anything can interrupt the caller.
+      Effect.onExit((exit) => {
+        if (Exit.isFailure(exit)) return Scope.close(scope, exit);
+        return Effect.sync(() => {
+          current = { process: exit.value, scope };
+          starts += 1;
+        });
+      }),
+      Effect.map((process): Running => ({ process, scope })),
     );
-    const running: Running = { process, scope };
-    starts += 1;
+    const { process } = running;
     lastStartupMs = (yield* Clock.currentTimeMillis) - startedAt;
     yield* Effect.logInfo("video engine started", { pid: process.pid, startupMs: lastStartupMs });
     // stdout closed: the engine is gone. Its calls have already failed; reap its group.
     yield* process.client.closed.pipe(
       Effect.andThen(Effect.logWarning("video engine exited", { pid: process.pid })),
-      Effect.andThen(stop(running)),
+      Effect.andThen(stopProcess(process)),
       Effect.forkIn(serviceScope),
     );
     return running;
   }).pipe(Effect.provideContext(context));
 
   const acquire = startLock.withPermit(
-    Effect.suspend(() =>
-      current && current.process.client.isOpen()
-        ? Effect.succeed(current)
-        : spawn.pipe(Effect.tap((running) => Effect.sync(() => (current = running)))),
-    ),
+    Effect.suspend(() => {
+      if (current && current.process.client.isOpen()) return Effect.succeed(current);
+      return (current ? stop(current) : Effect.void).pipe(Effect.andThen(spawn));
+    }),
   );
 
   yield* Effect.addFinalizer(() => Effect.suspend(() => (current ? stop(current) : Effect.void)));
+
+  // A slow call (a long file) is not a hung engine: restart only when a ping gets no answer either,
+  // since a restart also ends every running job.
+  const stopIfHung = (running: Running) =>
+    running.process.client.call("engine.ping", {}, EnginePingResult, HEALTH_TIMEOUT).pipe(
+      Effect.asVoid,
+      Effect.catch(() =>
+        Effect.logWarning("video engine stopped answering; restarting it", {
+          pid: running.process.pid,
+        }).pipe(Effect.andThen(stop(running))),
+      ),
+    );
 
   // Every caller is a named operation below, and the client adds its own call span.
   const call = Effect.fnUntraced(function* <A>(
@@ -169,10 +196,13 @@ const make = Effect.fn("EngineService.make")(function* (options: EngineServiceOp
     timeout: Duration.Input | undefined,
   ) {
     const running = yield* acquire;
-    return yield* running.process.client.call(method, params, success, timeout).pipe(
-      // A hung engine blocks every caller; the next call starts a fresh one.
-      Effect.tapError((error) => (error.reason === "timeout" ? stop(running) : Effect.void)),
-    );
+    return yield* running.process.client
+      .call(method, params, success, timeout)
+      .pipe(
+        Effect.tapError((error) =>
+          error.reason === "timeout" ? stopIfHung(running) : Effect.void,
+        ),
+      );
   });
 
   const callTimeout = options.callTimeout ?? CALL_TIMEOUT;

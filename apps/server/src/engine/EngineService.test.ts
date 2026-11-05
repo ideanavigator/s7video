@@ -36,7 +36,11 @@ interface FakeSpawn {
 
 const encoder = new TextEncoder();
 
-const makeFakeSpawner = Effect.sync(() => {
+const makeFakeSpawner = Effect.gen(function* () {
+  /** `ready: false` never sends `ready`; `hung: true` answers nothing, not even a ping. */
+  const control = { ready: true, hung: false };
+  const spawned = yield* Queue.unbounded<number>();
+  const requests = yield* Queue.unbounded<string>();
   const spawns: FakeSpawn[] = [];
   const signals: Array<readonly [number, string]> = [];
   let nextPid = 4242;
@@ -55,7 +59,9 @@ const makeFakeSpawner = Effect.sync(() => {
         env: command.options.env ?? {},
         stdout,
       });
-      yield* write({ jsonrpc: "2.0", method: "ready", params: { version: "0", protocol: 1 } });
+      if (control.ready) {
+        yield* write({ jsonrpc: "2.0", method: "ready", params: { version: "0", protocol: 1 } });
+      }
       const stdin = command.options.stdin;
       assert(typeof stdin === "object" && stdin !== null && "stream" in stdin);
       const input = stdin.stream as Stream.Stream<Uint8Array>;
@@ -64,14 +70,18 @@ const makeFakeSpawner = Effect.sync(() => {
         Stream.splitLines,
         Stream.runForEach((line) => {
           const request = JSON.parse(line) as { id: number; method: string };
-          if (request.method === "engine.ping") {
-            return write({
-              jsonrpc: "2.0",
-              id: request.id,
-              result: { pong: true, protocol: 1, pid: pid + 1 },
-            });
-          }
-          return Effect.void;
+          const answer = !control.hung && request.method === "engine.ping";
+          return Queue.offer(requests, request.method).pipe(
+            Effect.andThen(
+              answer
+                ? write({
+                    jsonrpc: "2.0",
+                    id: request.id,
+                    result: { pong: true, protocol: 1, pid: pid + 1 },
+                  })
+                : Effect.void,
+            ),
+          );
         }),
         // stdin closed: a real engine exits, closing stdout.
         Effect.andThen(Queue.end(stdout)),
@@ -79,6 +89,7 @@ const makeFakeSpawner = Effect.sync(() => {
       );
       // Stands in for the Node spawner's own release, which signals the same group.
       yield* Effect.addFinalizer(() => Effect.sync(() => signals.push([pid, "spawner-release"])));
+      yield* Queue.offer(spawned, pid);
       return ChildProcessSpawner.makeHandle({
         pid: ChildProcessSpawner.ProcessId(pid),
         exitCode: Effect.never,
@@ -94,7 +105,7 @@ const makeFakeSpawner = Effect.sync(() => {
       });
     }),
   );
-  return { spawner, spawns, signals };
+  return { spawner, spawns, signals, control, spawned, requests };
 });
 
 const fakeTools = Effect.gen(function* () {
@@ -222,16 +233,101 @@ describe("EngineService with a fake engine", () => {
       Effect.gen(function* () {
         const engine = yield* EngineService.EngineService;
         yield* engine.ping;
+        yield* Queue.take(fake.requests);
+        fake.control.hung = true;
         const hung = yield* engine.probe({ path: "/clip.mp4" }).pipe(Effect.flip, Effect.forkChild);
+        expect(yield* Queue.take(fake.requests)).toBe("media.probe");
+        yield* Effect.yieldNow;
+        yield* TestClock.adjust("6 seconds");
+        // The health ping gets no answer either, so the engine is stopped through its own group.
+        expect(yield* Queue.take(fake.requests)).toBe("engine.ping");
         yield* Effect.yieldNow;
         yield* TestClock.adjust("6 seconds");
         const error = yield* Fiber.join(hung);
         expect(error.reason).toBe("timeout");
-        // The hung engine was stopped through its own group, and the next call starts afresh.
         expect(fake.signals).toContainEqual([4242, "SIGTERM"]);
+        expect((yield* engine.status).pid).toBeUndefined();
+        fake.control.hung = false;
         expect((yield* engine.ping).pid).toBe(4343);
       }),
     ),
+  );
+
+  it.effect("keeps a slow but healthy engine and its jobs", () =>
+    withFakeEngine({ callTimeout: "5 seconds" }, (fake) =>
+      Effect.gen(function* () {
+        const engine = yield* EngineService.EngineService;
+        yield* engine.ping;
+        yield* Queue.take(fake.requests);
+        const slow = yield* engine
+          .probe({ path: "/long.webm" })
+          .pipe(Effect.flip, Effect.forkChild);
+        expect(yield* Queue.take(fake.requests)).toBe("media.probe");
+        yield* Effect.yieldNow;
+        yield* TestClock.adjust("6 seconds");
+        // The health ping is answered, so nothing is signalled and the same engine stays.
+        expect((yield* Fiber.join(slow)).reason).toBe("timeout");
+        expect(yield* Queue.take(fake.requests)).toBe("engine.ping");
+        expect((yield* engine.ping).pid).toBe(4243);
+        expect(fake.signals).toEqual([]);
+        expect(fake.spawns).toHaveLength(1);
+      }),
+    ),
+  );
+
+  it.effect("spawns once for concurrent first calls", () =>
+    withFakeEngine({}, (fake) =>
+      Effect.gen(function* () {
+        const engine = yield* EngineService.EngineService;
+        const pongs = yield* Effect.all(
+          Array.from({ length: 6 }, () => engine.ping),
+          {
+            concurrency: "unbounded",
+          },
+        );
+        expect(pongs.map((pong) => pong.pid)).toEqual(Array.from({ length: 6 }, () => 4243));
+        expect(fake.spawns).toHaveLength(1);
+      }),
+    ),
+  );
+
+  it.effect("reaps an engine whose caller is interrupted before ready", () =>
+    withFakeEngine({}, (fake) =>
+      Effect.gen(function* () {
+        const engine = yield* EngineService.EngineService;
+        fake.control.ready = false;
+        const starting = yield* engine.ping.pipe(Effect.forkChild);
+        expect(yield* Queue.take(fake.spawned)).toBe(4242);
+        yield* Fiber.interrupt(starting);
+        expect(fake.signals).toEqual([
+          [4242, "SIGTERM"],
+          [4242, "spawner-release"],
+        ]);
+        expect((yield* engine.status).pid).toBeUndefined();
+        fake.control.ready = true;
+        expect((yield* engine.ping).pid).toBe(4343);
+      }),
+    ),
+  );
+
+  it.effect("reaps an engine that is still starting when the service shuts down", () =>
+    Effect.gen(function* () {
+      let signals: ReadonlyArray<readonly [number, string]> = [];
+      yield* withFakeEngine({}, (fake) =>
+        Effect.gen(function* () {
+          signals = fake.signals;
+          const engine = yield* EngineService.EngineService;
+          fake.control.ready = false;
+          yield* engine.ping.pipe(Effect.ignore, Effect.forkDetach);
+          yield* Queue.take(fake.spawned);
+          expect(fake.signals).toEqual([]);
+        }),
+      );
+      expect(signals).toEqual([
+        [4242, "SIGTERM"],
+        [4242, "spawner-release"],
+      ]);
+    }),
   );
 
   it.effect("writes engine stderr to the engine log folder", () =>
