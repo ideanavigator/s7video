@@ -78,6 +78,11 @@ import {
   DeviceStandardToolkit,
 } from "./toolkits/device/tools.ts";
 import * as HtmlHandlers from "./toolkits/html/handlers.ts";
+import * as VideoHandlers from "./toolkits/video/handlers.ts";
+import { VideoFrameTool, VideoFrameToolkit, VideoStandardToolkit } from "./toolkits/video/tools.ts";
+import * as EditDocumentService from "../edit/EditDocumentService.ts";
+import * as EngineService from "../engine/EngineService.ts";
+import * as ProjectService from "../project/ProjectService.ts";
 import { HtmlPreviewTool, HtmlPreviewToolkit, HtmlRenderToolkit } from "./toolkits/html/tools.ts";
 
 const mcpResourceMetadataUrl = (request: HttpServerRequest.HttpServerRequest) =>
@@ -812,6 +817,28 @@ const registerHtmlPreview = Effect.fn("McpHttpServer.registerHtmlPreview")(funct
   );
 });
 
+const registerVideoFrame = Effect.fn("McpHttpServer.registerVideoFrame")(function* () {
+  const services = yield* Effect.context<
+    | ThreadManagementService.ThreadManagementService
+    | ProjectService.ProjectService
+    | EditDocumentService.EditDocumentService
+    | EngineService.EngineService
+    | FileSystem.FileSystem
+    | Path.Path
+  >();
+  const built = yield* decodeAsAdvertised(VideoFrameToolkit);
+  yield* registerImageTool(
+    VideoFrameTool,
+    (payload) =>
+      built
+        .handle("video_frame", payload)
+        .pipe(Stream.unwrap, Stream.run(Sink.last()), Effect.flatMap(Effect.fromOption)),
+    (effect) => effect.pipe(Effect.provideContext(services)),
+    "frame",
+    (error) => (isOrchestratorMcpFailure(error) ? error.message : "Video frame failed."),
+  );
+});
+
 /**
  * Tools that hand work to another thread's agent: they create it, message it,
  * steer it, or move context into it. Their events name the receiving agent too.
@@ -1148,6 +1175,12 @@ export const layerDeviceToolkit = Layer.mergeAll(
   layerDeviceScreenshotRegistration,
 );
 
+/** Agent tools for the caller's edit project (S7V-023); later engine cards add theirs here. */
+export const layerVideoToolkit = Layer.mergeAll(
+  toolkitRegistration(VideoStandardToolkit, VideoHandlers.layerStandard),
+  imageToolRegistration(registerVideoFrame(), VideoHandlers.layerFrame),
+);
+
 export const layerMcpTransport = McpServer.layerHttp({
   name: `${BRAND.app.productName}`,
   version: packageJson.version,
@@ -1169,6 +1202,7 @@ export const layerTools = Layer.mergeAll(
   layerPullRequestsToolkit,
   layerDeviceToolkit,
   layerHtmlToolkit,
+  layerVideoToolkit,
 );
 
 export const layer = layerTools.pipe(Layer.provideMerge(layerMcpTransport));

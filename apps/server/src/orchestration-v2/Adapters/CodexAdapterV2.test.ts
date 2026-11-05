@@ -1077,6 +1077,75 @@ describe("CodexAdapterV2 session initialize", () => {
     ),
   );
 
+  it.effect("should give the Codex update message below 0.159 in a video project", () =>
+    Effect.gen(function* () {
+      const opened = (scenario: string, version: string, capabilities: ReadonlyArray<string>) =>
+        Effect.gen(function* () {
+          yield* (yield* McpProviderSessions.McpProviderSessions).set({
+            environmentId: EnvironmentId.make("environment-codex-video"),
+            threadId: ThreadId.make(`thread-${scenario}`),
+            providerSessionId: `provider-session-${scenario}`,
+            providerInstanceId: ProviderInstanceId.make("codex"),
+            endpoint: "http://127.0.0.1:43123/mcp",
+            authorizationHeader: "Bearer secret-codex-token",
+            browserToolsAvailable: false,
+            capabilities: new Set(capabilities),
+          });
+          const [initialize] = replayPreamble(scenario);
+          return yield* openReplaySession(
+            makeCodexReplayTranscript({
+              scenario,
+              entries: [
+                initialize!,
+                {
+                  type: "emit_inbound",
+                  label: "initialize",
+                  frame: {
+                    id: 1,
+                    result: {
+                      userAgent: `s7video/${version} (Mac OS 15.5.0; arm64) unknown (s7video; 0.1.5)`,
+                      codexHome: "/tmp/codex-home",
+                      platformFamily: "unix",
+                      platformOs: "macos",
+                    },
+                  },
+                },
+              ],
+            }),
+            undefined,
+            (codexVersion) =>
+              Effect.succeed(
+                resolveProviderCompatibility(
+                  ModelManifest.BUNDLED_MODEL_MANIFEST.compatibility,
+                  CodexAdapterV2.CODEX_DRIVER_KIND,
+                  codexVersion,
+                ),
+              ),
+          ).pipe(Effect.flip);
+        });
+
+      // The PO's Mac had 0.137, which is also below every supported range.
+      for (const version of ["0.137.0", "0.157.2"]) {
+        const failure = yield* opened(`video-old-${version}`, version, ["orchestration", "video"]);
+        assert.instanceOf(failure, ProviderAdapter.ProviderAdapterOpenSessionError);
+        assert.instanceOf(failure.cause, ProviderSetupError);
+        assert.equal(
+          failure.cause.message,
+          `Your Codex app is version ${version}. s7video's video tools need 0.159 or later. Update Codex, then start a new thread.`,
+        );
+      }
+      // Outside a video project the usual compatibility rules apply.
+      const plain = yield* opened("video-plain", "0.137.0", ["orchestration"]);
+      assert.instanceOf(plain.cause, ProviderSetupError);
+      assert.include(plain.cause.message, "does not work with this s7video release");
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
+  );
+
   it.effect("completes the handshake after a caller is interrupted mid-initialize", () =>
     Effect.gen(function* () {
       const initializeAwaitingResponse = yield* Deferred.make<void>();

@@ -266,6 +266,27 @@ small additions to `config.ts` (`engineLogsDir`, `engineModelsDir`), `server.ts`
 and is never bundled); shipping a Python runtime and an LGPL FFmpeg is release work (S7V-016).
 `pnpm licenses:check` also scans `packages/engine/uv.lock`.
 
+## Video agent tools (S7V-023)
+
+The `video` toolkit is new code in `apps/server/src/mcp/toolkits/video/` and
+`apps/server/src/mcp/VideoProjectScope.ts`. These upstream files have small edits:
+
+- `mcp/McpHttpServer.ts` adds `registerVideoFrame`, adds `layerVideoToolkit`, and adds it to `layerTools`.
+- `mcp/McpInvocationContext.ts` adds the `video` capability and its `hiddenWithoutVideo` visibility check.
+- `orchestration-v2/ProviderSessionManager.ts` grants `video` when the thread's project folder has `edit.json` and `project.json`.
+- `orchestration-v2/Adapters/CodexAdapterV2.ts` and `provider/CodexProvider.ts` show a plain update message when Codex is below 0.159 in a video project.
+- `provider/agentContextBudget.json` and `provider/AgentContextBudget.test.ts` have the new tool-list size and mocks.
+- `orchestration-v2/runtimeLayer.ts` provides `ProjectService` around the whole production runtime.
+
+**Behaviour change from `runtimeLayer.ts`.** The session manager reads `ProjectService` as an
+optional service. Memoized layers keep the context of their first build, and resource cleanup built
+the session manager first, without `ProjectService`. So upstream never found the thread's project
+there. If any per-project browser or device access override existed, access fell back to
+"withheld". Those overrides are now honoured.
+
+`runtimeLayer.production.test.ts` guards the wiring. If upstream fixes the wiring itself, drop our line and
+keep the test.
+
 ## Licensing (S7V-004)
 
 `LICENSE` is T3 Code's MIT licence with a second line, `Copyright (c) 2026 s7video contributors`.

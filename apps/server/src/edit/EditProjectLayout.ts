@@ -65,6 +65,18 @@ export class EditLayoutError extends Schema.TaggedError<EditLayoutError>()("Edit
   }
 }
 
+/** Whether `cwd` holds an edit project: both `edit.json` and `project.json`. */
+export const isEditProjectFolder =
+  (fileSystem: FileSystem.FileSystem) =>
+  (cwd: string): Effect.Effect<boolean> =>
+    Effect.all([
+      fileSystem.exists(`${cwd}/${EDIT_FILE}`),
+      fileSystem.exists(`${cwd}/${PROJECT_FILE}`),
+    ]).pipe(
+      Effect.map(([edit, project]) => edit && project),
+      Effect.orElseSucceed(() => false),
+    );
+
 export class EditProjectLayout extends Context.Service<
   EditProjectLayout,
   {
@@ -116,16 +128,7 @@ const make = Effect.gen(function* () {
     (effect, cwd) => effect.pipe(Effect.mapError((cause) => new EditLayoutError({ cwd, cause }))),
   );
 
-  const isEditProject: EditProjectLayout["Service"]["isEditProject"] = (cwd) =>
-    Effect.all([
-      fileSystem.exists(path.join(cwd, EDIT_FILE)),
-      fileSystem.exists(path.join(cwd, PROJECT_FILE)),
-    ]).pipe(
-      Effect.map(([edit, project]) => edit && project),
-      Effect.orElseSucceed(() => false),
-    );
-
-  return EditProjectLayout.of({ ensure, isEditProject });
+  return EditProjectLayout.of({ ensure, isEditProject: isEditProjectFolder(fileSystem) });
 });
 
 export const layer = Layer.effect(EditProjectLayout, make);
