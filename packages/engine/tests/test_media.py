@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from conftest import FFMPEG, Wire
+from engine_support import FFMPEG, Wire
 
 from s7engine import rpc
 

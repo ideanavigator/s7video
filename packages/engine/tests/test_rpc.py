@@ -6,7 +6,7 @@ import os
 import time
 from pathlib import Path
 
-from conftest import Wire
+from engine_support import Wire
 
 from s7engine import rpc
 from s7engine.jobs import JobContext
