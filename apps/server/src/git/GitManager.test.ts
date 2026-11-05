@@ -1876,7 +1876,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       expect(result.push.status).toBe("pushed");
       expect(result.toast).toMatchObject({
         description: "Implement stacked git actions",
-        cta: { kind: "run_action", action: { kind: "create_pr" } },
+        cta: { kind: "none" },
       });
       expect(result.toast.title).toMatch(
         /^Pushed [0-9a-f]{7} to origin\/feature\/implement-stacked-git-actions$/,

@@ -1748,7 +1748,7 @@ export const make = Effect.gen(function* () {
   const runCommitStep = Effect.fn("runCommitStep")(function* (
     settings: SourceControlTextGenerationSettings,
     cwd: string,
-    action: "commit" | "commit_push" | "commit_push_pr",
+    action: "commit" | "commit_push",
     branch: string | null,
     commitMessage?: string,
     preResolvedSuggestion?: CommitAndBranchSuggestion,
