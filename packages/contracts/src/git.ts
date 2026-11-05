@@ -15,13 +15,8 @@ const TrimmedNonEmptyStringSchema = TrimmedNonEmptyString;
 const GitFilePath = Schema.String.check(Schema.isNonEmpty());
 const GIT_LIST_BRANCHES_MAX_LIMIT = 200;
 
-export const GitStackedAction = Schema.Literals([
-  "commit",
-  "push",
-  "create_pr",
-  "commit_push",
-  "commit_push_pr",
-]);
+/** Local commit and push only; "create_pr" and "commit_push_pr" went with code hosts (S7V-018). */
+export const GitStackedAction = Schema.Literals(["commit", "push", "commit_push"]);
 export type GitStackedAction = typeof GitStackedAction.Type;
 export const GitActionProgressPhase = Schema.Literals(["branch", "commit", "push", "pr"]);
 export type GitActionProgressPhase = typeof GitActionProgressPhase.Type;

@@ -494,10 +494,6 @@
     "./dataHome": {
       "types": "./src/config/dataHome.ts",
       "import": "./src/config/dataHome.ts"
-    },
-    "./remoteEnvironments": {
-      "types": "./src/config/remoteEnvironments.ts",
-      "import": "./src/config/remoteEnvironments.ts"
     }
   },
   "scripts": {

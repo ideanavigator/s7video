@@ -18,17 +18,6 @@ const ConfiguredDeviceHostId = DeviceHostId.check(
   Schema.makeFilter((id) => id !== "local" || "The local host id is reserved."),
 );
 
-export const SshDeviceHostConfig = Schema.Struct({
-  // Hosts saved before EAS hosts existed carry no kind.
-  kind: Schema.Literal("ssh").pipe(Schema.withDecodingDefaultKey(Effect.succeed("ssh" as const))),
-  id: ConfiguredDeviceHostId,
-  label: TrimmedNonEmptyString,
-  target: TrimmedNonEmptyString.check(Schema.isPattern(/^[^\s-][^\s]*$/)),
-  identityFile: Schema.optional(TrimmedNonEmptyString),
-  port: Schema.optional(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 65535 }))),
-});
-export type SshDeviceHostConfig = typeof SshDeviceHostConfig.Type;
-
 /**
  * Cloud simulators from EAS Simulator. Sessions bill the Expo account until
  * they stop, so every one is bounded. The Expo credential is not stored here.
@@ -93,7 +82,7 @@ export const SimlockDeviceHostConfig = Schema.Struct({
 });
 export type SimlockDeviceHostConfig = typeof SimlockDeviceHostConfig.Type;
 
-export type DeviceHostConfig = SshDeviceHostConfig | EasDeviceHostConfig | SimlockDeviceHostConfig;
+export type DeviceHostConfig = EasDeviceHostConfig | SimlockDeviceHostConfig;
 
 const uniqueHostIds = Schema.makeFilter(
   (hosts: ReadonlyArray<{ readonly id: string }>) =>
@@ -101,12 +90,10 @@ const uniqueHostIds = Schema.makeFilter(
     "Device host ids must be unique.",
 );
 
-export const SshDeviceHostConfigs = Schema.Array(SshDeviceHostConfig).check(uniqueHostIds);
-
 /**
- * Kept apart from the SSH hosts in settings: servers and clients from before
- * EAS hosts decode `deviceHosts` as SSH hosts and would reject the whole file
- * or snapshot over one EAS entry.
+ * Kept apart from upstream's SSH hosts (`deviceHosts`, removed in S7V-018): servers and clients
+ * from before EAS hosts decode `deviceHosts` as SSH hosts and would reject the whole file or
+ * snapshot over one EAS entry.
  */
 export const EasDeviceHostConfigs = Schema.Array(EasDeviceHostConfig).check(uniqueHostIds);
 
@@ -583,7 +570,6 @@ export class DeviceOperationError extends Schema.TaggedError<DeviceOperationErro
       "invalid_payload",
       "settings_failed",
       "hub_rejected",
-      "remote_disabled",
     ]),
     exitCode: Schema.optional(Schema.Number),
     cause: Schema.Defect(),
@@ -596,7 +582,6 @@ export class DeviceOperationError extends Schema.TaggedError<DeviceOperationErro
       invalid_payload: "The device request could not be encoded.",
       settings_failed: "Could not read or save device settings.",
       hub_rejected: "The device hub could not complete the request.",
-      remote_disabled: "SSH device hosts are turned off in this build.",
     }[this.reason];
     return `Device ${this.operation} failed: ${explanation}`;
   }
