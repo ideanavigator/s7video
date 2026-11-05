@@ -41,7 +41,10 @@ function Probe(props: {
 
 /** The files the composer would still attach after the drop. */
 async function dropped(projectId: ProjectId | null, files: ReadonlyArray<File>) {
-  const { promise, resolve } = Promise.withResolvers<File[]>();
+  let resolve: (files: File[]) => void = () => undefined;
+  const promise = new Promise<File[]>((settle) => {
+    resolve = settle;
+  });
   await using screen = await render(
     <Probe projectId={projectId} files={files} onResult={resolve} />,
     { router: false },
