@@ -386,6 +386,31 @@ describe("TranscriptTab", () => {
     expect(list.scrollTop).toBe(held);
   });
 
+  it("seeks to the clicked word on the first click, even with the playing word off screen", async () => {
+    ready(synthetic(5_000));
+    using listener = listenForSeeks();
+    await using screen = await renderTab(wholeClip(100_000));
+    await expect.element(screen.getByRole("option", { name: "word0", exact: true })).toBeVisible();
+    await act(() => publishPlayerFrame(projectKey, startOf(4_000) + 2));
+    await expect
+      .element(screen.getByRole("option", { name: "word4000", exact: true }))
+      .toBeInViewport();
+    // The user scrolls back to the top and clicks a word there: the list must not jump back.
+    const list = scroller(screen);
+    list.dispatchEvent(new WheelEvent("wheel", { bubbles: true, deltaY: -100 }));
+    await act(() => {
+      list.scrollTop = 0;
+    });
+    const target = screen.getByRole("option", { name: "word3", exact: true });
+    await expect.element(target).toBeInViewport();
+    await userEvent.click(target);
+    expect(listener.seeks).toEqual([startOf(3)]);
+    expect(list.scrollTop).toBe(0);
+    await expect
+      .element(screen.getByRole("listbox", { name: "Transcript" }))
+      .toHaveAttribute("aria-activedescendant", target.element().id);
+  });
+
   it("should keep scroll on agent edit, updating struck words", async () => {
     ready(synthetic(5_000));
     await using screen = await renderTab(wholeClip(100_000));

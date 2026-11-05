@@ -10,7 +10,7 @@ import { scopedProjectKey } from "@t3tools/client-runtime/environment";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type { ScopedProjectRef, TranscribeModel, TranscribeModelsStatus } from "@t3tools/contracts";
 import { AudioLinesIcon, FileTextIcon, TriangleAlertIcon } from "lucide-react";
-import { useEffect, useId, useState, type KeyboardEvent, type MouseEvent } from "react";
+import { useEffect, useId, useRef, useState, type KeyboardEvent, type MouseEvent } from "react";
 
 import {
   editEnvironment,
@@ -308,10 +308,22 @@ function TranscriptWords(props: {
     return 0;
   };
 
-  const onFocus = (event: React.FocusEvent<HTMLDivElement>) => {
-    if (event.target !== event.currentTarget || marks.active() !== -1) return;
+  /** The keyboard's first word: the playing one, else the first on screen. */
+  const ensureActive = (root: HTMLElement) => {
+    if (marks.active() !== -1) return;
     const current = marks.current();
-    marks.setActive(current !== -1 ? current : firstVisibleWord(event.currentTarget));
+    marks.setActive(current !== -1 ? current : firstVisibleWord(root));
+  };
+
+  // A mouse focus leaves the list where it is: scrolling to the playing word between press and
+  // release would move the click off the word the user aimed at, which then becomes active.
+  const pointerFocus = useRef(false);
+
+  const onFocus = (event: React.FocusEvent<HTMLDivElement>) => {
+    const fromPointer = pointerFocus.current;
+    pointerFocus.current = false;
+    if (event.target !== event.currentTarget || fromPointer) return;
+    ensureActive(event.currentTarget);
   };
 
   const rowStart = (index: number, direction: 1 | -1) => {
@@ -322,6 +334,9 @@ function TranscriptWords(props: {
   };
 
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (event.key.startsWith("Arrow") || event.key === "Enter" || event.key === " ") {
+      ensureActive(event.currentTarget);
+    }
     const last = model.words.length - 1;
     const active = Math.max(0, marks.active());
     const move = (index: number) => {
@@ -330,7 +345,7 @@ function TranscriptWords(props: {
     };
     switch (event.key) {
       case "ArrowRight":
-        return move(marks.active() === -1 ? 0 : active + 1);
+        return move(active + 1);
       case "ArrowLeft":
         return move(active - 1);
       case "ArrowDown":
@@ -374,7 +389,13 @@ function TranscriptWords(props: {
         onKeyDown={onKeyDown}
         onWheel={() => marks.noteUserScroll()}
         onTouchMove={() => marks.noteUserScroll()}
-        onPointerDown={() => marks.noteUserScroll()}
+        onPointerDown={() => {
+          pointerFocus.current = true;
+          marks.noteUserScroll();
+        }}
+        onPointerUp={() => {
+          pointerFocus.current = false;
+        }}
       >
         <LegendList<TranscriptRow>
           ref={(list) => marks.attachList(list)}
