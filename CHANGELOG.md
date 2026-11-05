@@ -27,6 +27,8 @@ from; the per-ticket entries and how this file is compiled are in
 - A free-licence (CC-BY-4.0) sample video that `pnpm media:fetch` downloads with a checksum into a
   cache outside the repo, a guard that fails `pnpm licenses:check` if media or model weights are
   committed, and engine golden tests in `pnpm test:golden`. (S7V-031)
+- A built-in video helper that reads clips and grabs frames on your Mac. It starts on demand,
+  restarts itself if it stops, and names any missing tool on a developer machine. (S7V-022)
 
 ### Changed
 

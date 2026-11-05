@@ -18,6 +18,9 @@ differently; check their policy.
 - Proxies, thumbnails, waveforms, transcripts, edit documents, notes, versions, review comments and
   renders, in your project folder.
 - Chats with the agent, settings and app state, in the s7video data folder (`~/.s7video`).
+- The built-in video helper, which reads clips and grabs frames, runs on your Mac as a separate
+  program and sends nothing anywhere. It works offline; its log (`logs/engine/` in the data folder)
+  records what it did and how long it took, never your footage, transcripts or messages.
 - Secrets you save in settings, in the data folder. API keys for the planned bring-your-own-key
   mode will be kept in the macOS Keychain. Keys are never written to logs or project files.
 

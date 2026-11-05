@@ -249,6 +249,17 @@ desktop bridge for attachments (`apps/web/src/lib/imageCompression.ts`) and prev
 In a plain browser, HEIC photos ask to be converted to JPEG first. When an upstream merge touches
 HEIC code, keep `heic-to` out of every `package.json`.
 
+## Local video helper (S7V-022)
+
+s7video adds a Python helper that T3 Code does not have: `packages/engine`, a `uv` project, run by
+`apps/server/src/engine/EngineService.ts` as one long-lived child process that speaks JSON-RPC over
+stdio (ADR-004). It is new code, so upstream merges do not touch it; the upstream files it edits are
+small additions to `config.ts` (`engineLogsDir`, `engineModelsDir`), `server.ts` (the layer),
+`ws.ts`, the RPC contracts and their scope and metric maps (`engine.jobs.subscribe`,
+`engine.jobs.cancel`). Development uses the developer's `uv` and FFmpeg (Homebrew's FFmpeg is GPL
+and is never bundled); shipping a Python runtime and an LGPL FFmpeg is release work (S7V-016).
+`pnpm licenses:check` also scans `packages/engine/uv.lock`.
+
 ## Licensing (S7V-004)
 
 `LICENSE` is T3 Code's MIT licence with a second line, `Copyright (c) 2026 s7video contributors`.
