@@ -146,7 +146,7 @@ const make = Effect.gen(function* () {
     if (!validated.ok) {
       return yield* unreadable(`edit.json is not valid: ${validated.issues[0]!.explanation}`);
     }
-    return { revision: project.value.revision, document: validated.document };
+    return { revision: project.value.revision, document: validated.document, editText };
   });
 
   const snapshotOf = Effect.fnUntraced(function* (
@@ -158,20 +158,27 @@ const make = Effect.gen(function* () {
     return { revision, document, canUndo: status.canUndo, canRedo: status.canRedo };
   });
 
-  /** Temp file in the same folder, fsync, rename: a crash leaves the old file or the new one. */
+  /**
+   * Temp file in the same folder, fsync, rename, fsync the folder: a crash leaves the old file or
+   * the new one. The temp file is removed whenever a step fails.
+   */
   const writeAtomic = Effect.fnUntraced(function* (file: string, contents: string) {
     const id = yield* crypto.randomUUIDv4();
-    const temp = path.join(path.dirname(file), `.${path.basename(file)}.${id}.tmp`);
+    const folder = path.dirname(file);
+    const temp = path.join(folder, `.${path.basename(file)}.${id}.tmp`);
+    yield* Effect.gen(function* () {
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const handle = yield* fileSystem.open(temp, { flag: "w" });
+          yield* handle.writeAll(new TextEncoder().encode(contents));
+          yield* handle.sync;
+        }),
+      );
+      yield* fileSystem.rename(temp, file);
+    }).pipe(Effect.onError(() => fileSystem.remove(temp, { force: true }).pipe(Effect.ignore)));
     yield* Effect.scoped(
-      Effect.gen(function* () {
-        const handle = yield* fileSystem.open(temp, { flag: "w" });
-        yield* handle.writeAll(new TextEncoder().encode(contents));
-        yield* handle.sync;
-      }),
-    );
-    yield* fileSystem
-      .rename(temp, file)
-      .pipe(Effect.onError(() => fileSystem.remove(temp, { force: true }).pipe(Effect.ignore)));
+      fileSystem.open(folder, { flag: "r" }).pipe(Effect.flatMap((handle) => handle.sync)),
+    ).pipe(Effect.ignore);
   });
 
   const historyError = (projectId: ProjectId) => (error: EditHistoryService.EditHistoryError) =>
@@ -185,11 +192,42 @@ const make = Effect.gen(function* () {
     yield* PubSub.publish(yield* channelFor(root), snapshot);
   });
 
+  /**
+   * Notices an edit.json changed outside this service (a T3 turn revert, an agent writing the file)
+   * and records it as a new revision and history step, so subscribers and undo stay in step.
+   * Runs under the project lock.
+   */
+  const loadReconciled = Effect.fnUntraced(function* (projectId: ProjectId, root: string) {
+    const current = yield* load(projectId, root);
+    if (yield* history.isKnown(root, current.editText)) return current;
+    yield* history.guard(root).pipe(Effect.mapError(historyError(projectId)));
+    const { highestRevision } = yield* history.status(root);
+    const revision = Math.max(current.revision, highestRevision) + 1;
+    yield* writeAtomic(
+      path.join(root, EditProjectLayout.PROJECT_FILE),
+      EditProjectLayout.projectFileContents(revision),
+    ).pipe(
+      Effect.mapError(() =>
+        unavailable(projectId, "write-failed", "Could not save the edit revision."),
+      ),
+    );
+    yield* history
+      .record(root, revision, current.editText)
+      .pipe(Effect.mapError(historyError(projectId)));
+    const reconciled = { ...current, revision };
+    yield* publish(root, yield* snapshotOf(root, revision, current.document));
+    return reconciled;
+  });
+
   const read: EditDocumentService["Service"]["read"] = Effect.fn("EditDocumentService.read")(
     function* (projectId) {
       const root = yield* resolveRoot(projectId);
-      const current = yield* load(projectId, root);
-      return yield* snapshotOf(root, current.revision, current.document);
+      return yield* lockFor(root).withPermit(
+        Effect.gen(function* () {
+          const current = yield* loadReconciled(projectId, root);
+          return yield* snapshotOf(root, current.revision, current.document);
+        }),
+      );
     },
   );
 
@@ -199,7 +237,7 @@ const make = Effect.gen(function* () {
       const root = yield* resolveRoot(projectId);
       return yield* lockFor(root).withPermit(
         Effect.gen(function* () {
-          const current = yield* load(projectId, root);
+          const current = yield* loadReconciled(projectId, root);
           if (options.baseRevision !== current.revision) {
             return yield* new EditConflict({
               baseRevision: options.baseRevision,
@@ -214,7 +252,7 @@ const make = Effect.gen(function* () {
 
           yield* history.guard(root).pipe(Effect.mapError(historyError(projectId)));
           yield* history
-            .ensureBaseline(root, current.revision)
+            .ensureBaseline(root, current.revision, current.editText)
             .pipe(Effect.mapError(historyError(projectId)));
           const { highestRevision } = yield* history.status(root);
           const revision = Math.max(current.revision, highestRevision) + 1;
@@ -226,13 +264,12 @@ const make = Effect.gen(function* () {
           ]).pipe(Effect.orElseSucceed(() => null));
           const writeFailed = () =>
             unavailable(projectId, "write-failed", "Could not save the edit. Nothing changed.");
-          yield* writeAtomic(editFile, EditProjectLayout.editFileContents(validated.document)).pipe(
-            Effect.mapError(writeFailed),
-          );
+          const editText = EditProjectLayout.editFileContents(validated.document);
+          yield* writeAtomic(editFile, editText).pipe(Effect.mapError(writeFailed));
           yield* writeAtomic(projectFile, EditProjectLayout.projectFileContents(revision)).pipe(
             Effect.mapError(writeFailed),
           );
-          yield* history.record(root, revision).pipe(
+          yield* history.record(root, revision, editText).pipe(
             Effect.mapError(historyError(projectId)),
             // Keep the edit and its history in step: without a checkpoint the change is undone.
             Effect.tapError(() =>
@@ -257,9 +294,24 @@ const make = Effect.gen(function* () {
       const root = yield* resolveRoot(projectId);
       return yield* lockFor(root).withPermit(
         Effect.gen(function* () {
-          const moved = yield* history[direction](root).pipe(
-            Effect.mapError(historyError(projectId)),
-          );
+          yield* loadReconciled(projectId, root);
+          const writeFailed = () =>
+            unavailable(projectId, "write-failed", "Could not save the edit. Nothing changed.");
+          const moved = yield* history
+            .step(root, direction, (editJson, revision) =>
+              Effect.all([
+                writeAtomic(path.join(root, EditProjectLayout.EDIT_FILE), editJson),
+                writeAtomic(
+                  path.join(root, EditProjectLayout.PROJECT_FILE),
+                  EditProjectLayout.projectFileContents(revision),
+                ),
+              ]).pipe(Effect.mapError(writeFailed)),
+            )
+            .pipe(
+              Effect.mapError((error) =>
+                error._tag === "EditHistoryError" ? historyError(projectId)(error) : error,
+              ),
+            );
           if (Option.isNone(moved)) {
             return yield* unavailable(
               projectId,
@@ -267,15 +319,6 @@ const make = Effect.gen(function* () {
               direction === "undo" ? "There is nothing to undo." : "There is nothing to redo.",
             );
           }
-          // The restore brought back an older project.json; revisions only ever go up.
-          yield* writeAtomic(
-            path.join(root, EditProjectLayout.PROJECT_FILE),
-            EditProjectLayout.projectFileContents(moved.value),
-          ).pipe(
-            Effect.mapError(() =>
-              unavailable(projectId, "write-failed", "Could not save the edit revision."),
-            ),
-          );
           const current = yield* load(projectId, root);
           const snapshot = yield* snapshotOf(root, current.revision, current.document);
           yield* publish(root, snapshot);

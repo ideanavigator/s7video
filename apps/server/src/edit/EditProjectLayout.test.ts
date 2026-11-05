@@ -10,7 +10,7 @@ import * as NodePath from "node:path";
 
 import * as ProjectFaviconResolver from "../project/ProjectFaviconResolver.ts";
 import * as EditProjectLayout from "./EditProjectLayout.ts";
-import { git, isIgnored, layerEditTest } from "./editTestHarness.ts";
+import { git, isIgnored, layerEditTest } from "./editHarness.testkit.ts";
 
 const withRoot = <A, E>(
   body: (

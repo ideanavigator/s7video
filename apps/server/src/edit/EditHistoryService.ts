@@ -2,11 +2,13 @@
 // SPDX-License-Identifier: MIT
 /**
  * Undo and redo for `edit.json` on T3's git checkpoints (ADR-005). Each committed change is one
- * checkpoint ref; with the whitelist `.gitignore`, a whole-tree restore only touches tracked edit
- * files, so media, cache, exports and notes are never rewritten or deleted.
+ * checkpoint ref. A step reads only `edit.json` back from its ref; nothing else in the project is
+ * restored, cleaned or deleted.
  */
 import { CheckpointRef } from "@t3tools/contracts";
 import * as Context from "effect/Context";
+import * as Crypto from "effect/Crypto";
+import * as Hex from "effect/encoding/Hex";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -16,7 +18,7 @@ import * as Schema from "effect/Schema";
 
 import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
-import { CACHE_DIR } from "./EditProjectLayout.ts";
+import { CACHE_DIR, EDIT_FILE } from "./EditProjectLayout.ts";
 
 /** Hidden refs, outside `refs/t3/orchestration-v2/` so turn cleanup never deletes them. */
 const EDIT_CHECKPOINT_REF_PREFIX = "refs/t3/edit/checkpoints";
@@ -59,6 +61,8 @@ const HistoryState = Schema.Struct({
   /** Index into `entries` of the checkpoint matching the current edit. */
   cursor: Schema.Int,
   entries: Schema.Array(HistoryEntry),
+  /** sha256 of the edit.json the service last wrote; anything else on disk changed outside it. */
+  knownEdit: Schema.optionalKey(Schema.String),
 });
 type HistoryState = typeof HistoryState.Type;
 
@@ -98,12 +102,26 @@ export class EditHistoryService extends Context.Service<
     readonly ensureBaseline: (
       cwd: string,
       revision: number,
+      editJson: string,
     ) => Effect.Effect<void, EditHistoryError>;
     /** Captures the files after a committed change and drops any redo steps. */
-    readonly record: (cwd: string, revision: number) => Effect.Effect<void, EditHistoryError>;
-    /** Restores the previous checkpoint; none when there is nothing to undo. */
-    readonly undo: (cwd: string) => Effect.Effect<Option.Option<number>, EditHistoryError>;
-    readonly redo: (cwd: string) => Effect.Effect<Option.Option<number>, EditHistoryError>;
+    readonly record: (
+      cwd: string,
+      revision: number,
+      editJson: string,
+    ) => Effect.Effect<void, EditHistoryError>;
+    /** False when edit.json differs from what the history last recorded or restored. */
+    readonly isKnown: (cwd: string, editJson: string) => Effect.Effect<boolean>;
+    /**
+     * Steps back or forward. Only `edit.json` comes from the checkpoint: `write` saves it with the
+     * new revision, so no other file (styles, README, notes) is ever restored or deleted.
+     * None when there is nothing to undo or redo.
+     */
+    readonly step: <E>(
+      cwd: string,
+      direction: "undo" | "redo",
+      write: (editJson: string, revision: number) => Effect.Effect<void, E>,
+    ) => Effect.Effect<Option.Option<number>, EditHistoryError | E>;
     readonly status: (cwd: string) => Effect.Effect<EditHistoryStatus>;
   }
 >()("t3/edit/EditHistoryService") {}
@@ -113,6 +131,12 @@ const make = Effect.gen(function* () {
   const path = yield* Path.Path;
   const checkpoints = yield* CheckpointStore.CheckpointStore;
   const git = yield* GitVcsDriver.GitVcsDriver;
+  const crypto = yield* Crypto.Crypto;
+
+  const hashOf = (text: string) =>
+    crypto
+      .digest("SHA-256", new TextEncoder().encode(text))
+      .pipe(Effect.map(Hex.encode), Effect.orDie);
 
   const historyPath = (cwd: string) => path.join(cwd, CACHE_DIR, HISTORY_FILE);
 
@@ -186,7 +210,12 @@ const make = Effect.gen(function* () {
     },
   );
 
-  const capture = Effect.fnUntraced(function* (cwd: string, state: HistoryState, revision: number) {
+  const capture = Effect.fnUntraced(function* (
+    cwd: string,
+    state: HistoryState,
+    revision: number,
+    editJson: string,
+  ) {
     const ref = `${EDIT_CHECKPOINT_REF_PREFIX}/${state.nextSeq}`;
     yield* checkpoints
       .captureCheckpoint({ cwd, checkpointRef: CheckpointRef.make(ref) })
@@ -206,6 +235,7 @@ const make = Effect.gen(function* () {
       highestRevision: Math.max(state.highestRevision, revision),
       cursor: entries.length - 1,
       entries,
+      knownEdit: yield* hashOf(editJson),
     };
     yield* writeState(cwd, next);
     if (stale.length > 0) {
@@ -220,40 +250,50 @@ const make = Effect.gen(function* () {
 
   const ensureBaseline: EditHistoryService["Service"]["ensureBaseline"] = Effect.fn(
     "EditHistoryService.ensureBaseline",
-  )(function* (cwd, revision) {
+  )(function* (cwd, revision, editJson) {
     const state = yield* readState(cwd);
     if (state.entries.length > 0) return;
-    yield* capture(cwd, state, revision);
+    yield* capture(cwd, state, revision, editJson);
   });
 
   const record: EditHistoryService["Service"]["record"] = Effect.fn("EditHistoryService.record")(
-    function* (cwd, revision) {
-      yield* capture(cwd, yield* readState(cwd), revision);
+    function* (cwd, revision, editJson) {
+      yield* capture(cwd, yield* readState(cwd), revision, editJson);
     },
   );
 
-  const move = Effect.fnUntraced(function* (cwd: string, step: -1 | 1) {
-    const state = yield* readState(cwd);
-    const target = state.entries[state.cursor + step];
-    if (target === undefined || state.cursor < 0) return Option.none<number>();
-    yield* guard(cwd);
-    const restored = yield* checkpoints
-      .restoreCheckpoint({ cwd, checkpointRef: CheckpointRef.make(target.ref) })
-      .pipe(Effect.mapError(checkpointFailed(cwd)));
-    if (!restored) return yield* checkpointFailed(cwd)("The checkpoint ref is missing.");
-    const revision = state.highestRevision + 1;
-    yield* writeState(cwd, { ...state, cursor: state.cursor + step, highestRevision: revision });
-    return Option.some(revision);
-  });
-
-  const undo: EditHistoryService["Service"]["undo"] = Effect.fn("EditHistoryService.undo")(
-    function* (cwd) {
-      return yield* move(cwd, -1);
+  const isKnown: EditHistoryService["Service"]["isKnown"] = Effect.fn("EditHistoryService.isKnown")(
+    function* (cwd, editJson) {
+      const state = yield* readState(cwd);
+      if (state.knownEdit === undefined) return true;
+      return state.knownEdit === (yield* hashOf(editJson));
     },
   );
-  const redo: EditHistoryService["Service"]["redo"] = Effect.fn("EditHistoryService.redo")(
-    function* (cwd) {
-      return yield* move(cwd, 1);
+
+  const step: EditHistoryService["Service"]["step"] = Effect.fn("EditHistoryService.step")(
+    function* (cwd, direction, write) {
+      const state = yield* readState(cwd);
+      const cursor = state.cursor + (direction === "undo" ? -1 : 1);
+      const target = state.entries[cursor];
+      if (target === undefined || state.cursor < 0) return Option.none<number>();
+      const shown = yield* git
+        .execute({
+          operation: "EditHistoryService.step",
+          cwd,
+          args: ["show", `${target.ref}:${EDIT_FILE}`],
+          timeoutMs: 10_000,
+          maxOutputBytes: 256 * 1024 * 1024,
+        })
+        .pipe(Effect.mapError(checkpointFailed(cwd)));
+      const revision = state.highestRevision + 1;
+      yield* write(shown.stdout, revision);
+      yield* writeState(cwd, {
+        ...state,
+        cursor,
+        highestRevision: revision,
+        knownEdit: yield* hashOf(shown.stdout),
+      });
+      return Option.some(revision);
     },
   );
 
@@ -266,7 +306,7 @@ const make = Effect.gen(function* () {
       })),
     );
 
-  return EditHistoryService.of({ guard, ensureBaseline, record, undo, redo, status });
+  return EditHistoryService.of({ guard, ensureBaseline, record, isKnown, step, status });
 });
 
 export const layer = Layer.effect(EditHistoryService, make);

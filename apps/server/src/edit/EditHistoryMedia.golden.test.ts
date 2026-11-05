@@ -18,7 +18,7 @@ import * as NodePath from "node:path";
 import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as EditDocumentService from "./EditDocumentService.ts";
-import { git, layerEditTest } from "./editTestHarness.ts";
+import { git, layerEditTest } from "./editHarness.testkit.ts";
 
 const CLIP_MIB = Number(process.env.S7V_EDIT_MEDIA_MIB ?? "24");
 const BENCH = process.env.S7V_EDIT_BENCH === "1";

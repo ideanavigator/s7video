@@ -15,7 +15,7 @@ import * as NodePath from "node:path";
 
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as EditDocumentService from "./EditDocumentService.ts";
-import { type EditFaults, git, isIgnored, layerEditTest } from "./editTestHarness.ts";
+import { type EditFaults, git, isIgnored, layerEditTest } from "./editHarness.testkit.ts";
 
 const media = {
   id: "cam",
@@ -197,6 +197,80 @@ describe("EditDocumentService", () => {
           );
         }
       }),
+    ),
+  );
+
+  it.effect("undo and redo change only edit.json and project.json", () =>
+    withProject(({ projectId, edits, root }) =>
+      Effect.gen(function* () {
+        const initial = yield* edits.read(projectId);
+        const first = yield* edits.apply(projectId, setup, {
+          origin: "agent",
+          baseRevision: initial.revision,
+        });
+        const afterFirst = readEdit(root);
+        yield* edits.apply(projectId, [keep([[0, 30]])], {
+          origin: "agent",
+          baseRevision: first.revision,
+        });
+        // Files the history also saves, created or changed after the last checkpoint.
+        NodeFS.mkdirSync(NodePath.join(root, "styles", "fonts"), { recursive: true });
+        const kept: Record<string, string> = {
+          "styles/brand.json": '{"colour":"teal"}\n',
+          "styles/fonts/mine.otf": "font bytes",
+          "README.md": "# My own notes\n",
+        };
+        for (const [file, text] of Object.entries(kept)) {
+          NodeFS.writeFileSync(NodePath.join(root, file), text);
+        }
+        yield* edits.undo(projectId);
+        assert.strictEqual(readEdit(root), afterFirst);
+        yield* edits.redo(projectId);
+        yield* edits.undo(projectId);
+        for (const [file, text] of Object.entries(kept)) {
+          assert.strictEqual(NodeFS.readFileSync(NodePath.join(root, file), "utf8"), text, file);
+        }
+      }),
+    ),
+  );
+
+  it.effect("records an edit.json changed outside the service and tells subscribers", () =>
+    withProject(({ projectId, edits, root }) =>
+      Effect.gen(function* () {
+        const initial = yield* edits.read(projectId);
+        const applied = yield* edits.apply(projectId, [...setup, keep([[0, 300]])], {
+          origin: "agent",
+          baseRevision: initial.revision,
+        });
+        const afterApply = readEdit(root);
+        const seen: EditSnapshot[] = [];
+        const subscribed = yield* Deferred.make<void>();
+        const fiber = yield* edits.subscribe(projectId).pipe(
+          Stream.take(2),
+          Stream.runForEach((snapshot) =>
+            Effect.sync(() => seen.push(snapshot)).pipe(
+              Effect.andThen(Deferred.succeed(subscribed, undefined)),
+            ),
+          ),
+          Effect.forkScoped,
+        );
+        yield* Deferred.await(subscribed);
+        // As a T3 turn revert or an agent writing the file directly would.
+        const outside = { ...applied.document, metadata: { note: "written outside" } };
+        NodeFS.writeFileSync(NodePath.join(root, "edit.json"), JSON.stringify(outside));
+        const stale = yield* edits
+          .apply(projectId, [keep([[0, 10]])], {
+            origin: "timeline",
+            baseRevision: applied.revision,
+          })
+          .pipe(Effect.flip);
+        assert.strictEqual(stale._tag, "EditConflict");
+        yield* Fiber.join(fiber);
+        assert.deepEqual(seen[1]!.document.metadata, { note: "written outside" });
+        assert.isAbove(seen[1]!.revision, applied.revision);
+        yield* edits.undo(projectId);
+        assert.strictEqual(readEdit(root), afterApply);
+      }).pipe(Effect.scoped),
     ),
   );
 
