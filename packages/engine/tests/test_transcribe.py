@@ -12,7 +12,6 @@ import http.server
 import json
 import math
 import threading
-import time
 import wave
 from collections.abc import Iterator
 from dataclasses import dataclass
@@ -281,15 +280,27 @@ class FakeTokenizer:
 NAMES = ["alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", "hotel", "india", "juliet"]
 
 
+class Gate:
+    """Holds the fake recogniser inside a chunk until the test lets it go."""
+
+    def __init__(self) -> None:
+        self.entered = threading.Event()
+        self.release = threading.Event()
+
+
 class FakeASR:
     """One word per burst of tone in the chunk, named by its burst's place in the chunk."""
 
-    def __init__(self, delay: float = 0.0) -> None:
+    def __init__(self, gate: Gate | None = None) -> None:
         self._tokenizer = FakeTokenizer()
-        self.delay = delay
+        self.gate = gate
+        self.chunks = 0
 
     def stream_generate(self, piece: np.ndarray) -> Iterator[tuple[int, np.ndarray]]:
-        time.sleep(self.delay)
+        self.chunks += 1
+        if self.gate is not None:
+            self.gate.entered.set()
+            assert self.gate.release.wait(10), "the test never released the recogniser"
         spans = transcribe.speech_spans(piece)
         texts = ["language", " English", "<asr_text>", *(" " + NAMES[i % len(NAMES)] for i in range(len(spans)))]
         for text in texts:
@@ -322,17 +333,45 @@ class FakeAligner:
 
 
 class Loads:
-    def __init__(self, delay: float = 0.0) -> None:
+    def __init__(self, gate: Gate | None = None) -> None:
         self.count = 0
         self.released = 0
-        self.delay = delay
+        self.gate = gate
+        self.asr: FakeASR | None = None
 
     def loader(self, model: models.Model) -> Any:
         self.count += 1
-        return FakeAligner() if "aligner" in model.repo else FakeASR(self.delay)
+        if "aligner" in model.repo:
+            return FakeAligner()
+        self.asr = FakeASR(self.gate)
+        return self.asr
 
     def release(self) -> None:
         self.released += 1
+
+
+class ManualTimer:
+    """An idle timer the test fires itself, instead of waiting for real time to pass."""
+
+    made: list[ManualTimer] = []
+
+    def __init__(self, interval: float, callback: Any) -> None:
+        self.interval = interval
+        self.callback = callback
+        self.daemon = False
+        self.started = False
+        self.cancelled = False
+        ManualTimer.made.append(self)
+
+    def start(self) -> None:
+        self.started = True
+
+    def cancel(self) -> None:
+        self.cancelled = True
+
+    def fire(self) -> None:
+        if not self.cancelled:
+            self.callback()
 
 
 @pytest.fixture
@@ -389,9 +428,7 @@ def test_cache_hit_skips_model_load(
     first = _run(wire, talk, tmp_path / "cache", "a")["result"]
     assert fake_models.count == 2
     transcribe.holder().unload()
-    started = time.monotonic()
     second = _run(wire, talk, tmp_path / "cache", "b")["result"]
-    assert time.monotonic() - started < 1
     assert second["cached"] is True and second["path"] == first["path"]
     assert fake_models.count == 2  # Not loaded again.
 
@@ -429,8 +466,10 @@ def test_cancel_transcription_job(
     hub: FakeHub, tools: None, wire: Wire, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     _download()
-    loads = Loads(delay=0.3)
+    gate = Gate()
+    loads = Loads(gate)
     monkeypatch.setattr(transcribe, "_HOLDER", models.ModelHolder(600, loader=loads.loader, release=loads.release))
+    # Forty pause-separated phrases: several chunks.
     pattern = [item for _ in range(40) for item in (("s", 0.5), ("p", 0.3))]
     long_talk = write_wav(tmp_path / "long.wav", speech(pattern))
     cache = tmp_path / "cache"
@@ -438,12 +477,14 @@ def test_cancel_transcription_job(
         "transcribe.run",
         {"jobId": "slow", "path": str(long_talk), "cacheDir": str(cache), "fingerprint": _fingerprint(long_talk)},
     )
-    wire.wait_for(lambda message: message.get("method") == "progress" and message["params"]["stage"] == "transcribing")
-    cancelled_at = time.monotonic()
+    assert gate.entered.wait(10)
     assert wire.call("job.cancel", {"jobId": "slow"})["result"] == {"cancelled": True}
+    gate.release.set()
     reply = wire.reply(request)
-    assert time.monotonic() - cancelled_at < 1
     assert reply["error"]["code"] == rpc.CANCELLED
+    # The job stopped at the next chunk boundary: the first chunk was the only one recognised.
+    assert loads.asr is not None and loads.asr.chunks == 1
+    assert len(transcribe.plan_chunks(transcribe.decode_audio(str(long_talk), JobContext("p", None)))) > 1
     assert not cache.exists() or list(cache.iterdir()) == []
 
 
@@ -456,21 +497,23 @@ def test_video_without_audio_stream(
     assert reply["error"]["message"] == "this clip has no sound to transcribe"
 
 
-def test_idle_unload() -> None:
+def test_idle_unload(monkeypatch: pytest.MonkeyPatch) -> None:
     loads = Loads()
-    holder = models.ModelHolder(0.1, loader=loads.loader, release=loads.release)
+    ManualTimer.made = []
+    holder = models.ModelHolder(600, loader=loads.loader, release=loads.release, timer=ManualTimer)
     job = JobContext("x", None)
-    original = models.require_ready
-    models.require_ready = lambda profile: [models.Model("a", "test/asr", "r", ()), models.Model("b", "test/aligner", "r", ())]
-    try:
-        with holder.use("default", job):
-            pass
-        assert holder.loaded_profile == "default"
-        deadline = time.monotonic() + 5
-        while holder.loaded_profile is not None and time.monotonic() < deadline:
-            time.sleep(0.02)
-    finally:
-        models.require_ready = original
+    pair = [models.Model("a", "test/asr", "r", ()), models.Model("b", "test/aligner", "r", ())]
+    monkeypatch.setattr(models, "require_ready", lambda _profile: pair)
+    with holder.use("default", job):
+        pass
+    assert holder.loaded_profile == "default"
+    [timer] = ManualTimer.made
+    assert (timer.interval, timer.started, timer.daemon) == (600, True, True)
+    # Used again before the timeout: that timer is cancelled and a new one starts.
+    with holder.use("default", job):
+        pass
+    assert timer.cancelled and len(ManualTimer.made) == 2 and loads.count == 2
+    ManualTimer.made[-1].fire()
     assert holder.loaded_profile is None and loads.released == 1
 
 

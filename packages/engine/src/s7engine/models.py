@@ -29,7 +29,7 @@ import urllib.request
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 from .jobs import Cancelled, JobContext
 from .rpc import RpcError
@@ -373,6 +373,18 @@ def _download(profile: str, job: JobContext) -> dict[str, Any]:
 Loader = Callable[[Model], Any]
 
 
+class IdleTimer(Protocol):
+    daemon: bool
+
+    def start(self) -> None: ...
+
+    def cancel(self) -> None: ...
+
+
+#: `threading.Timer`; tests pass a timer they fire themselves.
+TimerFactory = Callable[[float, Callable[[], None]], IdleTimer]
+
+
 def _mlx_loader(model: Model) -> Any:
     from mlx_audio.stt.utils import load_model
     from mlx_audio.utils import get_model_name_parts
@@ -399,15 +411,17 @@ class ModelHolder:
         idle_seconds: float,
         loader: Loader = _mlx_loader,
         release: Callable[[], None] = _release_memory,
+        timer: TimerFactory = threading.Timer,
     ) -> None:
         self.idle_seconds = idle_seconds
         self._loader = loader
         self._release = release
+        self._make_timer = timer
         self._lock = threading.Lock()
         self._state = threading.Lock()
         self._profile: str | None = None
         self._pair: tuple[Any, Any] | None = None
-        self._timer: threading.Timer | None = None
+        self._timer: IdleTimer | None = None
         self.loads = 0
 
     @property
@@ -454,7 +468,7 @@ class ModelHolder:
         if self._pair is None:
             return
         with self._state:
-            self._timer = threading.Timer(self.idle_seconds, self._idle_unload)
+            self._timer = self._make_timer(self.idle_seconds, self._idle_unload)
             self._timer.daemon = True
             self._timer.start()
 
