@@ -110,7 +110,6 @@ describe("enginePaths", () => {
       HOME: "/Users/someone",
       TMPDIR: "/var/tmp/x",
       LANG: "en_US.UTF-8",
-      PYTHONUNBUFFERED: "1",
       UV_NO_PROGRESS: "1",
       HF_HOME: "/tmp/state/models",
       HF_HUB_OFFLINE: "1",
