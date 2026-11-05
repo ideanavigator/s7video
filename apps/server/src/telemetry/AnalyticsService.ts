@@ -24,7 +24,7 @@ import packageJson from "../../package.json" with { type: "json" };
 import * as ServerConfig from "../config.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
-import { getTelemetryIdentity, type TelemetryOwner } from "./Identify.ts";
+import { getServerOwners, getTelemetryIdentity, type TelemetryOwner } from "./Identify.ts";
 
 interface BufferedAnalyticsEvent {
   readonly uuid: string;
@@ -102,6 +102,9 @@ export class AnalyticsService extends Context.Service<
       observedBy: "server" | "client",
     ) => Effect.Effect<void>;
 
+    /** `recordOwners` for the provider logins this server can read; reads them only when sharing. */
+    readonly recordServerOwners: Effect.Effect<void>;
+
     /** Whether clients may offer the sharing switch, and what overrides it. */
     readonly usageData: Effect.Effect<ServerUsageData>;
   }
@@ -123,7 +126,6 @@ function serverOsFromNodePlatform(platform: string): ClientOs {
 }
 
 /** @public */
-/** @public */
 export const make = Effect.gen(function* () {
   const telemetryConfig = yield* TelemetryEnvConfig;
   const hostEnvironment = yield* HostProcess.Environment;
@@ -135,7 +137,7 @@ export const make = Effect.gen(function* () {
     telemetryConfig.posthogHost.trim() !== "" && telemetryConfig.posthogKey.trim() !== "";
   const available = policyAllows && hasTarget;
   const serverSettings = yield* ServerSettingsService;
-  // The desktop sends the login shell's value after startup; an unreadable one means off.
+  // Desktop servers read the login shell's value, sent after startup; an unreadable one means off.
   const environmentPreference = Effect.suspend(() => {
     if (!awaitingShellConsent) return Effect.succeed(telemetryConfig.enabled);
     const preference = hostEnvironment[ENABLED_VARIABLE];
@@ -151,9 +153,8 @@ export const make = Effect.gen(function* () {
     );
   });
   const telemetryEnabled = Effect.gen(function* () {
-    if (!available) return false;
-    // A cached PATH does not establish consent from the current login shell.
-    if (hostEnvironment.T3CODE_DESKTOP_SHELL_DISCOVERY_PENDING === "1") return false;
+    // Until the login shell is read, a cached PATH does not establish consent.
+    if (!available || hostEnvironment.T3CODE_DESKTOP_SHELL_DISCOVERY_PENDING === "1") return false;
     const preference = yield* environmentPreference;
     if (Option.isSome(preference)) return preference.value;
     return yield* serverSettings.getSettings.pipe(
@@ -170,7 +171,13 @@ export const make = Effect.gen(function* () {
   );
   const httpClient = yield* HttpClient.HttpClient;
   const serverConfig = yield* ServerConfig.ServerConfig;
-  const { distinctId, installId } = yield* getTelemetryIdentity;
+  // The install id file and the provider login files are touched only once sharing is on.
+  const identityContext = yield* Effect.context<
+    Effect.Services<typeof getTelemetryIdentity> | Effect.Services<typeof getServerOwners>
+  >();
+  const identity = yield* Effect.cached(
+    getTelemetryIdentity.pipe(Effect.provideContext(identityContext)),
+  );
   const crypto = yield* Crypto.Crypto;
   const bufferRef = yield* Ref.make<ReadonlyArray<BufferedAnalyticsEvent>>([]);
   const deliveryRef = yield* Ref.make<DeliveryState>({
@@ -224,7 +231,9 @@ export const make = Effect.gen(function* () {
   const sendBatch = Effect.fn("AnalyticsService.sendBatch")(function* (
     events: ReadonlyArray<BufferedAnalyticsEvent>,
   ) {
-    if (!(yield* telemetryEnabled) || !distinctId) return;
+    if (!(yield* telemetryEnabled)) return;
+    const { distinctId, installId } = yield* identity;
+    if (!distinctId) return;
 
     const payload = {
       api_key: telemetryConfig.posthogKey,
@@ -336,7 +345,7 @@ export const make = Effect.gen(function* () {
 
   const record: AnalyticsService["Service"]["record"] = Effect.fn("AnalyticsService.record")(
     function* (event, properties) {
-      if (!(yield* telemetryEnabled) || !distinctId) return;
+      if (!(yield* telemetryEnabled) || !(yield* identity).distinctId) return;
 
       // Catch Node UUID defects too; best-effort telemetry drops events without UUIDs.
       const uuid = yield* Effect.exit(crypto.randomUUIDv7());
@@ -354,8 +363,10 @@ export const make = Effect.gen(function* () {
 
   const recordOwners: AnalyticsService["Service"]["recordOwners"] = Effect.fn(
     "AnalyticsService.recordOwners",
-  )((owners, observedBy) =>
-    Effect.forEach(
+  )(function* (owners, observedBy) {
+    // An owner dropped while sharing is off must not count as sent.
+    if (!(yield* telemetryEnabled)) return;
+    yield* Effect.forEach(
       owners,
       ({ source, ownerId }) =>
         Ref.modify(recordedOwnersRef, (recorded) => {
@@ -372,7 +383,15 @@ export const make = Effect.gen(function* () {
           ),
         ),
       { discard: true },
-    ),
+    );
+  });
+
+  const recordServerOwners: AnalyticsService["Service"]["recordServerOwners"] = Effect.gen(
+    function* () {
+      if (!(yield* telemetryEnabled)) return;
+      const owners = yield* getServerOwners.pipe(Effect.provideContext(identityContext));
+      yield* recordOwners(owners, "server");
+    },
   );
 
   yield* Effect.forever(Effect.sleep(FLUSH_INTERVAL_MS).pipe(Effect.andThen(flushWhenDue)), {
@@ -381,7 +400,7 @@ export const make = Effect.gen(function* () {
 
   yield* Effect.addFinalizer(() => flush);
 
-  return AnalyticsService.of({ record, flush, recordOwners, usageData });
+  return AnalyticsService.of({ record, flush, recordOwners, recordServerOwners, usageData });
 });
 
 export const layer = Layer.effect(AnalyticsService, make);

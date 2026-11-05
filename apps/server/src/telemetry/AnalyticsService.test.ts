@@ -4,6 +4,7 @@ import { assert, it } from "@effect/vitest";
 import * as Clock from "effect/Clock";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
@@ -123,7 +124,9 @@ interface SendOptions {
   readonly record?: Effect.Effect<
     void,
     never,
-    AnalyticsService.AnalyticsService | Effect.Services<typeof getTelemetryIdentity>
+    | AnalyticsService.AnalyticsService
+    | ServerSettingsService
+    | Effect.Services<typeof getTelemetryIdentity>
   >;
   readonly policy?: ManagedPolicyDocument;
   /** The server's environment. Defaults to a configured destination and nothing else. */
@@ -171,9 +174,9 @@ const sendFor = (
           Layer.succeed(HostProcess.Architecture, "x64"),
           Layer.succeed(HttpClient.HttpClient, client),
           ManagedPolicy.layerTest(policy),
-          ServerSettingsService.layerTest({ shareUsageData }),
         ),
       ),
+      Layer.provideMerge(ServerSettingsService.layerTest({ shareUsageData })),
     );
 
     yield* Effect.gen(function* () {
@@ -273,6 +276,107 @@ it.layer(NodeServices.layer)("AnalyticsService test", (it) => {
           limits: { telemetry: false },
         }),
         { available: false },
+      );
+    }),
+  );
+
+  it.effect("refuses a managed policy that tries to opt users in, before anything is sent", () =>
+    Effect.gen(function* () {
+      const error = yield* sendFor(1, refuseEveryRequest, {
+        shareUsageData: false,
+        policy: {
+          schemaVersion: 1,
+          organization: "Example Corp",
+          settings: { shareUsageData: { value: true, locked: true } },
+        },
+      }).pipe(Effect.flip);
+      assert.equal(error._tag, "ManagedPolicyFileError");
+      assert.include(String(error.message), "limits.telemetry: false");
+    }),
+  );
+
+  it.effect("touches no install id or provider login file while sharing is off", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const identityFile = /anonymous-id|\.codex|\.claude/;
+      const run = (shareUsageData: boolean) =>
+        Effect.gen(function* () {
+          const touched: Array<string> = [];
+          const watch = (path: string) => {
+            if (identityFile.test(path)) touched.push(path);
+          };
+          let installIdExists = false;
+          yield* sendFor(0, respondWithStatus(204), {
+            shareUsageData,
+            record: Effect.gen(function* () {
+              const analytics = yield* AnalyticsService.AnalyticsService;
+              yield* analytics.record("test.boot");
+              yield* analytics.recordServerOwners;
+              yield* analytics.flush;
+              const { anonymousIdPath } = yield* ServerConfig.ServerConfig;
+              installIdExists = yield* fileSystem.exists(anonymousIdPath).pipe(Effect.orDie);
+            }),
+          }).pipe(
+            Effect.provideService(FileSystem.FileSystem, {
+              ...fileSystem,
+              exists: (path) => (watch(path), fileSystem.exists(path)),
+              readFileString: (path, encoding) => (
+                watch(path),
+                fileSystem.readFileString(path, encoding)
+              ),
+              writeFileString: (path, data, options) => (
+                watch(path),
+                fileSystem.writeFileString(path, data, options)
+              ),
+            }),
+          );
+          return { touched: touched.length, installIdExists };
+        });
+      assert.deepEqual(yield* run(false), { touched: 0, installIdExists: false });
+      const optedIn = yield* run(true);
+      assert.isAbove(optedIn.touched, 0);
+      assert.isTrue(optedIn.installIdExists);
+    }),
+  );
+
+  it.effect("stops sending, retries included, as soon as the user switches sharing off", () =>
+    Effect.gen(function* () {
+      const ingest = failingFor(Infinity);
+      const batches = yield* sendFor(5, ingest.respond, {
+        record: Effect.gen(function* () {
+          const analytics = yield* AnalyticsService.AnalyticsService;
+          const settings = yield* ServerSettingsService;
+          yield* analytics.record("test.while-on");
+          yield* analytics.flush;
+          yield* settings.updateSettings({ shareUsageData: false }).pipe(Effect.orDie);
+          yield* analytics.record("test.after-off");
+          yield* analytics.flush;
+        }),
+      });
+      assert.deepEqual(
+        batches.map((batch) => batch.map(({ event }) => event)),
+        [["test.while-on"]],
+      );
+    }),
+  );
+
+  it.effect("records owners seen while sharing was off once the user opts in", () =>
+    Effect.gen(function* () {
+      const owner = { source: "device" as const, ownerId: "b".repeat(64) };
+      const batches = yield* sendFor(0, respondWithStatus(204), {
+        shareUsageData: false,
+        record: Effect.gen(function* () {
+          const analytics = yield* AnalyticsService.AnalyticsService;
+          const settings = yield* ServerSettingsService;
+          yield* analytics.recordOwners([owner], "client");
+          yield* settings.updateSettings({ shareUsageData: true }).pipe(Effect.orDie);
+          yield* analytics.recordOwners([owner], "client");
+          yield* analytics.flush;
+        }),
+      });
+      assert.deepEqual(
+        batches.flat().map((event) => event.properties.observedBy),
+        ["client"],
       );
     }),
   );

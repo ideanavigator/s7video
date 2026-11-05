@@ -344,6 +344,7 @@ it.effect("records only failed calls of tools that hand off no work", () => {
                 ),
               flush: Effect.void,
               recordOwners: () => Effect.void,
+              recordServerOwners: Effect.void,
               usageData: Effect.succeed({ available: false }),
             }),
           ),
