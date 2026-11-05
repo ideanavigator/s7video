@@ -20,12 +20,6 @@ export function isDesktopLocalConnectionTarget(
   );
 }
 
-export function desktopLocalBackendId(target: ConnectionTarget): string | null {
-  return isDesktopLocalConnectionTarget(target)
-    ? target.connectionId.slice(DESKTOP_LOCAL_CONNECTION_ID_PREFIX.length)
-    : null;
-}
-
 export type DesktopSecondaryBootstrapsRead =
   | {
       readonly _tag: "Success";
@@ -65,7 +59,6 @@ export function createDesktopSecondaryBootstrapsReader(
             previous === undefined ||
             entry.id !== previous.id ||
             entry.label !== previous.label ||
-            entry.runningDistro !== previous.runningDistro ||
             entry.httpBaseUrl !== previous.httpBaseUrl ||
             entry.wsBaseUrl !== previous.wsBaseUrl ||
             entry.bootstrapToken !== previous.bootstrapToken

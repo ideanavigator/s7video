@@ -50,7 +50,7 @@ function BoringSidebarMultilineRow() {
   return (
     <SettingsRow
       {...searchableSetting("boring-sidebar-multiline")}
-      description="In the boring sidebar, show folder threads on two lines: the title, then the branch, pull request, and agent."
+      description="In the boring sidebar, show folder threads on two lines: the title, then the branch and agent."
       control={
         <Switch
           checked={settings.boringSidebarMultilineRows}

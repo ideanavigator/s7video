@@ -1,4 +1,4 @@
-import { BearerConnectionTarget, SshConnectionTarget } from "@t3tools/client-runtime/connection";
+import { BearerConnectionTarget } from "@t3tools/client-runtime/connection";
 import { EnvironmentId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -47,17 +47,6 @@ describe("folderDropTarget", () => {
     [
       "a desktop WSL backend",
       { ...thinClient, connection: savedServer("http://127.0.0.1:3774", "local:wsl-ubuntu") },
-      "remote",
-    ],
-    [
-      "an SSH forward on loopback",
-      {
-        ...thinClient,
-        connection: {
-          target: new SshConnectionTarget({ ...base, connectionId: "ssh-1" }),
-          httpBaseUrl: "http://127.0.0.1:41000",
-        },
-      },
       "remote",
     ],
     ["an unprepared connection", { ...thinClient, connection: null }, "remote"],

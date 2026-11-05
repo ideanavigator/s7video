@@ -1,13 +1,9 @@
 import { AuthEnvironmentMaintainScope } from "@t3tools/contracts";
 
-import { isElectron } from "~/env";
 import { isLocalEnvironmentDisabled } from "~/localEnvironment";
-import { desktopWslStateAtom } from "~/state/desktopWslState";
 import { useEnvironments, usePrimaryEnvironmentId } from "~/state/environments";
 import { usePeerLinkHosts } from "~/state/peerLinks";
-import { useEnvironmentQuery } from "~/state/query";
 import { useEnvironmentScope } from "~/state/session";
-import { isWslSettingsRowVisible } from "./ConnectionsSettings.logic";
 import { offeredUsageData } from "./PrivacySettings.logic";
 import { isProviderSettingsEnvironmentAvailable } from "./ProviderSettingsPanel.logic";
 import type { SettingsScopeSearch } from "./settingsScope";
@@ -46,11 +42,6 @@ export function useAvailableSettingsSearchItems(scopeSearch: SettingsScopeSearch
   const hasUsageDataSharing = offeredUsageData(environments) !== null;
   const localEnvironmentDisabled = isLocalEnvironmentDisabled() === true;
   const canManageLocalBackend = !localEnvironmentDisabled && canMaintain;
-  const desktopWsl = useEnvironmentQuery(
-    isElectron && canManageLocalBackend ? desktopWslStateAtom : null,
-  );
-  const wslSettingsRowVisible =
-    isWslSettingsRowVisible({ state: desktopWsl.data, error: desktopWsl.error }) === true;
 
   return filterAvailableSettingsSearchItems({
     localEnvironmentDisabled,
@@ -58,7 +49,6 @@ export function useAvailableSettingsSearchItems(scopeSearch: SettingsScopeSearch
     hasProviderSettingsEnvironment,
     hasMacProviderSettingsEnvironment,
     canManageLocalBackend,
-    isWslSettingsRowVisible: wslSettingsRowVisible,
     hasThreadAutoSettlement,
     hasPeerLinkHost,
     hasUsageDataSharing,

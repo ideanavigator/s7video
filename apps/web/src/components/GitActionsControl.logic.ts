@@ -4,9 +4,7 @@ import type {
   VcsStatusResult,
 } from "@t3tools/contracts";
 import { isTemporaryWorktreeBranch } from "@t3tools/shared/git";
-import type { ChangeRequestTerminology } from "@t3tools/client-runtime/source-control-clients";
 import {
-  changeRequestTerminologyFor,
   type DefaultBranchActionDialogCopy,
   type DefaultBranchConfirmableAction,
   type GitActionIconName,
@@ -20,7 +18,7 @@ export {
 } from "@t3tools/client-runtime/state/vcs";
 
 export interface GitActionMenuItem {
-  id: "commit" | "push" | "pr";
+  id: "commit" | "push";
   label: string;
   disabled: boolean;
   icon: GitActionIconName;
@@ -111,13 +109,10 @@ export function buildMenuItems(
   hasPrimaryRemote = true,
 ): GitActionMenuItem[] {
   if (!gitStatus) return [];
-  const terminology = changeRequestTerminologyFor(gitStatus);
 
   const hasBranch = gitStatus.refName !== null;
   const hasChanges = gitStatus.hasWorkingTreeChanges;
-  const hasOpenPr = gitStatus.pr?.state === "open";
   const isBehind = gitStatus.behindCount > 0;
-  const hasDefaultBranchDelta = (gitStatus.aheadOfDefaultCount ?? gitStatus.aheadCount) > 0;
   const canPushWithoutUpstream = hasPrimaryRemote && !gitStatus.hasUpstream;
   const canCommit = !isBusy && hasChanges;
   const canPush =
@@ -126,14 +121,6 @@ export function buildMenuItems(
     !isBehind &&
     gitStatus.aheadCount > 0 &&
     (gitStatus.hasUpstream || canPushWithoutUpstream);
-  const canCreatePr =
-    !isBusy &&
-    hasBranch &&
-    !hasOpenPr &&
-    hasDefaultBranchDelta &&
-    !isBehind &&
-    (gitStatus.hasUpstream || canPushWithoutUpstream);
-
   const commitItem: GitActionMenuItem = {
     id: "commit",
     label: "Commit",
@@ -156,22 +143,7 @@ export function buildMenuItems(
     dialogAction: "push",
   };
 
-  if (hasOpenPr) {
-    return [commitItem, pushItem];
-  }
-
-  return [
-    commitItem,
-    pushItem,
-    {
-      id: "pr",
-      label: `Create ${terminology.shortLabel}`,
-      disabled: !canCreatePr,
-      icon: "pr",
-      kind: "open_dialog",
-      dialogAction: "create_pr",
-    },
-  ];
+  return [commitItem, pushItem];
 }
 
 export function resolveQuickAction(
@@ -195,19 +167,16 @@ export function resolveQuickAction(
 
   const hasBranch = gitStatus.refName !== null;
   const hasChanges = gitStatus.hasWorkingTreeChanges;
-  const hasOpenPr = gitStatus.pr?.state === "open";
   const isAhead = gitStatus.aheadCount > 0;
-  const hasDefaultBranchDelta = (gitStatus.aheadOfDefaultCount ?? gitStatus.aheadCount) > 0;
   const isBehind = gitStatus.behindCount > 0;
   const isDiverged = isAhead && isBehind;
-  const terminology = changeRequestTerminologyFor(gitStatus);
 
   if (!hasBranch) {
     return {
       label: "Commit",
       disabled: true,
       kind: "show_hint",
-      hint: `Create and checkout a ref before pushing or opening a ${terminology.singular}.`,
+      hint: "Create and checkout a ref before pushing.",
     };
   }
 
@@ -215,15 +184,7 @@ export function resolveQuickAction(
     if (isBehind || (!gitStatus.hasUpstream && !hasPrimaryRemote)) {
       return { label: "Commit", disabled: false, kind: "run_action", action: "commit" };
     }
-    if (hasOpenPr || isDefaultRef) {
-      return { label: "Commit & push", disabled: false, kind: "run_action", action: "commit_push" };
-    }
-    return {
-      label: `Commit, push & ${terminology.shortLabel}`,
-      disabled: false,
-      kind: "run_action",
-      action: "commit_push_pr",
-    };
+    return { label: "Commit & push", disabled: false, kind: "run_action", action: "commit_push" };
   }
 
   if (!gitStatus.hasUpstream) {
@@ -235,14 +196,6 @@ export function resolveQuickAction(
       };
     }
     if (!isAhead) {
-      if (hasOpenPr) {
-        return {
-          label: "Commit",
-          disabled: true,
-          kind: "show_hint",
-          hint: "Branch is up to date. No action needed.",
-        };
-      }
       return {
         label: "Push",
         disabled: true,
@@ -250,19 +203,11 @@ export function resolveQuickAction(
         hint: "No local commits to push.",
       };
     }
-    if (hasOpenPr || isDefaultRef) {
-      return {
-        label: "Push",
-        disabled: false,
-        kind: "run_action",
-        action: isDefaultRef ? "commit_push" : "push",
-      };
-    }
     return {
-      label: `Push & create ${terminology.shortLabel}`,
+      label: "Push",
       disabled: false,
       kind: "run_action",
-      action: "create_pr",
+      action: isDefaultRef ? "commit_push" : "push",
     };
   }
 
@@ -284,37 +229,11 @@ export function resolveQuickAction(
   }
 
   if (isAhead) {
-    if (hasOpenPr || isDefaultRef) {
-      return {
-        label: "Push",
-        disabled: false,
-        kind: "run_action",
-        action: isDefaultRef ? "commit_push" : "push",
-      };
-    }
     return {
-      label: `Push & create ${terminology.shortLabel}`,
+      label: "Push",
       disabled: false,
       kind: "run_action",
-      action: "create_pr",
-    };
-  }
-
-  if (hasOpenPr && gitStatus.hasUpstream) {
-    return {
-      label: "Commit",
-      disabled: true,
-      kind: "show_hint",
-      hint: "Branch is up to date. No action needed.",
-    };
-  }
-
-  if (hasDefaultBranchDelta && !isDefaultRef) {
-    return {
-      label: `Create ${terminology.shortLabel}`,
-      disabled: false,
-      kind: "run_action",
-      action: "create_pr",
+      action: isDefaultRef ? "commit_push" : "push",
     };
   }
 
@@ -330,38 +249,20 @@ export function resolveDefaultBranchActionDialogCopy(input: {
   action: DefaultBranchConfirmableAction;
   branchName: string;
   includesCommit: boolean;
-  terminology: ChangeRequestTerminology;
 }): DefaultBranchActionDialogCopy {
   const branchLabel = input.branchName;
   const suffix = ` on "${branchLabel}". You can continue on this ref or create a feature ref and run the same action there.`;
-  const { terminology } = input;
-
-  if (input.action === "push" || input.action === "commit_push") {
-    if (input.includesCommit) {
-      return {
-        title: "Commit & push to default ref?",
-        description: `This action will commit and push changes${suffix}`,
-        continueLabel: `Commit & push to ${branchLabel}`,
-      };
-    }
-    return {
-      title: "Push to default ref?",
-      description: `This action will push local commits${suffix}`,
-      continueLabel: `Push to ${branchLabel}`,
-    };
-  }
-
   if (input.includesCommit) {
     return {
-      title: `Commit, push & create ${terminology.shortLabel} from default ref?`,
-      description: `This action will commit, push, and create a ${terminology.singular}${suffix}`,
-      continueLabel: `Commit, push & create ${terminology.shortLabel}`,
+      title: "Commit & push to default ref?",
+      description: `This action will commit and push changes${suffix}`,
+      continueLabel: `Commit & push to ${branchLabel}`,
     };
   }
   return {
-    title: `Push & create ${terminology.shortLabel} from default ref?`,
-    description: `This action will push local commits and create a ${terminology.singular}${suffix}`,
-    continueLabel: `Push & create ${terminology.shortLabel}`,
+    title: "Push to default ref?",
+    description: `This action will push local commits${suffix}`,
+    continueLabel: `Push to ${branchLabel}`,
   };
 }
 

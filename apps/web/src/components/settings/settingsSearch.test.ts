@@ -104,6 +104,24 @@ describe("searchSettings", () => {
     ).toEqual(["network-access", "connections-environment"]);
   });
 
+  it("lists no SSH, Tailscale, WSL or pull request settings (S7V-018)", () => {
+    for (const query of [
+      "ssh",
+      "tailscale",
+      "wsl",
+      "pull request",
+      "merge method",
+      "review guide",
+    ]) {
+      expect(searchSettings(query).map((item) => item.id)).toEqual([]);
+    }
+    expect(
+      SETTINGS_SEARCH_ITEMS.filter((item) =>
+        /pull request|tailscale|\bssh\b|\bwsl\b/i.test(item.title),
+      ),
+    ).toEqual([]);
+  });
+
   it("hides desktop-only settings from browser search", () => {
     expect(SETTINGS_SEARCH_ITEMS.some((item) => item.id === "quit-confirmation")).toBe(true);
     expect(searchSettings("hold to quit")).toEqual([]);
@@ -117,24 +135,17 @@ describe("searchSettings", () => {
       hasProviderSettingsEnvironment: false,
       hasMacProviderSettingsEnvironment: false,
       canManageLocalBackend: false,
-      isWslSettingsRowVisible: false,
       hasThreadAutoSettlement: false,
     });
 
     const gatedIds = new Set<string>([
-      "follow-change-request-templates",
       "git-fetch-interval",
       "network-access",
       "provider-health-check-interval",
       "cursor-keychain-usage",
       "source-control-writer-model",
-      "review-guide-model",
-      "review-guide-instructions",
       "source-control-writing-style",
-      "tailscale-https",
-      "wsl-backend",
       "auto-settle-inactive-threads",
-      "auto-settle-merged-threads",
       "days-before-auto-settle",
       "linked-environments",
     ]);
@@ -148,7 +159,6 @@ describe("searchSettings", () => {
       hasMacProviderSettingsEnvironment: false,
       canManageLocalBackend: false,
       localEnvironmentDisabled: true,
-      isWslSettingsRowVisible: false,
       hasThreadAutoSettlement: false,
     };
     const results = (hasPeerLinkHost: boolean) =>
@@ -170,7 +180,7 @@ describe("searchSettings", () => {
     expect(searchSettings("toggle sidebar")[0]?.id).toBe("keybinding-sidebar.toggle");
     expect(searchSettings("sidebar.toggle")[0]?.id).toBe("keybinding-sidebar.toggle");
     expect(searchSettings("mod+b")[0]?.id).toBe("keybinding-sidebar.toggle");
-    expect(searchSettings("copy link")[0]).toMatchObject({
+    expect(searchSettings("copy reference")[0]).toMatchObject({
       id: "keybinding-thread.copyReference",
       to: "/settings/keybindings",
     });
@@ -258,14 +268,11 @@ describe("auto-settlement search availability", () => {
       hasProviderSettingsEnvironment: true,
       hasMacProviderSettingsEnvironment: false,
       canManageLocalBackend: false,
-      isWslSettingsRowVisible: false,
       hasThreadAutoSettlement: availability.eligibleEnvironmentIds.length > 0,
     });
     expect(searchSettings("auto-settle", items).map((item) => item.id)).toEqual([
       "auto-settle-inactive-threads",
-      "auto-settle-merged-threads",
       "days-before-auto-settle",
-      "keep-threads-with-pull-requests",
     ]);
   });
 
