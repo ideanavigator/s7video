@@ -7,7 +7,14 @@
   "fps": "24000/1001",
   "video_frames": 3356,
   "duration_frames": 3356,
+  "color_range": "tv",
+  "color_space": "bt709",
+  "color_transfer": "bt709",
+  "color_primaries": "bt709",
+  "video_start_s": 0.0,
   "audio_codec": "opus",
   "audio_rate": 48000,
-  "audio_channels": 2
+  "audio_channels": 2,
+  "audio_start_s": -0.007,
+  "audio_duration_s": 140.001
 }

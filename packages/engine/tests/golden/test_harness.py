@@ -20,7 +20,17 @@ BEEPS = {
 
 def test_ssim_identical_is_one(synth_clip):
     clip = synth_clip(BEEPS)
-    assert harness.ssim(clip, clip) == pytest.approx(1.0, abs=1e-6)
+    result = harness.ssim(clip, clip)
+    assert len(result.per_frame) == 60
+    assert result.min == pytest.approx(1.0, abs=1e-6)
+    assert result.mean == pytest.approx(1.0, abs=1e-6)
+
+
+def test_ssim_refuses_clips_with_different_frame_counts(synth_clip):
+    clip = synth_clip(BEEPS)
+    shorter = synth_clip({**BEEPS, "name": "harness-beeps-short", "audio": [{"seconds": 1.5}]})
+    with pytest.raises(harness.HarnessError, match="frame counts differ: reference 60, candidate 45"):
+        harness.ssim(clip, shorter)
 
 
 def test_phash_identical_frames_have_distance_zero(synth_clip):
@@ -35,6 +45,9 @@ def test_probe_summary_counts_frames_exactly(synth_clip):
     assert summary["fps"] == "30/1"
     assert (summary["width"], summary["height"]) == (320, 180)
     assert (summary["audio_codec"], summary["audio_rate"]) == ("aac", 48000)
+    assert summary["video_start_s"] == 0.0
+    assert summary["audio_duration_s"] == pytest.approx(2.0, abs=0.05)
+    assert {"color_range", "color_space", "color_transfer", "color_primaries"} <= summary.keys()
 
 
 def test_lufs_calibrated_tone(synth_clip):
@@ -70,14 +83,39 @@ def test_word_timing_diff_measures_start_errors():
     fps = Fraction(25)
     expected = [{"text": "Hello", "start": 25, "end": 40}, {"text": "world", "start": 50, "end": 60}]
     actual = [{"text": "hello,", "start": 1.02, "end": 1.6}, {"w": "World", "start": 2.0, "end": 2.4}]
-    report = harness.word_timing_diff(expected, actual, fps)
+    report = harness.word_timing_diff(expected, actual, fps, actual_unit="seconds")
     assert not report.missing
     assert report.start_errors_ms == pytest.approx([20.0, 0.0])
     assert report.within_one_frame == 1.0
     assert report.passes()
-    late = harness.word_timing_diff(expected, [{"text": "hello", "start": 1.3, "end": 1.6}], fps)
+    late = harness.word_timing_diff(
+        expected, [{"text": "hello", "start": 1.3, "end": 1.6}], fps, actual_unit="seconds"
+    )
     assert [w["text"] for w in late.missing] == ["world"]
     assert not late.passes()
+
+
+def test_word_timing_diff_units_edges_and_apostrophes():
+    fps = Fraction(25)
+    expected = [
+        {"text": "Let\u2019s", "start": 25, "end": 40, "startSeconds": 1.01, "startEdge": "pause"},
+        {"text": "go", "start": 50, "end": 60, "startEdge": "dip"},
+    ]
+    in_frames = [{"text": "let's", "start": 25, "end": 40}, {"text": "go", "start": 60, "end": 70}]
+    report = harness.word_timing_diff(expected, in_frames, fps, actual_unit="frames")
+    assert not report.missing
+    # startSeconds (1.01 s) is the reference, not the rounded frame (1.00 s).
+    assert report.start_errors_ms == pytest.approx([-10.0])
+    assert [m["scored"] for m in report.matched] == [True, False]
+    assert report.passes()
+    every = harness.word_timing_diff(
+        expected, in_frames, fps, actual_unit="frames", score_edges=None
+    )
+    assert not every.passes()
+    in_seconds = harness.word_timing_diff(
+        expected, [{"w": "Let's", "startSeconds": 1.01, "endSeconds": 1.6}], fps, actual_unit="frames"
+    )
+    assert in_seconds.start_errors_ms == pytest.approx([0.0])
 
 
 def test_hand_marked_words_file_is_well_formed():
@@ -93,8 +131,9 @@ def test_hand_marked_words_file_is_well_formed():
         assert word["start"] == round(Fraction(str(word["startSeconds"])) * fps)
     assert [w["start"] for w in words] == sorted(w["start"] for w in words)
     # Every word is matched against itself with zero error.
-    actual = [{"text": w["text"], "start": w["start"] / fps, "end": w["end"] / fps} for w in words]
-    assert harness.word_timing_diff(words, actual, fps).passes()
+    assert sum(w["startEdge"] in harness.SCORED_EDGES for w in words) >= 30
+    report = harness.word_timing_diff(words, words, fps, actual_unit="frames")
+    assert report.passes() and report.mean_abs_start_error_ms == 0
 
 
 def test_media_fixture_skips_when_clip_is_missing(request, monkeypatch, tmp_path):

@@ -45,14 +45,18 @@ Attribution text:
 
 ### How the words were marked
 
-The marks are independent of any speech model, so S7V-026 can test its aligner against them:
+These are machine-made reference marks, not human ground truth. `pause` and `gap` edges come from
+the audio alone; `dip` edges were searched near a speech aligner's word boundary, so they are not
+independent of a speech model. `harness.word_timing_diff` therefore scores only `pause`/`gap`
+starts by default (36 of the 40 words) and reports the rest:
 
 1. The spoken text comes from the clip's human-made English captions on Commons, cross-checked with
    a one-off local Qwen3-ASR run outside the repo. A word is kept only when both agree.
 2. Each edge comes from the audio energy envelope (mono 16 kHz, 100 Hz high-pass, 5 ms RMS, 20 ms
    smoothing; speech is 10 dB over the 5th-percentile floor). `startEdge` and `endEdge` give the
    evidence: `pause` (borders a pause of at least 250 ms), `gap` (borders a shorter quiet stretch),
-   or `dip` (an energy minimum at least 6 dB deep between two words, the softest kind).
+   or `dip` (an energy minimum at least 6 dB deep between two words, searched within 80 ms of the
+   Qwen3-ForcedAligner boundary; the softest kind).
 3. The words are phrase-initial or phrase-final, spread across the clip, and each envelope was
    inspected. Frames are `round(seconds × 24000/1001)`; the seconds are kept beside them.
 

@@ -12,12 +12,13 @@ API (other cards code against these names):
 
 - ``media_dir()``, ``load_manifest()``, ``clip_entry(id)``, ``cached_clip(id)``: the fetched-clip cache.
 - ``synth(spec)``: a deterministic synthetic clip from ``fixtures/media/synth.ts``.
-- ``probe_summary(path)``: codec, size, rate and exact frame count, for exact comparison.
-- ``ssim(reference, candidate)``: mean SSIM (FFmpeg ``ssim``), 1.0 for identical frames.
+- ``probe_summary(path)``: codecs, size, rate, exact frame count, colour tags, stream starts.
+- ``ssim(reference, candidate)``: per-frame SSIM (``.min``, ``.mean``); frame counts must match.
 - ``phash(path, frame)`` and ``phash_distance(a, b)``: 64-bit DCT perceptual hash of one frame.
 - ``loudness(path)``: EBU R128 integrated LUFS, loudness range and true peak (FFmpeg ``ebur128``).
 - ``cut_list_diff(expected, actual)``: ``None`` when equal, else the first differing output frame.
-- ``word_timing_diff(expected, actual, fps)``: per-word start/end errors against hand-marked words.
+- ``word_timing_diff(expected, actual, fps, actual_unit=...)``: start/end errors against hand-marked
+  words; only ``pause``/``gap`` starts are scored by default.
 """
 
 from __future__ import annotations
@@ -29,10 +30,11 @@ import os
 import re
 import shutil
 import subprocess
+import tempfile
 from dataclasses import dataclass, field
 from fractions import Fraction
 from pathlib import Path
-from typing import Iterable, Sequence
+from typing import Iterable, Literal, Sequence
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 MANIFEST = REPO_ROOT / "fixtures" / "media" / "manifest.json"
@@ -113,8 +115,19 @@ def synth(spec: dict) -> Path:
 # --- Probe -------------------------------------------------------------------------------------
 
 
+def _seconds(value: str | None) -> float | None:
+    """ffprobe seconds (``"1.5"``) or a Matroska ``DURATION`` tag (``"00:02:20.001"``), to the ms."""
+    if value in (None, "N/A"):
+        return None
+    total = 0.0
+    for part in str(value).split(":"):
+        total = total * 60 + float(part)
+    return round(total, 3)
+
+
 def probe_summary(path: Path | str) -> dict:
-    """What a golden compares exactly: container, codecs, size, rate and frame count.
+    """What a golden compares exactly: container, codecs, size, rate, frame count, colour tags,
+    and each stream's start (and the audio duration) for A/V sync checks.
 
     ``video_frames`` counts the video packets (exact, no decode); ``duration_frames`` is the same
     figure, named for the testing.md tolerance table.
@@ -128,7 +141,9 @@ def probe_summary(path: Path | str) -> dict:
                 "-count_packets",
                 "-show_entries",
                 "format=format_name:stream=index,codec_type,codec_name,profile,width,height,"
-                "pix_fmt,r_frame_rate,avg_frame_rate,nb_read_packets,sample_rate,channels",
+                "pix_fmt,r_frame_rate,avg_frame_rate,nb_read_packets,sample_rate,channels,"
+                "color_range,color_space,color_transfer,color_primaries,start_time,duration"
+                ":stream_tags=DURATION",
                 "-of",
                 "json",
                 str(path),
@@ -149,12 +164,19 @@ def probe_summary(path: Path | str) -> dict:
             fps=video.get("r_frame_rate"),
             video_frames=frames,
             duration_frames=frames,
+            color_range=video.get("color_range"),
+            color_space=video.get("color_space"),
+            color_transfer=video.get("color_transfer"),
+            color_primaries=video.get("color_primaries"),
+            video_start_s=_seconds(video.get("start_time")),
         )
     if audio:
         summary.update(
             audio_codec=audio.get("codec_name"),
             audio_rate=int(audio["sample_rate"]) if audio.get("sample_rate") else None,
             audio_channels=audio.get("channels"),
+            audio_start_s=_seconds(audio.get("start_time")),
+            audio_duration_s=_seconds(audio.get("duration") or audio.get("tags", {}).get("DURATION")),
         )
     return summary
 
@@ -162,28 +184,67 @@ def probe_summary(path: Path | str) -> dict:
 # --- Picture -----------------------------------------------------------------------------------
 
 
-def ssim(reference: Path | str, candidate: Path | str) -> float:
-    """Mean SSIM ("All") over every frame pair of two clips of the same size (FFmpeg ``ssim``)."""
-    result = _run(
-        [
-            _tool("ffmpeg"),
-            "-hide_banner",
-            "-nostats",
-            "-i",
-            str(candidate),
-            "-i",
-            str(reference),
-            "-lavfi",
-            "[0:v][1:v]ssim",
-            "-f",
-            "null",
-            "-",
+@dataclass(frozen=True)
+class SsimResult:
+    """SSIM ("All") per frame pair; testing.md's ≥ 0.98 applies to every sampled frame (``min``)."""
+
+    per_frame: tuple[float, ...]
+
+    @property
+    def mean(self) -> float:
+        return sum(self.per_frame) / len(self.per_frame)
+
+    @property
+    def min(self) -> float:
+        return min(self.per_frame)
+
+    @property
+    def worst_frame(self) -> int:
+        return self.per_frame.index(self.min)
+
+
+def ssim(reference: Path | str, candidate: Path | str) -> SsimResult:
+    """Per-frame SSIM of two clips of the same size and frame count (FFmpeg ``ssim``).
+
+    Raises ``HarnessError`` when the frame counts differ: FFmpeg's framesync would otherwise
+    repeat the last frame of the shorter clip and hide a truncated render.
+    """
+    ref_frames = probe_summary(reference).get("video_frames")
+    cand_frames = probe_summary(candidate).get("video_frames")
+    if ref_frames != cand_frames:
+        raise HarnessError(
+            f"frame counts differ: reference {ref_frames}, candidate {cand_frames}"
+        )
+    with tempfile.TemporaryDirectory(prefix="s7v-ssim-") as tmp:
+        stats = Path(tmp) / "ssim.log"
+        _run(
+            [
+                _tool("ffmpeg"),
+                "-hide_banner",
+                "-nostats",
+                "-i",
+                str(candidate),
+                "-i",
+                str(reference),
+                "-lavfi",
+                f"[0:v][1:v]ssim=stats_file={_filter_path(stats)}",
+                "-f",
+                "null",
+                "-",
+            ]
+        )
+        values = [
+            1.0 if m.group(1) == "inf" else float(m.group(1))
+            for m in re.finditer(r"All:([0-9.]+|inf)", stats.read_text(encoding="utf-8"))
         ]
-    )
-    match = re.search(r"SSIM .*All:([0-9.]+|inf)", result.stderr)
-    if not match:
-        raise HarnessError("ffmpeg ssim printed no summary")
-    return 1.0 if match.group(1) == "inf" else float(match.group(1))
+    if len(values) != ref_frames:
+        raise HarnessError(f"ffmpeg ssim scored {len(values)} frames, expected {ref_frames}")
+    return SsimResult(tuple(values))
+
+
+def _filter_path(path: Path) -> str:
+    """Escape a path for use as a filter option value."""
+    return str(path).replace("\\", "\\\\").replace(":", "\\:").replace("'", "\\'")
 
 
 def _frame_gray(path: Path | str, frame: int, size: int) -> list[list[float]]:
@@ -325,22 +386,33 @@ def cut_list_diff(expected: Iterable[CutRange], actual: Iterable[CutRange]) -> C
 
 # --- Word timings ------------------------------------------------------------------------------
 
+# Hand-marked edges trusted for scoring: bordering a pause or a quiet gap. ``dip`` edges were found
+# near an aligner's boundary, so they are reported but not scored by default.
+SCORED_EDGES = ("pause", "gap")
+
 
 def _norm(text: str) -> str:
-    return re.sub(r"[^\w']", "", text.lower()).replace("’", "'")
+    return re.sub(r"[^\w']", "", text.lower().replace("\u2019", "'"))
 
 
 @dataclass
 class WordTimingReport:
-    """Start and end errors (actual − expected) for each expected word that was matched."""
+    """Start and end errors (actual − expected) for each expected word that was matched.
+
+    Only ``scored`` words (start edge in ``score_edges``) count towards the mean and the share.
+    """
 
     fps: Fraction
     matched: list[dict] = field(default_factory=list)
     missing: list[dict] = field(default_factory=list)
 
     @property
+    def scored(self) -> list[dict]:
+        return [m for m in self.matched if m["scored"]]
+
+    @property
     def start_errors_ms(self) -> list[float]:
-        return [m["start_error_ms"] for m in self.matched]
+        return [m["start_error_ms"] for m in self.scored]
 
     @property
     def mean_abs_start_error_ms(self) -> float:
@@ -349,10 +421,10 @@ class WordTimingReport:
 
     @property
     def within_one_frame(self) -> float:
-        """Share of matched words whose start is within one frame of the hand mark."""
-        if not self.matched:
+        """Share of scored words whose start is within one frame of the hand mark."""
+        if not self.scored:
             return 0.0
-        return sum(1 for m in self.matched if abs(m["start_error_frames"]) <= 1) / len(self.matched)
+        return sum(1 for m in self.scored if abs(m["start_error_frames"]) <= 1) / len(self.scored)
 
     def passes(self, *, mean_ms: float = 50.0, share_within_frame: float = 0.9) -> bool:
         """PRD-002 targets: mean start error < 50 ms and 90% of starts within one frame."""
@@ -364,9 +436,22 @@ class WordTimingReport:
 
     def summary(self) -> str:
         return (
-            f"{len(self.matched)} matched, {len(self.missing)} missing; mean |start error| "
-            f"{self.mean_abs_start_error_ms:.1f} ms; {self.within_one_frame:.0%} within one frame"
+            f"{len(self.scored)} scored of {len(self.matched)} matched, {len(self.missing)} "
+            f"missing; mean |start error| {self.mean_abs_start_error_ms:.1f} ms; "
+            f"{self.within_one_frame:.0%} within one frame"
         )
+
+
+def _expected_seconds(word: dict, edge: str, rate: Fraction) -> float:
+    exact = word.get(f"{edge}Seconds")
+    return float(exact) if exact is not None else float(Fraction(word[edge]) / rate)
+
+
+def _actual_seconds(word: dict, edge: str, unit: str, rate: Fraction) -> float:
+    if f"{edge}Seconds" in word:
+        return float(word[f"{edge}Seconds"])
+    value = word[edge]
+    return float(Fraction(value) / rate) if unit == "frames" else float(value)
 
 
 def word_timing_diff(
@@ -374,29 +459,34 @@ def word_timing_diff(
     actual: Sequence[dict],
     fps: Fraction | str,
     *,
+    actual_unit: Literal["seconds", "frames"],
+    score_edges: Iterable[str] | None = SCORED_EDGES,
     search_window_s: float = 0.5,
 ) -> WordTimingReport:
     """Match hand-marked words to transcript words and measure timing errors.
 
-    ``expected`` items have ``text`` and integer ``start``/``end`` frames (the words.json shape).
-    ``actual`` items have ``text`` and ``start``/``end`` in seconds (``startSeconds``/``endSeconds``
-    and ``w`` are also accepted). A word matches the same normalised text whose start is closest
-    within ``search_window_s``; unmatched hand-marked words are reported as missing.
+    ``expected`` is the words.json shape: ``text``, integer ``start``/``end`` frames, and
+    ``startSeconds``/``endSeconds`` (used when present, so frame rounding adds no error) plus
+    ``startEdge``. ``actual`` items have ``text`` (or ``w``) and ``start``/``end`` in
+    ``actual_unit``; ``startSeconds``/``endSeconds`` in an item always win. A word matches the same
+    normalised text whose start is closest within ``search_window_s``. Words whose ``startEdge``
+    is not in ``score_edges`` are reported but not scored (``None`` scores every word).
     """
     rate = Fraction(fps) if not isinstance(fps, Fraction) else fps
+    edges = None if score_edges is None else set(score_edges)
     report = WordTimingReport(rate)
     candidates = [
         {
             "text": _norm(str(a.get("text", a.get("w", "")))),
-            "start": float(a.get("start", a.get("startSeconds", 0.0))),
-            "end": float(a.get("end", a.get("endSeconds", 0.0))),
+            "start": _actual_seconds(a, "start", actual_unit, rate),
+            "end": _actual_seconds(a, "end", actual_unit, rate),
         }
         for a in actual
     ]
     used: set[int] = set()
     for word in expected:
-        start_s = float(Fraction(word["start"]) / rate)
-        end_s = float(Fraction(word["end"]) / rate)
+        start_s = _expected_seconds(word, "start", rate)
+        end_s = _expected_seconds(word, "end", rate)
         text = _norm(word["text"])
         best: tuple[float, int] | None = None
         for index, cand in enumerate(candidates):
@@ -413,6 +503,7 @@ def word_timing_diff(
         report.matched.append(
             {
                 "text": word["text"],
+                "scored": edges is None or word.get("startEdge", "pause") in edges,
                 "start_error_ms": (cand["start"] - start_s) * 1000,
                 "end_error_ms": (cand["end"] - end_s) * 1000,
                 "start_error_frames": round(cand["start"] * rate) - word["start"],

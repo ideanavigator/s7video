@@ -5,8 +5,8 @@
   "frameRule": "start and end are frame numbers at fps: round(seconds * 24000/1001). startSeconds/endSeconds keep the 5 ms mark.",
   "method": [
     "Spoken words: the human-made English captions on the clip's Commons page (TimedText .en.srt), cross-checked with a one-off local Qwen3-ASR run outside the repo; a word is kept only when both agree.",
-    "Edges: from the audio energy envelope (mono 16 kHz, 100 Hz high-pass, 5 ms RMS, 20 ms smoothing; noise floor = 5th percentile, speech = floor + 10 dB).",
-    "startEdge/endEdge says how sure an edge is. pause: the word borders a pause of at least 250 ms (sharp). gap: it borders a quiet stretch shorter than 250 ms inside a phrase (sharp). dip: an energy minimum at least 6 dB deep between two words, searched within 80 ms of the aligner's boundary (softer; prefer starts and pause/gap edges for timing checks).",
+    "Machine-made reference marks, not human ground truth. Edges: from the audio energy envelope (mono 16 kHz, 100 Hz high-pass, 5 ms RMS, 20 ms smoothing; noise floor = 5th percentile, speech = floor + 10 dB).",
+    "startEdge/endEdge says how sure an edge is. pause: the word borders a pause of at least 250 ms (sharp). gap: it borders a quiet stretch shorter than 250 ms inside a phrase (sharp). dip: an energy minimum at least 6 dB deep between two words, searched within 80 ms of the Qwen3-ForcedAligner boundary, so not independent of a speech model; harness.word_timing_diff scores only pause/gap starts by default.",
     "Words are phrase-initial or phrase-final, spread over the whole clip; each envelope was inspected as ASCII. Not yet checked by ear: the PO should spot-check a few (for example 'Greetings', 'accuse', 'vote', 'encyclopedia', 'roof')."
   ],
   "words": [
