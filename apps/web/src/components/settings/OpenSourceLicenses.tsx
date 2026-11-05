@@ -8,6 +8,7 @@ import { FetchHttpClient, HttpClient } from "effect/http";
 import { Atom } from "effect/reactivity";
 import { useState } from "react";
 
+import { BRAND } from "@t3tools/shared/brand";
 import {
   decodeThirdPartyLicenseManifest,
   filterThirdPartyLicenseEntries,
@@ -256,6 +257,9 @@ export function OpenSourceLicensesPanel() {
       >
         {manifest ? (
           <div className="text-base sm:text-sm">
+            <p className="border-b px-3 py-3 text-xs/5 text-muted-foreground sm:px-4">
+              {`${BRAND.app.productName} includes the open-source software below, starting with ${BRAND.credits.upstreamName} (${BRAND.credits.license}). Open a row to read its full licence text.`}
+            </p>
             {filteredEntries.length > 0 ? (
               filteredEntries.map((entry) => {
                 const entryKey = thirdPartyLicenseEntryKey(entry);
