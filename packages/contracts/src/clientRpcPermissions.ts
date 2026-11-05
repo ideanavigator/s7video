@@ -78,6 +78,10 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.transcribeRun]: AuthOrchestrationOperateScope,
   [WS_METHODS.transcribeModelsDownload]: AuthOrchestrationOperateScope,
   [WS_METHODS.transcribeModelsDismiss]: AuthOrchestrationOperateScope,
+  // Imports read any file on this machine and write into the project's edit.json and assets/.
+  [WS_METHODS.mediaImportPlan]: AuthOrchestrationOperateScope,
+  [WS_METHODS.mediaImport]: AuthOrchestrationOperateScope,
+  [WS_METHODS.mediaRelink]: AuthOrchestrationOperateScope,
 } as const;
 export type ClientGuardedRpcTag = keyof typeof CLIENT_GUARDED_RPC_SCOPES;
 

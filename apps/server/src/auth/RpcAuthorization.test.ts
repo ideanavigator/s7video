@@ -410,6 +410,20 @@ it.effect("denies manual cleanup before the handler without settings permission"
   }).pipe(Effect.scoped),
 );
 
+it("lets readers follow the media library but only operators import or relink", () => {
+  for (const method of [WS_METHODS.mediaList, WS_METHODS.mediaSubscribe]) {
+    expect(requiredScopeForRpcMethod(method)).toBe(AuthOrchestrationReadScope);
+  }
+  for (const method of [
+    WS_METHODS.mediaImportPlan,
+    WS_METHODS.mediaImport,
+    WS_METHODS.mediaRelink,
+  ]) {
+    expect(requiredScopeForRpcMethod(method)).toBe(AuthOrchestrationOperateScope);
+    expect(clientRpcRequiredScopes(method, undefined)).toEqual([AuthOrchestrationOperateScope]);
+  }
+});
+
 it("lets readers load and follow an edit but only operators change or undo it", () => {
   for (const method of [WS_METHODS.editGet, WS_METHODS.editSubscribe]) {
     expect(requiredScopeForRpcMethod(method)).toBe(AuthOrchestrationReadScope);

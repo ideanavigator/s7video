@@ -366,6 +366,16 @@ import {
 import { UsagePricing, UsageReadError, UsageSummary, UsageSummaryInput } from "./usage.ts";
 import { EditConflict, EditValidationError } from "./edit.ts";
 import {
+  MediaImportInput,
+  MediaImportPlan,
+  MediaImportPlanInput,
+  MediaImportResult,
+  MediaLibraryError,
+  MediaLibraryInput,
+  MediaLibrarySnapshot,
+  MediaRelinkInput,
+} from "./media.ts";
+import {
   EditApplyInput,
   EditOpError,
   EditProjectInput,
@@ -643,6 +653,12 @@ export const WS_METHODS = {
   transcribeModelsStatus: "transcribe.models.status",
   transcribeModelsDownload: "transcribe.models.download",
   transcribeModelsDismiss: "transcribe.models.dismiss",
+  // Media library (S7V-025)
+  mediaImportPlan: "media.importPlan",
+  mediaImport: "media.import",
+  mediaList: "media.list",
+  mediaSubscribe: "media.subscribe",
+  mediaRelink: "media.relink",
 } as const;
 
 const WsServerUpsertKeybindingRpc = Rpc.make(WS_METHODS.serverUpsertKeybinding, {
@@ -2089,6 +2105,35 @@ const WsTranscribeModelsDismissRpc = Rpc.make(WS_METHODS.transcribeModelsDismiss
   error: TranscriptRpcError,
 });
 
+const MediaRpcError = Schema.Union([MediaLibraryError, EnvironmentAuthorizationError]);
+const WsMediaImportPlanRpc = Rpc.make(WS_METHODS.mediaImportPlan, {
+  payload: MediaImportPlanInput,
+  success: MediaImportPlan,
+  error: MediaRpcError,
+});
+// Returns once the media is in edit.json; a copy's progress streams on media.subscribe.
+const WsMediaImportRpc = Rpc.make(WS_METHODS.mediaImport, {
+  payload: MediaImportInput,
+  success: MediaImportResult,
+  error: MediaRpcError,
+});
+const WsMediaListRpc = Rpc.make(WS_METHODS.mediaList, {
+  payload: MediaLibraryInput,
+  success: MediaLibrarySnapshot,
+  error: MediaRpcError,
+});
+const WsMediaSubscribeRpc = Rpc.make(WS_METHODS.mediaSubscribe, {
+  payload: MediaLibraryInput,
+  success: MediaLibrarySnapshot,
+  error: MediaRpcError,
+  stream: true,
+});
+const WsMediaRelinkRpc = Rpc.make(WS_METHODS.mediaRelink, {
+  payload: MediaRelinkInput,
+  success: MediaImportResult,
+  error: MediaRpcError,
+});
+
 export const WsRpcGroup = RpcGroup.make(
   WsServerProbeRpc,
   WsServerGetConfigRpc,
@@ -2309,4 +2354,9 @@ export const WsRpcGroup = RpcGroup.make(
   WsTranscribeModelsStatusRpc,
   WsTranscribeModelsDownloadRpc,
   WsTranscribeModelsDismissRpc,
+  WsMediaImportPlanRpc,
+  WsMediaImportRpc,
+  WsMediaListRpc,
+  WsMediaSubscribeRpc,
+  WsMediaRelinkRpc,
 ).middleware(RpcScopeAuthorization);

@@ -13,6 +13,8 @@ import {
   AssetWorkspacePathValidationError,
   AssetWorkspaceResolutionError,
   AssetWorkspaceRootNormalizationError,
+  MediaVariant,
+  ProjectId,
   SOURCE_CONTROL_MEDIA_ASSET,
   ThreadId,
   ToolActivityNativeAppReference,
@@ -67,6 +69,7 @@ import { sourceControlDefinitions } from "../sourceControl/sourceControlDefiniti
 import { extractIcnsPng } from "./icns.ts";
 import { openMediaFile, readMediaFileHeader, type OpenMediaFile } from "./MediaFile.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as MediaLibraryService from "../media/MediaLibraryService.ts";
 
 export const ASSET_ROUTE_PREFIX = "/api/assets";
 
@@ -128,6 +131,18 @@ const AssetClaimsSchema = Schema.Union([
     kind: Schema.Literal("media-file-exact"),
     filePath: Schema.String,
     download: Schema.optionalKey(Schema.Boolean),
+    device: Schema.String,
+    inode: Schema.String,
+    expiresAt: Schema.Number,
+  }),
+  // Project media (S7V-025): pinned like media-file-exact, and re-checked against edit.json.
+  Schema.Struct({
+    version: Schema.Literal(1),
+    kind: Schema.Literal("project-media-exact"),
+    projectId: ProjectId,
+    mediaId: Schema.String,
+    variant: MediaVariant,
+    filePath: Schema.String,
     device: Schema.String,
     inode: Schema.String,
     expiresAt: Schema.Number,
@@ -831,6 +846,47 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
       fileName = "native-app-icon.png";
       break;
     }
+    case "project-media": {
+      const { projectId, mediaId, variant } = input.resource;
+      const library = yield* MediaLibraryService.MediaLibraryService;
+      const resolved = yield* library.resolveVariant(projectId, mediaId, variant);
+      if (Option.isNone(resolved)) {
+        return yield* new AssetWorkspaceAssetNotFoundError({ resource: input.resource });
+      }
+      const filePath = resolved.value.path;
+      const opened = yield* openMediaFile(filePath).pipe(
+        Effect.map((file) =>
+          file === null
+            ? null
+            : {
+                device: file.info.dev.toString(),
+                inode: file.info.ino.toString(),
+                fileRevision: `${file.info.dev}:${file.info.ino}:${file.info.size}:${file.info.mtimeNs}:${file.info.ctimeNs}`,
+              },
+        ),
+        Effect.scoped,
+        Effect.mapError(
+          (cause) => new AssetWorkspaceAssetInspectionError({ resource: input.resource, cause }),
+        ),
+      );
+      if (opened === null) {
+        return yield* new AssetWorkspaceAssetNotFoundError({ resource: input.resource });
+      }
+      claims = {
+        version: 1,
+        kind: "project-media-exact",
+        projectId,
+        mediaId,
+        variant,
+        filePath,
+        device: opened.device,
+        inode: opened.inode,
+        expiresAt,
+      };
+      fileName = path.basename(filePath);
+      fileRevision = opened.fileRevision;
+      break;
+    }
     case SOURCE_CONTROL_MEDIA_ASSET: {
       const media = sourceControlDefinitions.mediaUrl(input.resource.url);
       if (media === null) {
@@ -1015,6 +1071,31 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
           mimeType,
           file,
           ...(claims.download ? { download: true, fileName: path.basename(canonicalFile) } : {}),
+        } satisfies ResolvedAsset)
+      : null;
+  }
+  if (claims.kind === "project-media-exact") {
+    if (decodedPath !== path.basename(claims.filePath)) return null;
+    // Still recorded in that project's edit.json, at the same file the token was issued for.
+    const library = yield* MediaLibraryService.MediaLibraryService;
+    const resolved = yield* library.resolveVariant(
+      claims.projectId,
+      claims.mediaId,
+      claims.variant,
+    );
+    if (Option.isNone(resolved) || resolved.value.path !== claims.filePath) return null;
+    const file = yield* openMediaFile(claims.filePath, claims).pipe(
+      Effect.tapError((cause) =>
+        Effect.logError("Failed to open project media.", { mediaId: claims.mediaId, cause }),
+      ),
+      Effect.orElseSucceed(() => null),
+    );
+    return file
+      ? ({
+          kind: "file",
+          path: claims.filePath,
+          mimeType: resolved.value.mimeType,
+          file,
         } satisfies ResolvedAsset)
       : null;
   }

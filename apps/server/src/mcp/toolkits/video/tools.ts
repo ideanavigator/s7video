@@ -18,9 +18,11 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import { McpSchema, Tool, Toolkit } from "effect/ai";
 
+import * as ServerConfig from "../../../config.ts";
 import * as EditDocumentService from "../../../edit/EditDocumentService.ts";
 import * as EngineService from "../../../engine/EngineService.ts";
 import * as ExportService from "../../../export/ExportService.ts";
+import * as MediaLibraryService from "../../../media/MediaLibraryService.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../../../project/ProjectService.ts";
 import * as TranscriptService from "../../../transcript/TranscriptService.ts";
@@ -178,8 +180,23 @@ const VideoTranscriptReadTool = Tool.make("video_transcript_read", {
   .annotate(Tool.Title, "Read transcript")
   .annotateMerge(READS);
 
+const VideoImportTool = Tool.make("video_import", {
+  description: "Import a file the user shared into the video project.",
+  parameters: Schema.Struct({ path: Schema.String }),
+  success: Schema.Struct({ media: Schema.String, jobId: Schema.optional(EngineJobId) }),
+  failure: OrchestratorMcpFailure,
+  dependencies: [
+    ...dependencies,
+    MediaLibraryService.MediaLibraryService,
+    ServerConfig.ServerConfig,
+  ],
+})
+  .annotate(Tool.Title, "Import clip")
+  .annotateMerge(videoAnnotations(false));
+
 /** Tools that return JSON. A new tool goes here, with its handler in `handlers.ts`. */
 export const VideoStandardToolkit = Toolkit.make(
+  VideoImportTool,
   VideoProbeTool,
   VideoEditReadTool,
   VideoJobStatusTool,
@@ -193,6 +210,7 @@ export const VideoStandardToolkit = Toolkit.make(
 export const VideoFrameToolkit = Toolkit.make(VideoFrameTool);
 
 export const VideoToolkit = Toolkit.make(
+  VideoImportTool,
   VideoProbeTool,
   VideoEditReadTool,
   VideoJobStatusTool,

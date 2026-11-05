@@ -17,8 +17,14 @@ import * as Stream from "effect/Stream";
 import * as EngineService from "../../../engine/EngineService.ts";
 import * as ExportService from "../../../export/ExportService.ts";
 import * as TranscriptService from "../../../transcript/TranscriptService.ts";
+import * as MediaLibraryService from "../../../media/MediaLibraryService.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
-import { callerProject, resolveMedia, type VideoProject } from "../../VideoProjectScope.ts";
+import {
+  callerProject,
+  resolveMedia,
+  resolveSharedFile,
+  type VideoProject,
+} from "../../VideoProjectScope.ts";
 import { VideoFrameToolkit, VideoStandardToolkit, type VideoToolkit } from "./tools.ts";
 
 const DEFAULT_FRAME_WIDTH = 640;
@@ -66,6 +72,34 @@ const projectJobs = Effect.fn("VideoHandlers.projectJobs")(function* (project: V
 });
 
 const handlers = {
+  // Always a copy: chat attachments live in the app's store, which may clean them up later.
+  video_import: McpToolAccess.actsAsCaller(({ path }) =>
+    Effect.gen(function* () {
+      const project = yield* callerProject();
+      const file = yield* resolveSharedFile(project, path);
+      const library = yield* MediaLibraryService.MediaLibraryService;
+      const imported = yield* library
+        .import({
+          projectId: project.projectId,
+          sourcePath: file,
+          mode: "copy",
+          origin: "agent",
+        })
+        .pipe(
+          Effect.mapError(
+            (error) =>
+              new OrchestratorMcpFailure({
+                code: error.reason === "edit-failed" ? "orchestration_error" : "invalid_request",
+                message: error.explanation,
+              }),
+          ),
+        );
+      return {
+        media: imported.mediaId,
+        ...(imported.jobId === undefined ? {} : { jobId: imported.jobId }),
+      };
+    }),
+  ),
   video_probe: McpToolAccess.readsAsCaller(({ media }) =>
     Effect.gen(function* () {
       const project = yield* callerProject();
@@ -249,6 +283,7 @@ const handlers = {
 } satisfies McpToolAccess.Handlers<typeof VideoToolkit.tools>;
 
 export const layerStandard = McpToolAccess.toLayer(VideoStandardToolkit, {
+  video_import: handlers.video_import,
   video_probe: handlers.video_probe,
   video_edit_read: handlers.video_edit_read,
   video_job_status: handlers.video_job_status,

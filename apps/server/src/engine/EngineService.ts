@@ -8,12 +8,18 @@ import {
   EngineJobCancelResult,
   EnginePingResult,
   MediaFrameResult,
+  MediaKeyframesResult,
   MediaProbeResult,
+  MediaProxyResult,
+  MediaThumbnailResult,
   type EngineJobId,
   type EngineJobsEvent,
   type EngineTool,
   type MediaFrameInput,
+  type MediaKeyframesInput,
   type MediaProbeInput,
+  type MediaProxyInput,
+  type MediaThumbnailInput,
   type ProjectId,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -87,6 +93,19 @@ export class EngineService extends Context.Service<
       params: Readonly<Record<string, unknown>>,
       success: Schema.Decoder<A>,
     ) => Effect.Effect<A, EngineError>;
+    readonly thumbnail: (
+      input: MediaThumbnailInput,
+    ) => Effect.Effect<MediaThumbnailResult, EngineError>;
+    readonly keyframes: (
+      input: MediaKeyframesInput,
+    ) => Effect.Effect<MediaKeyframesResult, EngineError>;
+    /** A preview proxy as a `proxy` job of `projectId`. */
+    readonly proxy: (
+      input: MediaProxyInput &
+        Pick<EngineJobInput<unknown>, "onStart"> & {
+          readonly projectId: ProjectId;
+        },
+    ) => Effect.Effect<MediaProxyResult, EngineError>;
     /** A long engine method as a job: progress on `subscribeJobs`, stoppable with `cancelJob`. */
     readonly runJob: <A>(input: EngineJobInput<A>) => Effect.Effect<A, EngineError>;
     /**
@@ -253,6 +272,14 @@ const make = Effect.fn("EngineService.make")(function* (options: EngineServiceOp
     );
   });
 
+  const thumbnail = Effect.fn("EngineService.thumbnail")(function* (input: MediaThumbnailInput) {
+    return yield* call("media.thumbnail", { ...input }, MediaThumbnailResult, callTimeout);
+  });
+
+  const keyframes = Effect.fn("EngineService.keyframes")(function* (input: MediaKeyframesInput) {
+    return yield* call("media.keyframes", { path: input.path }, MediaKeyframesResult, callTimeout);
+  });
+
   const cancelJob = Effect.fn("EngineService.cancelJob")(function* (jobId: EngineJobId) {
     if (!(yield* jobs.isRunning(jobId)) || !current?.process.client.isOpen()) return false;
     const result = yield* current.process.client
@@ -298,11 +325,31 @@ const make = Effect.fn("EngineService.make")(function* (options: EngineServiceOp
     success: Schema.Decoder<A>,
   ) => call(method, params, success, callTimeout).pipe(Effect.withSpan(`EngineService.${method}`));
 
+  const proxy = Effect.fn("EngineService.proxy")(function* (
+    input: MediaProxyInput &
+      Pick<EngineJobInput<unknown>, "onStart"> & {
+        readonly projectId: ProjectId;
+      },
+  ) {
+    const { projectId, onStart, ...params } = input;
+    return yield* runJob({
+      kind: "proxy",
+      method: "media.proxy",
+      params,
+      success: MediaProxyResult,
+      projectId,
+      ...(onStart ? { onStart } : {}),
+    });
+  });
+
   return EngineService.of({
     ping,
     probe,
     frame,
     call: quickCall,
+    thumbnail,
+    keyframes,
+    proxy,
     runJob,
     startJob,
     cancelJob,
