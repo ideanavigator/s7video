@@ -106,3 +106,28 @@ export const streamCopy = (source: string, target: string, onProgress: (value: n
       signal,
     });
   });
+
+/**
+ * Gives `partial` its final name in `folder` without ever replacing a file: a hard link is an
+ * exclusive create, so a taken name (a kept copy of a removed clip, a concurrent import of the same
+ * name) moves on to `stem-2`, `stem-3`… Returns the name used; `partial` is gone afterwards.
+ */
+export const publishExclusive = (
+  partial: string,
+  folder: string,
+  stem: string,
+  extension: string,
+) =>
+  attempt("publish", async () => {
+    for (let index = 1; ; index += 1) {
+      const name = index === 1 ? `${stem}${extension}` : `${stem}-${index}${extension}`;
+      try {
+        await NodeFSP.link(partial, `${folder}/${name}`);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "EEXIST") continue;
+        throw error;
+      }
+      await NodeFSP.unlink(partial);
+      return name;
+    }
+  });

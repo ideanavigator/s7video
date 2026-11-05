@@ -85,7 +85,7 @@ const audioProbe = (path: string): MediaProbeResult => ({
 interface FakeEngine {
   /** Longest keyframe gap the fake reports, in seconds. */
   gapSeconds: number;
-  /** Settles each proxy job: succeed, or fail with an engine error. */
+  /** Settles each proxy job: succeed, or fail with an engine error. Replaceable between jobs. */
   proxyOutcome: Deferred.Deferred<"succeed" | "cancelled" | "failed">;
   readonly proxies: Array<MediaProxyInput>;
   readonly probed: Array<string>;
@@ -547,6 +547,155 @@ describe("MediaLibraryService", () => {
           Stream.runHead,
         );
         assert.equal(Option.getOrUndefined(settled), "none");
+      }),
+    ),
+  );
+
+  it.effect("serves cache files only from inside the project's .s7cache", () =>
+    withLibrary(({ projectId, root, desktop, library }) =>
+      Effect.gen(function* () {
+        const clip = writeClip(desktop, "cam.mp4");
+        yield* library.import({ projectId, sourcePath: clip, mode: "reference" });
+        const sha = (editJson(root).media[0]!.fingerprint as { sha256: string }).sha256;
+        const thumb = NodePath.join(root, ".s7cache", "thumbs", `${sha}.jpg`);
+        assert.isTrue(Option.isSome(yield* library.resolveVariant(projectId, "cam", "thumbnail")));
+        // A cache entry swapped for a symlink to a file elsewhere is not served.
+        const secret = NodePath.join(desktop, "secret.txt");
+        NodeFS.writeFileSync(secret, "private");
+        NodeFS.rmSync(thumb);
+        NodeFS.symlinkSync(secret, thumb);
+        assert.isTrue(Option.isNone(yield* library.resolveVariant(projectId, "cam", "thumbnail")));
+        // Nor through a symlinked cache folder.
+        const proxies = NodePath.join(root, ".s7cache", "proxies");
+        NodeFS.rmSync(proxies, { recursive: true, force: true });
+        NodeFS.mkdirSync(NodePath.join(desktop, "elsewhere"));
+        NodeFS.writeFileSync(NodePath.join(desktop, "elsewhere", `${sha}.mp4`), "x");
+        NodeFS.symlinkSync(NodePath.join(desktop, "elsewhere"), proxies);
+        assert.isTrue(Option.isNone(yield* library.resolveVariant(projectId, "cam", "proxy")));
+      }),
+    ),
+  );
+
+  it.effect("never replaces a kept copy, and undo finds the original bytes again", () =>
+    withLibrary(({ projectId, root, desktop, library, edits }) =>
+      Effect.gen(function* () {
+        const first = writeClip(desktop, "cam.mp4", 1);
+        yield* library.import({ projectId, sourcePath: first, mode: "copy" });
+        const kept = NodePath.join(root, "assets", "cam.mp4");
+        const keptBytes = NodeFS.readFileSync(kept);
+        // Removing the clip keeps its copy in assets/.
+        const removed = yield* edits.read(projectId);
+        yield* edits.apply(projectId, [{ _tag: "removeMedia", mediaId: "cam" }], {
+          origin: "timeline",
+          baseRevision: removed.revision,
+        });
+        NodeFS.mkdirSync(NodePath.join(desktop, "Other"));
+        const second = writeClip(NodePath.join(desktop, "Other"), "cam.mp4", 2);
+        yield* library.import({ projectId, sourcePath: second, mode: "copy" });
+        assert.deepEqual(NodeFS.readFileSync(kept), keptBytes);
+        assert.deepEqual(
+          NodeFS.readFileSync(NodePath.join(root, "assets", "cam-2.mp4")),
+          NodeFS.readFileSync(second),
+        );
+        assert.deepInclude(editJson(root).media[0], { id: "cam", path: "assets/cam-2.mp4" });
+        // Undo the import and the removal: the first clip is back on its own bytes.
+        yield* edits.undo(projectId);
+        yield* edits.undo(projectId);
+        assert.deepInclude((yield* library.list(projectId)).items[0], {
+          location: "assets/cam.mp4",
+          state: "ready",
+        });
+        // Different bytes of the same size at a recorded path are missing, not the clip.
+        const tampered = Buffer.from(keptBytes);
+        tampered[tampered.length - 1] = tampered[tampered.length - 1]! ^ 0xff;
+        NodeFS.writeFileSync(kept, tampered);
+        assert.equal((yield* library.list(projectId)).items[0]!.state, "missing");
+      }),
+    ),
+  );
+
+  it.effect("two imports of same-named files at once keep both", () =>
+    withLibrary(({ projectId, root, desktop, library }) =>
+      Effect.gen(function* () {
+        NodeFS.mkdirSync(NodePath.join(desktop, "A"));
+        NodeFS.mkdirSync(NodePath.join(desktop, "B"));
+        const a = writeClip(NodePath.join(desktop, "A"), "take.mp4", 3);
+        const b = writeClip(NodePath.join(desktop, "B"), "take.mp4", 4);
+        const results = yield* Effect.forEach(
+          [a, b],
+          (sourcePath) => library.import({ projectId, sourcePath, mode: "copy" }),
+          { concurrency: "unbounded" },
+        );
+        const ids = results.map((result) => result.mediaId).toSorted();
+        assert.deepEqual(ids, ["take", "take-2"]);
+        const media = editJson(root).media as Array<{ id: string; path: string }>;
+        assert.equal(new Set(media.map((entry) => entry.path)).size, 2);
+        for (const [source, result] of [a, b].map(
+          (file, index) => [file, results[index]!] as const,
+        )) {
+          const entry = media.find((candidate) => candidate.id === result.mediaId)!;
+          assert.deepEqual(
+            NodeFS.readFileSync(NodePath.join(root, entry.path)),
+            NodeFS.readFileSync(source),
+          );
+        }
+        assert.isTrue(
+          (yield* library.list(projectId)).items.every((item) => item.state === "ready"),
+        );
+      }),
+    ),
+  );
+
+  it.effect("retries a failed proxy on re-import, and a missing one on first list", () =>
+    withLibrary(({ projectId, root, desktop, library, edits, fake }) =>
+      Effect.gen(function* () {
+        fake.gapSeconds = 10;
+        const clip = writeClip(desktop, "phone.mp4", 5);
+        yield* library.import({ projectId, sourcePath: clip, mode: "reference" });
+        yield* Deferred.succeed(fake.proxyOutcome, "failed");
+        const failed = yield* library.subscribe(projectId).pipe(
+          Stream.map((snapshot) => snapshot.items[0]!.proxy.status),
+          Stream.filter((status) => status === "failed"),
+          Stream.runHead,
+        );
+        assert.equal(Option.getOrUndefined(failed), "failed");
+
+        fake.proxyOutcome = yield* Deferred.make<"succeed" | "cancelled" | "failed">();
+        const again = yield* library.import({ projectId, sourcePath: clip, mode: "reference" });
+        assert.deepEqual(again, { mediaId: "phone", jobId: EngineJobId.make("engine-job-2") });
+        assert.equal(fake.proxies.length, 2);
+
+        // A media this server run never imported (as after a restart) is checked on first list.
+        const other = writeClip(desktop, "camera.mp4", 6);
+        const { sha256, size } = yield* MediaFiles.fingerprint(other);
+        const current = yield* edits.read(projectId);
+        yield* edits.apply(
+          projectId,
+          [
+            {
+              _tag: "putMedia",
+              media: {
+                id: "camera",
+                kind: "video",
+                reference: other,
+                fingerprint: { sha256, size },
+                probe: toEditProbe(videoProbe(other), { num: 30, den: 1 }),
+              },
+            },
+          ],
+          { origin: "import", baseRevision: current.revision },
+        );
+        const started = yield* library.subscribe(projectId).pipe(
+          Stream.filter((snapshot) =>
+            snapshot.items.some(
+              (item) => item.id === "camera" && item.proxy.status === "preparing",
+            ),
+          ),
+          Stream.runHead,
+        );
+        assert.isTrue(Option.isSome(started));
+        assert.equal(fake.proxies.at(-1)!.path, other);
+        assert.isTrue(NodeFS.existsSync(root));
       }),
     ),
   );

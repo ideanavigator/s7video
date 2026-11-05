@@ -203,6 +203,8 @@ const make = Effect.fn("MediaLibraryService.make")(function* (options: MediaLibr
   /** Proxy jobs by `${projectId}\0${sha256}`; a finished proxy is its file in `.s7cache/`. */
   const proxyRuns = new Map<string, ProxyRun>();
   const proxyJobs = new Map<EngineJobId, { key: string; projectId: ProjectId }>();
+  /** Media whose proxy need this server run has already judged. */
+  const proxyChecked = new Set<string>();
 
   yield* engine.subscribeJobs.pipe(
     Stream.runForEach((event) => {
@@ -267,12 +269,31 @@ const make = Effect.fn("MediaLibraryService.make")(function* (options: MediaLibr
       Effect.orElseSucceed(() => Option.none<FileSystem.File.Info>()),
     );
 
-  /** Present when the file is there and still its recorded size. */
+  /** Fingerprints by file, valid while its size, mtime and inode stay the same. */
+  const fingerprints = new Map<string, { readonly stamp: string; readonly sha256: string }>();
+
+  /**
+   * Present when the file is there with the recorded fingerprint: a different file at the same
+   * path (a re-import, an undo to an older entry) is missing, not silently the wrong bytes.
+   */
   const isPresent = Effect.fnUntraced(function* (root: string, media: EditMedia) {
     const file = originalPath(root, media);
     if (file === undefined) return false;
     const info = yield* isFile(file);
-    return Option.isSome(info) && Number(info.value.size) === media.fingerprint.size;
+    if (Option.isNone(info) || Number(info.value.size) !== media.fingerprint.size) return false;
+    const stamp = [
+      info.value.size,
+      Option.getOrUndefined(info.value.mtime)?.getTime(),
+      Option.getOrUndefined(info.value.ino),
+    ].join(":");
+    let known = fingerprints.get(file);
+    if (known?.stamp !== stamp) {
+      const measured = yield* MediaFiles.fingerprint(file).pipe(Effect.option);
+      if (Option.isNone(measured)) return false;
+      known = { stamp, sha256: measured.value.sha256 };
+      fingerprints.set(file, known);
+    }
+    return known.sha256 === media.fingerprint.sha256;
   });
 
   const proxyState = Effect.fnUntraced(function* (
@@ -341,9 +362,38 @@ const make = Effect.fn("MediaLibraryService.make")(function* (options: MediaLibr
     } satisfies MediaLibrarySnapshot;
   });
 
+  /**
+   * The first time a server run lists a video, it checks for a proxy the policy wants but nobody
+   * made (a failure, or a job cut short when the app quit) and starts it in the background.
+   */
+  const ensureProxy = Effect.fnUntraced(function* (
+    projectId: ProjectId,
+    root: string,
+    media: EditMedia,
+  ) {
+    const key = `${projectId}\0${media.fingerprint.sha256}`;
+    if (media.kind !== "video" || proxyChecked.has(key)) return;
+    proxyChecked.add(key);
+    const source = originalPath(root, media);
+    if (source === undefined || !(yield* isPresent(root, media))) {
+      proxyChecked.delete(key);
+      return;
+    }
+    const probe = yield* engine.probe({ path: source }).pipe(Effect.option);
+    if (Option.isSome(probe)) {
+      yield* startProxy(projectId, root, source, media.fingerprint.sha256, probe.value);
+    }
+  });
+
   const list: MediaLibraryService["Service"]["list"] = Effect.fn("MediaLibraryService.list")(
     function* (projectId) {
-      return yield* snapshotOf(projectId, (yield* readDocument(projectId)).document);
+      const { document } = yield* readDocument(projectId);
+      const snapshot = yield* snapshotOf(projectId, document);
+      const root = yield* projectRoot(projectId);
+      yield* Effect.forEach(document.media, (media) => ensureProxy(projectId, root, media), {
+        discard: true,
+      }).pipe(Effect.ignore, Effect.forkIn(serviceScope));
+      return snapshot;
     },
   );
 
@@ -380,13 +430,11 @@ const make = Effect.fn("MediaLibraryService.make")(function* (options: MediaLibr
     projectId: ProjectId,
     root: string,
     source: string,
-    mediaId: string,
     label: string,
   ) {
     const assets = path.join(root, ASSETS_DIR);
     yield* fileSystem.makeDirectory(assets, { recursive: true }).pipe(Effect.ignore);
-    const relative = `${ASSETS_DIR}/${mediaId}${path.extname(source).toLowerCase()}`;
-    const target = path.join(root, relative);
+    const stem = mediaIdFor(label, new Set());
     const unique = yield* crypto
       .randomUUIDv4()
       .pipe(
@@ -394,8 +442,8 @@ const make = Effect.fn("MediaLibraryService.make")(function* (options: MediaLibr
           fail("copy-failed", "The file could not be copied into the project."),
         ),
       );
-    const partial = path.join(assets, `.${mediaId}.${unique}.part`);
-    const key = `copy-${mediaId}`;
+    const partial = path.join(assets, `.${stem}.${unique}.part`);
+    const key = `copy-${unique}`;
     const copied = Effect.gen(function* () {
       const cloned =
         (yield* MediaFiles.canClone(source, assets, platform)) &&
@@ -407,16 +455,22 @@ const make = Effect.fn("MediaLibraryService.make")(function* (options: MediaLibr
           runFork(setImporting(projectId, key, label, progress));
         });
       }
-      yield* fileSystem.rename(partial, target);
+      // Never replaces a file already in assets/: the name moves on to the next free one.
+      return yield* MediaFiles.publishExclusive(
+        partial,
+        assets,
+        stem,
+        path.extname(source).toLowerCase(),
+      );
     });
-    yield* copied.pipe(
+    const name = yield* copied.pipe(
       Effect.onExit(() => clearImporting(projectId, key)),
       Effect.onError(() => fileSystem.remove(partial, { force: true }).pipe(Effect.ignore)),
       Effect.mapError(() =>
         fail("copy-failed", "The file could not be copied into the project. Nothing was changed."),
       ),
     );
-    return relative;
+    return `${ASSETS_DIR}/${name}`;
   });
 
   const thumbnailFor = Effect.fnUntraced(function* (
@@ -576,31 +630,36 @@ const make = Effect.fn("MediaLibraryService.make")(function* (options: MediaLibr
         media.fingerprint.size === fingerprint.size,
     );
     if (existing !== undefined && (yield* isPresent(root, existing))) {
-      return { mediaId: existing.id };
+      // Importing again retries a proxy that failed or was cut short when the app quit.
+      proxyChecked.add(`${input.projectId}\0${fingerprint.sha256}`);
+      const source = originalPath(root, existing) ?? real;
+      const retried = yield* startProxy(input.projectId, root, source, fingerprint.sha256, probe);
+      return { mediaId: existing.id, ...(retried === undefined ? {} : { jobId: retried }) };
     }
     const label = path.basename(real);
-    const mediaId =
-      existing?.id ?? mediaIdFor(label, new Set(before.document.media.map((media) => media.id)));
     const assets = path.join(root, ASSETS_DIR);
     // Already in the project's own assets/ folder: record it where it is, copy nothing.
     const inAssets = real.startsWith(assets + path.sep);
     const location: Pick<EditMedia, "path" | "reference"> = inAssets
       ? { path: path.relative(root, real).split(path.sep).join("/") }
       : input.mode === "copy"
-        ? { path: yield* copyIntoAssets(input.projectId, root, real, mediaId, label) }
+        ? { path: yield* copyIntoAssets(input.projectId, root, real, label) }
         : { reference: real };
     yield* thumbnailFor(root, real, fingerprint.sha256, probe);
-    const media: EditMedia = {
-      id: mediaId,
+    const media: Omit<EditMedia, "id"> = {
       kind: probe.video !== null ? "video" : "audio",
       ...location,
       fingerprint,
       probe: toEditProbe(probe, before.document.fps),
       label,
     };
-    yield* applyWith(input.projectId, input.origin ?? "import", () => [
-      { _tag: "putMedia", media },
-    ]).pipe(
+    // The id is chosen against the document the edit lands on, so two imports of files with the
+    // same name at once get two ids rather than one replacing the other.
+    let mediaId = "";
+    yield* applyWith(input.projectId, input.origin ?? "import", (document) => {
+      mediaId = existing?.id ?? mediaIdFor(label, new Set(document.media.map((entry) => entry.id)));
+      return [{ _tag: "putMedia", media: { id: mediaId, ...media } }];
+    }).pipe(
       Effect.tapError(() =>
         location.path !== undefined && !inAssets
           ? fileSystem.remove(path.join(root, location.path), { force: true }).pipe(Effect.ignore)
@@ -609,6 +668,7 @@ const make = Effect.fn("MediaLibraryService.make")(function* (options: MediaLibr
     );
     // Proxies read the project's copy when there is one, so a moved original cannot break them.
     const readable = location.path !== undefined ? path.join(root, location.path) : real;
+    proxyChecked.add(`${input.projectId}\0${fingerprint.sha256}`);
     const jobId = yield* startProxy(input.projectId, root, readable, fingerprint.sha256, probe);
     return { mediaId, ...(jobId === undefined ? {} : { jobId }) } satisfies MediaImportResult;
   });
@@ -668,14 +728,15 @@ const make = Effect.fn("MediaLibraryService.make")(function* (options: MediaLibr
     if (candidate === undefined) return none;
     const real = yield* fileSystem.realPath(candidate).pipe(Effect.option);
     if (Option.isNone(real)) return none;
-    // A recorded copy must stay inside the project, whatever symlinks say.
-    if (
-      variant === "original" &&
-      media.path !== undefined &&
-      !real.value.startsWith(root.value + path.sep)
-    ) {
-      return none;
-    }
+    // A recorded copy must stay inside the project, and cache files inside its .s7cache/,
+    // whatever symlinks say.
+    const mustBeUnder =
+      variant === "original"
+        ? media.path === undefined
+          ? undefined
+          : root.value
+        : path.join(root.value, CACHE_DIR);
+    if (mustBeUnder !== undefined && !real.value.startsWith(mustBeUnder + path.sep)) return none;
     const mimeType =
       variant === "thumbnail"
         ? "image/jpeg"
