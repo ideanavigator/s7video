@@ -48,10 +48,23 @@ describe("check-no-media", () => {
 
   it("should block model weights", () => {
     const big = Buffer.alloc(WEIGHTS_SIZE_LIMIT + 1);
-    const repo = tempRepo({ "models/asr.safetensors": big, "models/x.gguf": big });
+    const repo = tempRepo({
+      "models/asr.safetensors": big,
+      "models/x.gguf": big,
+      "models/pytorch_model.bin": big,
+    });
     expect(findForbiddenFiles(trackedFiles(repo))).toEqual([
       `models/asr.safetensors: looks like model weights (${big.length} bytes)`,
+      `models/pytorch_model.bin: looks like model weights (${big.length} bytes)`,
       `models/x.gguf: looks like model weights (${big.length} bytes)`,
+    ]);
+  });
+
+  it("reads the size of the staged blob, even when the working file is gone", () => {
+    const repo = tempRepo({ "models/asr.safetensors": Buffer.alloc(WEIGHTS_SIZE_LIMIT + 1) });
+    NodeFS.rmSync(NodePath.join(repo, "models/asr.safetensors"));
+    expect(trackedFiles(repo)).toEqual([
+      { path: "models/asr.safetensors", size: WEIGHTS_SIZE_LIMIT + 1 },
     ]);
   });
 });

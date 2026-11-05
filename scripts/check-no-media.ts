@@ -5,7 +5,6 @@
 // 5 MiB. Test media is downloaded into a cache by `pnpm media:fetch` and model weights are
 // downloaded at runtime; neither is ever committed (S7V-031). Run by `pnpm licenses:check`.
 import * as NodeChildProcess from "node:child_process";
-import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
 const MEDIA_EXTENSIONS = new Set(
@@ -13,7 +12,16 @@ const MEDIA_EXTENSIONS = new Set(
     " ",
   ),
 );
-const WEIGHT_EXTENSIONS = new Set(["safetensors", "npz", "gguf", "ckpt", "pt", "pth", "onnx"]);
+const WEIGHT_EXTENSIONS = new Set([
+  "safetensors",
+  "npz",
+  "gguf",
+  "ckpt",
+  "pt",
+  "pth",
+  "onnx",
+  "bin",
+]);
 export const WEIGHTS_SIZE_LIMIT = 5 * 1024 * 1024;
 
 // UI sounds the app ships; each is CC0-1.0 and annotated in REUSE.toml. Nothing else may be added
@@ -47,23 +55,30 @@ export function findForbiddenFiles(
   return problems;
 }
 
-/** Files in the git index of `root` (tracked or staged), with their working-tree size. */
+/** Files in the git index of `root` (tracked or staged), with the size of the staged blob. */
 export function trackedFiles(root: string): TrackedFile[] {
-  const output = NodeChildProcess.execFileSync("git", ["ls-files", "-z", "--cached"], {
+  const entries = NodeChildProcess.execFileSync("git", ["ls-files", "-z", "--cached", "--stage"], {
     cwd: root,
     encoding: "utf8",
     maxBuffer: 64 * 1024 * 1024,
-  });
-  return output
+  })
     .split("\0")
     .filter(Boolean)
-    .map((path) => {
-      try {
-        return { path, size: NodeFS.statSync(NodePath.join(root, path)).size };
-      } catch {
-        return { path, size: 0 };
-      }
+    .map((line) => {
+      // "<mode> <object> <stage>\t<path>"
+      const tab = line.indexOf("\t");
+      return { object: line.slice(0, tab).split(" ")[1] ?? "", path: line.slice(tab + 1) };
     });
+  if (entries.length === 0) return [];
+  const sizes = NodeChildProcess.execFileSync("git", ["cat-file", "--batch-check=%(objectsize)"], {
+    cwd: root,
+    encoding: "utf8",
+    input: entries.map((entry) => entry.object).join("\n") + "\n",
+    maxBuffer: 64 * 1024 * 1024,
+  })
+    .split("\n")
+    .filter(Boolean);
+  return entries.map((entry, index) => ({ path: entry.path, size: Number(sizes[index]) || 0 }));
 }
 
 /** Prints problems and returns the exit code. */
