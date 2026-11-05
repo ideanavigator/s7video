@@ -172,7 +172,12 @@ def caption_chunks(caption_items: list[dict[str, Any]], rate: Fraction, end_fram
     chunks: list[Chunk] = []
     for item in sorted(caption_items, key=lambda entry: entry["start"]):
         chunks.extend(chunk_words(_words_of(item), rate))
-    chunks.sort(key=lambda chunk: chunk.start)
+    return clip_chunks(chunks, end_frame)
+
+
+def clip_chunks(chunks: list[Chunk], end_frame: int) -> list[Chunk]:
+    """Chunks in time order, each ending by the timeline's end and the next chunk's start."""
+    chunks = sorted(chunks, key=lambda chunk: chunk.start)
     clipped: list[Chunk] = []
     for index, chunk in enumerate(chunks):
         end = min(chunk.end, end_frame)

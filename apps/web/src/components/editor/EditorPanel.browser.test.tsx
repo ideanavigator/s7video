@@ -4,9 +4,11 @@ import {
   EngineJobId,
   type EngineJob,
   EnvironmentId,
+  ExportStartError,
   type MediaAsset,
   ProjectId,
 } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import { useSyncExternalStore } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
 
@@ -42,6 +44,12 @@ const commands = vi.hoisted(() => ({
   start: vi.fn(),
   cancel: vi.fn(async () => ({ _tag: "Success", value: { applied: true } })),
 }));
+const toasts = vi.hoisted(() => ({ add: vi.fn() }));
+
+vi.mock(import("../ui/toast"), async (importOriginal) => {
+  const actual = await importOriginal();
+  return { ...actual, toastManager: { ...actual.toastManager, add: toasts.add } };
+});
 
 vi.mock(import("../../editor/editStore"), async (importOriginal) => ({
   ...(await importOriginal()),
@@ -278,6 +286,56 @@ describe("EditorPanel", () => {
     await using screen = await renderPanel();
     await expect.element(screen.getByText("Export failed: The disk is full.")).toBeVisible();
     state.export = { job: null, status: null };
+  });
+
+  it("offers to export without captions when the clip has no transcript", async () => {
+    setState([asset("clip-0")], true);
+    toasts.add.mockReset();
+    commands.start.mockReset();
+    commands.start
+      .mockResolvedValueOnce({
+        _tag: "Failure",
+        cause: Cause.fail(new ExportStartError({ projectId, reason: "no-transcript" })),
+      })
+      .mockResolvedValueOnce({
+        _tag: "Success",
+        value: { jobId: EngineJobId.make("job-2"), path: "exports/edit.mp4" },
+      });
+    await using screen = await renderPanel();
+    await screen.getByRole("button", { name: "Export" }).click();
+    // Captions are on by default: the first request does not turn them off.
+    expect(commands.start).toHaveBeenNthCalledWith(1, {
+      environmentId: EnvironmentId.make("env-1"),
+      input: { projectId },
+    });
+    await vi.waitFor(() => expect(toasts.add).toHaveBeenCalledTimes(1));
+    const toast = toasts.add.mock.calls[0]![0];
+    expect(toast).toMatchObject({
+      type: "error",
+      title: "Couldn't start the export",
+      description: "Transcribe the clip first, or export without captions.",
+      actionProps: { children: "Export without captions" },
+    });
+    await act(async () => toast.actionProps.onClick());
+    expect(commands.start).toHaveBeenNthCalledWith(2, {
+      environmentId: EnvironmentId.make("env-1"),
+      input: { projectId, captions: false },
+    });
+    await expect.element(screen.getByRole("progressbar", { name: "Export" })).toBeVisible();
+  });
+
+  it("offers no export action for other start errors", async () => {
+    setState([asset("clip-0")], true);
+    toasts.add.mockReset();
+    commands.start.mockReset();
+    commands.start.mockResolvedValueOnce({
+      _tag: "Failure",
+      cause: Cause.fail(new ExportStartError({ projectId, reason: "exports-folder" })),
+    });
+    await using screen = await renderPanel();
+    await screen.getByRole("button", { name: "Export" }).click();
+    await vi.waitFor(() => expect(toasts.add).toHaveBeenCalledTimes(1));
+    expect(toasts.add.mock.calls[0]![0].actionProps).toBeUndefined();
   });
 
   it("retries a video that fails once, then explains and offers Retry", async () => {

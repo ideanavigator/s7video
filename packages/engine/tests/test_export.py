@@ -24,7 +24,7 @@ import pytest
 from engine_support import FFMPEG, Wire, needs_ffmpeg
 from export_support import decode_audio_mono, decode_gray, make_edit, stream_info
 
-from s7engine import captions_ass, rpc
+from s7engine import captions_ass, captions_from_words, rpc
 from s7engine.jobs import Cancelled, JobContext
 from s7engine.methods import export
 
@@ -654,3 +654,104 @@ def test_refuses_a_name_already_being_written(clip_30: Path, tmp_path: Path) -> 
     assert raised.value.code == rpc.OUTPUT_ERROR
     assert Path(f"{out}.part").read_bytes() == b"another job"
     assert not out.exists()
+
+
+# --- Captions from the transcript (S7V-046) ----------------------------------------------------
+
+
+def transcript_plan(tmp_path: Path, ranges: list[tuple[int, int]], rate: Fraction = Fraction(30)) -> tuple[dict[str, Any], export.Plan]:
+    source = tmp_path / "cam.mp4"
+    source.write_bytes(b"")
+    edit = make_edit(source=source, ranges=ranges, fps=rate, duration_frames=10_000, width=W, height=H, captions=[])
+    return edit, export.plan_segments(edit, W, H)
+
+
+def transcript_of(words: list[tuple[str, int, int]], fps: tuple[int, int] = (30, 1)) -> dict[str, Any]:
+    return {
+        "media": "cam",
+        "fps": {"num": fps[0], "den": fps[1]},
+        "words": [{"text": text, "startFrame": start, "endFrame": end} for text, start, end in words],
+    }
+
+
+def mapped(plan: export.Plan, transcript: dict[str, Any]) -> list[list[tuple[str, int, int]]]:
+    groups = captions_from_words.map_words(plan.segments, {"cam": transcript}, plan.rate)
+    return [[(word.text, word.start, word.end) for word in group] for group in groups]
+
+
+def test_words_map_through_keep_ranges(tmp_path: Path) -> None:
+    # Keeps 10-40 and 100-130: the second range starts on timeline frame 30, so it shifts by -70.
+    _, plan = transcript_plan(tmp_path, [(10, 40), (100, 130)])
+    words = transcript_of([("hello", 12, 20), ("there", 21, 30), ("gone", 50, 60), ("again", 105, 115)])
+    assert mapped(plan, words) == [[("hello", 2, 10), ("there", 11, 20)], [("again", 35, 45)]]
+
+
+def test_words_wholly_in_a_removed_range_are_dropped(tmp_path: Path) -> None:
+    _, plan = transcript_plan(tmp_path, [(0, 30), (60, 90)])
+    words = transcript_of([("kept", 5, 10), ("cut", 30, 60), ("edge", 40, 45), ("last", 70, 80)])
+    texts = [word[0] for group in mapped(plan, words) for word in group]
+    assert texts == ["kept", "last"]
+
+
+def test_a_word_crossing_a_cut_keeps_only_its_kept_frames(tmp_path: Path) -> None:
+    _, plan = transcript_plan(tmp_path, [(0, 30), (60, 90)])
+    # "across" runs 25-65: frames 25-29 before the cut and 60-64 after it; "touch" ends on the cut.
+    words = transcript_of([("across", 25, 65), ("touch", 20, 30), ("after", 30, 60)])
+    assert mapped(plan, words) == [[("touch", 20, 30), ("across", 25, 30)], [("across", 30, 35)]]
+
+
+def test_transcript_chunks_never_span_a_join(tmp_path: Path) -> None:
+    # Four words on each side of the cut, with no pause: without the cut they would chunk as 4 + 4
+    # across it; with it each side is its own run. A split with no cut (90-120 → 120-150) is no join.
+    _, plan = transcript_plan(tmp_path, [(0, 30), (60, 90), (90, 120)])
+    words = transcript_of([(f"a{i}", 6 * i, 6 * i + 5) for i in range(5)] + [(f"b{i}", 60 + 6 * i, 65 + 6 * i) for i in range(8)])
+    chunks = captions_from_words.transcript_chunks(plan.segments, {"cam": words}, plan.rate, plan.total_frames)
+    assert [c.text for c in chunks] == ["a0 a1 a2", "a3 a4", "b0 b1 b2 b3", "b4 b5 b6 b7"]
+    joins = {30}
+    assert all(not (c.start < join < c.end) for c in chunks for join in joins)
+    assert all(c.end <= plan.total_frames for c in chunks)
+
+
+def test_transcript_chunks_two_to_four_words_at_pauses_and_punctuation(tmp_path: Path) -> None:
+    _, plan = transcript_plan(tmp_path, [(0, 400)])
+    spoken = [("So", 0), ("today", 6), ("we", 12), ("cut", 18), ("the", 24), ("silences.", 30), ("Then", 36), ("we", 42),
+              ("add", 48), ("captions", 54), ("after", 120), ("a", 126), ("pause", 132)]
+    words = transcript_of([(text, start, start + 5) for text, start in spoken])
+    chunks = captions_from_words.transcript_chunks(plan.segments, {"cam": words}, plan.rate, plan.total_frames)
+    # Six words to the full stop split 3 + 3, never 4 + 2; the pause before "after" ends a phrase.
+    assert [c.text for c in chunks] == ["So today we", "cut the silences.", "Then we add captions", "after a pause"]
+    assert all(2 <= len(c.text.split()) <= 4 for c in chunks)
+
+
+def test_caption_items_win_over_the_transcript(tmp_path: Path) -> None:
+    edit, plan = transcript_plan(tmp_path, [(0, 90)])
+    words = transcript_of([("from", 0, 10), ("transcript", 10, 20)])
+    edit["tracks"][1]["items"] = [{"id": "c", "start": 30, "duration": 20, "text": "typed caption"}]
+    assert [c.text for c in export.export_chunks(edit, plan, {"transcripts": [words]})] == ["typed caption"]
+    # A muted caption track with items means no captions, not transcript captions.
+    edit["tracks"][1]["muted"] = True
+    assert export.export_chunks(edit, plan, {"transcripts": [words]}) == []
+    # No items at all: the transcript gives the captions; no transcript passed: none.
+    edit["tracks"][1] = {**edit["tracks"][1], "items": [], "muted": False}
+    assert [c.text for c in export.export_chunks(edit, plan, {"transcripts": [words]})] == ["from transcript"]
+    assert export.export_chunks(edit, plan, {}) == []
+
+
+@pytest.mark.parametrize(("edit_rate", "transcript_fps"), [(Fraction(30000, 1001), (30000, 1001)), (Fraction(30000, 1001), (60000, 1001)), (Fraction(24000, 1001), (24000, 1001))])
+def test_transcript_words_at_rational_rates(tmp_path: Path, edit_rate: Fraction, transcript_fps: tuple[int, int]) -> None:
+    # A transcript at twice the edit's rate lands on half its frame numbers, rounded to whole frames.
+    _, plan = transcript_plan(tmp_path, [(100, 200), (500, 600)], edit_rate)
+    scale = Fraction(*transcript_fps) / edit_rate
+    words = transcript_of([("one", int(120 * scale), int(130 * scale)), ("two", int(510 * scale), int(521 * scale))], transcript_fps)
+    groups = mapped(plan, words)
+    assert groups == [[("one", 20, 30)], [("two", 110, 121)]]
+    assert all(isinstance(frame, int) for group in groups for word in group for frame in word[1:])
+
+
+@pytest.mark.usefixtures("tools")
+def test_export_burns_transcript_captions(clip_30: Path, tmp_path: Path) -> None:
+    edit = make_edit(source=clip_30, ranges=[(0, 60), (120, 180)], fps=Fraction(30), duration_frames=360, width=W, height=H, captions=[])
+    words = transcript_of([("first", 10, 20), ("words", 21, 30), ("cut", 70, 90), ("second", 130, 140), ("part", 141, 150)])
+    result = run_export(edit, tmp_path / "out.mp4", transcripts=[words])
+    assert result["captions"] == 2 and Path(result["path"]).is_file()
+    assert run_export(edit, tmp_path / "off.mp4", transcripts=[words], captions=False)["captions"] == 0

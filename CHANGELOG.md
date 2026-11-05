@@ -48,6 +48,9 @@ from; the per-ticket entries and how this file is compiled are in
   shows the same edit, and the Editor opens by itself when a project gets its first clip. (S7V-029)
 - The Transcript tab shows every word, highlights the one being spoken, jumps the player when you
   click a word, and crosses out words the edit removed. (S7V-030)
+- Exports now show captions made from your transcript, timed to your voice, with cut words left
+  out. Without a transcript, the Export button asks you to transcribe the clip first, or offers to
+  export without captions. (S7V-046)
 
 ### Changed
 
