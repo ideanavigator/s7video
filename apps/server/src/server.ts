@@ -114,6 +114,7 @@ import * as VcsStatusBroadcaster from "./vcs/VcsStatusBroadcaster.ts";
 import * as ProjectCloneTracker from "./project/ProjectCloneTracker.ts";
 import * as EngineService from "./engine/EngineService.ts";
 import * as ExportService from "./export/ExportService.ts";
+import * as TranscriptService from "./transcript/TranscriptService.ts";
 import * as GitWorkflowService from "./git/GitWorkflowService.ts";
 import * as ReviewService from "./review/ReviewService.ts";
 import * as SourceControlProviderRegistry from "./sourceControl/SourceControlProviderRegistry.ts";
@@ -600,6 +601,7 @@ const layerRuntimeDependencies = ExportService.layer.pipe(
   Layer.provideMerge(RemoteOpenTargets.layer),
   Layer.provideMerge(DirectEndpoints.layer),
   Layer.provideMerge(ServerLifecycleEvents.layer),
+  Layer.provideMerge(TranscriptService.layer),
   Layer.provideMerge(EngineService.layer),
   Layer.provide(NetService.layer),
 );

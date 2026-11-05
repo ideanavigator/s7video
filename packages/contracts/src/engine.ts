@@ -128,6 +128,11 @@ export const ENGINE_RPC_ERROR_CODES = {
   cancelled: 1003,
   missingTool: 1004,
   outputError: 1005,
+  modelsMissing: 1006,
+  modelDownloadFailed: 1007,
+  modelChecksumMismatch: 1008,
+  diskFull: 1009,
+  noAudio: 1010,
 } as const;
 
 export const EngineRpcRequest = Schema.Struct({
@@ -145,6 +150,7 @@ export const EngineRpcErrorBody = Schema.Struct({
     Schema.Struct({
       tool: Schema.optional(Schema.String),
       feature: Schema.optional(Schema.String),
+      profile: Schema.optional(Schema.String),
     }),
   ),
 });
@@ -189,6 +195,7 @@ export const EngineErrorReason = Schema.Literals([
   "rpc_error",
   "cancelled",
   "missing_tool",
+  "models_missing",
 ]);
 export type EngineErrorReason = typeof EngineErrorReason.Type;
 
@@ -236,6 +243,8 @@ export class EngineError extends Schema.TaggedError<EngineError>()("EngineError"
         return `The video engine rejected ${this.method}: ${this.rpcMessage ?? "unknown error"}.`;
       case "cancelled":
         return `The video engine stopped ${this.method} because it was cancelled.`;
+      case "models_missing":
+        return "The speech model is not downloaded yet. Ask the user to accept the download in the Editor panel; s7video downloads it only after they agree.";
       case "missing_tool": {
         const tool = this.tool ?? "ffmpeg";
         if (this.feature !== undefined) {

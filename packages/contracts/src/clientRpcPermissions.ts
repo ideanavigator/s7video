@@ -74,6 +74,10 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.editApply]: AuthOrchestrationOperateScope,
   [WS_METHODS.editUndo]: AuthOrchestrationOperateScope,
   [WS_METHODS.editRedo]: AuthOrchestrationOperateScope,
+  // Transcription loads a 4-6 GB model; the download fetches 2.3-3.7 GB from Hugging Face.
+  [WS_METHODS.transcribeRun]: AuthOrchestrationOperateScope,
+  [WS_METHODS.transcribeModelsDownload]: AuthOrchestrationOperateScope,
+  [WS_METHODS.transcribeModelsDismiss]: AuthOrchestrationOperateScope,
 } as const;
 export type ClientGuardedRpcTag = keyof typeof CLIENT_GUARDED_RPC_SCOPES;
 

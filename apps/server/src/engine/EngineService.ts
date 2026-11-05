@@ -53,6 +53,8 @@ export interface EngineServiceOptions {
   readonly tools?: Partial<Record<EngineTool, string>>;
   readonly testMethods?: boolean;
   readonly signalGroup?: EngineProcess.SignalGroup;
+  /** Unload the speech model after this many idle minutes (S7V-026; PO default 10). */
+  readonly transcribeIdleUnloadMinutes?: number;
 }
 
 export interface EngineJobInput<A> {
@@ -79,6 +81,12 @@ export class EngineService extends Context.Service<
     readonly probe: (input: MediaProbeInput) => Effect.Effect<MediaProbeResult, EngineError>;
     /** Writes the frame as a PNG; `outputDir` defaults to the service's scratch folder. */
     readonly frame: (input: MediaFrameInput) => Effect.Effect<MediaFrameResult, EngineError>;
+    /** Any quick engine method, with the quick-call timeout; for the engine's other services. */
+    readonly call: <A>(
+      method: string,
+      params: Readonly<Record<string, unknown>>,
+      success: Schema.Decoder<A>,
+    ) => Effect.Effect<A, EngineError>;
     /** A long engine method as a job: progress on `subscribeJobs`, stoppable with `cancelJob`. */
     readonly runJob: <A>(input: EngineJobInput<A>) => Effect.Effect<A, EngineError>;
     readonly cancelJob: (jobId: EngineJobId) => Effect.Effect<boolean>;
@@ -91,6 +99,7 @@ const CALL_TIMEOUT = "30 seconds";
 const START_TIMEOUT = "30 seconds";
 const CANCEL_TIMEOUT = "5 seconds";
 const HEALTH_TIMEOUT = "5 seconds";
+const TRANSCRIBE_IDLE_UNLOAD_MINUTES = 10;
 
 interface Running {
   readonly process: EngineProcess.EngineProcess;
@@ -143,6 +152,8 @@ const make = Effect.fn("EngineService.make")(function* (options: EngineServiceOp
         modelsDir: config.engineModelsDir,
         tmpDir: env.TMPDIR,
         testMethods: options.testMethods ?? false,
+        transcribeIdleUnloadSeconds:
+          (options.transcribeIdleUnloadMinutes ?? TRANSCRIBE_IDLE_UNLOAD_MINUTES) * 60,
       }),
       logFile: path.join(config.engineLogsDir, "engine.log"),
       startTimeout: options.startTimeout ?? START_TIMEOUT,
@@ -264,10 +275,17 @@ const make = Effect.fn("EngineService.make")(function* (options: EngineServiceOp
     );
   });
 
+  const quickCall = <A>(
+    method: string,
+    params: Readonly<Record<string, unknown>>,
+    success: Schema.Decoder<A>,
+  ) => call(method, params, success, callTimeout).pipe(Effect.withSpan(`EngineService.${method}`));
+
   return EngineService.of({
     ping,
     probe,
     frame,
+    call: quickCall,
     runJob,
     cancelJob,
     subscribeJobs: jobs.subscribe,
