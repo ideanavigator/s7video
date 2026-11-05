@@ -60,15 +60,15 @@ export const AssetResource = Schema.Union([
   Schema.TaggedStruct("native-app-icon", {
     app: ToolActivityNativeAppReference,
   }),
-  // Media a change request body points at on its host. A private repository serves these only
-  // to a request that carries a credential, which the client has none of, so the server fetches
-  // them with the credential the host's driver holds for the repository at `cwd`.
   // Media recorded in a project's edit.json (S7V-025); resolved only through that project.
   Schema.TaggedStruct("project-media", {
     projectId: ProjectId,
     mediaId: EditId,
     variant: MediaVariant,
   }),
+  // Media a change request body points at on its host. A private repository serves these only
+  // to a request that carries a credential, which the client has none of, so the server fetches
+  // them with the credential the host's driver holds for the repository at `cwd`.
   Schema.TaggedStruct(SOURCE_CONTROL_MEDIA_ASSET, {
     cwd: TrimmedNonEmptyString.check(Schema.isMaxLength(ASSET_PATH_MAX_LENGTH)),
     url: TrimmedNonEmptyString.check(Schema.isMaxLength(2048)),
