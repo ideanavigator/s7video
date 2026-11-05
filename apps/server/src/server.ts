@@ -586,7 +586,8 @@ const layerRuntimeCoreDependencies = layerRuntimeCoreDependenciesBase.pipe(
   Layer.provideMerge(ServerSecretStore.layer),
 );
 
-const layerRuntimeDependencies = ExportService.layer.pipe(
+// Export and transcription resolve projects and their edit documents, so they sit above both.
+const layerRuntimeDependencies = Layer.mergeAll(ExportService.layer, TranscriptService.layer).pipe(
   Layer.provideMerge(layerEditDocument),
   Layer.provideMerge(layerRuntimeCoreDependencies),
 
@@ -601,7 +602,6 @@ const layerRuntimeDependencies = ExportService.layer.pipe(
   Layer.provideMerge(RemoteOpenTargets.layer),
   Layer.provideMerge(DirectEndpoints.layer),
   Layer.provideMerge(ServerLifecycleEvents.layer),
-  Layer.provideMerge(TranscriptService.layer),
   Layer.provideMerge(EngineService.layer),
   Layer.provide(NetService.layer),
 );

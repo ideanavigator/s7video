@@ -9,13 +9,14 @@ import * as NodeOS from "node:os";
 
 import {
   EngineError,
+  type EngineJobId,
+  type ProjectId,
   TranscribeConsent,
   TranscribeEngineModelsStatus,
   TranscribeModelsDownloadResult,
   TranscribeRunResult,
   Transcript,
   TranscriptError,
-  type MediaFingerprint,
   type TranscribeModel,
   type TranscribeModelsStatus,
   type TranscribeRunInput,
@@ -30,7 +31,10 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 
 import * as ServerConfig from "../config.ts";
+import * as EditDocumentService from "../edit/EditDocumentService.ts";
 import * as EngineService from "../engine/EngineService.ts";
+import { projectFor, resolveMedia } from "../mcp/VideoProjectScope.ts";
+import * as ProjectService from "../project/ProjectService.ts";
 import { mediaFingerprint } from "./mediaFingerprint.ts";
 
 const LIGHT_MODEL_MEMORY_BYTES = 8 * 1024 ** 3;
@@ -50,6 +54,11 @@ export interface TranscriptTextInput extends TranscriptMediaInput {
   readonly toFrame?: number;
 }
 
+/** A started transcription to follow by job id, or the cached one, which needs no job. */
+export type TranscribeStartResult =
+  | { readonly jobId: EngineJobId }
+  | { readonly cached: true; readonly wordCount: number; readonly durationFrames: number };
+
 export class TranscriptService extends Context.Service<
   TranscriptService,
   {
@@ -57,6 +66,13 @@ export class TranscriptService extends Context.Service<
     readonly transcribe: (
       input: TranscribeRunInput,
     ) => Effect.Effect<TranscribeRunResult, EngineError | TranscriptError>;
+    /**
+     * For agents: the cached summary, or a job started in the background (follow it by id). A
+     * missing model fails at once with `models_missing`, never as a failed job.
+     */
+    readonly start: (
+      input: TranscribeRunInput,
+    ) => Effect.Effect<TranscribeStartResult, EngineError | TranscriptError>;
     /** The cached transcript, or null if this media has not been transcribed. */
     readonly get: (
       input: TranscriptMediaInput,
@@ -69,6 +85,7 @@ export class TranscriptService extends Context.Service<
     /** The user's yes in the Editor panel: records it, then downloads as an engine job. */
     readonly downloadModels: (
       model: TranscribeModel,
+      projectId?: ProjectId,
     ) => Effect.Effect<TranscribeModelsDownloadResult, EngineError | TranscriptError>;
     /** The user's "not now": the panel does not ask again on its own. */
     readonly dismissDownload: Effect.Effect<TranscribeModelsStatus, EngineError | TranscriptError>;
@@ -114,22 +131,37 @@ const make = Effect.fn("TranscriptService.make")(function* (options: TranscriptS
   const engine = yield* EngineService.EngineService;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  const scopeContext = yield* Effect.context<
+    | ProjectService.ProjectService
+    | EditDocumentService.EditDocumentService
+    | FileSystem.FileSystem
+    | Path.Path
+  >();
   const consentLock = yield* Semaphore.make(1);
   const totalMemory = options.totalMemoryBytes ?? NodeOS.totalmem();
   const recommended: TranscribeModel =
     totalMemory <= LIGHT_MODEL_MEMORY_BYTES ? "light" : "default";
   const consentPath = path.join(config.engineModelsDir, CONSENT_FILE);
 
+  // The project comes from the server's own records and the media must belong to it (the same
+  // check the agent tools use); the cache key is computed here, never taken from the client.
   const media = Effect.fnUntraced(function* (input: TranscriptMediaInput) {
-    const mediaPath = path.resolve(input.projectRoot, input.mediaPath);
-    const fingerprint: MediaFingerprint =
-      input.fingerprint ??
-      (yield* mediaFingerprint(mediaPath).pipe(
-        Effect.provideService(FileSystem.FileSystem, fileSystem),
-        Effect.mapError((cause) => new TranscriptError({ reason: "media_unreadable", cause })),
-      ));
-    const cacheDir = path.join(input.projectRoot, ".s7cache", "transcripts");
-    return { mediaPath, fingerprint, cacheDir };
+    const refused = (failure: { readonly message: string }) =>
+      new TranscriptError({ reason: "media_refused", detail: failure.message });
+    const project = yield* projectFor(input.projectId).pipe(
+      Effect.mapError(refused),
+      Effect.provideContext(scopeContext),
+    );
+    const scoped = yield* resolveMedia(project, input.media).pipe(
+      Effect.mapError(refused),
+      Effect.provideContext(scopeContext),
+    );
+    const fingerprint = yield* mediaFingerprint(scoped.path).pipe(
+      Effect.provideService(FileSystem.FileSystem, fileSystem),
+      Effect.mapError((cause) => new TranscriptError({ reason: "media_unreadable", cause })),
+    );
+    const cacheDir = path.join(project.root, ".s7cache", "transcripts");
+    return { projectId: project.projectId, mediaPath: scoped.path, fingerprint, cacheDir };
   });
 
   const readConsent = fileSystem.readFileString(consentPath).pipe(
@@ -171,8 +203,10 @@ const make = Effect.fn("TranscriptService.make")(function* (options: TranscriptS
     } satisfies TranscribeModelsStatus;
   }).pipe(Effect.withSpan("TranscriptService.modelsStatus"));
 
-  const get = Effect.fn("TranscriptService.get")(function* (input: TranscriptMediaInput) {
-    const { fingerprint, cacheDir } = yield* media(input);
+  const readCache = Effect.fnUntraced(function* (
+    resolved: Effect.Success<ReturnType<typeof media>>,
+  ) {
+    const { fingerprint, cacheDir } = resolved;
     const file = path.join(cacheDir, `${fingerprint.sha256}.json`);
     const text = yield* fileSystem.readFileString(file).pipe(Effect.option);
     if (text._tag === "None") return null;
@@ -185,6 +219,10 @@ const make = Effect.fn("TranscriptService.make")(function* (options: TranscriptS
     return same ? transcript : null;
   });
 
+  const get = Effect.fn("TranscriptService.get")(function* (input: TranscriptMediaInput) {
+    return yield* readCache(yield* media(input));
+  });
+
   const readText = Effect.fn("TranscriptService.readText")(function* (input: TranscriptTextInput) {
     const transcript = yield* get(input);
     if (transcript === null) return null;
@@ -194,38 +232,83 @@ const make = Effect.fn("TranscriptService.make")(function* (options: TranscriptS
     });
   });
 
-  const transcribe = Effect.fn("TranscriptService.transcribe")(function* (
-    input: TranscribeRunInput,
-  ) {
-    const { mediaPath, fingerprint, cacheDir } = yield* media(input);
-    // Unasked: the downloaded model wins, then the one this Mac should use.
-    let model = input.model;
-    if (model === undefined) {
-      const status = yield* engineStatus;
-      model = status.profiles.default.ready
+  /** The model a request gets: the one asked for, else one downloaded, else the Mac's default. */
+  const chooseModel = Effect.fnUntraced(function* (requested: TranscribeModel | undefined) {
+    const status = yield* engineStatus;
+    const model: TranscribeModel =
+      requested ??
+      (status.profiles.default.ready
         ? "default"
         : status.profiles.light.ready
           ? "light"
-          : recommended;
-    }
+          : recommended);
+    return { model, ready: status.profiles[model].ready };
+  });
+
+  const jobInput = (
+    resolved: Effect.Success<ReturnType<typeof media>>,
+    model: TranscribeModel,
+  ) => ({
+    kind: "transcribe",
+    method: "transcribe.run",
+    params: {
+      path: resolved.mediaPath,
+      cacheDir: resolved.cacheDir,
+      fingerprint: resolved.fingerprint,
+      model,
+    },
+    success: TranscribeRunResult,
+    projectId: resolved.projectId,
+  });
+
+  const transcribe = Effect.fn("TranscriptService.transcribe")(function* (
+    input: TranscribeRunInput,
+  ) {
+    const resolved = yield* media(input);
+    const { model } = yield* chooseModel(input.model);
     yield* Effect.annotateCurrentSpan({ "transcribe.model": model });
-    return yield* engine.runJob({
-      kind: "transcribe",
-      method: "transcribe.run",
-      params: { path: mediaPath, cacheDir, fingerprint, model },
-      success: TranscribeRunResult,
-    });
+    return yield* engine.runJob(jobInput(resolved, model));
+  });
+
+  const start = Effect.fn("TranscriptService.start")(function* (input: TranscribeRunInput) {
+    const resolved = yield* media(input);
+    const cached = yield* readCache(resolved);
+    if (cached !== null) {
+      return {
+        cached: true,
+        wordCount: cached.words.length,
+        durationFrames: cached.durationFrames,
+      } as const;
+    }
+    const { model, ready } = yield* chooseModel(input.model);
+    if (!ready) {
+      return yield* new EngineError({ reason: "models_missing", method: "transcribe.run" });
+    }
+    return { jobId: yield* engine.startJob(jobInput(resolved, model)) };
   });
 
   const downloadModels = Effect.fn("TranscriptService.downloadModels")(function* (
     model: TranscribeModel,
+    projectId?: ProjectId,
   ) {
+    // Only a project the server knows tags the job; agents of that project can then follow it.
+    const project =
+      projectId === undefined
+        ? undefined
+        : yield* projectFor(projectId).pipe(
+            Effect.mapError(
+              (failure) =>
+                new TranscriptError({ reason: "media_refused", detail: failure.message }),
+            ),
+            Effect.provideContext(scopeContext),
+          );
     yield* writeConsent("accepted");
     return yield* engine.runJob({
       kind: "transcribe.models.download",
       method: "transcribe.models.download",
       params: { model },
       success: TranscribeModelsDownloadResult,
+      ...(project === undefined ? {} : { projectId: project.projectId }),
     });
   });
 
@@ -236,6 +319,7 @@ const make = Effect.fn("TranscriptService.make")(function* (options: TranscriptS
 
   return TranscriptService.of({
     transcribe,
+    start,
     get,
     readText,
     modelsStatus,

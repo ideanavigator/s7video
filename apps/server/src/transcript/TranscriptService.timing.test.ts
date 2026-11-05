@@ -13,16 +13,19 @@ import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
-import type { TranscribeModel } from "@t3tools/contracts";
+import { type EditSnapshot, ProjectId, type TranscribeModel } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 
 import * as ServerConfig from "../config.ts";
+import * as EditDocumentService from "../edit/EditDocumentService.ts";
 import * as EngineService from "../engine/EngineService.ts";
+import * as ProjectService from "../project/ProjectService.ts";
 import * as TranscriptService from "./TranscriptService.ts";
 
 const MODELS = process.env.S7VIDEO_TEST_MODELS_DIR ?? "";
@@ -31,8 +34,45 @@ const CLIP =
   NodePath.join(NodeOS.homedir(), "Library/Caches/s7video-test-media/talking-head-01.webm");
 const ENABLED = MODELS !== "" && NodeFS.existsSync(CLIP);
 
+/** Each run gets a fresh project folder, so the transcript cache never answers. */
+const project = { root: "" };
+const projectId = ProjectId.make("project-timing");
+
+// The clip stays where it is: the edit document records it as a reference.
+const layerProject = Layer.mergeAll(
+  Layer.mock(ProjectService.ProjectService)({
+    getById: () => Effect.sync(() => Option.some({ workspaceRoot: project.root } as never)),
+  }),
+  Layer.mock(EditDocumentService.EditDocumentService)({
+    read: () =>
+      Effect.succeed({
+        revision: 1,
+        document: {
+          version: 1,
+          fps: { num: 30, den: 1 },
+          canvas: { width: 1920, height: 1080 },
+          media: [
+            {
+              id: "clip",
+              kind: "video",
+              reference: CLIP,
+              fingerprint: { sha256: "ab".repeat(32), size: 1 },
+              probe: { hasVideo: true, hasAudio: true },
+            },
+          ],
+          tracks: [],
+          markers: [],
+          metadata: {},
+        },
+        canUndo: false,
+        canRedo: false,
+      } satisfies EditSnapshot),
+  }),
+);
+
 const layerWith = (idleUnloadMinutes: number) =>
   TranscriptService.layer.pipe(
+    Layer.provide(layerProject),
     Layer.provideMerge(EngineService.layerWith({ transcribeIdleUnloadMinutes: idleUnloadMinutes })),
     Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "transcribe-timing-" })),
     Layer.provideMerge(NodeServices.layer),
@@ -56,11 +96,10 @@ const rssBytes = (pid: number) => {
   }
 };
 
-/** A fresh project per run, so the transcript cache never answers. */
 const freshProject = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
-  const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: "transcribe-project-" });
-  return { projectRoot: root, mediaPath: CLIP };
+  project.root = yield* fileSystem.makeTempDirectoryScoped({ prefix: "transcribe-project-" });
+  return { projectId, media: "clip" };
 });
 
 const timed = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
@@ -107,9 +146,9 @@ describe.runIf(ENABLED)("TranscriptService timing (S7V-026)", () => {
         );
         expect(warm.ms).toBeLessThan(30_000);
       }
-      const project = yield* freshProject;
-      yield* service.transcribe(project);
-      const cached = yield* timed(service.transcribe(project));
+      const clip = yield* freshProject;
+      yield* service.transcribe(clip);
+      const cached = yield* timed(service.transcribe(clip));
       console.log(`cache hit: ${cached.ms.toFixed(0)} ms`);
       expect(cached.value.cached).toBe(true);
       expect(cached.ms).toBeLessThan(1_000);

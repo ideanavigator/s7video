@@ -89,6 +89,11 @@ export class EngineService extends Context.Service<
     ) => Effect.Effect<A, EngineError>;
     /** A long engine method as a job: progress on `subscribeJobs`, stoppable with `cancelJob`. */
     readonly runJob: <A>(input: EngineJobInput<A>) => Effect.Effect<A, EngineError>;
+    /**
+     * Starts a job that outlives the caller (it runs in the service's scope) and returns its id at
+     * once, for agent tools that hand back a job id and let the agent follow it.
+     */
+    readonly startJob: <A>(input: EngineJobInput<A>) => Effect.Effect<EngineJobId>;
     readonly cancelJob: (jobId: EngineJobId) => Effect.Effect<boolean>;
     readonly subscribeJobs: Stream.Stream<EngineJobsEvent>;
     readonly status: Effect.Effect<EngineStatus>;
@@ -260,7 +265,20 @@ const make = Effect.fn("EngineService.make")(function* (options: EngineServiceOp
     yield* Effect.annotateCurrentSpan({ "engine.job.kind": input.kind });
     const jobId = yield* jobs.start(input.kind, input.projectId);
     if (input.onStart) yield* input.onStart(jobId);
-    return yield* call(input.method, { ...input.params, jobId }, input.success, undefined).pipe(
+    return yield* runStartedJob(jobId, input);
+  });
+
+  const startJob = Effect.fn("EngineService.startJob")(function* <A>(input: EngineJobInput<A>) {
+    yield* Effect.annotateCurrentSpan({ "engine.job.kind": input.kind });
+    const jobId = yield* jobs.start(input.kind, input.projectId);
+    if (input.onStart) yield* input.onStart(jobId);
+    // Its outcome reaches callers through the job's state on `subscribeJobs`.
+    yield* runStartedJob(jobId, input).pipe(Effect.ignore, Effect.forkIn(serviceScope));
+    return jobId;
+  });
+
+  const runStartedJob = <A>(jobId: EngineJobId, input: EngineJobInput<A>) =>
+    call(input.method, { ...input.params, jobId }, input.success, undefined).pipe(
       Effect.onExit((exit) => {
         if (Exit.isSuccess(exit)) return jobs.finish(jobId, "succeeded");
         if (Cause.hasInterrupts(exit.cause)) {
@@ -273,7 +291,6 @@ const make = Effect.fn("EngineService.make")(function* (options: EngineServiceOp
         return jobs.finish(jobId, cancelled ? "cancelled" : "failed");
       }),
     );
-  });
 
   const quickCall = <A>(
     method: string,
@@ -287,6 +304,7 @@ const make = Effect.fn("EngineService.make")(function* (options: EngineServiceOp
     frame,
     call: quickCall,
     runJob,
+    startJob,
     cancelJob,
     subscribeJobs: jobs.subscribe,
     status: Effect.sync(() => ({ pid: current?.process.pid, starts, lastStartupMs })),

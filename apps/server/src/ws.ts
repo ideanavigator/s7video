@@ -2755,7 +2755,8 @@ export const layerWsRpc = (
           transcripts.get(input).pipe(Effect.map((transcript) => ({ transcript }))),
         [WS_METHODS.transcribeRun]: (input) => transcripts.transcribe(input),
         [WS_METHODS.transcribeModelsStatus]: () => transcripts.modelsStatus,
-        [WS_METHODS.transcribeModelsDownload]: (input) => transcripts.downloadModels(input.model),
+        [WS_METHODS.transcribeModelsDownload]: (input) =>
+          transcripts.downloadModels(input.model, input.projectId),
         [WS_METHODS.transcribeModelsDismiss]: () => transcripts.dismissDownload,
         [WS_METHODS.sourceControlPublishRepository]: (input) =>
           sourceControlRepositories.publishRepository(input).pipe(

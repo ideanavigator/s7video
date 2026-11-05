@@ -5,7 +5,7 @@
 // at the transcript's `fps`, never seconds.
 import * as Schema from "effect/Schema";
 
-import { NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { NonNegativeInt, ProjectId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { EngineRational } from "./engine.ts";
 
 /** `default` is Qwen3-ASR 1.7B; `light` is Qwen3-ASR 0.6B, offered on Macs with 8 GB or less. */
@@ -115,13 +115,14 @@ export const TranscribeModelsStatus = Schema.Struct({
 });
 export type TranscribeModelsStatus = typeof TranscribeModelsStatus.Type;
 
-/** A project's media file; the transcript cache lives in that project's `.s7cache/transcripts`. */
+/**
+ * A project's media: an `edit.json` media id or a path inside the project. The server resolves the
+ * project and checks the media belongs to it; the transcript cache is that project's
+ * `.s7cache/transcripts`, keyed by a fingerprint the server computes from the file.
+ */
 export const TranscriptMediaInput = Schema.Struct({
-  projectRoot: TrimmedNonEmptyString,
-  /** Absolute, or relative to the project root. */
-  mediaPath: TrimmedNonEmptyString,
-  /** From the edit document's media table when known; computed from the file otherwise. */
-  fingerprint: Schema.optional(MediaFingerprint),
+  projectId: ProjectId,
+  media: TrimmedNonEmptyString,
 });
 export type TranscriptMediaInput = typeof TranscriptMediaInput.Type;
 
@@ -137,18 +138,31 @@ export type TranscriptGetResult = typeof TranscriptGetResult.Type;
 export const TranscribeModelsStatusInput = Schema.Struct({});
 export type TranscribeModelsStatusInput = typeof TranscribeModelsStatusInput.Type;
 
-export const TranscribeModelsDownloadInput = Schema.Struct({ model: TranscribeModel });
+export const TranscribeModelsDownloadInput = Schema.Struct({
+  model: TranscribeModel,
+  /** The project the user accepted the download in, so its agents can follow the job. */
+  projectId: Schema.optional(ProjectId),
+});
 export type TranscribeModelsDownloadInput = typeof TranscribeModelsDownloadInput.Type;
 
 export const TranscribeModelsDismissInput = Schema.Struct({});
 export type TranscribeModelsDismissInput = typeof TranscribeModelsDismissInput.Type;
 
 export class TranscriptError extends Schema.TaggedError<TranscriptError>()("TranscriptError", {
-  reason: Schema.Literals(["media_unreadable", "cache_unreadable", "consent_unsaved"]),
+  reason: Schema.Literals([
+    "media_refused",
+    "media_unreadable",
+    "cache_unreadable",
+    "consent_unsaved",
+  ]),
+  /** For `media_refused`: the plain reason (not in this project, no such file, no project). */
+  detail: Schema.optional(Schema.String),
   cause: Schema.optional(Schema.Defect()),
 }) {
   override get message(): string {
     switch (this.reason) {
+      case "media_refused":
+        return this.detail ?? "That file is not part of this project.";
       case "media_unreadable":
         return "The media file could not be read.";
       case "cache_unreadable":
