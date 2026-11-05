@@ -95,6 +95,23 @@ function TranscribePrompt(props: {
   const [pending, setPending] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
   const [dialog, setDialog] = useState<DialogState | null>(null);
+  // A Cancel pressed before the download's job is in the jobs stream waits here for its id.
+  const cancelQueued = useRef(false);
+  const cancelRequested = useRef(false);
+  const downloadJobId = jobs.download?.id ?? null;
+
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- sends a queued cancel to the server once the download's job id arrives in the jobs stream
+  useEffect(() => {
+    if (!cancelQueued.current || downloadJobId === null) return;
+    cancelQueued.current = false;
+    void cancel({ environmentId, input: { jobId: downloadJobId } });
+  }, [cancel, downloadJobId, environmentId]);
+
+  const cancelDownload = () => {
+    cancelRequested.current = true;
+    if (downloadJobId === null) cancelQueued.current = true;
+    else void cancel({ environmentId, input: { jobId: downloadJobId } });
+  };
 
   const askForModel = async () => {
     const status = await readStatus({ environmentId, input: {} });
@@ -131,8 +148,15 @@ function TranscribePrompt(props: {
 
   const downloadModel = async (model: TranscribeModel) => {
     if (dialog === null) return;
+    cancelRequested.current = false;
     setDialog({ ...dialog, state: { phase: "downloading", progress: 0 } });
     const result = await download({ environmentId, input: { model, projectId } });
+    cancelQueued.current = false;
+    if (cancelRequested.current) {
+      // Cancelled, or finished just as the user cancelled: either way, no transcription now.
+      setDialog(null);
+      return;
+    }
     if (result._tag === "Success") {
       setDialog(null);
       await transcribe(model);
@@ -202,11 +226,7 @@ function TranscribePrompt(props: {
           status={dialog.status}
           state={dialogState}
           onDownload={(model) => void downloadModel(model)}
-          onCancelDownload={() => {
-            if (jobs.download !== null) {
-              void cancel({ environmentId, input: { jobId: jobs.download.id } });
-            }
-          }}
+          onCancelDownload={cancelDownload}
           onDismiss={() => {
             setDialog(null);
             void dismiss({ environmentId, input: {} });

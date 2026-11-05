@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 s7video contributors
 // SPDX-License-Identifier: MIT
 import {
+  EngineError,
   EngineJobId,
   type EngineJob,
   EnvironmentId,
@@ -9,6 +10,7 @@ import {
   type TranscribeModelsStatus,
   type TranscriptWord,
 } from "@t3tools/contracts";
+import { Cause } from "effect";
 import { Profiler, useSyncExternalStore } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
@@ -300,6 +302,79 @@ describe("TranscriptTab", () => {
     );
     await expect.poll(() => page.getByRole("dialog").query()).toBeNull();
     expect(commands.status).toHaveBeenCalledOnce();
+  });
+
+  it("shows the download's progress and cancels it, even before its job is listed", async () => {
+    state.transcript = { _tag: "ready", transcript: null };
+    commands.run.mockClear();
+    commands.cancel.mockClear();
+    commands.status.mockResolvedValueOnce({
+      _tag: "Success",
+      value: modelsStatus(false, "default"),
+    });
+    let finishDownload: (result: unknown) => void = () => {};
+    commands.download.mockImplementationOnce(
+      () => new Promise((resolve) => (finishDownload = resolve)),
+    );
+    await using screen = await renderTab(null);
+    await screen.getByRole("button", { name: "Transcribe" }).click();
+    await page.getByRole("button", { name: "Download 3.7 GB" }).click();
+    await expect
+      .element(page.getByRole("progressbar", { name: "Speech model download" }))
+      .toBeVisible();
+
+    // Cancel before the job reaches the jobs stream: it waits for the job's id.
+    await page.getByRole("button", { name: "Cancel download" }).click();
+    expect(commands.cancel).not.toHaveBeenCalled();
+    const job: EngineJob = {
+      id: EngineJobId.make("download-1"),
+      kind: "transcribe.models.download",
+      progress: 0.3,
+      stage: null,
+      state: "running",
+    };
+    await act(() => jobsStore.set({ transcribe: null, download: job }));
+    await expect
+      .element(page.getByRole("progressbar", { name: "Speech model download" }))
+      .toHaveAttribute("aria-valuenow", "30");
+    expect(commands.cancel).toHaveBeenCalledWith({ environmentId, input: { jobId: "download-1" } });
+    expect(commands.cancel).toHaveBeenCalledOnce();
+
+    await act(() => {
+      jobsStore.set({ transcribe: null, download: null });
+      finishDownload({
+        _tag: "Failure",
+        cause: Cause.fail(
+          new EngineError({ reason: "cancelled", method: "transcribe.models.download" }),
+        ),
+      });
+    });
+    await expect.poll(() => page.getByRole("dialog").query()).toBeNull();
+    expect(commands.run).not.toHaveBeenCalled();
+  });
+
+  it("cancels a listed download at once", async () => {
+    state.transcript = { _tag: "ready", transcript: null };
+    commands.cancel.mockClear();
+    commands.status.mockResolvedValueOnce({
+      _tag: "Success",
+      value: modelsStatus(false, "default"),
+    });
+    commands.download.mockImplementationOnce(() => new Promise(() => {}));
+    await using screen = await renderTab(null);
+    await screen.getByRole("button", { name: "Transcribe" }).click();
+    await page.getByRole("button", { name: "Download 3.7 GB" }).click();
+    const job: EngineJob = {
+      id: EngineJobId.make("download-2"),
+      kind: "transcribe.models.download",
+      progress: 0.5,
+      stage: null,
+      state: "running",
+    };
+    await act(() => jobsStore.set({ transcribe: null, download: job }));
+    await page.getByRole("button", { name: "Cancel download" }).click();
+    expect(commands.cancel).toHaveBeenCalledWith({ environmentId, input: { jobId: "download-2" } });
+    await act(() => jobsStore.set({ transcribe: null, download: null }));
   });
 
   it("records 'Not now' and closes the question", async () => {
