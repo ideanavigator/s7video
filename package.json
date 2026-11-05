@@ -18,6 +18,8 @@
     "icons:check": "node scripts/export-brand-icons.ts --check",
     "brand:check": "node scripts/brand-check.ts",
     "licenses:sync": "node scripts/sync-third-party-license-notices.ts",
+    "licenses:check": "node scripts/licenses-check.ts",
+    "reuse:lint": "uvx --from 'reuse[charset-normalizer]==6.3.0' reuse lint",
     "docs:linkcheck": "node scripts/check-doc-links.ts",
     "tickets": "node scripts/planning.ts tickets",
     "ticket:new": "node scripts/planning.ts ticket:new",

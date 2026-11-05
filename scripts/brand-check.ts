@@ -61,6 +61,10 @@ const BANNED_COLOURS = [
 /** Paths where upstream names are expected: licences, attribution and upstream-tracking code. */
 const ALLOWED_PATHS: ReadonlyArray<{ readonly pattern: RegExp; readonly reason: string }> = [
   { pattern: /^(LICENSE|NOTICE)(\..*)?$/, reason: "licence and notice" },
+  {
+    pattern: /^(REUSE\.toml$|LICENSES\/)/,
+    reason: "REUSE copyright annotations and licence texts",
+  },
   { pattern: /^third-party-licenses/, reason: "licence notices" },
   { pattern: /^docs\/FORK\.md$/, reason: "fork record" },
   { pattern: /^s7video\.config\.ts$/, reason: "the config credits T3 Code" },

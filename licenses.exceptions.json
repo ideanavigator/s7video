@@ -1,0 +1,11 @@
+{
+  "$comment": "Reviewed packages outside the allowlist. Every entry names the ADR that accepted it; pnpm licenses:check rejects an entry without one, and an entry whose package is no longer installed.",
+  "exceptions": [
+    {
+      "name": "@anthropic-ai/claude-agent-sdk",
+      "license": "Proprietary (Anthropic Commercial Terms)",
+      "adr": "ADR-002",
+      "reason": "Claude provider. Shipped the way T3 Code ships it: the SDK's JavaScript only, driving the user's own signed-in Claude CLI."
+    }
+  ]
+}
