@@ -194,6 +194,8 @@ const makeFixture = (): Fixture => {
   );
   NodeFS.symlinkSync("dangling.mp4", NodePath.join(rootA, "assets", "chained.mp4"));
   NodeFS.symlinkSync("gone.mp4", NodePath.join(rootA, "assets", "dangling-inside.mp4"));
+  // Reached through assets/desktop, a lexical resolve would land inside Project A.
+  NodeFS.symlinkSync("../secret/missing.mp4", NodePath.join(outside, "rel-link.mp4"));
   const documents = new Map<ProjectId, EditDocument>([
     [
       projectA,
@@ -598,6 +600,9 @@ describe("video toolkit", () => {
     );
     it.effect("should refuse a chain of symlinks that ends outside the project", () =>
       refused(() => "assets/chained.mp4"),
+    );
+    it.effect("should refuse a relative dangling symlink behind a symlinked folder", () =>
+      refused(() => "assets/desktop/rel-link.mp4"),
     );
     it.effect("still says a dangling symlink inside the project is missing", () =>
       withTools(({ fixture, call }) =>

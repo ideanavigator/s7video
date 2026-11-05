@@ -125,7 +125,9 @@ export const resolveMedia = Effect.fn("VideoProjectScope.resolveMedia")(function
     for (let hop = 0; hop < MAX_LINK_HOPS; hop++) {
       const target = yield* fileSystem.readLink(missing).pipe(Effect.option);
       if (Option.isNone(target)) break;
-      missing = path.resolve(path.dirname(missing), target.value);
+      // Resolve from the link's real folder: a symlinked folder must not pull the link back inside.
+      const folder = path.dirname(missing);
+      missing = path.resolve((yield* realPathOf(folder)) ?? folder, target.value);
     }
     let folder = path.dirname(missing);
     let realFolder = yield* realPathOf(folder);
