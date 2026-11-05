@@ -190,7 +190,7 @@ export function AddEnvironmentDialog({
           <DialogDescription>
             {routeTarget
               ? "Pair this machine again over another address, such as its LAN address. It joins the existing routes instead of adding a second machine."
-              : "Pair another environment to this client."}
+              : "Pair another computer on your network with this one."}
           </DialogDescription>
         </DialogHeader>
         <DialogPanel>{renderRemoteModeBody()}</DialogPanel>

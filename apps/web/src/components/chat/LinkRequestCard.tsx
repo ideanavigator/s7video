@@ -377,7 +377,7 @@ function LinkRequestDialog(props: {
                     <Input
                       value={address}
                       onChange={(event) => setAddress(event.target.value)}
-                      placeholder="https://machine.tailnet.ts.net"
+                      placeholder="https://studio.local"
                       disabled={busy}
                       nativeInput
                       spellCheck={false}
@@ -385,7 +385,7 @@ function LinkRequestDialog(props: {
                     {target.kind === "machine" ? (
                       <span className="block text-xs text-muted-foreground">
                         This app has no address for {target.label} that another machine can reach.
-                        Enter its https or Tailscale address.
+                        Enter its https address.
                       </span>
                     ) : null}
                   </label>

@@ -152,7 +152,7 @@ export function SimlockDeviceHostEditor(props: {
               <Input
                 required
                 type="url"
-                placeholder="https://gateway.example.ts.net:4700"
+                placeholder="https://gateway.local:4700"
                 value={gatewayUrl}
                 disabled={props.busy}
                 onChange={(event) => {

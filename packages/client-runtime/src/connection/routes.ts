@@ -146,7 +146,7 @@ export function connectionRouteLabel(route: ConnectionRoute): string {
     case "lan":
       return "LAN";
     case "tailnet":
-      return "Tailscale";
+      return "Private network";
     case "vpn":
       return "VPN";
     case "public":

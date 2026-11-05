@@ -39,7 +39,7 @@ export function simlockDeviceHostProblem(host: SimlockDeviceHostConfigType): str
   return Option.isNone(
     parseSimlockDeviceHostDraft({ ...withToken, maxLeases: 1, maxLeaseMinutes: 60 }),
   )
-    ? "Enter the gateway's origin, such as https://gateway.example.ts.net:4700."
+    ? "Enter the gateway's origin, such as https://gateway.local:4700."
     : "Keep the limits within the ranges shown.";
 }
 

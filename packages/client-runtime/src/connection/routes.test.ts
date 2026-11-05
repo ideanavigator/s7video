@@ -69,7 +69,7 @@ describe("connection routes", () => {
     expect(connectionRouteKind(PUBLIC)).toBe("public");
     expect(connectionRouteKind(direct("lo", "http://127.0.0.1:3773/"))).toBe("loopback");
     expect(connectionRouteKind(direct("ts6", "http://[fd7a:115c:a1e0::1]:3773/"))).toBe("tailnet");
-    expect(connectionRouteLabel(TAILNET)).toBe("Tailscale");
+    expect(connectionRouteLabel(TAILNET)).toBe("Private network");
   });
 
   it("places a new route after faster kinds and ahead of slower ones", () => {
@@ -189,7 +189,7 @@ describe("learned routes", () => {
       reported: [tailscale, mesh],
       allowInsecure: true,
     })!;
-    expect(first.map(connectionRouteLabel)).toEqual(["LAN", "Tailscale", "VPN"]);
+    expect(first.map(connectionRouteLabel)).toEqual(["LAN", "Private network", "VPN"]);
 
     const corrected = mergeLearnedRoutes({
       entry: entryWithRoutes(lanOnly, first),

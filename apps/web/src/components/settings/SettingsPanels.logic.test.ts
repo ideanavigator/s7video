@@ -96,3 +96,19 @@ describe("settings panels name no pull request options (S7V-018)", () => {
     expect(settingsPanelsSource).not.toMatch(/\["[^"]*pull request[^"]*"\]/i);
   });
 });
+
+describe("settings copy names no Tailscale (S7V-018)", () => {
+  const sources = import.meta.glob<string>(["./*.tsx", "./*.ts", "!./*.test.*"], {
+    query: "?raw",
+    import: "default",
+    eager: true,
+  });
+
+  it("has no Tailscale wording or ts.net examples in any settings component", () => {
+    expect(Object.keys(sources).length).toBeGreaterThan(50);
+    const offenders = Object.entries(sources)
+      .filter(([, source]) => /tailscale|\.ts\.net\b/i.test(source.replaceAll(/\/\/.*$/gm, "")))
+      .map(([path]) => path);
+    expect(offenders).toEqual([]);
+  });
+});

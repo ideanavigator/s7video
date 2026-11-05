@@ -27,6 +27,6 @@ export function webhookAddress(
     copyable: true,
     note: isLocalLoopbackHost(url.hostname)
       ? "Only this computer can call this address."
-      : "Works wherever this environment's address is reachable, for example over Tailscale or your own proxy.",
+      : "Works wherever this environment's address is reachable, for example over your own VPN or proxy.",
   };
 }
