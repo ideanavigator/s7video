@@ -127,6 +127,11 @@ export const make = Effect.fn("EngineRpcClient.make")(function* <E>(input: {
     const id = ++nextId;
     const reply = yield* Deferred.make<unknown, EngineError>();
     pending.set(id, { method, reply });
+    // stdout may have closed since the check above; that close cleared `pending` without us.
+    if (!open) {
+      pending.delete(id);
+      return yield* new EngineError({ reason: "crashed", method });
+    }
     yield* input.send(`${encodeRequest({ jsonrpc: "2.0", id, method, params })}\n`);
     const awaited = Deferred.await(reply);
     const result = yield* (
