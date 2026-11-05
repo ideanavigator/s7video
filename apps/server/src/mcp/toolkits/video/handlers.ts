@@ -219,9 +219,9 @@ const handlers = {
         );
     }),
   ),
-  // Reads-level access: transcription only fills the project's .s7cache; it never changes the
-  // edit or the project's files, so plan-mode and read-only threads may run it too.
-  video_transcribe: McpToolAccess.readsAsCaller(({ media }) =>
+  // Acts on the environment: it loads a 4-6 GB model and writes the project's .s7cache, and the
+  // matching transcribe.run RPC needs operate scope, so read-only clients are refused.
+  video_transcribe: McpToolAccess.actsAsCaller(({ media }) =>
     Effect.gen(function* () {
       const project = yield* callerProject();
       const transcripts = yield* TranscriptService.TranscriptService;

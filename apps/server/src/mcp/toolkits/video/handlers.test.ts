@@ -326,6 +326,7 @@ const withTools = <A, E>(
       name: string,
       args: object,
       capabilities?: ReadonlyArray<McpInvocationContext.McpCapability>,
+      client?: McpInvocationContext.McpThreadInvocationScope["client"],
     ) => Effect.Effect<McpSchema.CallToolResult, McpSchema.InternalError | McpSchema.InvalidParams>;
     readonly server: McpServer.McpServer["Service"];
   }) => Effect.Effect<A, E, McpServer.McpServer>,
@@ -341,16 +342,15 @@ const withTools = <A, E>(
         name: string,
         args: object,
         capabilities?: ReadonlyArray<McpInvocationContext.McpCapability>,
+        caller?: McpInvocationContext.McpThreadInvocationScope["client"],
       ) =>
-        server
-          .callTool({ name, arguments: args })
-          .pipe(
-            Effect.provideService(
-              McpInvocationContext.McpInvocationContext,
-              scopeFor(threadId, capabilities),
-            ),
-            Effect.provideService(McpSchema.McpServerClient, client),
-          );
+        server.callTool({ name, arguments: args }).pipe(
+          Effect.provideService(McpInvocationContext.McpInvocationContext, {
+            ...scopeFor(threadId, capabilities),
+            client: caller,
+          }),
+          Effect.provideService(McpSchema.McpServerClient, client),
+        );
       return yield* body({ fixture, call, server });
     }).pipe(
       Effect.provide(
@@ -545,6 +545,35 @@ describe("video toolkit", () => {
           expect(fixture.started).toHaveLength(1);
         }),
       ),
+  );
+
+  it.effect("video_transcribe refuses a read-only client; video_transcript_read does not", () =>
+    withTools(({ fixture, call }) =>
+      Effect.gen(function* () {
+        const readOnly = { sessionId: "session-ro", label: "Viewer", access: "read-only" as const };
+        const refused = yield* call(
+          threadA,
+          "video_transcribe",
+          { media: "cam" },
+          undefined,
+          readOnly,
+        );
+        expect(refused.isError).toBe(true);
+        expect(textOf(refused)).toEqual([
+          "This tool changes the environment, and this MCP client was approved for read-only access.",
+        ]);
+        expect(fixture.started).toEqual([]);
+        // Reading stays open to read-only clients: it gets the normal "not transcribed" answer.
+        const read = yield* call(
+          threadA,
+          "video_transcript_read",
+          { media: "cam" },
+          undefined,
+          readOnly,
+        );
+        expect(textOf(read)).toEqual(["cam has no transcript yet. Run video_transcribe first."]);
+      }),
+    ),
   );
 
   it.effect("video_transcript_read returns frame-stamped text, or asks for video_transcribe", () =>
