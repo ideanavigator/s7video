@@ -109,6 +109,9 @@ def _frame(params: dict[str, Any], job: JobContext) -> dict[str, Any]:
                 "image2",
                 "-c:v",
                 "png",
+                # zlib level 1: about 40 ms less than the default on a 1080p frame, for ~15% more bytes.
+                "-compression_level",
+                "1",
                 "-update",
                 "1",
                 "-y",
