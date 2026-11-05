@@ -395,6 +395,52 @@ export const pickThemeFiles = DesktopIpc.makeIpcMethod({
   }),
 });
 
+const MEDIA_FILE_EXTENSIONS = [
+  // Video
+  "mp4",
+  "mov",
+  "m4v",
+  "mkv",
+  "webm",
+  "avi",
+  "mts",
+  "m2ts",
+  "mxf",
+  // Audio
+  "mp3",
+  "m4a",
+  "aac",
+  "wav",
+  "aif",
+  "aiff",
+  "flac",
+  "ogg",
+  "opus",
+  "caf",
+];
+
+/** Video and audio for a project's Assets (S7V-025); the paths go to the server's import. */
+export const pickMediaFiles = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.PICK_MEDIA_FILES_CHANNEL,
+  payload: Schema.Struct({ multiple: Schema.Boolean }),
+  result: Schema.Array(Schema.String),
+  handler: Effect.fn("desktop.ipc.window.pickMediaFiles")(function* (input) {
+    const dialog = yield* ElectronDialog.ElectronDialog;
+    const electronWindow = yield* ElectronWindow.ElectronWindow;
+    return yield* dialog.pickFiles({
+      owner: yield* electronWindow.focusedMainOrFirst,
+      defaultPath: Option.none(),
+      filters: [
+        {
+          name: "Video and audio",
+          extensions: MEDIA_FILE_EXTENSIONS,
+        },
+      ],
+      multiple: input.multiple,
+    });
+  }),
+});
+
 export const checkSystemPermission = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.CHECK_SYSTEM_PERMISSION_CHANNEL,
   payload: SystemSettingsPaneSchema,

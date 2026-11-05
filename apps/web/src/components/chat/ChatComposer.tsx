@@ -50,6 +50,7 @@ import * as Schema from "effect/Schema";
 import { isPasteAsTextShortcut } from "@t3tools/client-runtime/text-paste";
 import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
 import { folderDropTarget, resolveDroppedFolderPath } from "./folderDrop";
+import { useChatMediaImport } from "./useChatMediaImport";
 import { splitTransferredFiles } from "./workspaceFileDrop";
 import { createModelSelection, normalizeModelSlug } from "@t3tools/shared/model";
 import { USAGE_LIMITS_COMMAND } from "@t3tools/shared/usageLimits";
@@ -2628,6 +2629,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     },
   });
 
+  const importDroppedMedia = useChatMediaImport(environmentId, activeProjectId);
   const attachDroppedThreadFile = useEffectEvent((file: File) => addComposerAttachments([file]));
   const importDroppedThread = useEffectEvent(
     async (ref: ScopedThreadRef, isActive: () => boolean) => {
@@ -2836,9 +2838,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         composerEditorRef.current?.focusAt(cursor);
       },
       addDroppedFiles: (files: File[]) => {
-        void addComposerAttachments(files).then((inserted) => {
-          if (!inserted) focusComposer();
-        });
+        void importDroppedMedia(files)
+          .then((rest) => (rest.length === 0 ? false : addComposerAttachments(rest)))
+          .then((inserted) => {
+            if (!inserted) focusComposer();
+          });
       },
       addDroppedFolders: addComposerFoldersStable,
       hasPendingAttachments: () =>
