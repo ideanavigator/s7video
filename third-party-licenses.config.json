@@ -150,10 +150,49 @@
     },
     {
       "bundles": ["assets", "web"],
-      "license": "MIT",
+      "license": "MIT AND OFL-1.1 AND CC-BY-4.0 AND Apache-2.0 AND Unlicense",
       "name": "Symbols Nerd Font Mono",
-      "noticeFile": "apps/web/src/terminal/ghostty/fonts/LICENSE",
-      "sourceUrl": "https://github.com/ryanoasis/nerd-fonts"
+      "version": "3.4.0",
+      "sourceUrl": "https://github.com/ryanoasis/nerd-fonts",
+      "generatedNotices": [
+        {
+          "licenseId": "MIT",
+          "copyrights": [
+            "Copyright (c) 2014 Ryan L McIntyre",
+            "Copyright (c) 2023 GitHub Inc. (Octicons)",
+            "Copyright 2013 Kim Silkebækken and other contributors (Powerline)"
+          ],
+          "preamble": [
+            "Nerd Fonts 3.4.0 symbols-only font. The font is MIT; the icon sets inside keep their own licences, listed below. Octicons, Devicons, Powerline symbols, IEC Power Symbols, Font Awesome Extension and the Seti-based original icons are MIT."
+          ]
+        },
+        {
+          "licenseId": "OFL-1.1",
+          "copyrights": [
+            "Copyright (c) 2022 Fonticons, Inc. (https://fontawesome.com), with Reserved Font Name \"Font Awesome\"",
+            "Copyright (c) 2021, Gabriele Lana, with Reserved Font Name Pomicons",
+            "Copyright (c) Erik Flowers (Weather Icons)"
+          ],
+          "preamble": ["Font Awesome Free, Pomicons and Weather Icons glyphs, as font files."]
+        },
+        {
+          "licenseId": "CC-BY-4.0",
+          "copyrights": ["Copyright (c) Microsoft Corporation"],
+          "preamble": [
+            "Codicons (https://github.com/microsoft/vscode-codicons), by Microsoft, used under CC BY 4.0. Changes: glyphs copied into the Nerd Fonts symbols font."
+          ]
+        },
+        {
+          "licenseId": "Apache-2.0",
+          "preamble": [
+            "Material Design Icons by Pictogrammers (https://pictogrammers.com), redistributed under the Apache License 2.0."
+          ]
+        },
+        {
+          "licenseId": "Unlicense",
+          "preamble": ["Font Logos (https://github.com/lukas-w/font-logos)."]
+        }
+      ]
     },
     {
       "bundles": ["assets"],

@@ -60,12 +60,25 @@ precedence = "override"
 SPDX-FileCopyrightText = "2024 Mitchell Hashimoto, Ghostty contributors"
 SPDX-License-Identifier = "MIT"
 
-# Symbols Nerd Font Mono (MIT); the licence is in fonts/LICENSE beside it.
+# Symbols Nerd Font Mono 3.4.0 (from the font's name table). The Nerd Fonts project licence beside it
+# (fonts/LICENSE) is MIT; the glyph sets inside keep theirs, per the v3.4.0 src/glyphs licence files:
+# Font Awesome, Pomicons and Weather Icons OFL-1.1; Codicons CC-BY-4.0; Material Design Icons
+# Apache-2.0; Font Logos Unlicense; Octicons, Devicons, Powerline and the rest MIT.
 [[annotations]]
 path = "apps/web/src/terminal/ghostty/fonts/*.woff2"
 precedence = "override"
-SPDX-FileCopyrightText = "2014 Ryan L McIntyre"
-SPDX-License-Identifier = "MIT"
+SPDX-FileCopyrightText = [
+  "2014 Ryan L McIntyre (Nerd Fonts)",
+  "2022 Fonticons, Inc. (Font Awesome)",
+  "2021 Gabriele Lana (Pomicons)",
+  "Erik Flowers (Weather Icons)",
+  "Microsoft Corporation (Codicons)",
+  "Pictogrammers (Material Design Icons)",
+  "Lukas W (Font Logos)",
+  "2023 GitHub Inc. (Octicons)",
+  "2013 Kim Silkebaekken and other contributors (Powerline)",
+]
+SPDX-License-Identifier = "MIT AND OFL-1.1 AND CC-BY-4.0 AND Apache-2.0 AND Unlicense"
 
 # Sounds from freesound.org, dedicated to the public domain (CC0 1.0) and converted to MP3.
 [[annotations]]
@@ -95,3 +108,23 @@ path = "third-party-licenses/spdx/**"
 precedence = "override"
 SPDX-FileCopyrightText = "Linux Foundation and its Contributors (SPDX License List)"
 SPDX-License-Identifier = "LicenseRef-SPDX-License-List-Data"
+
+# The GCC runtime licence shipped beside libatomic in the Linux CLI archive (scripts/build-cli-archive.ts).
+[[annotations]]
+path = "scripts/licenses/libatomic.LICENSE"
+precedence = "override"
+SPDX-FileCopyrightText = "Free Software Foundation, Inc."
+SPDX-License-Identifier = "GPL-3.0-or-later WITH GCC-exception-3.1"
+
+# Hyprland Wayland protocol definitions (BSD-3-Clause; the notice is inside each file).
+[[annotations]]
+path = "native/hyprland-snap-shot/protocols/hyprland-toplevel-export-v1.xml"
+precedence = "override"
+SPDX-FileCopyrightText = "2022 Vaxry"
+SPDX-License-Identifier = "BSD-3-Clause"
+
+[[annotations]]
+path = "native/hyprland-snap-shot/protocols/hyprland-toplevel-mapping-v1.xml"
+precedence = "override"
+SPDX-FileCopyrightText = "2025 WhySoBad"
+SPDX-License-Identifier = "BSD-3-Clause"
