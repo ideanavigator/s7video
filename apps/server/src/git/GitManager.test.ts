@@ -2611,6 +2611,12 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
 
       expect(result.branch).toEqual({ status: "created", name: scenario.expected });
       expect(result.commit.status).toBe("created");
+      // A commit on a new feature branch offers Push; no code host is needed for this CTA.
+      expect(result.toast.cta).toEqual({
+        kind: "run_action",
+        label: "Push",
+        action: { kind: "push" },
+      });
       expect((yield* runGit(repoDir, ["branch", "--show-current"])).stdout.trim()).toBe(
         scenario.expected,
       );
