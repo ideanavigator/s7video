@@ -3,7 +3,12 @@
 import { EngineJobId, type EditSnapshot, type EngineJob } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { acceptNewerSnapshot, applyJobsEvent, currentExportJob } from "./editStreams";
+import {
+  acceptNewerSnapshot,
+  adoptedExportJobId,
+  applyJobsEvent,
+  currentExportJob,
+} from "./editStreams";
 
 const snapshot = (revision: number): EditSnapshot => ({
   revision,
@@ -81,5 +86,19 @@ describe("currentExportJob", () => {
   it("finds this project's running export after the panel remounts", () => {
     expect(currentExportJob(jobs, "project-1", null)?.id).toBe("running");
     expect(currentExportJob(jobs, "project-3", null)).toBeNull();
+  });
+
+  it("keeps following an export picked up after a remount to its end", () => {
+    const shown = currentExportJob(jobs, "project-1", null);
+    const adopted = adoptedExportJobId(null, null, shown);
+    expect(adopted).toBe("running");
+    for (const state of ["succeeded", "failed", "cancelled"] as const) {
+      const ended = new Map(jobs).set("running", job("running", { state }));
+      const followed = currentExportJob(ended, "project-1", adopted);
+      expect(followed?.state).toBe(state);
+      expect(adoptedExportJobId(adopted, null, followed)).toBe("running");
+    }
+    // An export started here takes over from one picked up before.
+    expect(adoptedExportJobId(adopted, "done", null)).toBeNull();
   });
 });

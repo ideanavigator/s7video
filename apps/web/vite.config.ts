@@ -78,7 +78,7 @@ const unitTestProject = {
   test: {
     name: "unit",
     include: ["src/**/*.test.{ts,tsx}"],
-    exclude: ["src/**/*.browser.test.{ts,tsx}"],
+    exclude: ["src/**/*.browser.test.{ts,tsx}", "src/**/*.golden.test.ts"],
     hookTimeout: 15_000,
     testTimeout: 15_000,
     setupFiles: [
@@ -134,6 +134,35 @@ const browserTestProject = {
         // position starts hovered. test/browserSetup.ts parks it off the page before each test.
         resetPointer: async ({ page }) => {
           await page.mouse.move(-1, -1);
+        },
+      },
+    },
+  },
+} satisfies TestProjectInlineConfiguration;
+
+// Golden media tests in the browser (S7V-030): the real player on clips from `pnpm media:fetch`,
+// served from the test-media cache. They play media in real time, so their timeouts are longer.
+const testMediaDir =
+  process.env.S7VIDEO_TEST_MEDIA_DIR ?? `${process.env.HOME}/Library/Caches/s7video-test-media`;
+
+const goldenBrowserProject = {
+  ...browserTestProject,
+  server: { fs: { allow: [`${import.meta.dirname}/../..`, testMediaDir] } },
+  test: {
+    ...browserTestProject.test,
+    name: "golden",
+    include: ["src/**/*.golden.test.ts"],
+    hookTimeout: 120_000,
+    testTimeout: 120_000,
+    browser: {
+      ...browserTestProject.test.browser,
+      instances: [{ browser: "chromium" }],
+      commands: {
+        ...browserTestProject.test.browser.commands,
+        // The cached clip's path for `/@fs/`, or null when `pnpm media:fetch` has not run.
+        testMediaPath: async (_context, file: string) => {
+          const path = `${testMediaDir}/${file.replaceAll("/", "")}`;
+          return (await NodeFSP.stat(path).catch(() => null))?.isFile() ? path : null;
         },
       },
     },
@@ -380,6 +409,7 @@ export default defineConfig(() => {
         defineProject(unitTestProject),
         defineProject(browserTestProject),
         defineProject(renderScenariosProject),
+        defineProject(goldenBrowserProject),
       ],
     },
   };

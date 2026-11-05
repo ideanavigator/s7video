@@ -32,3 +32,16 @@ export function currentExportJob(
   }
   return null;
 }
+
+/**
+ * The running export a remounted panel picked up, latched by id so the panel keeps following it
+ * to its path, failure reason or cancellation after it stops running.
+ */
+export function adoptedExportJobId(
+  adoptedJobId: string | null,
+  startedJobId: string | null,
+  shown: EngineJob | null,
+): string | null {
+  if (startedJobId !== null) return null;
+  return adoptedJobId ?? shown?.id ?? null;
+}

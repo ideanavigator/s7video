@@ -22,7 +22,8 @@ import {
   useProjectEdit,
 } from "../../editor/editStore";
 import { playerViewOf, type PlayerView } from "../../editor/editorView";
-import { useMediaLibrary } from "../../state/media";
+import type { TranscriptPlayback } from "../../editor/transcriptModel";
+import { useMediaLibrary, type MediaLibraryState } from "../../state/media";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { Button } from "../ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "../ui/empty";
@@ -31,6 +32,7 @@ import { toastManager } from "../ui/toast";
 import { AssetsTab, useAssetsActions } from "./AssetsTab";
 import { EditPlayer } from "./EditPlayer";
 import { ImportDialog } from "./ImportDialog";
+import { TranscriptTab } from "./TranscriptTab";
 
 type EditorTab = "transcript" | "assets";
 
@@ -72,7 +74,11 @@ function PlayingSource(props: {
   const [playing, setPlaying] = useState(false);
   const [variant, setVariant] = useState(view.variant);
   // A proxy that finishes mid-playback takes over at the next pause, not by stopping playback.
-  if (variant !== view.variant && !playing) setVariant(view.variant);
+  // A new source starts with a fresh retry, even when the old one failed to decode.
+  if (variant !== view.variant && !playing) {
+    setVariant(view.variant);
+    setErrors(0);
+  }
   const url = useAssetUrlState(
     projectRef.environmentId,
     {
@@ -126,6 +132,8 @@ function PlayingSource(props: {
       startFrame={rememberedPlayerFrame(projectKey)}
       onPositionChange={(frame) => rememberPlayerFrame(projectKey, frame)}
       onPlayingChange={setPlaying}
+      // A source that loaded earns its quiet retry back, for the next URL expiry.
+      onLoaded={() => setErrors(0)}
       onError={() => {
         setPlaying(false);
         setErrors((current) => current + 1);
@@ -236,6 +244,33 @@ function PlayerArea(props: {
   }
 }
 
+/** The clip the Transcript tab reads, and what of it plays. */
+function transcriptSourceOf(
+  view: PlayerView,
+  library: MediaLibraryState,
+  edit: ReturnType<typeof useProjectEdit>,
+): { readonly mediaId: string | null; readonly playback: TranscriptPlayback | null } {
+  switch (view._tag) {
+    case "play":
+      return {
+        mediaId: view.asset.id,
+        playback: { fps: view.plan.fps, segments: view.plan.segments },
+      };
+    case "missing":
+      return { mediaId: view.asset.id, playback: null };
+    case "all-cut": {
+      const clip =
+        library._tag === "ready" ? library.snapshot.items.find((item) => item.hasVideo) : undefined;
+      return {
+        mediaId: clip?.id ?? null,
+        playback: edit._tag === "ready" ? { fps: edit.snapshot.document.fps, segments: [] } : null,
+      };
+    }
+    default:
+      return { mediaId: null, playback: null };
+  }
+}
+
 function ExportButton(props: { readonly projectRef: ScopedProjectRef }) {
   const { environmentId, projectId } = props.projectRef;
   const start = useAtomCommand(editEnvironment.exportStart, { reportFailure: false });
@@ -245,6 +280,9 @@ function ExportButton(props: { readonly projectRef: ScopedProjectRef }) {
   // Started but not yet in the jobs stream counts as running.
   const running = job?.state === "running" || (started !== null && job === null);
   const progress = Math.round((job?.progress ?? 0) * 100);
+  // Set from the click until the job stops running, so a repeat click can't resend the cancel.
+  const [cancellingJobId, setCancellingJobId] = useState<EngineJobId | null>(null);
+  const cancelling = cancellingJobId !== null && cancellingJobId === (job?.id ?? started?.jobId);
 
   const exportEdit = async () => {
     const result = await start({ environmentId, input: { projectId } });
@@ -263,8 +301,10 @@ function ExportButton(props: { readonly projectRef: ScopedProjectRef }) {
   const cancelExport = async () => {
     const jobId = job?.id ?? started?.jobId;
     if (jobId === undefined) return;
+    setCancellingJobId(jobId);
     const result = await cancel({ environmentId, input: { jobId } });
     if (result._tag === "Failure") {
+      setCancellingJobId(null);
       toastManager.add({ type: "error", title: "Couldn't cancel the export" });
     }
   };
@@ -304,7 +344,13 @@ function ExportButton(props: { readonly projectRef: ScopedProjectRef }) {
         </span>
       ) : null}
       {running ? (
-        <Button size="compact" variant="outline" onClick={() => void cancelExport()}>
+        <Button
+          size="compact"
+          variant="outline"
+          aria-label="Cancel export"
+          disabled={cancelling}
+          onClick={() => void cancelExport()}
+        >
           Cancel
         </Button>
       ) : (
@@ -389,14 +435,9 @@ export default function EditorPanel(props: {
         id="editor-tabpanel-transcript"
         aria-labelledby="editor-tab-transcript"
         hidden={tab !== "transcript"}
-        className="min-h-0 flex-1 overflow-auto"
+        className="min-h-0 flex-1"
       >
-        <Empty>
-          <EmptyHeader>
-            <EmptyTitle>Transcript</EmptyTitle>
-            <EmptyDescription>What was said will appear here, word by word.</EmptyDescription>
-          </EmptyHeader>
-        </Empty>
+        <TranscriptTab projectRef={projectRef} {...transcriptSourceOf(view, library, edit)} />
       </div>
       <div
         role="tabpanel"
