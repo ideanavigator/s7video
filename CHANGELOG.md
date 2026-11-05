@@ -31,6 +31,9 @@ from; the per-ticket entries and how this file is compiled are in
   restarts itself if it stops, and names any missing tool on a developer machine. (S7V-022)
 - Each new project keeps one edit record (`edit.json`) shared by the assistant and the editor;
   every change can be undone and redone, and undo never touches your footage. (S7V-024)
+- The assistant can see your video: Claude, Codex and other agents can read a clip's details, look
+  at any frame and read the current edit, for files in your project only. Codex older than 0.159
+  gets a plain message asking to update it. (S7V-023)
 
 ### Changed
 

@@ -1,6 +1,10 @@
 import { assert, it } from "@effect/vitest";
 
-import { applyPreferredCodexDefaultModel, mapCodexModelCapabilities } from "./CodexProvider.ts";
+import {
+  applyPreferredCodexDefaultModel,
+  codexVideoToolsVersionMessage,
+  mapCodexModelCapabilities,
+} from "./CodexProvider.ts";
 
 it("maps current Codex model capability fields", () => {
   const capabilities = mapCodexModelCapabilities({
@@ -152,4 +156,15 @@ it("ignores custom models that shadow a preferred slug", () => {
   ]);
 
   assert.deepStrictEqual(models.find((model) => model.isDefault)?.slug, "gpt-5.4");
+});
+
+it("asks for a Codex update only below the video tools' 0.159", () => {
+  assert.equal(
+    codexVideoToolsVersionMessage("codex-cli 0.137.0"),
+    "Your Codex app is version 0.137.0. s7video's video tools need 0.159 or later. Update Codex, then start a new thread.",
+  );
+  assert.include(codexVideoToolsVersionMessage("0.158.9") ?? "", "version 0.158.9");
+  for (const version of ["0.159.0", "codex-cli 0.166.0", "1.0.0", "0.160.0-alpha.1", "dev"]) {
+    assert.isUndefined(codexVideoToolsVersionMessage(version), version);
+  }
 });

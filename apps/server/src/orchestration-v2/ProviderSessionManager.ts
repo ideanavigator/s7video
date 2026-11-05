@@ -42,6 +42,7 @@ import {
 } from "../observability/Metrics.ts";
 import { ProviderWorkspaceMissingError } from "../provider/Errors.ts";
 import * as ProjectService from "../project/ProjectService.ts";
+import { isEditProjectFolder } from "../edit/EditProjectLayout.ts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as ServerSettings from "../serverSettings.ts";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
@@ -384,6 +385,20 @@ export const layerWithOptions = (
           );
         },
       );
+      // Video tools work on the thread's own edit project (S7V-023), so only its threads get them.
+      const isEditProject = isEditProjectFolder(fileSystem);
+      const videoToolsAvailable = (threadId: ThreadId) =>
+        Option.isNone(projectService)
+          ? Effect.succeed(false)
+          : projectionStore.getThread(threadId).pipe(
+              Effect.flatMap((thread) => projectService.value.getById(thread.projectId)),
+              Effect.flatMap((project) =>
+                Option.isSome(project)
+                  ? isEditProject(project.value.workspaceRoot)
+                  : Effect.succeed(false),
+              ),
+              Effect.orElseSucceed(() => false),
+            );
       const layerScope = yield* Effect.scope;
       // Group signals stop providers before restart capture; drop post-signal events so recovery owns that state.
       const shutdownSignal = { received: false };
@@ -457,6 +472,8 @@ export const layerWithOptions = (
                 >(["orchestration", "worktree", "pull-requests"]);
                 if (browserToolsAvailable) capabilities.add("preview");
                 if (deviceToolsAvailable) capabilities.add("device");
+                const videoTools = yield* videoToolsAvailable(threadId);
+                if (videoTools) capabilities.add("video");
                 const subagent = yield* projectionStore.getThread(threadId).pipe(
                   Effect.map((thread) => thread.lineage.relationshipToParent === "subagent"),
                   Effect.orElseSucceed(() => false),
@@ -482,6 +499,7 @@ export const layerWithOptions = (
                     resolved.thread.providerInstanceId === providerInstanceId &&
                     resolved.capabilities.has("preview") === browserToolsAvailable &&
                     resolved.capabilities.has("device") === deviceToolsAvailable &&
+                    resolved.capabilities.has("video") === videoTools &&
                     // A credential issued while the lineage read failed is replaced once it works.
                     (resolved.thread.subagent === true) === subagent
                   ) {

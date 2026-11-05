@@ -22,6 +22,7 @@ import {
   buildCodexInitializeParams,
   codexAppServerEnvironment,
   codexDefaultReasoningEffortOverride,
+  codexVideoToolsVersionMessage,
 } from "../../provider/CodexProvider.ts";
 import {
   codexRateLimitsToUpdate,
@@ -1760,6 +1761,18 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 }),
               );
             const version = userAgent && /\/(\S+)/u.exec(userAgent)?.[1];
+            // In a video project the agent needs the video tools; say so instead of failing them.
+            const videoProblem =
+              version && (yield* readMcpSession(input.threadId))?.capabilities?.has("video")
+                ? codexVideoToolsVersionMessage(version)
+                : undefined;
+            if (videoProblem !== undefined) {
+              return yield* new ProviderSetupError({
+                instanceId: adapterOptions.instanceId,
+                operation: "runtime",
+                detail: videoProblem,
+              });
+            }
             const advisory =
               version && adapterOptions.compatibility
                 ? yield* adapterOptions.compatibility(version)

@@ -14,6 +14,7 @@ import {
   type EngineTool,
   type MediaFrameInput,
   type MediaProbeInput,
+  type ProjectId,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Cause from "effect/Cause";
@@ -54,6 +55,15 @@ export interface EngineServiceOptions {
   readonly signalGroup?: EngineProcess.SignalGroup;
 }
 
+export interface EngineJobInput<A> {
+  readonly kind: string;
+  readonly method: string;
+  readonly params: Readonly<Record<string, unknown>>;
+  readonly success: Schema.Decoder<A>;
+  /** The project the job works for, so agent tools can scope job status and cancel to it. */
+  readonly projectId?: ProjectId;
+}
+
 export interface EngineStatus {
   readonly pid: number | undefined;
   readonly starts: number;
@@ -68,12 +78,7 @@ export class EngineService extends Context.Service<
     /** Writes the frame as a PNG; `outputDir` defaults to the service's scratch folder. */
     readonly frame: (input: MediaFrameInput) => Effect.Effect<MediaFrameResult, EngineError>;
     /** A long engine method as a job: progress on `subscribeJobs`, stoppable with `cancelJob`. */
-    readonly runJob: <A>(input: {
-      readonly kind: string;
-      readonly method: string;
-      readonly params: Readonly<Record<string, unknown>>;
-      readonly success: Schema.Decoder<A>;
-    }) => Effect.Effect<A, EngineError>;
+    readonly runJob: <A>(input: EngineJobInput<A>) => Effect.Effect<A, EngineError>;
     readonly cancelJob: (jobId: EngineJobId) => Effect.Effect<boolean>;
     readonly subscribeJobs: Stream.Stream<EngineJobsEvent>;
     readonly status: Effect.Effect<EngineStatus>;
@@ -238,14 +243,9 @@ const make = Effect.fn("EngineService.make")(function* (options: EngineServiceOp
     return result._tag === "Some" && result.value.cancelled;
   });
 
-  const runJob = Effect.fn("EngineService.runJob")(function* <A>(input: {
-    readonly kind: string;
-    readonly method: string;
-    readonly params: Readonly<Record<string, unknown>>;
-    readonly success: Schema.Decoder<A>;
-  }) {
+  const runJob = Effect.fn("EngineService.runJob")(function* <A>(input: EngineJobInput<A>) {
     yield* Effect.annotateCurrentSpan({ "engine.job.kind": input.kind });
-    const jobId = yield* jobs.start(input.kind);
+    const jobId = yield* jobs.start(input.kind, input.projectId);
     return yield* call(input.method, { ...input.params, jobId }, input.success, undefined).pipe(
       Effect.onExit((exit) => {
         if (Exit.isSuccess(exit)) return jobs.finish(jobId, "succeeded");

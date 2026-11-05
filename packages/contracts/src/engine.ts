@@ -5,7 +5,7 @@
 // `{num, den}` rationals, never as float seconds.
 import * as Schema from "effect/Schema";
 
-import { NonNegativeInt, PositiveInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { NonNegativeInt, PositiveInt, ProjectId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 
 export const EngineRational = Schema.Struct({ num: PositiveInt, den: PositiveInt });
 export type EngineRational = typeof EngineRational.Type;
@@ -224,6 +224,8 @@ export const EngineJob = Schema.Struct({
   progress: Schema.Number.check(Schema.isBetween({ minimum: 0, maximum: 1 })),
   stage: NullableString,
   state: EngineJobState,
+  /** The project the job works for; agents see only their own project's jobs. */
+  projectId: Schema.optional(ProjectId),
 });
 export type EngineJob = typeof EngineJob.Type;
 

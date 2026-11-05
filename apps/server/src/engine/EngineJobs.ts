@@ -2,7 +2,13 @@
 // SPDX-License-Identifier: MIT
 // Running engine jobs and their progress, for `engine.jobs.subscribe`. In memory only: a job
 // lives as long as its engine call, and a restart ends every job with it.
-import type { EngineJob, EngineJobId, EngineJobState, EngineJobsEvent } from "@t3tools/contracts";
+import type {
+  EngineJob,
+  EngineJobId,
+  EngineJobState,
+  EngineJobsEvent,
+  ProjectId,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as PubSub from "effect/PubSub";
 import * as Stream from "effect/Stream";
@@ -14,7 +20,7 @@ export const make = Effect.gen(function* () {
 
   const publish = (job: EngineJob) => PubSub.publish(events, { type: "updated", job });
 
-  const start = (kind: string) =>
+  const start = (kind: string, projectId?: ProjectId) =>
     Effect.suspend(() => {
       counter += 1;
       const job: EngineJob = {
@@ -23,6 +29,7 @@ export const make = Effect.gen(function* () {
         progress: 0,
         stage: null,
         state: "running",
+        ...(projectId === undefined ? {} : { projectId }),
       };
       jobs.set(job.id, job);
       return publish(job).pipe(Effect.as(job.id));

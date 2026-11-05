@@ -1,4 +1,5 @@
 import { BRAND } from "@t3tools/shared/brand";
+import { satisfiesSemverRange } from "@t3tools/shared/semver";
 import { pipe } from "effect/Function";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -81,6 +82,18 @@ const CODEX_DISCOVERY_MARGIN_MS = 250;
 // `codex-cli 0.159.0`, `codex-cli 0.160.0-alpha.1` or the npm CLI's bare `0.1.4161006`.
 // Keep a prerelease suffix so compatibility stays unknown for it, as it does for `initialize`.
 const CODEX_CLI_VERSION_PATTERN = /(?:^|\s)v?(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)(?=\s|$)/u;
+
+/** The video tools' image results need this Codex (spike S7V-020 A3). */
+const CODEX_VIDEO_TOOLS_RANGE = ">=0.159.0";
+
+/** The plain update notice for a thread whose Codex is too old for the video tools, if it is. */
+export function codexVideoToolsVersionMessage(version: string): string | undefined {
+  const stable = CODEX_CLI_VERSION_PATTERN.exec(version)?.[1];
+  // A prerelease or unreadable version is unknown, as for compatibility; let it run.
+  if (stable === undefined || !/^\d+\.\d+\.\d+$/u.test(stable)) return undefined;
+  if (satisfiesSemverRange(stable, CODEX_VIDEO_TOOLS_RANGE)) return undefined;
+  return `Your Codex app is version ${stable}. ${BRAND.app.productName}'s video tools need 0.159 or later. Update Codex, then start a new thread.`;
+}
 
 const CODEX_PRESENTATION = {
   displayName: "Codex",

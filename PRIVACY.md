@@ -37,6 +37,11 @@ You pick how the agent runs. The table says what each mode sends and where.
 | **Bring your own key**       | Planned   | Transcripts, the edit plan, your messages and a few sampled low-resolution frames. Never the raw video or audio files.                                                                                                     | The provider whose key you entered (for example Anthropic, OpenAI, OpenRouter or Google), under your key and its terms                  |
 | **s7video Cloud (Pro)**      | Planned   | The same as bring your own key: transcripts, the edit plan, your messages and a few sampled low-resolution frames, never the raw files.                                                                                    | The s7video proxy, which forwards them to the model provider                                                                            |
 
+In a video project the agent can also ask s7video for a clip's details (length, size, codecs), a
+summary of the current edit and single frames as small pictures (640 pixels wide unless it asks for
+another size). These go to the same provider as the rest of the chat, only when the agent asks, and
+only for files in that project.
+
 In the planned modes, s7video itself decides what is sent, and the rule is the one above: text and a
 few small frames, never the original media. In the installed-CLI mode the agent works like it does in
 your terminal, so anything in the opened project can be read by it and sent to its provider. Open only
