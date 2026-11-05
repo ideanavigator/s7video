@@ -28,6 +28,14 @@ const UNMANAGEABLE_KEYS: ReadonlySet<string> = new Set([
   "projectScriptOverrides",
 ]);
 
+/** Consent only the user can give: a policy that set these could opt every user in. */
+const USER_CONSENT_KEYS: ReadonlyMap<string, string> = new Map([
+  [
+    "shareUsageData",
+    "sharing usage data is each user's choice; use limits.telemetry: false to keep it off",
+  ],
+]);
+
 /** Legacy settings the server derives from another on every write; manage that one instead. */
 const DERIVED_FROM: ReadonlyMap<string, string> = new Map([
   ["compactIdleThreads", "idleCompaction"],
@@ -252,6 +260,10 @@ export function makeManagedSettings(
     }
     if (!(head in ServerSettings.fields) || UNMANAGEABLE_KEYS.has(head)) {
       return { _tag: "Invalid", reason: `"${path}" is not a setting this version can manage` };
+    }
+    const consent = USER_CONSENT_KEYS.get(head);
+    if (consent !== undefined) {
+      return { _tag: "Invalid", reason: `"${path}" cannot be managed: ${consent}` };
     }
     const source = DERIVED_FROM.get(head);
     if (source !== undefined) {
