@@ -72,13 +72,18 @@ def _keyframes(params: dict[str, Any], job: JobContext) -> dict[str, Any]:
     if not head:
         raise RpcError(MEDIA_ERROR, "the video stream has no frames")
     stretches = [_stretch(head)]
-    duration_text = (ffprobe_json(["-show_entries", "format=duration", path], job).get("format") or {}).get("duration")
-    try:
-        duration = Fraction(duration_text) if isinstance(duration_text, str) else None
-    except ValueError:
-        duration = None
+    container = ffprobe_json(["-show_entries", "format=duration,start_time", path], job).get("format") or {}
+
+    def seconds(key: str) -> Fraction | None:
+        try:
+            return Fraction(container[key]) if isinstance(container.get(key), str) else None
+        except ValueError:
+            return None
+
+    duration = seconds("duration")
     if duration is not None and duration > 2 * _HEAD_SECONDS:
-        middle = (duration - _MIDDLE_SECONDS) / 2
+        # -read_intervals takes timestamps, so the middle is counted from the file's start time.
+        middle = (seconds("start_time") or Fraction(0)) + (duration - _MIDDLE_SECONDS) / 2
         _, packets = _scan(path, f"{timebase.decimal_seconds(middle)}%+{_MIDDLE_SECONDS}", job)
         if packets:
             stretches.append(_stretch(packets))

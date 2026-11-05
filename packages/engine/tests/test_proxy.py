@@ -46,6 +46,20 @@ def gop_clips(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Path]:
             "testsrc2=s=320x180:r=30:d=30",
             [*mpeg4, "-g", "300", "-force_key_frames", "expr:lt(t,12)*gte(t,n_forced*0.5)"],
         ),
+        # The same, with timestamps starting at 1000 s, as recorder and camera files can.
+        "late_offset": make_clip(
+            root / "late-long-gop-offset.mp4",
+            "testsrc2=s=320x180:r=30:d=30",
+            [
+                *mpeg4,
+                "-g",
+                "300",
+                "-force_key_frames",
+                "expr:lt(t,12)*gte(t,n_forced*0.5)",
+                "-output_ts_offset",
+                "1000",
+            ],
+        ),
         # Phone-style variable frame rate: from frame 40 each frame is 13 ms later than at 30 fps.
         "vfr": make_clip(
             root / "vfr.mp4",
@@ -195,10 +209,14 @@ def test_unreadable_files_fail_with_a_plain_message(
 
 
 @pytest.mark.usefixtures("tools")
-def test_keyframes_sees_a_long_gop_that_starts_mid_file(wire: Wire, gop_clips: dict[str, Path]) -> None:
-    result = wire.call("media.keyframes", {"path": str(gop_clips["late"])})["result"]
+@pytest.mark.parametrize("clip", ["late", "late_offset"])
+def test_keyframes_sees_a_long_gop_that_starts_mid_file(
+    wire: Wire, gop_clips: dict[str, Path], clip: str
+) -> None:
+    result = wire.call("media.keyframes", {"path": str(gop_clips[clip])})["result"]
     tick = result["timeBase"]
-    # The first 10 s alone would say 0.5 s; the middle of the file has 10 s between keyframes.
+    # The first 10 s alone would say 0.5 s; the middle of the file has 10 s between keyframes,
+    # wherever the file's timestamps start.
     assert result["maxGapTicks"] * tick["num"] / tick["den"] > 4
 
 
