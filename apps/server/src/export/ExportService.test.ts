@@ -25,6 +25,7 @@ import * as ExportService from "./ExportService.ts";
 
 interface RunJobCall {
   readonly kind: string;
+  readonly projectId: ProjectId | undefined;
   readonly method: string;
   readonly params: Readonly<Record<string, unknown>>;
 }
@@ -51,7 +52,12 @@ const fakeEngine = (
   const runJob: EngineService.EngineService["Service"]["runJob"] = (input) =>
     Effect.gen(function* () {
       counter += 1;
-      calls.push({ kind: input.kind, method: input.method, params: input.params });
+      calls.push({
+        kind: input.kind,
+        projectId: input.projectId,
+        method: input.method,
+        params: input.params,
+      });
       if (input.onStart) yield* input.onStart(`engine-job-${counter}` as EngineJobId);
       const result = yield* Deferred.await(outcome);
       if (result === "cancelled") {
@@ -153,6 +159,8 @@ describe("ExportService", () => {
         const [call] = calls;
         assert.isDefined(call);
         assert.strictEqual(call.kind, "export");
+        // The job carries its project, so the agent's video_job_status and video_job_cancel see it.
+        assert.strictEqual(call.projectId, projectId);
         assert.strictEqual(call.method, "export.render");
         assert.strictEqual(call.params.projectDir, NodePath.resolve(root));
         assert.strictEqual(
