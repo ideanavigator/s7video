@@ -249,6 +249,38 @@ desktop bridge for attachments (`apps/web/src/lib/imageCompression.ts`) and prev
 In a plain browser, HEIC photos ask to be converted to JPEG first. When an upstream merge touches
 HEIC code, keep `heic-to` out of every `package.json`.
 
+## Licensing (S7V-004)
+
+`LICENSE` is T3 Code's MIT licence with a second line, `Copyright (c) 2026 s7video contributors`.
+`NOTICE` credits T3 Code, names OpenCut for when its code is used, and lists the Claude Agent SDK as
+the one proprietary part (ADR-002).
+
+**REUSE without touching upstream files.** `pnpm reuse:lint` passes for every tracked file, but no
+T3 Code file gets an SPDX header. One catch-all `**` annotation in `REUSE.toml` gives every file
+both holders (`2026 T3 Tools Inc.`, `2026 s7video contributors`) and MIT, the same statement as
+`LICENSE`; adding headers to the ~4,600 upstream files would conflict with every upstream merge.
+Who changed which line is in git history. Files s7video creates carry their own header, which wins
+(`precedence = "closest"`). Later `REUSE.toml` entries name third-party code and media copied into
+the repo: the opencode Office viewers, Ionic keyboard code, libghostty-vt, the Nerd Font, the CC0
+sounds and the SPDX licence templates. Changelog entries of finished tickets are frozen, so they are
+covered there too rather than edited.
+
+**`pnpm licenses:check`** (`scripts/licenses-check.ts`) reads `pnpm licenses list` for the whole
+workspace and checks every installed package against `licenses.allowlist.json`. Production
+packages must match the allowlist. Packages only build and test tools pull in are checked too; the
+one extra licence they may use is WTFPL (`truncate-utf8-bytes`, under electron-builder; S7V-005
+kept it as dev-only). Dual licences take the permissive option (ADR-003): jszip under MIT, dompurify
+under Apache-2.0. A patched MPL-2.0 package fails. Missing metadata is fixed in the existing
+`packageOverrides` of `third-party-licenses.config.json`, which also feeds the in-app notices.
+`licenses.exceptions.json` holds reviewed exceptions, each naming its ADR; today only
+`@anthropic-ai/claude-agent-sdk` (ADR-002). Rust crates under `native/` are not scanned here.
+
+**Notices config.** S7V-004 dropped the `packageOverrides` for packages the strip tickets removed
+(Expo and mobile tooling, `@electron-webauthn/*`, `objc-js`, the opencode SDK and others no longer
+in `pnpm-lock.yaml`). It added custom notices for T3 Code and for Chromium inside Electron
+(electron-builder already moves `LICENSES.chromium.html` into the app's `Contents/Resources`), and
+shows the Claude Agent SDK as "Proprietary (Anthropic Commercial Terms)".
+
 ## Merging upstream
 
 Monthly, or when an upstream fix is needed:

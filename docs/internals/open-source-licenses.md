@@ -88,3 +88,14 @@ repository fallbacks.
 The `@react-grab/cli` override uses the root React Grab repository's MIT license because the CLI's
 npm archive omits both its license field and license file. Keep the override until the published
 CLI package carries that metadata itself.
+
+## Licence check
+
+`pnpm licenses:check` is the gate for the dependency tree; the notice generator only proves each
+package has text to show. It reads `pnpm licenses list --json --recursive` (with and without
+`--prod`), applies the `license` of matching `packageOverrides` above, and fails on any package
+whose licence is missing or outside `licenses.allowlist.json`, printing the package and its install
+path. Order in `allowed` decides which option of a dual licence is taken; `elections` pins reviewed
+choices. Packages outside the list need an ADR and an entry in `licenses.exceptions.json`; an entry
+without an ADR, or for a package no longer installed, fails the check. The rules and their tests
+are in `scripts/lib/licenses-check.ts`.

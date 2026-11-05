@@ -68,16 +68,35 @@ responsible for the change.
 
 ## File headers
 
-New source files start with an [SPDX](https://spdx.dev/learn/handling-license-info/) header
-([REUSE 3.x](https://reuse.software/spec/)):
+New files you create start with an [SPDX](https://spdx.dev/learn/handling-license-info/) header
+([REUSE 3.3](https://reuse.software/spec-3.3/)). Copy the snippet for the file type:
 
 ```ts
 // SPDX-FileCopyrightText: 2026 s7video contributors
 // SPDX-License-Identifier: MIT
 ```
 
-Use the comment style of the file type (`#` in YAML and shell, `<!-- -->` in Markdown). Files copied
-from T3 Code keep their original notice; do not add a second one.
+```yaml
+# SPDX-FileCopyrightText: 2026 s7video contributors
+# SPDX-License-Identifier: MIT
+```
+
+```markdown
+<!--
+SPDX-FileCopyrightText: 2026 s7video contributors
+SPDX-License-Identifier: MIT
+-->
+```
+
+The header goes first, after a `#!` line if there is one. Files that cannot hold a comment (JSON,
+images, fixtures) get an entry in [`REUSE.toml`](REUSE.toml) instead. Do not add headers to files
+that came from T3 Code, even ones you edit: `REUSE.toml` covers them, which keeps upstream merges
+free of header conflicts. Code or media copied from another project keeps its own notice and gets a
+`REUSE.toml` entry naming its authors and licence.
+
+Check the whole repository with `pnpm reuse:lint`. It runs the [REUSE tool](https://reuse.software/)
+through [uv](https://docs.astral.sh/uv/) (`brew install uv`), so nothing is installed into the
+project: the tool is GPL-3.0 and is only ever run, never bundled.
 
 ## Licences
 
@@ -99,6 +118,12 @@ Creative Commons licences, "free for personal use" terms, and anything with an u
 licence. Dual-licensed packages are used under their permissive option. Anything else needs a
 maintainer decision before you use it.
 
+`pnpm licenses:check` enforces this list from [`licenses.allowlist.json`](licenses.allowlist.json)
+for every installed npm package, and prints the choice it made for each dual-licensed one. Build
+and test tools that never ship may also be WTFPL. The few reviewed packages outside the list are in
+[`licenses.exceptions.json`](licenses.exceptions.json), each with the decision record that
+accepted it.
+
 Model weights are downloaded on first run and never committed.
 
 **Never commit:** client footage or audio, assets from CapCut or other editors' libraries, API keys
@@ -117,6 +142,9 @@ pnpm typecheck
 vp test run <changed test files>
 pnpm test
 ```
+
+A pull request that adds or upgrades a dependency also runs `pnpm licenses:check` (every installed
+package against the allowlist) and `pnpm reuse:lint`.
 
 Then fill in the [pull request template](.github/PULL_REQUEST_TEMPLATE.md): the ticket ID, what
 changed, the tests you added and ran with their output, the licence checklist, and screenshots in

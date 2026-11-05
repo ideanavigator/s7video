@@ -21,6 +21,9 @@ from; the per-ticket entries and how this file is compiled are in
 - Written rules for agents and contributors (`AGENTS.md`), engineering standards in
   `docs/engineering/`, this per-ticket changelog, and `pnpm tickets` / `ticket:*` commands that run
   the planning repo's ticket tools. (S7V-008)
+- MIT licence naming T3 Tools Inc. and the s7video contributors, a `NOTICE` file, REUSE-compliant
+  copyright information for every file (`pnpm reuse:lint`), `pnpm licenses:check` against the
+  licence allowlist, and T3 Code and Chromium in the in-app open-source licences list. (S7V-004)
 
 ### Changed
 
