@@ -19,10 +19,12 @@ import hashlib
 import http.client
 import json
 import os
+import re
 import shutil
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -69,19 +71,46 @@ class Model:
         return sum(file.size for file in self.files)
 
 
+_REPO = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*$")
+_REVISION = re.compile(r"^[0-9a-f]{40}$")
+_SHA256 = re.compile(r"^[0-9a-f]{64}$")
+
+
+def _safe_file_path(value: Any) -> bool:
+    """A lock path stays inside its model folder: relative, no `..`, no empty or odd parts."""
+    if not isinstance(value, str) or not value or "\\" in value or "\0" in value:
+        return False
+    if value.startswith("/") or os.path.isabs(value):
+        return False
+    return all(part not in ("", ".", "..") for part in value.split("/"))
+
+
 def load_lock(path: Path | None = None) -> dict[str, Model]:
     # Tests point the engine at a lock of tiny files served by a local fake server.
     lock_path = path or Path(os.environ.get("S7_MODELS_LOCK") or LOCK_PATH)
-    data = json.loads(lock_path.read_text(encoding="utf-8"))
-    return {
-        key: Model(
-            key=key,
-            repo=entry["repo"],
-            revision=entry["revision"],
-            files=tuple(ModelFile(file["path"], int(file["size"]), file["sha256"]) for file in entry["files"]),
+    try:
+        data = json.loads(lock_path.read_text(encoding="utf-8"))
+        lock = {
+            key: Model(
+                key=key,
+                repo=entry["repo"],
+                revision=entry["revision"],
+                files=tuple(ModelFile(file["path"], int(file["size"]), file["sha256"]) for file in entry["files"]),
+            )
+            for key, entry in data["models"].items()
+        }
+    except (OSError, ValueError, KeyError, TypeError):
+        raise RpcError(DOWNLOAD_FAILED, "the speech model list is unreadable") from None
+    for model in lock.values():
+        valid = (
+            _REPO.match(model.repo) is not None
+            and ".." not in model.repo
+            and _REVISION.match(model.revision) is not None
+            and all(_safe_file_path(file.path) and _SHA256.match(file.sha256) and file.size >= 0 for file in model.files)
         )
-        for key, entry in data["models"].items()
-    }
+        if not valid:
+            raise RpcError(DOWNLOAD_FAILED, "the speech model list is invalid")
+    return lock
 
 
 def models_root() -> Path:
@@ -173,6 +202,22 @@ def _base_url() -> str:
     return (os.environ.get("S7_MODELS_BASE_URL") or DEFAULT_BASE_URL).rstrip("/")
 
 
+class _SecureRedirects(urllib.request.HTTPRedirectHandler):
+    """Follows redirects only to https (the Hub sends files to its CDN). A plain-http base, which
+    only the tests' local server uses, may redirect within its own origin and nowhere else."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # type: ignore[no-untyped-def]
+        new = urllib.parse.urlsplit(newurl)
+        old = urllib.parse.urlsplit(req.full_url)
+        same_origin = (new.scheme, new.netloc) == (old.scheme, old.netloc)
+        if new.scheme != "https" and not same_origin:
+            raise RpcError(DOWNLOAD_FAILED, "the speech model download was redirected to an insecure address")
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+_OPENER = urllib.request.build_opener(_SecureRedirects)
+
+
 def _file_url(model: Model, file: ModelFile) -> str:
     return f"{_base_url()}/{model.repo}/resolve/{model.revision}/{urllib.request.quote(file.path)}"
 
@@ -228,7 +273,7 @@ def _download_file(model: Model, file: ModelFile, folder: Path, progress: _Progr
         headers = {"User-Agent": USER_AGENT, **({"Range": f"bytes={have}-"} if have else {})}
         request = urllib.request.Request(_file_url(model, file), headers=headers)
         try:
-            response = urllib.request.urlopen(request, timeout=30)
+            response = _OPENER.open(request, timeout=30)
         except urllib.error.HTTPError as error:
             if error.code == 416 and have:
                 response = None  # The server says the partial file is already complete.

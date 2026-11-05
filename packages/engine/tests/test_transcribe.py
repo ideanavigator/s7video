@@ -160,6 +160,8 @@ class FakeFile:
     drop_after: int | None = None
     #: Serve these bytes instead of `content` (a corrupt mirror).
     served: bytes | None = None
+    #: Answer with a 302 to this URL instead of the file.
+    redirect_to: str | None = None
 
 
 class FakeHub:
@@ -178,6 +180,12 @@ class FakeHub:
                 hub.requests.append((name, self.headers.get("Range")))
                 if fake is None:
                     self.send_error(404)
+                    return
+                if fake.redirect_to is not None:
+                    self.send_response(302)
+                    self.send_header("Location", fake.redirect_to)
+                    self.send_header("Content-Length", "0")
+                    self.end_headers()
                     return
                 body = fake.served if fake.served is not None else fake.content
                 start = 0
@@ -565,6 +573,63 @@ def test_offline_download_fails_with_a_plain_message(hub: FakeHub, monkeypatch: 
         _download()
     assert caught.value.code == models.DOWNLOAD_FAILED
     assert "check the connection" in caught.value.message
+
+
+def test_redirect_to_another_plain_http_origin_is_refused(hub: FakeHub) -> None:
+    other = FakeHub({"elsewhere.bin": FakeFile(FILES["big.bin"])})
+    try:
+        hub.files["big.bin"].redirect_to = f"{other.url}/elsewhere.bin"
+        with pytest.raises(rpc.RpcError) as caught:
+            _download()
+        assert caught.value.code == models.DOWNLOAD_FAILED
+        assert caught.value.message == "the speech model download was redirected to an insecure address"
+        assert other.requests == []
+        folder = models.snapshot_dir(models.load_lock()["asr-1.7b"])
+        assert not (folder / "big.bin").exists()
+    finally:
+        other.close()
+
+
+def test_redirect_within_the_same_origin_is_followed(hub: FakeHub) -> None:
+    hub.files["mirror.bin"] = FakeFile(FILES["big.bin"])
+    hub.files["big.bin"].redirect_to = f"{hub.url}/cdn/mirror.bin"
+    _download()
+    assert models.status()["profiles"]["default"]["ready"] is True
+    assert ("mirror.bin", None) in hub.requests
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("path", "../outside.bin"),
+        ("path", "sub/../../outside.bin"),
+        ("path", "/etc/outside.bin"),
+        ("path", ""),
+        ("path", "a\\b.bin"),
+        ("repo", "test/../asr"),
+        ("repo", "/abs/asr"),
+        ("revision", "main"),
+        ("sha256", "not-a-hash"),
+    ],
+)
+def test_lock_with_unsafe_entries_is_refused(
+    hub: FakeHub, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, field: str, value: str
+) -> None:
+    lock = _lock(FILES)
+    entry = lock["models"]["asr-1.7b"]
+    if field in ("path", "sha256"):
+        entry["files"][0][field] = value
+    else:
+        entry[field] = value
+    bad = tmp_path / "bad.lock.json"
+    bad.write_text(json.dumps(lock))
+    monkeypatch.setenv("S7_MODELS_LOCK", str(bad))
+    for attempt in (models.status, _download):
+        with pytest.raises(rpc.RpcError) as caught:
+            attempt()
+        assert caught.value.message == "the speech model list is invalid"
+    assert hub.requests == []
+    assert not (tmp_path / "outside.bin").exists()
 
 
 def test_shipped_lock_pins_every_model(monkeypatch: pytest.MonkeyPatch) -> None:
