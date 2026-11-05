@@ -53,6 +53,7 @@ import JSZip from "jszip";
 import { boundedZip } from "@t3tools/client-runtime/zip/bounded-zip";
 import BinaryViewer from "./BinaryViewer";
 import { decodeImagePreview } from "./decodeImagePreview";
+import { HEIC_CONVERT_FIRST_MESSAGE } from "~/lib/desktopHeic";
 import type { BinaryWorkerResult } from "./binaryPreviewProtocol";
 import type { TextPreviewResult } from "./largeTextProtocol";
 
@@ -329,6 +330,28 @@ describe("bounded binary previews", () => {
       expect(screen.container.querySelector("img")?.getAttribute("src")).toBe(image),
     );
     expect(refresh).toHaveBeenCalledTimes(2);
+  });
+
+  it("asks for a JPEG when a HEIC preview has no desktop decoder", async () => {
+    const heic = URL.createObjectURL(new Blob(["not decodable"], { type: "image/heic" }));
+    refresh.mockReset().mockResolvedValue(heic);
+    try {
+      await using screen = await render(
+        <AttachmentFilePreview
+          name="IMG_0001.HEIC"
+          mimeType="image/heic"
+          sizeBytes={13}
+          asset={{ environmentId: EnvironmentId.make("test-environment"), attachmentId: "image" }}
+        />,
+      );
+      await vi.waitFor(() =>
+        expect(screen.container.querySelector('[role="alert"]')?.textContent).toContain(
+          HEIC_CONVERT_FIRST_MESSAGE,
+        ),
+      );
+    } finally {
+      URL.revokeObjectURL(heic);
+    }
   });
 
   it("reads a small ZIP64 archive and rejects understated directory counts", async () => {
