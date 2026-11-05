@@ -24,6 +24,7 @@ Run with ``pnpm test:golden -- export-transcript-captions``.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import subprocess
@@ -90,6 +91,11 @@ def test_export_transcript_captions(media, tmp_path: Path) -> None:
     disk = os.statvfs(tmp_path)
     assert disk.f_bavail * disk.f_frsize > 15 * 2**30, "under 15 GB free; not rendering"
     transcript = json.loads(TRANSCRIPT.read_text(encoding="utf-8"))
+    # The cache key TranscriptService computes (transcript/mediaFingerprint.ts), so the fixture is a
+    # valid cache file for this clip: sha256 over the first and last MiB, plus the size.
+    data = source.read_bytes()
+    mib = 1 << 20
+    assert transcript["mediaFingerprint"] == {"sha256": hashlib.sha256(data[:mib] + data[-mib:]).hexdigest(), "size": len(data)}
     assert transcript["fps"] == {"num": RATE.numerator, "den": RATE.denominator}
     ranges = keep_ranges(SOURCE_FRAMES, SEGMENTS, TOTAL)
     edit = make_edit(source=source, ranges=ranges, fps=RATE, duration_frames=SOURCE_FRAMES, captions=[])

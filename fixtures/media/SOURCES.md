@@ -44,6 +44,16 @@ Attribution text:
 | [talking-head-01.transcript.json](talking-head-01.transcript.json) | The transcript cache file of one real Qwen3-ASR 1.7B + ForcedAligner run on `talking-head-01` (S7V-026), so export goldens need no models | MIT     |
 | [synth.ts](synth.ts)                                               | Generator for deterministic synthetic clips (`testsrc2` video, tone and silence audio)                                                    | MIT     |
 
+### Where the transcript came from
+
+`talking-head-01.transcript.json` is the file the engine's `transcribe.run` wrote to
+`.s7cache/transcripts/` for the clip, unchanged apart from indentation (model
+`mlx-community/Qwen3-ASR-1.7B-8bit` with the 0.6B ForcedAligner, offline, 2026-11-06). Its
+`mediaFingerprint` is the transcript cache key (`apps/server/src/transcript/mediaFingerprint.ts`):
+sha256 over the clip's first and last MiB, plus its size. That is not `MediaFiles.fingerprint`
+(which also hashes the size first) and not the whole file's sha256 in `manifest.json`. The
+`export-transcript-captions` golden checks the key against the cached clip.
+
 ### How the words were marked
 
 These are machine-made reference marks, not human ground truth. `pause` and `gap` edges come from
