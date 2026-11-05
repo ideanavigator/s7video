@@ -8348,7 +8348,16 @@ describe("AcpAdapterV2", () => {
 });
 
 describe("acpPostSettleContinuationOfferEvidence", () => {
-  it("offers on a completed tool update when no flavor normalizes it", () => {
+  // Some ACP agents ACK a Monitor start as completed while the task is still running; a flavor
+  // holds it running, and that ACK must not offer a completion wake.
+  const holdMonitorStartAck = (toolCall: AcpToolCallState): AcpToolCallState => {
+    const rawOutput = toolCall.data.rawOutput as { type?: unknown } | undefined;
+    return rawOutput?.type === "Monitor" && toolCall.status === "completed"
+      ? { ...toolCall, status: "inProgress" }
+      : toolCall;
+  };
+
+  it("offers on a completed monitor start ACK only when no flavor holds it running", () => {
     const monitorStartAck = {
       sessionId: "session-wake-offer",
       update: {
@@ -8368,5 +8377,10 @@ describe("acpPostSettleContinuationOfferEvidence", () => {
       },
     } as const;
     assert.isTrue(acpPostSettleContinuationOfferEvidence(monitorStartAck));
+    assert.isFalse(
+      acpPostSettleContinuationOfferEvidence(monitorStartAck, {
+        normalizeToolCall: holdMonitorStartAck,
+      }),
+    );
   });
 });
