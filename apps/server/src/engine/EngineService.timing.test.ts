@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 s7video contributors
 // SPDX-License-Identifier: MIT
-// @effect-diagnostics nodeBuiltinImport:off - generates a synthetic clip with the developer's FFmpeg.
+// @effect-diagnostics nodeBuiltinImport:off globalConsoleInEffect:off - makes a synthetic clip with FFmpeg and prints timings for the ticket.
 // Timing checks for S7V-022 AC-2 and AC-3, run by hand on a Mac:
 //   S7VIDEO_ENGINE_TIMING=1 [S7VIDEO_TIMING_CLIP=/abs/clip.mp4] vp test run src/engine/EngineService.timing.test.ts
 // Without a clip it generates a 1080p30 testsrc2 clip in a temp folder.
