@@ -112,7 +112,7 @@ async function download(clip: TestClip, url: string, partial: string, options: F
 /**
  * Make sure `clip` is in the cache with the right bytes. A cached file that verifies is reused
  * with no network call; a cached file that does not is deleted and reported. A download is
- * written to `<file>.part`, verified, and only then renamed into place, so a failed or tampered
+ * written to a unique `<file>.<pid>-<id>.part`, verified, and only then renamed into place, so a failed or tampered
  * download leaves nothing behind.
  */
 export async function fetchClip(clip: TestClip, options: FetchOptions): Promise<FetchOutcome> {
@@ -131,7 +131,8 @@ export async function fetchClip(clip: TestClip, options: FetchOptions): Promise<
       `${clip.id}: ${describeWriteError(error, options.dir) ?? String(error)}`,
     );
   }
-  const partial = `${target}.part`;
+  // Unique per run, so concurrent fetches never write into each other's partial file.
+  const partial = `${target}.${process.pid}-${NodeCrypto.randomUUID().slice(0, 8)}.part`;
   const failures: string[] = [];
   for (const url of [clip.url, ...(clip.mirrors ?? [])]) {
     log(`${clip.id}: downloading ${url}`);

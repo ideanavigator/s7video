@@ -61,6 +61,17 @@ describe("fetchClip", () => {
     });
   });
 
+  it("lets two concurrent fetches of the same clip both succeed", async () => {
+    const dir = tempDir();
+    const results = await Promise.all([
+      fetchClip(CLIP, { dir, fetch: serving(BYTES) }),
+      fetchClip(CLIP, { dir, fetch: serving(BYTES) }),
+    ]);
+    expect(results.map((result) => result.source)).toEqual(["download", "download"]);
+    expect(NodeFS.readdirSync(dir)).toEqual([CLIP.file]);
+    expect(NodeFS.readFileSync(NodePath.join(dir, CLIP.file))).toEqual(BYTES);
+  });
+
   it("tries the mirrors in order when the main URL fails", async () => {
     const dir = tempDir();
     const calls: string[] = [];
@@ -127,7 +138,7 @@ describe("fetchClip edge cases", () => {
     await expect(
       fetchClip(CLIP, { dir, fetch: serving(BYTES), createWriteStream: full }),
     ).rejects.toThrow(
-      /sample-01: disk full while writing .*sample-01\.webm\.part; free some space or point S7VIDEO_TEST_MEDIA_DIR/,
+      /sample-01: disk full while writing .*sample-01\.webm\.\d+-[0-9a-f]{8}\.part; free some space or point S7VIDEO_TEST_MEDIA_DIR/,
     );
     expect(NodeFS.readdirSync(dir)).toEqual([]);
   });

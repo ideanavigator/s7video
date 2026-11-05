@@ -158,7 +158,8 @@ export function synthesize(
   if (NodeFS.existsSync(output)) return output;
   NodeFS.mkdirSync(NodePath.dirname(output), { recursive: true });
   const ext = NodePath.extname(output);
-  const partial = `${output.slice(0, -ext.length)}.part${ext}`;
+  // Unique per run, so concurrent generators never write into each other's partial file.
+  const partial = `${output.slice(0, -ext.length)}.${process.pid}-${NodeCrypto.randomUUID().slice(0, 8)}.part${ext}`;
   const ffmpeg = options.ffmpeg ?? process.env.S7VIDEO_FFMPEG ?? "ffmpeg";
   const run = NodeChildProcess.spawnSync(ffmpeg, ffmpegArgs(spec, partial), { encoding: "utf8" });
   if (run.status !== 0) {
