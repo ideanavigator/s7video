@@ -27,8 +27,11 @@ describe("engine contracts", () => {
   it("no float seconds appear in any engine response schema", () => {
     // Progress (0..1) is a notification, not media time; it proves the check sees floats.
     expect(floatPaths(Schema.toJsonSchemaDocument(EngineProgressParams))).not.toEqual([]);
+    // Loudness and gain are levels in dB, not media time.
+    const levels = /\.properties\.(measuredLufs|gainDb|lufs|truePeak)\b/u;
     for (const [method, schema] of Object.entries(ENGINE_RESPONSE_SCHEMAS)) {
-      expect({ method, floats: floatPaths(Schema.toJsonSchemaDocument(schema)) }).toEqual({
+      const floats = floatPaths(Schema.toJsonSchemaDocument(schema));
+      expect({ method, floats: floats.filter((path) => !levels.test(path)) }).toEqual({
         method,
         floats: [],
       });
@@ -48,6 +51,18 @@ describe("engine contracts", () => {
     };
     expect(decode(base).durationFrames).toBe(90);
     expect(() => decode({ ...base, durationFrames: 3.5 })).toThrow();
+  });
+
+  it("names the FFmpeg feature an export is missing", () => {
+    const error = new EngineError({
+      reason: "missing_tool",
+      method: "export.render",
+      tool: "ffmpeg",
+      feature: "libass",
+    });
+    expect(error.message).toBe(
+      "The video engine needs an ffmpeg with libass to burn in captions, and the ffmpeg on this Mac was built without it. For development, install it with `brew install ffmpeg`, or set S7VIDEO_FFMPEG to its full path.",
+    );
   });
 
   it("gives each failure reason one fixed, actionable message", () => {

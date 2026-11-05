@@ -11,6 +11,12 @@ import {
   EngineJobsCancelResult,
   EngineJobsEvent,
   EngineJobsSubscribeInput,
+  EngineError,
+  ExportStartError,
+  ExportStartInput,
+  ExportStartResult,
+  ExportStatus,
+  ExportStatusInput,
 } from "./engine.ts";
 import {
   McpAppCallToolInput,
@@ -611,6 +617,8 @@ export const WS_METHODS = {
 
   engineJobsSubscribe: "engine.jobs.subscribe",
   engineJobsCancel: "engine.jobs.cancel",
+  exportStart: "export.start",
+  exportStatus: "export.status",
 
   // Edit document (S7V-024)
   editGet: "edit.get",
@@ -1975,6 +1983,24 @@ const WsEngineJobsCancelRpc = Rpc.make(WS_METHODS.engineJobsCancel, {
   error: EnvironmentAuthorizationError,
 });
 
+// Export returns its job at once; progress and cancel are the engine job's (S7V-028).
+const WsExportStartRpc = Rpc.make(WS_METHODS.exportStart, {
+  payload: ExportStartInput,
+  success: ExportStartResult,
+  error: Schema.Union([
+    EditUnavailableError,
+    ExportStartError,
+    EngineError,
+    EnvironmentAuthorizationError,
+  ]),
+});
+
+const WsExportStatusRpc = Rpc.make(WS_METHODS.exportStatus, {
+  payload: ExportStatusInput,
+  success: Schema.NullOr(ExportStatus),
+  error: EnvironmentAuthorizationError,
+});
+
 const EditRpcError = Schema.Union([EditUnavailableError, EnvironmentAuthorizationError]);
 const WsEditGetRpc = Rpc.make(WS_METHODS.editGet, {
   payload: EditProjectInput,
@@ -2217,6 +2243,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsOrchestrationV2SubscribeCommandOutputRpc,
   WsEngineJobsSubscribeRpc,
   WsEngineJobsCancelRpc,
+  WsExportStartRpc,
+  WsExportStatusRpc,
   WsEditGetRpc,
   WsEditApplyRpc,
   WsEditSubscribeRpc,

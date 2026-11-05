@@ -79,6 +79,11 @@ describe("RPC authorization scopes", () => {
     );
   });
 
+  it("lets readers see an export's status but only operators start one", () => {
+    expect(requiredScopeForRpcMethod(WS_METHODS.exportStatus)).toBe(AuthOrchestrationReadScope);
+    expect(requiredScopeForRpcMethod(WS_METHODS.exportStart)).toBe(AuthOrchestrationOperateScope);
+  });
+
   it("rejects unknown RPC method names", () => {
     for (const method of ["server.notRegistered", "toString", "constructor"]) {
       expect(() => requiredScopeForRpcMethod(method)).toThrow(
