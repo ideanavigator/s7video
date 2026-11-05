@@ -19,6 +19,8 @@ const state = vi.hoisted(() => ({
   library: { _tag: "loading" } as MediaLibraryState,
   export: { job: null, status: null } as ProjectExport,
   urlRevisions: [] as Array<string | null | undefined>,
+  urlVariants: [] as Array<string | undefined>,
+  transcriptMedia: [] as Array<string | null>,
 }));
 
 /** The export as the jobs stream would deliver it: setting it re-renders its readers. */
@@ -45,6 +47,11 @@ vi.mock(import("../../editor/editStore"), async (importOriginal) => ({
   ...(await importOriginal()),
   useProjectEdit: () => state.edit,
   useProjectExport: () => useSyncExternalStore(exportStore.subscribe, () => state.export),
+  useMediaTranscript: (_ref: unknown, mediaId: string | null) => {
+    state.transcriptMedia.push(mediaId);
+    return { _tag: "loading" };
+  },
+  useTranscriptionJobs: () => ({ transcribe: null, download: null }),
 }));
 vi.mock(import("../../state/media"), () => ({
   useMediaLibrary: () => state.library,
@@ -59,8 +66,13 @@ vi.mock(import("../../state/use-atom-command"), () => ({
         : vi.fn()) as never,
 }));
 vi.mock(import("../../assets/assetUrls"), () => ({
-  useAssetUrlState: ((_environmentId: unknown, _resource: unknown, revision?: string | null) => {
+  useAssetUrlState: ((
+    _environmentId: unknown,
+    resource: { readonly variant?: string } | null,
+    revision?: string | null,
+  ) => {
     state.urlRevisions.push(revision);
+    if (resource?.variant !== undefined) state.urlVariants.push(resource.variant);
     return { _tag: "Success", url: "" };
   }) as never,
 }));
@@ -125,11 +137,16 @@ const sized = () => {
   return container;
 };
 
-const renderPanel = () =>
-  render(<EditorPanel environmentId={EnvironmentId.make("env-1")} projectId={projectId} />, {
-    container: sized(),
-    router: false,
-  });
+const panel = () => (
+  <EditorPanel environmentId={EnvironmentId.make("env-1")} projectId={projectId} />
+);
+
+const renderPanel = () => render(panel(), { container: sized(), router: false });
+
+const videoOf = async (screen: Awaited<ReturnType<typeof renderPanel>>) =>
+  (await screen.getByLabelText("clip-0.mov", { exact: true }).findElement()) as HTMLVideoElement;
+
+const PROXY_READY = { proxy: { status: "ready" } } as const;
 
 const exportJob = (overrides: Partial<EngineJob> = {}): EngineJob => ({
   id: EngineJobId.make("job-1"),
@@ -147,6 +164,35 @@ describe("EditorPanel", () => {
     await using screen = await renderPanel();
     await expect.element(screen.getByText("Drop a clip here or into the chat.")).toBeVisible();
     expect(document.querySelector("video")).toBeNull();
+  });
+
+  it("reads the edit's own clip in the transcript when every part is cut", async () => {
+    setState([asset("clip-0"), asset("clip-1")], false);
+    const ready = state.edit as Extract<ProjectEditState, { _tag: "ready" }>;
+    const document = ready.snapshot.document;
+    state.edit = {
+      _tag: "ready",
+      snapshot: {
+        ...ready.snapshot,
+        document: {
+          ...document,
+          media: [
+            {
+              id: "clip-1",
+              kind: "video",
+              path: "assets/clip-1.mov",
+              fingerprint: { sha256: "1".repeat(64), size: 1_000 },
+              probe: {},
+            } as unknown as (typeof document.media)[number],
+          ],
+          tracks: [{ kind: "video", id: "v1", items: [] }],
+        },
+      },
+    };
+    state.transcriptMedia = [];
+    await using screen = await renderPanel();
+    await expect.element(screen.getByText("Everything is cut")).toBeVisible();
+    expect(state.transcriptMedia.at(-1)).toBe("clip-1");
   });
 
   it("should handle missing media with Find file…", async () => {
@@ -203,11 +249,14 @@ describe("EditorPanel", () => {
     await expect
       .element(screen.getByRole("progressbar", { name: "Export" }))
       .toHaveAttribute("aria-valuenow", "40");
-    await screen.getByRole("button", { name: "Cancel" }).click();
+    const cancel = screen.getByRole("button", { name: "Cancel export" });
+    await cancel.click();
     expect(commands.cancel).toHaveBeenCalledWith({
       environmentId: EnvironmentId.make("env-1"),
       input: { jobId: "job-1" },
     });
+    // Until the job stops, a second click can't resend the cancel.
+    await expect.element(cancel).toBeDisabled();
 
     await act(() => exportStore.set({ job: exportJob({ state: "cancelled" }), status: null }));
     await expect.element(screen.getByText("Export cancelled")).toBeVisible();
@@ -251,5 +300,44 @@ describe("EditorPanel", () => {
     await screen.getByRole("button", { name: "Retry" }).click();
     await expect.element(screen.getByLabelText("clip-0.mov", { exact: true })).toBeInTheDocument();
     expect(state.urlRevisions.at(-1)).toBe("2");
+  });
+
+  it("gives a source that loaded its quiet retry back", async () => {
+    setState([asset("clip-0")], true);
+    state.urlRevisions = [];
+    await using screen = await renderPanel();
+    await act(async () => (await videoOf(screen)).dispatchEvent(new Event("error")));
+    expect(state.urlRevisions.at(-1)).toBe("1");
+    await act(async () => (await videoOf(screen)).dispatchEvent(new Event("loadeddata")));
+    // An hour later the URL expires again: still a quiet retry, not the message.
+    await act(async () => (await videoOf(screen)).dispatchEvent(new Event("error")));
+    expect(state.urlRevisions.at(-1)).toBe("2");
+    expect(screen.getByText("Video unavailable").query()).toBeNull();
+  });
+
+  it("switches to the proxy at the next pause, not mid-playback", async () => {
+    setState([asset("clip-0")], true);
+    state.urlVariants = [];
+    await using screen = await renderPanel();
+    await act(async () => (await videoOf(screen)).dispatchEvent(new Event("play")));
+    setState([asset("clip-0", PROXY_READY)], true);
+    await screen.rerender(panel());
+    expect(state.urlVariants.at(-1)).toBe("original");
+    await act(async () => (await videoOf(screen)).dispatchEvent(new Event("pause")));
+    await expect.poll(() => state.urlVariants.at(-1)).toBe("proxy");
+  });
+
+  it("plays the proxy once it is ready, after the original failed to decode", async () => {
+    setState([asset("clip-0")], true);
+    state.urlVariants = [];
+    await using screen = await renderPanel();
+    await act(async () => (await videoOf(screen)).dispatchEvent(new Event("error")));
+    await act(async () => (await videoOf(screen)).dispatchEvent(new Event("error")));
+    await expect.element(screen.getByText("Video unavailable")).toBeVisible();
+    setState([asset("clip-0", PROXY_READY)], true);
+    await screen.rerender(panel());
+    await expect.element(screen.getByLabelText("clip-0.mov", { exact: true })).toBeInTheDocument();
+    expect(state.urlVariants.at(-1)).toBe("proxy");
+    expect(screen.getByText("Video unavailable").query()).toBeNull();
   });
 });

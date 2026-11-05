@@ -1,9 +1,9 @@
 // SPDX-FileCopyrightText: 2026 s7video contributors
 // SPDX-License-Identifier: MIT
-// The one-time question before the speech model downloads (S7V-026, ADR-006). It only shows
-// state: the Editor panel (S7V-029) opens it when a transcription finds no model and the user has
-// not answered yet, and wires the answers to transcribe.models.download / .dismiss and the
-// download's engine job (progress and cancel through engine.jobs.*).
+// The question before the speech model downloads (S7V-026, ADR-006). It only shows state: the
+// Transcript tab (S7V-030) opens it when the user asks to transcribe and no model is downloaded,
+// and wires the answers to transcribe.models.download / .dismiss and the download's engine job
+// (progress and cancel through engine.jobs.*). Nothing opens it unasked.
 import type { TranscribeModel, TranscribeModelsStatus } from "@t3tools/contracts";
 import { useId, useState } from "react";
 

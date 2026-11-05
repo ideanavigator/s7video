@@ -20,15 +20,42 @@ export function applyJobsEvent(
   return new Map(jobs).set(event.job.id, event.job);
 }
 
-/** The export to show: the one started here, else a running export of this project. */
-export function currentExportJob(
+function runningExportOf(
+  jobs: ReadonlyMap<string, EngineJob>,
+  projectId: string,
+  except: string | null,
+): EngineJob | null {
+  for (const job of jobs.values()) {
+    if (job.kind !== "export" || job.projectId !== projectId || job.id === except) continue;
+    if (job.state === "running") return job;
+  }
+  return null;
+}
+
+export interface FollowedExport {
+  readonly job: EngineJob | null;
+  /** An export this panel did not start but follows, by id, so its outcome stays on screen. */
+  readonly adoptedJobId: string | null;
+}
+
+/**
+ * The export to show: one adopted earlier, else the one started here, else a running export of
+ * this project. The followed export stays on screen with its outcome after it ends, until another
+ * export of the project starts (from the agent or another window), which is then adopted.
+ */
+export function followExportJob(
   jobs: ReadonlyMap<string, EngineJob>,
   projectId: string,
   startedJobId: string | null,
-): EngineJob | null {
-  if (startedJobId !== null) return jobs.get(startedJobId) ?? null;
-  for (const job of jobs.values()) {
-    if (job.kind === "export" && job.projectId === projectId && job.state === "running") return job;
+  adoptedJobId: string | null,
+): FollowedExport {
+  const followedId = adoptedJobId ?? startedJobId;
+  const followed = followedId === null ? null : (jobs.get(followedId) ?? null);
+  if (followedId !== null && (followed === null || followed.state === "running")) {
+    // Running, or started here and not in the jobs stream yet.
+    return { job: followed, adoptedJobId };
   }
-  return null;
+  const next = runningExportOf(jobs, projectId, followedId);
+  if (next !== null) return { job: next, adoptedJobId: next.id };
+  return { job: followed, adoptedJobId };
 }

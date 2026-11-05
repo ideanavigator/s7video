@@ -9,7 +9,8 @@ import { useEffect, useState, type KeyboardEvent } from "react";
 
 import { formatPlaybackClock, type PlaybackPlan } from "../../editor/editPlayback";
 import { createPlaybackLoop, type PlaybackLoop } from "../../editor/editPlaybackLoop";
-import { publishPlayerFrame } from "../../editor/editStore";
+import { publishPlayerFrame, subscribePlayerSeek } from "../../editor/editStore";
+import { useStableCallback } from "../../hooks/useStableCallback";
 import { Button } from "../ui/button";
 
 export interface EditPlayerProps {
@@ -21,6 +22,8 @@ export interface EditPlayerProps {
   readonly startFrame: number;
   readonly onPositionChange: (frame: number) => void;
   readonly onPlayingChange?: ((playing: boolean) => void) | undefined;
+  /** The first frame decoded, so the source plays. */
+  readonly onLoaded?: (() => void) | undefined;
   readonly onError: () => void;
 }
 
@@ -75,6 +78,10 @@ export function EditPlayer(props: EditPlayerProps) {
     publishPlayerFrame(projectKey, settled);
   };
 
+  const seekOnRequest = useStableCallback(seek);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- listens for seeks from outside React (a click on a transcript word)
+  useEffect(() => subscribePlayerSeek(projectKey, seekOnRequest), [projectKey, seekOnRequest]);
+
   const togglePlay = () => {
     if (video === null || loop === null) return;
     if (video.paused) void loop.play().catch(() => setPlaying(false));
@@ -124,6 +131,7 @@ export function EditPlayer(props: EditPlayerProps) {
             loop?.setPlan(plan);
             loop?.seekToTimelineFrame(props.startFrame);
           }}
+          onLoadedData={props.onLoaded}
           onPlay={() => setPlaying(true)}
           onPause={() => {
             setPlaying(false);
