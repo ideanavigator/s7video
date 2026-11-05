@@ -7,6 +7,7 @@ import {
   type EngineError,
   type TranscriptError,
   type EngineJobId,
+  type MediaLibraryError,
   OrchestratorMcpFailure,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -30,6 +31,9 @@ import { VideoFrameToolkit, VideoStandardToolkit, type VideoToolkit } from "./to
 const DEFAULT_FRAME_WIDTH = 640;
 const MAX_FRAME_WIDTH = 1920;
 const CANCEL_WAIT = "5 seconds";
+
+export const NO_ROOM_TO_COPY =
+  "There is not enough free space to copy this file into the project. Ask the user to add it in Assets and choose to use the file where it is.";
 
 /** The engine's messages are fixed text that tells the agent what to do next. */
 const engineFailure = (error: EngineError) =>
@@ -78,6 +82,21 @@ const handlers = {
       const project = yield* callerProject();
       const file = yield* resolveSharedFile(project, path);
       const library = yield* MediaLibraryService.MediaLibraryService;
+      const libraryFailure = (error: MediaLibraryError) =>
+        new OrchestratorMcpFailure({
+          code: error.reason === "edit-failed" ? "orchestration_error" : "invalid_request",
+          message: error.explanation,
+        });
+      // A copy that would leave less than the free-space margin is refused, not made.
+      const plan = yield* library
+        .plan({ projectId: project.projectId, sourcePaths: [file] })
+        .pipe(Effect.mapError(libraryFailure));
+      if (plan.suggestedMode !== "copy") {
+        return yield* new OrchestratorMcpFailure({
+          code: "invalid_request",
+          message: NO_ROOM_TO_COPY,
+        });
+      }
       const imported = yield* library
         .import({
           projectId: project.projectId,
@@ -85,15 +104,7 @@ const handlers = {
           mode: "copy",
           origin: "agent",
         })
-        .pipe(
-          Effect.mapError(
-            (error) =>
-              new OrchestratorMcpFailure({
-                code: error.reason === "edit-failed" ? "orchestration_error" : "invalid_request",
-                message: error.explanation,
-              }),
-          ),
-        );
+        .pipe(Effect.mapError(libraryFailure));
       return {
         media: imported.mediaId,
         ...(imported.jobId === undefined ? {} : { jobId: imported.jobId }),

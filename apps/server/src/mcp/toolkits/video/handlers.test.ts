@@ -49,7 +49,7 @@ import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpSessionRegistry from "../../McpSessionRegistry.ts";
 import * as McpToolAccessTestkit from "../../McpToolAccess.testkit.ts";
 import { NOT_IN_PROJECT, NOT_SHARED } from "../../VideoProjectScope.ts";
-import { editDurationFrames } from "./handlers.ts";
+import { editDurationFrames, NO_ROOM_TO_COPY } from "./handlers.ts";
 import { VideoToolkit } from "./tools.ts";
 
 const environmentId = EnvironmentId.make("environment-video-test");
@@ -157,6 +157,7 @@ interface Fixture {
   readonly sharedInA: string;
   readonly sharedInB: string;
   readonly imports: Array<{ sourcePath: string; mode: string; origin: string | undefined }>;
+  diskShort: boolean;
 }
 
 const makeFixture = (): Fixture => {
@@ -215,6 +216,7 @@ const makeFixture = (): Fixture => {
     sharedInA,
     sharedInB,
     imports: [],
+    diskShort: false,
   };
 };
 
@@ -261,6 +263,17 @@ const layerFor = (fixture: Fixture, cancelSignal: Deferred.Deferred<string>) => 
     exportService,
     Layer.mock(ServerConfig.ServerConfig)({ attachmentsDir: fixture.attachmentsDir } as never),
     Layer.mock(MediaLibraryService.MediaLibraryService)({
+      plan: (input) =>
+        Effect.succeed(
+          fixture.diskShort
+            ? {
+                suggestedMode: "reference",
+                reason: "A copy needs 1.0 GB and should leave 15.0 GB free.",
+                totalBytes: input.sourcePaths.length,
+                freeBytes: 0,
+              }
+            : { suggestedMode: "copy", totalBytes: input.sourcePaths.length, freeBytes: 1e12 },
+        ),
       import: (input) =>
         Effect.sync(() => {
           fixture.imports.push({
@@ -453,6 +466,18 @@ describe("video toolkit", () => {
           { sourcePath: fixture.sharedInA, mode: "copy", origin: "agent" },
           { sourcePath: inProject, mode: "copy", origin: "agent" },
         ]);
+      }),
+    ),
+  );
+
+  it.effect("video_import refuses to copy when the disk is short", () =>
+    withTools(({ fixture, call }) =>
+      Effect.gen(function* () {
+        fixture.diskShort = true;
+        const result = yield* call(threadA, "video_import", { path: fixture.sharedInA });
+        expect(result.isError).toBe(true);
+        expect(textOf(result)).toEqual([NO_ROOM_TO_COPY]);
+        expect(fixture.imports).toEqual([]);
       }),
     ),
   );
