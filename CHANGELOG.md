@@ -34,6 +34,8 @@ from; the per-ticket entries and how this file is compiled are in
 - The assistant can see your video: Claude, Codex and other agents can read a clip's details, look
   at any frame and read the current edit, for files in your project only. Codex older than 0.159
   gets a plain message asking to update it. (S7V-023)
+- Export your edit as an MP4 with captions burned in, at −14 LUFS, using your Mac's video hardware.
+  It runs with progress and cancel, and lands in the project's `exports/` folder. (S7V-028)
 
 ### Changed
 

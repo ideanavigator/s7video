@@ -62,6 +62,8 @@ export interface EngineJobInput<A> {
   readonly success: Schema.Decoder<A>;
   /** The project the job works for, so agent tools can scope job status and cancel to it. */
   readonly projectId?: ProjectId;
+  /** Gets the job id before the engine is called, for callers that answer at once. */
+  readonly onStart?: (jobId: EngineJobId) => Effect.Effect<void>;
 }
 
 export interface EngineStatus {
@@ -246,6 +248,7 @@ const make = Effect.fn("EngineService.make")(function* (options: EngineServiceOp
   const runJob = Effect.fn("EngineService.runJob")(function* <A>(input: EngineJobInput<A>) {
     yield* Effect.annotateCurrentSpan({ "engine.job.kind": input.kind });
     const jobId = yield* jobs.start(input.kind, input.projectId);
+    if (input.onStart) yield* input.onStart(jobId);
     return yield* call(input.method, { ...input.params, jobId }, input.success, undefined).pipe(
       Effect.onExit((exit) => {
         if (Exit.isSuccess(exit)) return jobs.finish(jobId, "succeeded");

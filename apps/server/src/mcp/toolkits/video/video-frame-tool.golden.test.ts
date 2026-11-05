@@ -26,6 +26,7 @@ import * as NodePath from "node:path";
 import * as ServerConfig from "../../../config.ts";
 import * as EditDocumentService from "../../../edit/EditDocumentService.ts";
 import * as EngineService from "../../../engine/EngineService.ts";
+import * as ExportService from "../../../export/ExportService.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../../../project/ProjectService.ts";
 import * as McpHttpServer from "../../McpHttpServer.ts";
@@ -147,6 +148,7 @@ describe.skipIf(!available)("video-frame-tool golden", () => {
             Layer.mock(EditDocumentService.EditDocumentService)({
               read: () => Effect.succeed(snapshot),
             }),
+            Layer.mock(ExportService.ExportService)({}),
             EngineService.layer.pipe(
               Layer.provide(ServerConfig.layerTest(work, { prefix: "video-frame-golden-" })),
             ),

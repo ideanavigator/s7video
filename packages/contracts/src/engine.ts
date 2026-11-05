@@ -97,12 +97,29 @@ export type MediaFrameResult = typeof MediaFrameResult.Type;
 
 export const EngineJobCancelResult = Schema.Struct({ cancelled: Schema.Boolean });
 
+/** `export.render`'s reply: the finished MP4 (S7V-028). Loudness is null for a silent export. */
+export const ExportRenderResult = Schema.Struct({
+  path: Schema.String,
+  durationFrames: NonNegativeInt,
+  fps: EngineRational,
+  width: PositiveInt,
+  height: PositiveInt,
+  /** Caption chunks burned in. */
+  captions: NonNegativeInt,
+  measuredLufs: Schema.NullOr(Schema.Finite),
+  gainDb: Schema.Finite,
+  lufs: Schema.NullOr(Schema.Finite),
+  truePeak: Schema.NullOr(Schema.Finite),
+});
+export type ExportRenderResult = typeof ExportRenderResult.Type;
+
 /** Every engine method's response schema, for checks that apply to all of them. */
 export const ENGINE_RESPONSE_SCHEMAS = {
   "engine.ping": EnginePingResult,
   "media.probe": MediaProbeResult,
   "media.frame": MediaFrameResult,
   "job.cancel": EngineJobCancelResult,
+  "export.render": ExportRenderResult,
 } as const;
 
 export const ENGINE_RPC_ERROR_CODES = {
@@ -124,7 +141,12 @@ export type EngineRpcRequest = typeof EngineRpcRequest.Type;
 export const EngineRpcErrorBody = Schema.Struct({
   code: Schema.Int,
   message: Schema.String,
-  data: Schema.optional(Schema.Struct({ tool: Schema.optional(Schema.String) })),
+  data: Schema.optional(
+    Schema.Struct({
+      tool: Schema.optional(Schema.String),
+      feature: Schema.optional(Schema.String),
+    }),
+  ),
 });
 export type EngineRpcErrorBody = typeof EngineRpcErrorBody.Type;
 
@@ -180,11 +202,23 @@ const INSTALL_HINT: Record<EngineTool, string> = {
     "install FFmpeg with `brew install ffmpeg` (it includes ffprobe), or set S7VIDEO_FFPROBE to its full path",
 };
 
+/** What a tool can lack even when it is installed: FFmpeg built without libass, VideoToolbox or zimg. */
+export const EngineToolFeature = Schema.Literals(["libass", "h264_videotoolbox", "zscale"]);
+export type EngineToolFeature = typeof EngineToolFeature.Type;
+
+const FEATURE_PURPOSE: Record<EngineToolFeature, string> = {
+  libass: "libass to burn in captions",
+  h264_videotoolbox: "the h264_videotoolbox encoder to use the Mac's video hardware",
+  zscale: "zscale (zimg) to convert HDR video to standard range",
+};
+
 export class EngineError extends Schema.TaggedError<EngineError>()("EngineError", {
   reason: EngineErrorReason,
   /** The engine method, or `start` while the engine was starting. */
   method: Schema.String,
   tool: Schema.optional(EngineTool),
+  /** For `missing_tool`: the tool is there but was built without this. */
+  feature: Schema.optional(EngineToolFeature),
   /** The engine's own fixed rejection text, for `rpc_error`. */
   rpcMessage: Schema.optional(Schema.String),
   rpcCode: Schema.optional(Schema.Int),
@@ -204,6 +238,9 @@ export class EngineError extends Schema.TaggedError<EngineError>()("EngineError"
         return `The video engine stopped ${this.method} because it was cancelled.`;
       case "missing_tool": {
         const tool = this.tool ?? "ffmpeg";
+        if (this.feature !== undefined) {
+          return `The video engine needs an ${tool} with ${FEATURE_PURPOSE[this.feature]}, and the ${tool} on this Mac was built without it. For development, ${INSTALL_HINT[tool]}.`;
+        }
         return `The video engine needs ${tool}, which was not found on this Mac. For development, ${INSTALL_HINT[tool]}.`;
       }
     }
@@ -243,3 +280,59 @@ export type EngineJobsCancelInput = typeof EngineJobsCancelInput.Type;
 
 export const EngineJobsCancelResult = Schema.Struct({ applied: Schema.Boolean });
 export type EngineJobsCancelResult = typeof EngineJobsCancelResult.Type;
+
+/** Export (S7V-028) output canvas: the edit's own when absent. */
+export const ExportPreset = Schema.Literals(["reel-9x16", "square", "landscape"]);
+export type ExportPreset = typeof ExportPreset.Type;
+
+export const ExportStartInput = Schema.Struct({
+  projectId: ProjectId,
+  preset: Schema.optional(ExportPreset),
+  /** Burn in the edit's captions; on unless turned off (PO default, S7V-028). */
+  captions: Schema.optional(Schema.Boolean),
+});
+export type ExportStartInput = typeof ExportStartInput.Type;
+
+export const ExportStartResult = Schema.Struct({
+  jobId: EngineJobId,
+  /** Where the video will land, relative to the project folder (`exports/…mp4`). */
+  path: TrimmedNonEmptyString,
+});
+export type ExportStartResult = typeof ExportStartResult.Type;
+
+/** A finished export, as clients and agents see it: paths are project-relative. */
+export const ExportResult = Schema.Struct({
+  path: TrimmedNonEmptyString,
+  durationFrames: NonNegativeInt,
+  fps: EngineRational,
+  width: PositiveInt,
+  height: PositiveInt,
+  captions: NonNegativeInt,
+  lufs: Schema.NullOr(Schema.Finite),
+  truePeak: Schema.NullOr(Schema.Finite),
+});
+export type ExportResult = typeof ExportResult.Type;
+
+export const ExportStatusInput = Schema.Struct({ jobId: EngineJobId });
+export type ExportStatusInput = typeof ExportStatusInput.Type;
+
+export const ExportStatus = Schema.Struct({
+  jobId: EngineJobId,
+  projectId: ProjectId,
+  path: TrimmedNonEmptyString,
+  state: EngineJobState,
+  result: Schema.optional(ExportResult),
+  /** The plain reason a failed export stopped. */
+  message: Schema.optional(Schema.String),
+});
+export type ExportStatus = typeof ExportStatus.Type;
+
+export class ExportStartError extends Schema.TaggedError<ExportStartError>()("ExportStartError", {
+  projectId: ProjectId,
+  reason: Schema.Literals(["exports-folder"]),
+  cause: Schema.optional(Schema.Defect()),
+}) {
+  override get message(): string {
+    return "Could not create the project's exports folder.";
+  }
+}

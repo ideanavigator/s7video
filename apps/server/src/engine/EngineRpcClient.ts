@@ -8,6 +8,7 @@ import {
   EngineError,
   EngineRpcMessage,
   EngineTool,
+  EngineToolFeature,
   type EngineProgressParams,
   type EngineRpcErrorBody,
 } from "@t3tools/contracts";
@@ -21,6 +22,7 @@ import * as Stream from "effect/Stream";
 const decodeMessage = Schema.decodeUnknownOption(Schema.fromJsonString(EngineRpcMessage));
 const encodeRequest = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 const isEngineTool = Schema.is(EngineTool);
+const isEngineToolFeature = Schema.is(EngineToolFeature);
 const MAX_RPC_MESSAGE_CHARS = 200;
 
 export interface EngineReady {
@@ -39,10 +41,12 @@ const errorFromRpc = (method: string, body: EngineRpcErrorBody): EngineError => 
   }
   if (body.code === ENGINE_RPC_ERROR_CODES.missingTool) {
     const tool = body.data?.tool;
+    const feature = body.data?.feature;
     return new EngineError({
       reason: "missing_tool",
       method,
       ...(tool !== undefined && isEngineTool(tool) ? { tool } : {}),
+      ...(feature !== undefined && isEngineToolFeature(feature) ? { feature } : {}),
     });
   }
   return new EngineError({

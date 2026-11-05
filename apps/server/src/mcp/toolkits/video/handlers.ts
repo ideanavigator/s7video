@@ -14,6 +14,7 @@ import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 
 import * as EngineService from "../../../engine/EngineService.ts";
+import * as ExportService from "../../../export/ExportService.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import { callerProject, resolveMedia, type VideoProject } from "../../VideoProjectScope.ts";
 import { VideoFrameToolkit, VideoStandardToolkit, type VideoToolkit } from "./tools.ts";
@@ -187,6 +188,26 @@ const handlers = {
       };
     }),
   ),
+  // Writes a file into the project, so plan-mode and read-only callers are refused.
+  video_export: McpToolAccess.actsAsCaller(({ preset, captions }) =>
+    Effect.gen(function* () {
+      const project = yield* callerProject();
+      const exports = yield* ExportService.ExportService;
+      return yield* exports
+        .start({
+          projectId: project.projectId,
+          ...(preset === undefined ? {} : { preset }),
+          ...(captions === undefined ? {} : { captions }),
+        })
+        .pipe(
+          Effect.mapError((error) =>
+            error._tag === "EngineError"
+              ? engineFailure(error)
+              : new OrchestratorMcpFailure({ code: "orchestration_error", message: error.message }),
+          ),
+        );
+    }),
+  ),
 } satisfies McpToolAccess.Handlers<typeof VideoToolkit.tools>;
 
 export const layerStandard = McpToolAccess.toLayer(VideoStandardToolkit, {
@@ -194,6 +215,7 @@ export const layerStandard = McpToolAccess.toLayer(VideoStandardToolkit, {
   video_edit_read: handlers.video_edit_read,
   video_job_status: handlers.video_job_status,
   video_job_cancel: handlers.video_job_cancel,
+  video_export: handlers.video_export,
 });
 
 export const layerFrame = McpToolAccess.toLayer(VideoFrameToolkit, {

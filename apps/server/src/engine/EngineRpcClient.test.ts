@@ -70,6 +70,20 @@ describe("EngineRpcClient", () => {
       yield* reply({ error: { code: 1004, message: "x", data: { tool: "ffprobe" } } });
       expect(yield* Fiber.join(missing)).toMatchObject({ reason: "missing_tool", tool: "ffprobe" });
 
+      const noLibass = yield* client
+        .call("export.render", {}, Pong, undefined)
+        .pipe(Effect.flip, Effect.forkChild);
+      yield* reply({
+        error: { code: 1004, message: "x", data: { tool: "ffmpeg", feature: "libass" } },
+      });
+      const libassError = yield* Fiber.join(noLibass);
+      expect(libassError).toMatchObject({
+        reason: "missing_tool",
+        tool: "ffmpeg",
+        feature: "libass",
+      });
+      expect(libassError.message).toContain("libass");
+
       const cancelled = yield* client
         .call("test.slowJob", {}, Pong, undefined)
         .pipe(Effect.flip, Effect.forkChild);

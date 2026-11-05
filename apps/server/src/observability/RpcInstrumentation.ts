@@ -91,6 +91,8 @@ const RPC_AGGREGATES = {
   [WS_METHODS.scheduledTasksSubscribe]: "scheduledTasks",
   [WS_METHODS.engineJobsSubscribe]: "engine",
   [WS_METHODS.engineJobsCancel]: "engine",
+  [WS_METHODS.exportStart]: "engine",
+  [WS_METHODS.exportStatus]: "engine",
   [WS_METHODS.scheduledTasksUpsert]: "scheduledTasks",
   [WS_METHODS.scheduledTasksSetEnabled]: "scheduledTasks",
   [WS_METHODS.scheduledTasksDelete]: "scheduledTasks",

@@ -24,6 +24,14 @@ Proprietary component
   s7video ships the SDK's JavaScript the same way T3 Code does; it drives the Claude CLI the user
   installed and signed in to themselves.
 
+Bundled font
+
+  Inter (Inter-Bold.ttf, version 4.1), used for burned-in captions
+  https://github.com/rsms/inter
+  Copyright (c) 2016 The Inter Project Authors
+  Licensed under the SIL Open Font License, Version 1.1
+  (packages/engine/assets/fonts/OFL.txt)
+
 Third-party notices
 
 The app lists every bundled package, font, sound and asset with its full licence text under
