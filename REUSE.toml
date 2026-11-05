@@ -31,6 +31,7 @@ path = [
   "packages/engine/tests/golden/references/*.json",
   "fixtures/edit-documents/**",
   "packages/engine/schema/*.json",
+  "packages/engine/src/s7engine/styles/captions/*.json",
   "docs/changelog/entries/*.md",
   "licenses.allowlist.json",
   "licenses.exceptions.json",
@@ -85,6 +86,14 @@ SPDX-FileCopyrightText = [
   "2013 Kim Silkebaekken and other contributors (Powerline)",
 ]
 SPDX-License-Identifier = "MIT AND OFL-1.1 AND CC-BY-4.0 AND Apache-2.0 AND Unlicense"
+
+# Inter Bold 4.1 (rsms/inter), the caption font of the s7-neutral export style (S7V-028). Its
+# licence text sits beside it as OFL.txt, unmodified from the release.
+[[annotations]]
+path = "packages/engine/assets/fonts/**"
+precedence = "override"
+SPDX-FileCopyrightText = "2016 The Inter Project Authors (https://github.com/rsms/inter)"
+SPDX-License-Identifier = "OFL-1.1"
 
 # Sounds from freesound.org, dedicated to the public domain (CC0 1.0) and converted to MP3.
 [[annotations]]
