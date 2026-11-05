@@ -7,8 +7,10 @@ package in the lockfile is listed with its scope (production when the engine's o
 reach it, development otherwise) and what its installed metadata declares: `License-Expression`
 (PEP 639), the legacy `License` field and the `License ::` classifiers. A locked package that is
 not installed (excluded by a platform marker) is listed with `installed: false`; `otherPlatform`
-says the engine reaches it only through markers that do not hold here (Windows-only colorama), so
-it never ships with this Mac build.
+says the engine reaches it only through markers that do not hold on the shipped target, Apple
+Silicon macOS with CPython 3.12 (`TARGET`), such as Windows-only colorama, so it never ships.
+Markers are judged against that target, never the machine running the check, so a Linux CI runner
+still treats darwin-only packages such as mlx as shipped.
 """
 
 from __future__ import annotations
@@ -27,22 +29,40 @@ def _normalise(name: str) -> str:
     return name.lower().replace("_", "-").replace(".", "-")
 
 
-def _names(entries: Any, *, this_platform: bool = False) -> list[str]:
+#: The one platform the engine ships for. Every marker variable is set, so none falls back to the
+#: values of the machine running the check.
+TARGET: dict[str, str] = {
+    "implementation_name": "cpython",
+    "implementation_version": "3.12.0",
+    "os_name": "posix",
+    "platform_machine": "arm64",
+    "platform_python_implementation": "CPython",
+    "platform_release": "25.0.0",
+    "platform_system": "Darwin",
+    "platform_version": "Darwin Kernel Version 25.0.0",
+    "python_full_version": "3.12.0",
+    "python_version": "3.12",
+    "sys_platform": "darwin",
+    "extra": "",
+}
+
+
+def _names(entries: Any, *, on_target: bool = False) -> list[str]:
     return [
         _normalise(entry["name"])
         for entry in entries or []
-        if isinstance(entry, dict) and "name" in entry and (not this_platform or _applies(entry.get("marker")))
+        if isinstance(entry, dict) and "name" in entry and (not on_target or _applies(entry.get("marker")))
     ]
 
 
 def _applies(marker: Any) -> bool:
-    """Whether a lockfile dependency marker holds on this machine; unreadable markers count as holding."""
+    """Whether a lockfile dependency marker holds on `TARGET`; unreadable markers count as holding."""
     if not isinstance(marker, str) or not marker:
         return True
     try:
         from packaging.markers import Marker
 
-        return bool(Marker(marker).evaluate({"extra": ""}))
+        return bool(Marker(marker).evaluate(dict(TARGET)))
     except Exception:
         return True
 
@@ -86,12 +106,12 @@ def report(lock_path: Path) -> dict[str, Any]:
     ]
     graph = {_normalise(package["name"]): _names(package.get("dependencies")) for package in packages}
     local_graph = {
-        _normalise(package["name"]): _names(package.get("dependencies"), this_platform=True) for package in packages
+        _normalise(package["name"]): _names(package.get("dependencies"), on_target=True) for package in packages
     }
     root_names = {_normalise(package["name"]) for package in roots}
     production = _reachable([name for root in roots for name in _names(root.get("dependencies"))], graph)
     production_here = _reachable(
-        [name for root in roots for name in _names(root.get("dependencies"), this_platform=True)], local_graph
+        [name for root in roots for name in _names(root.get("dependencies"), on_target=True)], local_graph
     )
     listed = []
     for package in packages:
