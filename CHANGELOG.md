@@ -36,6 +36,9 @@ from; the per-ticket entries and how this file is compiled are in
   gets a plain message asking to update it. (S7V-023)
 - Export your edit as an MP4 with captions burned in, at −14 LUFS, using your Mac's video hardware.
   It runs with progress and cancel, and lands in the project's `exports/` folder. (S7V-028)
+- Transcription on your Mac, word by word with frame-accurate timings. s7video asks once before
+  downloading the speech model (about 3.7 GB, or 2.3 GB for the light model), then works offline,
+  and each clip is transcribed only once. Models are listed in `MODELS.md`. (S7V-026)
 
 ### Changed
 
