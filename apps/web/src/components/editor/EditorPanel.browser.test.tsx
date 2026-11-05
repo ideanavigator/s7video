@@ -20,6 +20,7 @@ const state = vi.hoisted(() => ({
   export: { job: null, status: null } as ProjectExport,
   urlRevisions: [] as Array<string | null | undefined>,
   urlVariants: [] as Array<string | undefined>,
+  transcriptMedia: [] as Array<string | null>,
 }));
 
 /** The export as the jobs stream would deliver it: setting it re-renders its readers. */
@@ -46,7 +47,10 @@ vi.mock(import("../../editor/editStore"), async (importOriginal) => ({
   ...(await importOriginal()),
   useProjectEdit: () => state.edit,
   useProjectExport: () => useSyncExternalStore(exportStore.subscribe, () => state.export),
-  useMediaTranscript: () => ({ _tag: "loading" }),
+  useMediaTranscript: (_ref: unknown, mediaId: string | null) => {
+    state.transcriptMedia.push(mediaId);
+    return { _tag: "loading" };
+  },
   useTranscriptionJobs: () => ({ transcribe: null, download: null }),
 }));
 vi.mock(import("../../state/media"), () => ({
@@ -160,6 +164,35 @@ describe("EditorPanel", () => {
     await using screen = await renderPanel();
     await expect.element(screen.getByText("Drop a clip here or into the chat.")).toBeVisible();
     expect(document.querySelector("video")).toBeNull();
+  });
+
+  it("reads the edit's own clip in the transcript when every part is cut", async () => {
+    setState([asset("clip-0"), asset("clip-1")], false);
+    const ready = state.edit as Extract<ProjectEditState, { _tag: "ready" }>;
+    const document = ready.snapshot.document;
+    state.edit = {
+      _tag: "ready",
+      snapshot: {
+        ...ready.snapshot,
+        document: {
+          ...document,
+          media: [
+            {
+              id: "clip-1",
+              kind: "video",
+              path: "assets/clip-1.mov",
+              fingerprint: { sha256: "1".repeat(64), size: 1_000 },
+              probe: {},
+            } as unknown as (typeof document.media)[number],
+          ],
+          tracks: [{ kind: "video", id: "v1", items: [] }],
+        },
+      },
+    };
+    state.transcriptMedia = [];
+    await using screen = await renderPanel();
+    await expect.element(screen.getByText("Everything is cut")).toBeVisible();
+    expect(state.transcriptMedia.at(-1)).toBe("clip-1");
   });
 
   it("should handle missing media with Find file…", async () => {

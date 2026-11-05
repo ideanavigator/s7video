@@ -21,6 +21,7 @@ import {
   useProjectExport,
   useProjectEdit,
 } from "../../editor/editStore";
+import { editPlaybackPlan } from "../../editor/editPlayback";
 import { playerViewOf, type PlayerView } from "../../editor/editorView";
 import type { TranscriptPlayback } from "../../editor/transcriptModel";
 import { useMediaLibrary, type MediaLibraryState } from "../../state/media";
@@ -259,10 +260,15 @@ function transcriptSourceOf(
     case "missing":
       return { mediaId: view.asset.id, playback: null };
     case "all-cut": {
-      const clip =
+      // The edit's own clip: every one of its words is struck.
+      const document = edit._tag === "ready" ? edit.snapshot.document : null;
+      const ownId =
+        (document === null ? undefined : editPlaybackPlan(document)?.mediaId) ??
+        document?.media.find((media) => media.kind === "video")?.id;
+      const fallback =
         library._tag === "ready" ? library.snapshot.items.find((item) => item.hasVideo) : undefined;
       return {
-        mediaId: clip?.id ?? null,
+        mediaId: ownId ?? fallback?.id ?? null,
         playback: edit._tag === "ready" ? { fps: edit.snapshot.document.fps, segments: [] } : null,
       };
     }
