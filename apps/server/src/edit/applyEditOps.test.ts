@@ -146,6 +146,49 @@ describe("applyEditOps", () => {
     ]);
   });
 
+  it("moves the source of a media overlay that has no in frame", () => {
+    const withOverlay = run([
+      { _tag: "addTrack", track: { kind: "overlay", id: "O1", items: [] } },
+      {
+        _tag: "insertItem",
+        trackId: "O1",
+        item: { id: "o1", media: "cam", start: 10, duration: 100 },
+      },
+    ]);
+    const trimmed = run(
+      [{ _tag: "trimItem", itemId: "o1", edge: "start", frame: 30 }],
+      withOverlay,
+    );
+    expect(trimmed.tracks[2]!.items[0]).toMatchObject({ start: 30, duration: 80, in: 20 });
+    const split = run([{ _tag: "splitItem", itemId: "o1", atFrame: 60 }], withOverlay);
+    expect(split.tracks[2]!.items[1]).toMatchObject({ start: 60, duration: 50, in: 50 });
+  });
+
+  it("leaves no copied text on a caption half without words", () => {
+    const document = run([
+      {
+        _tag: "setCaptions",
+        trackId: "C1",
+        captions: [
+          {
+            start: 0,
+            duration: 40,
+            text: "one two",
+            words: [
+              { text: "one", start: 0, duration: 12 },
+              { text: "two", start: 10, duration: 14 },
+            ],
+          },
+        ],
+      },
+      { _tag: "splitItem", itemId: "c1", atFrame: 30 },
+    ]);
+    expect(document.tracks[1]!.items).toMatchObject([
+      { id: "c1", text: "one two", duration: 30 },
+      { id: "c2", text: "", words: [], start: 30, duration: 10 },
+    ]);
+  });
+
   it("reports the op and item that cannot apply", () => {
     const result = applyEditOps(base, [
       keep([[0, 10]]),

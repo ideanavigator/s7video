@@ -54,7 +54,13 @@ const fail = (itemId: string | null, explanation: string): never => {
   throw new OpFailure(itemId, explanation);
 };
 
-const byStart = (a: DraftItem, b: DraftItem) => a.start - b.start || a.id.localeCompare(b.id);
+// Code-point order for ties, as the engine sorts, so both write and report the same thing.
+const byStart = (a: DraftItem, b: DraftItem) =>
+  a.start - b.start || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+
+/** The source frame an item starts at; a media overlay without `in` starts at 0. */
+const sourceIn = (item: DraftItem) =>
+  typeof item.in === "number" ? item.in : item.media !== undefined ? 0 : undefined;
 
 function allIds(document: DraftDocument): Set<string> {
   const ids = new Set<string>();
@@ -224,9 +230,10 @@ function applyOne(document: DraftDocument, op: EditOp): void {
       if (op.edge === "start") {
         if (op.frame >= end) fail(op.itemId, `"${op.itemId}" would have no frames left.`);
         const delta = op.frame - item.start;
-        if ("in" in item && typeof item.in === "number") {
-          if (item.in + delta < 0) fail(op.itemId, `"${op.itemId}" cannot start before its media.`);
-          item.in += delta;
+        const from = sourceIn(item);
+        if (from !== undefined) {
+          if (from + delta < 0) fail(op.itemId, `"${op.itemId}" cannot start before its media.`);
+          item.in = from + delta;
         }
         item.start = op.frame;
         item.duration = end - op.frame;
@@ -253,20 +260,26 @@ function applyOne(document: DraftDocument, op: EditOp): void {
         start: op.atFrame,
         duration: end - op.atFrame,
       };
-      if ("in" in item && typeof item.in === "number") right.in = item.in + left;
+      const from = sourceIn(item);
+      if (from !== undefined) right.in = from + left;
       if ("fadeInFrames" in item) delete right.fadeInFrames;
       if ("fadeOutFrames" in item) delete item.fadeOutFrames;
       if ("words" in item && Array.isArray(item.words)) {
         const words = item.words as ReadonlyArray<{
           readonly start: number;
+          readonly duration: number;
           readonly text: string;
         }>;
-        const before = words.filter((word) => word.start < op.atFrame);
+        // A word spoken across the cut ends at it, so it stays inside the left half.
+        const before = words
+          .filter((word) => word.start < op.atFrame)
+          .map((word) => ({ ...word, duration: Math.min(word.duration, op.atFrame - word.start) }));
         const after = words.filter((word) => word.start >= op.atFrame);
+        // Text follows the words, so a half without words is left with no text, not a copy.
         item.words = before;
         right.words = after;
-        if (before.length > 0) item.text = before.map((word) => word.text).join(" ");
-        if (after.length > 0) right.text = after.map((word) => word.text).join(" ");
+        item.text = before.map((word) => word.text).join(" ");
+        right.text = after.map((word) => word.text).join(" ");
       }
       item.duration = left;
       track.items.push(right);
