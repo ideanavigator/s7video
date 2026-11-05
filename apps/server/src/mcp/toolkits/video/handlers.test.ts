@@ -29,6 +29,7 @@ import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import { McpSchema, McpServer } from "effect/ai";
 import { HttpBody, HttpClient, HttpRouter } from "effect/http";
+import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
@@ -38,7 +39,9 @@ import * as EngineService from "../../../engine/EngineService.ts";
 import * as ExportService from "../../../export/ExportService.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../../../project/ProjectService.ts";
+import * as ServerConfig from "../../../config.ts";
 import * as ServerSettings from "../../../serverSettings.ts";
+import * as TranscriptService from "../../../transcript/TranscriptService.ts";
 import * as McpHttpServer from "../../McpHttpServer.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpSessionRegistry from "../../McpSessionRegistry.ts";
@@ -144,7 +147,8 @@ interface Fixture {
   readonly calls: Array<readonly ["probe", string] | readonly ["frame", MediaFrameInput]>;
   readonly cancelled: Array<string>;
   readonly exports: Array<ExportStartInput>;
-  readonly engine: { failNextProbe: boolean };
+  readonly engine: { failNextProbe: boolean; modelsReady: boolean };
+  readonly started: Array<{ readonly kind: string; readonly projectId: ProjectId | undefined }>;
   readonly documents: Map<ProjectId, EditDocument>;
 }
 
@@ -185,7 +189,8 @@ const makeFixture = (): Fixture => {
     calls: [],
     cancelled: [],
     exports: [],
-    engine: { failNextProbe: false },
+    engine: { failNextProbe: false, modelsReady: true },
+    started: [],
     documents,
   };
 };
@@ -287,9 +292,31 @@ const layerFor = (fixture: Fixture, cancelSignal: Deferred.Deferred<string>) => 
         Effect.sync(() => fixture.cancelled.push(jobId)).pipe(
           Effect.andThen(Deferred.succeed(cancelSignal, jobId)),
         ),
+      call: (method) => {
+        if (method !== "transcribe.models.status") return Effect.die(`unexpected ${method}`);
+        const ready = fixture.engine.modelsReady;
+        const profile = { models: [], sizeBytes: 1, ready };
+        return Effect.succeed({
+          models: {},
+          profiles: { default: profile, light: profile },
+          loadedProfile: null,
+        } as never);
+      },
+      startJob: (input) =>
+        Effect.sync(() => {
+          fixture.started.push({ kind: input.kind, projectId: input.projectId });
+          return EngineJobId.make("engine-job-9");
+        }),
     }),
   );
 };
+
+/** The real TranscriptService over the mocked project, edit and engine services. */
+const layerWithTranscripts = (fixture: Fixture, cancelSignal: Deferred.Deferred<string>) =>
+  TranscriptService.layerWith({ totalMemoryBytes: 36 * 1024 ** 3 }).pipe(
+    Layer.provideMerge(layerFor(fixture, cancelSignal)),
+    Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "video-transcript-" })),
+  );
 
 const withTools = <A, E>(
   body: (input: {
@@ -306,7 +333,7 @@ const withTools = <A, E>(
   Effect.gen(function* () {
     const fixture = makeFixture();
     const cancelSignal = yield* Deferred.make<string>();
-    const services = layerFor(fixture, cancelSignal);
+    const services = layerWithTranscripts(fixture, cancelSignal);
     return yield* Effect.gen(function* () {
       const server = yield* McpServer.McpServer;
       const call = (
@@ -356,6 +383,8 @@ describe("video toolkit", () => {
           "video_job_cancel",
           "video_job_status",
           "video_probe",
+          "video_transcribe",
+          "video_transcript_read",
         ]);
         // ToolSearch finds deferred tools by these words, so each says what it reads.
         for (const tool of tools) {
@@ -368,6 +397,8 @@ describe("video toolkit", () => {
         expect(described.video_job_status).toContain("job");
         expect(described.video_job_cancel).toContain("job");
         expect(described.video_export).toContain("job");
+        expect(described.video_transcribe).toContain("Transcribe");
+        expect(described.video_transcript_read).toContain("transcript");
       }),
     ),
   );
@@ -412,12 +443,22 @@ describe("video toolkit", () => {
     const refused = (media: (fixture: Fixture) => string, threadId = threadA) =>
       withTools(({ fixture, call }) =>
         Effect.gen(function* () {
-          for (const tool of ["video_probe", "video_frame"]) {
-            const result = yield* call(threadId, tool, { media: media(fixture), frame: 0 });
+          for (const tool of [
+            "video_probe",
+            "video_frame",
+            "video_transcribe",
+            "video_transcript_read",
+          ]) {
+            const args =
+              tool === "video_frame"
+                ? { media: media(fixture), frame: 0 }
+                : { media: media(fixture) };
+            const result = yield* call(threadId, tool, args);
             expect(result.isError, tool).toBe(true);
             expect(textOf(result), tool).toEqual([NOT_IN_PROJECT]);
           }
           expect(fixture.calls).toEqual([]);
+          expect(fixture.started).toEqual([]);
         }),
       );
 
@@ -484,6 +525,78 @@ describe("video toolkit", () => {
     );
   });
 
+  it.effect(
+    "video_transcribe starts a job for the caller's project, or says the model is missing",
+    () =>
+      withTools(({ fixture, call }) =>
+        Effect.gen(function* () {
+          const started = yield* call(threadA, "video_transcribe", { media: "cam" });
+          expect(started.isError).toBe(false);
+          expect(started.structuredContent).toEqual({ jobId: "engine-job-9" });
+          // Tagged with the caller's project, so video_job_status and video_job_cancel see it.
+          expect(fixture.started).toEqual([{ kind: "transcribe", projectId: projectA }]);
+
+          fixture.engine.modelsReady = false;
+          const missing = yield* call(threadA, "video_transcribe", { media: "cam" });
+          expect(missing.isError).toBe(true);
+          expect(textOf(missing)).toEqual([
+            "The speech model is not downloaded yet. Ask the user to accept the download in the Editor panel; s7video downloads it only after they agree.",
+          ]);
+          expect(fixture.started).toHaveLength(1);
+        }),
+      ),
+  );
+
+  it.effect("video_transcript_read returns frame-stamped text, or asks for video_transcribe", () =>
+    withTools(({ fixture, call }) =>
+      Effect.gen(function* () {
+        const none = yield* call(threadA, "video_transcript_read", { media: "cam" });
+        expect(none.isError).toBe(true);
+        expect(textOf(none)).toEqual(["cam has no transcript yet. Run video_transcribe first."]);
+
+        const clip = NodePath.join(fixture.rootA, "assets", "clip.mp4");
+        const bytes = NodeFS.readFileSync(clip);
+        const fingerprint = {
+          sha256: NodeCrypto.createHash("sha256").update(bytes).digest("hex"),
+          size: bytes.length,
+        };
+        const cacheDir = NodePath.join(fixture.rootA, ".s7cache", "transcripts");
+        NodeFS.mkdirSync(cacheDir, { recursive: true });
+        NodeFS.writeFileSync(
+          NodePath.join(cacheDir, `${fingerprint.sha256}.json`),
+          JSON.stringify({
+            transcriptVersion: 1,
+            mediaFingerprint: fingerprint,
+            model: "m",
+            revision: "r",
+            fps: { num: 30, den: 1 },
+            durationFrames: 90,
+            words: [
+              { text: "Hello", startFrame: 3, endFrame: 12, confidence: 0.9, speaker: "S1" },
+              { text: "world.", startFrame: 13, endFrame: 25, confidence: 0.8, speaker: "S1" },
+            ],
+            createdAt: "2026-11-06T00:00:00Z",
+          }),
+        );
+        const read = yield* call(threadA, "video_transcript_read", { media: "assets/clip.mp4" });
+        expect(read.structuredContent).toEqual({
+          text: "fps 30/1; [start-end] are frames of the clip.\n[3-25] Hello world.",
+        });
+        // A cached clip needs no job.
+        const cached = yield* call(threadA, "video_transcribe", { media: "cam" });
+        expect(cached.structuredContent).toEqual({
+          cached: true,
+          wordCount: 2,
+          durationFrames: 90,
+        });
+        expect(fixture.started).toEqual([]);
+        // Thread B's project cannot read project A's transcript.
+        const other = yield* call(threadB, "video_transcript_read", { media: clip });
+        expect(textOf(other)).toEqual([NOT_IN_PROJECT]);
+      }),
+    ),
+  );
+
   it.effect("should refuse every video tool without the video capability", () =>
     withTools(({ fixture, call }) =>
       Effect.gen(function* () {
@@ -494,6 +607,8 @@ describe("video toolkit", () => {
           ["video_job_status", {}],
           ["video_job_cancel", { jobId: "engine-job-1" }],
           ["video_export", {}],
+          ["video_transcribe", { media: "cam" }],
+          ["video_transcript_read", { media: "cam" }],
         ] as const) {
           // A hidden tool is not callable at all: the server answers as for an unknown tool.
           const error = yield* call(threadA, tool, args, ["orchestration"]).pipe(Effect.flip);
@@ -728,6 +843,7 @@ it.effect("should hide tools without the video capability", () =>
           ),
         ),
         Layer.provide(layerFor(fixture, cancelSignal)),
+        Layer.provide(Layer.mock(TranscriptService.TranscriptService)({})),
         Layer.provide(
           Layer.mock(McpSessionRegistry.McpSessionRegistry)({
             resolve: (presented) => Effect.succeed(tokens.get(presented)),
@@ -776,6 +892,8 @@ it.effect("should hide tools without the video capability", () =>
         "video_job_cancel",
         "video_job_status",
         "video_probe",
+        "video_transcribe",
+        "video_transcript_read",
       ]);
       expect(yield* listed("plainToken")).toEqual([]);
       NodeFS.rmSync(NodePath.dirname(fixture.rootA), { recursive: true, force: true });

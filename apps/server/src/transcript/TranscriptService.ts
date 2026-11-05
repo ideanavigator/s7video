@@ -180,7 +180,9 @@ const make = Effect.fn("TranscriptService.make")(function* (options: TranscriptS
       ),
     );
 
-  const engineStatus = engine.call("transcribe.models.status", {}, TranscribeEngineModelsStatus);
+  const engineStatus = Effect.suspend(() =>
+    engine.call("transcribe.models.status", {}, TranscribeEngineModelsStatus),
+  );
 
   const modelsStatus = Effect.gen(function* () {
     const status = yield* engineStatus;

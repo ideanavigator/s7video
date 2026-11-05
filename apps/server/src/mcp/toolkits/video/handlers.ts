@@ -5,6 +5,7 @@
 import {
   type EditDocument,
   type EngineError,
+  type TranscriptError,
   type EngineJobId,
   OrchestratorMcpFailure,
 } from "@t3tools/contracts";
@@ -15,6 +16,7 @@ import * as Stream from "effect/Stream";
 
 import * as EngineService from "../../../engine/EngineService.ts";
 import * as ExportService from "../../../export/ExportService.ts";
+import * as TranscriptService from "../../../transcript/TranscriptService.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import { callerProject, resolveMedia, type VideoProject } from "../../VideoProjectScope.ts";
 import { VideoFrameToolkit, VideoStandardToolkit, type VideoToolkit } from "./tools.ts";
@@ -29,6 +31,15 @@ const engineFailure = (error: EngineError) =>
     code: error.reason === "rpc_error" ? "invalid_request" : "orchestration_error",
     message: error.message,
   });
+
+/** Refusals carry the scope's plain reason (not in this project); the rest the service's message. */
+const transcriptFailure = (error: EngineError | TranscriptError) =>
+  error._tag === "EngineError"
+    ? engineFailure(error)
+    : new OrchestratorMcpFailure({
+        code: error.reason === "media_refused" ? "invalid_request" : "orchestration_error",
+        message: error.message,
+      });
 
 const noSuchJob = () =>
   new OrchestratorMcpFailure({
@@ -208,6 +219,33 @@ const handlers = {
         );
     }),
   ),
+  // Reads-level access: transcription only fills the project's .s7cache; it never changes the
+  // edit or the project's files, so plan-mode and read-only threads may run it too.
+  video_transcribe: McpToolAccess.readsAsCaller(({ media }) =>
+    Effect.gen(function* () {
+      const project = yield* callerProject();
+      const transcripts = yield* TranscriptService.TranscriptService;
+      return yield* transcripts
+        .start({ projectId: project.projectId, media })
+        .pipe(Effect.mapError(transcriptFailure));
+    }),
+  ),
+  video_transcript_read: McpToolAccess.readsAsCaller(({ media }) =>
+    Effect.gen(function* () {
+      const project = yield* callerProject();
+      const transcripts = yield* TranscriptService.TranscriptService;
+      const text = yield* transcripts
+        .readText({ projectId: project.projectId, media })
+        .pipe(Effect.mapError(transcriptFailure));
+      if (text === null) {
+        return yield* new OrchestratorMcpFailure({
+          code: "invalid_request",
+          message: `${media} has no transcript yet. Run video_transcribe first.`,
+        });
+      }
+      return { text };
+    }),
+  ),
 } satisfies McpToolAccess.Handlers<typeof VideoToolkit.tools>;
 
 export const layerStandard = McpToolAccess.toLayer(VideoStandardToolkit, {
@@ -216,6 +254,8 @@ export const layerStandard = McpToolAccess.toLayer(VideoStandardToolkit, {
   video_job_status: handlers.video_job_status,
   video_job_cancel: handlers.video_job_cancel,
   video_export: handlers.video_export,
+  video_transcribe: handlers.video_transcribe,
+  video_transcript_read: handlers.video_transcript_read,
 });
 
 export const layerFrame = McpToolAccess.toLayer(VideoFrameToolkit, {

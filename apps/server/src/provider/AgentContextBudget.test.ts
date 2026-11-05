@@ -12,6 +12,7 @@ import { DeviceService } from "../device/DeviceService.ts";
 import { EditDocumentService } from "../edit/EditDocumentService.ts";
 import { EngineService } from "../engine/EngineService.ts";
 import { ExportService } from "../export/ExportService.ts";
+import { TranscriptService } from "../transcript/TranscriptService.ts";
 import { ServerEnvironment } from "../environment/ServerEnvironment.ts";
 import { GitWorkflowService } from "../git/GitWorkflowService.ts";
 import * as McpHttpServer from "../mcp/McpHttpServer.ts";
@@ -54,6 +55,7 @@ const toolHandlerServices = Layer.mergeAll(
   Layer.mock(EditDocumentService)({}),
   Layer.mock(EngineService)({}),
   Layer.mock(ExportService)({}),
+  Layer.mock(TranscriptService)({}),
   Layer.mock(GitVcsDriver)({}),
   Layer.mock(GitWorkflowService)({}),
   Layer.mock(ManagedProjectFolders)({ namedProjectsRoot: "" }),

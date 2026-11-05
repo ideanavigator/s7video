@@ -29,6 +29,7 @@ import * as EngineService from "../../../engine/EngineService.ts";
 import * as ExportService from "../../../export/ExportService.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../../../project/ProjectService.ts";
+import * as TranscriptService from "../../../transcript/TranscriptService.ts";
 import * as McpHttpServer from "../../McpHttpServer.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccessTestkit from "../../McpToolAccess.testkit.ts";
@@ -152,6 +153,7 @@ describe.skipIf(!available)("video-frame-tool golden", () => {
             EngineService.layer.pipe(
               Layer.provide(ServerConfig.layerTest(work, { prefix: "video-frame-golden-" })),
             ),
+            Layer.mock(TranscriptService.TranscriptService)({}),
           ),
         ),
         Layer.provide(NodeServices.layer),

@@ -23,6 +23,7 @@ import * as EngineService from "../../../engine/EngineService.ts";
 import * as ExportService from "../../../export/ExportService.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../../../project/ProjectService.ts";
+import * as TranscriptService from "../../../transcript/TranscriptService.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 
 const dependencies = [
@@ -34,6 +35,8 @@ const dependencies = [
   FileSystem.FileSystem,
   Path.Path,
 ];
+
+const transcriptDependencies = [...dependencies, TranscriptService.TranscriptService];
 
 const Media = Schema.String.annotate({
   description: "Media id or project file path.",
@@ -148,6 +151,33 @@ const VideoExportTool = Tool.make("video_export", {
   .annotate(Tool.Title, "Export video")
   .annotateMerge(videoAnnotations(false));
 
+// Starts a job (S7V-026); the agent follows it with video_job_status. A cached clip answers at once.
+const VideoTranscribeTool = Tool.make("video_transcribe", {
+  description: "Transcribe a video clip's speech. Returns jobId, or cached.",
+  parameters: Schema.Struct({ media: Schema.String }),
+  success: Schema.Struct({
+    jobId: Schema.optional(EngineJobId),
+    cached: Schema.optional(Schema.Boolean),
+    wordCount: Schema.optional(Schema.Int),
+    durationFrames: Schema.optional(Schema.Int),
+  }),
+  failure: OrchestratorMcpFailure,
+  dependencies: transcriptDependencies,
+})
+  .annotate(Tool.Title, "Transcribe clip")
+  .annotateMerge(videoAnnotations(false));
+
+const VideoTranscriptReadTool = Tool.make("video_transcript_read", {
+  // No frame range: it would cost about 55 more bytes on every turn (AgentContextBudget).
+  description: "Read a video clip's transcript, frame-stamped lines.",
+  parameters: Schema.Struct({ media: Schema.String }),
+  success: Schema.Struct({ text: Schema.String }),
+  failure: OrchestratorMcpFailure,
+  dependencies: transcriptDependencies,
+})
+  .annotate(Tool.Title, "Read transcript")
+  .annotateMerge(READS);
+
 /** Tools that return JSON. A new tool goes here, with its handler in `handlers.ts`. */
 export const VideoStandardToolkit = Toolkit.make(
   VideoProbeTool,
@@ -155,6 +185,8 @@ export const VideoStandardToolkit = Toolkit.make(
   VideoJobStatusTool,
   VideoJobCancelTool,
   VideoExportTool,
+  VideoTranscribeTool,
+  VideoTranscriptReadTool,
 );
 
 /** `video_frame` returns image content, so it registers on its own (`registerVideoFrame`). */
@@ -166,5 +198,7 @@ export const VideoToolkit = Toolkit.make(
   VideoJobStatusTool,
   VideoJobCancelTool,
   VideoExportTool,
+  VideoTranscribeTool,
+  VideoTranscriptReadTool,
   VideoFrameTool,
 );
