@@ -1,0 +1,13 @@
+{
+  "format": "matroska,webm",
+  "video_codec": "av1",
+  "width": 1894,
+  "height": 1080,
+  "pix_fmt": "yuv420p",
+  "fps": "24000/1001",
+  "video_frames": 3356,
+  "duration_frames": 3356,
+  "audio_codec": "opus",
+  "audio_rate": 48000,
+  "audio_channels": 2
+}

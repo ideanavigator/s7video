@@ -1,0 +1,14 @@
+{
+  "clips": [
+    {
+      "id": "talking-head-01",
+      "file": "talking-head-01.webm",
+      "url": "https://upload.wikimedia.org/wikipedia/commons/2/2d/WikiConference_North_America_-_2025_-_Jiaxu_Zhao_-_Wikipedia%27s_Arbitration_Committee.webm",
+      "mirrors": [],
+      "sha256": "54ad0a3805394516438f2ba8e7f6ea75a7f77d18d391b8ed1a18e3bc6e1a0722",
+      "size": 12247260,
+      "licence": "CC-BY-4.0",
+      "sourcePage": "https://commons.wikimedia.org/wiki/File:WikiConference_North_America_-_2025_-_Jiaxu_Zhao_-_Wikipedia%27s_Arbitration_Committee.webm"
+    }
+  ]
+}

@@ -1,0 +1,18 @@
+[project]
+name = "s7engine"
+version = "0.0.0"
+description = "s7video local video engine"
+requires-python = ">=3.12,<3.13"
+license = "MIT"
+dependencies = ["jsonschema>=4.23"]
+
+[dependency-groups]
+dev = ["pytest>=8.3"]
+
+[build-system]
+requires = ["uv_build>=0.9,<0.13"]
+build-backend = "uv_build"
+
+[tool.pytest.ini_options]
+# Golden media tests are named `<case_name>_golden.py` (S7V-031, `pnpm test:golden`).
+python_files = ["test_*.py", "*_golden.py"]
