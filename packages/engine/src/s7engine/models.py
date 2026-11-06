@@ -229,7 +229,8 @@ def _blob_source(root: Path, model: Model, file: ModelFile) -> Path | None:
 
 def cached_snapshot(model: Model) -> dict[str, Path] | None:
     """The pinned revision in another cache: each locked file's resolved blob, every one inside
-    the model's own `blobs/` folder at its locked size. Callers read these paths, never the links."""
+    the model's own `blobs/` folder or the cache's shared `blobs/` store (see `_blob_source`), at
+    its locked size. Callers read these paths, never the links."""
     for root in _cache_roots():
         sources: dict[str, Path] = {}
         for file in model.files:
