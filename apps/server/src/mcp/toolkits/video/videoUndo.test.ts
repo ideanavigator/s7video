@@ -85,11 +85,17 @@ const client = McpSchema.McpServerClient.of({
   getClient: Effect.die("unused"),
 });
 
+/** Runs once, right after the next `read` returns: a write landing between a tool's read and its step. */
+interface ReadHook {
+  afterRead: Effect.Effect<void> | undefined;
+}
+
 /** The real edit services over git in a temp home, behind the video toolkit. */
 const withProject = <A, E>(
   body: (input: {
     readonly root: string;
     readonly thread: Thread;
+    readonly hook: ReadHook;
     readonly edits: EditDocumentService.EditDocumentService["Service"];
     readonly call: (
       name: string,
@@ -105,6 +111,23 @@ const withProject = <A, E>(
       interactionMode: "default",
       capabilities: ["orchestration", "video"],
     };
+    const hook: ReadHook = { afterRead: undefined };
+    const editLayer = Layer.effect(
+      EditDocumentService.EditDocumentService,
+      Effect.map(EditDocumentService.EditDocumentService, (real) =>
+        EditDocumentService.EditDocumentService.of({
+          ...real,
+          read: (projectId) =>
+            real.read(projectId).pipe(
+              Effect.tap(() => {
+                const after = hook.afterRead;
+                hook.afterRead = undefined;
+                return after ?? Effect.void;
+              }),
+            ),
+        }),
+      ),
+    ).pipe(Layer.provideMerge(layerEditTest(baseDir)));
     const services = Layer.mergeAll(
       Layer.mock(ThreadManagementService.ThreadManagementService)({
         getThreadShell: (id) =>
@@ -123,7 +146,7 @@ const withProject = <A, E>(
       Layer.mock(MediaLibraryService.MediaLibraryService)({}),
       Layer.mock(TranscriptService.TranscriptService)({}),
       Layer.mock(SilenceCutService.SilenceCutService)({}),
-    ).pipe(Layer.provideMerge(layerEditTest(baseDir)));
+    ).pipe(Layer.provideMerge(editLayer));
     return yield* Effect.gen(function* () {
       const folders = yield* ManagedProjectFolders.ManagedProjectFolders;
       const edits = yield* EditDocumentService.EditDocumentService;
@@ -137,7 +160,7 @@ const withProject = <A, E>(
             Effect.provideService(McpInvocationContext.McpInvocationContext, scopeFor(thread)),
             Effect.provideService(McpSchema.McpServerClient, client),
           );
-      return yield* body({ root: created.workspaceRoot, thread, edits, call });
+      return yield* body({ root: created.workspaceRoot, thread, hook, edits, call });
     }).pipe(
       Effect.provide(
         McpHttpServer.layerVideoToolkit.pipe(
@@ -188,6 +211,153 @@ describe("video_undo and video_redo", () => {
         expect(readFile(root, "edit.json")).toBe(afterFirst);
         expect(textOf(redone).join("")).toContain("Redone. The edit is now revision");
         expect(textOf(redone).join("")).toContain("1 item on 1 track, 300 frames");
+      }),
+    ),
+  );
+
+  // S7V-063: undo keeps clips in Assets (S7V-059), so stepping back past an import changes nothing.
+  it.effect("video_undo says when a step changes nothing on the timeline", () =>
+    withProject(({ root, thread, edits, call }) =>
+      Effect.gen(function* () {
+        const initial = yield* edits.read(thread.projectId);
+        const imported = yield* edits.apply(thread.projectId, [{ _tag: "putMedia", media }], {
+          origin: "agent",
+          baseRevision: initial.revision,
+        });
+        const before = readFile(root, "edit.json");
+
+        const undo = yield* call("video_undo");
+        expect(undo.isError).toBe(false);
+        expect(readFile(root, "edit.json")).toBe(before);
+        const revision = (yield* edits.read(thread.projectId)).revision;
+        expect(revision).not.toBe(imported.revision);
+        expect(undo.structuredContent).toEqual({
+          revision,
+          message:
+            "Nothing on the timeline changed: that step only added or removed a clip in Assets, and clips stay in Assets when you undo or redo. There is nothing more to undo.",
+        });
+        const restored = JSON.parse(readFile(root, "edit.json"));
+        expect(restored.media.map((entry: { id: string }) => entry.id)).toEqual(["cam"]);
+      }),
+    ),
+  );
+
+  it.effect("video_redo says when a step changes nothing on the timeline", () =>
+    withProject(({ root, thread, edits, call }) =>
+      Effect.gen(function* () {
+        const initial = yield* edits.read(thread.projectId);
+        yield* edits.apply(thread.projectId, [{ _tag: "putMedia", media }], {
+          origin: "agent",
+          baseRevision: initial.revision,
+        });
+        yield* call("video_undo");
+        const before = readFile(root, "edit.json");
+
+        const redo = yield* call("video_redo");
+        expect(redo.isError).toBe(false);
+        expect(readFile(root, "edit.json")).toBe(before);
+        const revision = (yield* edits.read(thread.projectId)).revision;
+        expect(redo.structuredContent).toEqual({
+          revision,
+          message:
+            "Nothing on the timeline changed: that step only added or removed a clip in Assets, and clips stay in Assets when you undo or redo. There is nothing more to redo.",
+        });
+      }),
+    ),
+  );
+
+  it.effect("a no-op undo with more history left says undo again", () =>
+    withProject(({ root, thread, edits, call }) =>
+      Effect.gen(function* () {
+        const initial = yield* edits.read(thread.projectId);
+        const first = yield* edits.apply(thread.projectId, [...setup, keep([[0, 300]])], {
+          origin: "agent",
+          baseRevision: initial.revision,
+        });
+        yield* edits.apply(
+          thread.projectId,
+          [{ _tag: "putMedia", media: { ...media, id: "mic", path: "assets/mic.mp4" } }],
+          { origin: "agent", baseRevision: first.revision },
+        );
+
+        const noop = yield* call("video_undo");
+        expect(textOf(noop).join("")).toContain(
+          "Nothing on the timeline changed: that step only added or removed a clip in Assets, and clips stay in Assets when you undo or redo. Say undo again to go back further.",
+        );
+        const real = yield* call("video_undo");
+        expect(textOf(real).join("")).toContain("Undone. The edit is now revision");
+        const restored = JSON.parse(readFile(root, "edit.json"));
+        expect(restored.tracks).toEqual([]);
+        expect(restored.media.map((entry: { id: string }) => entry.id)).toEqual(["cam", "mic"]);
+
+        // One redo per undo: the first comes back to the edit, the second over the no-op import.
+        const redone = yield* call("video_redo");
+        expect(textOf(redone).join("")).toContain("Redone. The edit is now revision");
+        const again = yield* call("video_redo");
+        expect(textOf(again).join("")).toContain(
+          "Nothing on the timeline changed: that step only added or removed a clip in Assets, and clips stay in Assets when you undo or redo. There is nothing more to redo.",
+        );
+      }),
+    ),
+  );
+
+  // S7V-063 review: undo and redo put kept clips at the end, so order alone is not a change.
+  it.effect("a redo of an Assets removal that only reorders clips says nothing changed", () =>
+    withProject(({ root, thread, edits, call }) =>
+      Effect.gen(function* () {
+        const initial = yield* edits.read(thread.projectId);
+        const both = yield* edits.apply(
+          thread.projectId,
+          [
+            { _tag: "putMedia", media },
+            { _tag: "putMedia", media: { ...media, id: "mic", path: "assets/mic.mp4" } },
+          ],
+          { origin: "agent", baseRevision: initial.revision },
+        );
+        yield* edits.apply(thread.projectId, [{ _tag: "removeMedia", mediaId: "cam" }], {
+          origin: "agent",
+          baseRevision: both.revision,
+        });
+
+        const undo = yield* call("video_undo");
+        expect(textOf(undo).join("")).toContain("Undone. The edit is now revision");
+        const redo = yield* call("video_redo");
+        const ids = JSON.parse(readFile(root, "edit.json")).media.map(
+          (entry: { id: string }) => entry.id,
+        );
+        expect(ids).toEqual(["mic", "cam"]);
+        expect(textOf(redo).join("")).toContain(
+          "Nothing on the timeline changed: that step only added or removed a clip in Assets, and clips stay in Assets when you undo or redo. There is nothing more to redo.",
+        );
+      }),
+    ),
+  );
+
+  // S7V-063 review: "changed" is decided inside the service's lock, not from the tool's earlier read.
+  it.effect("an undo of a write that landed after the tool read the edit says Undone", () =>
+    withProject(({ thread, hook, edits, call }) =>
+      Effect.gen(function* () {
+        const initial = yield* edits.read(thread.projectId);
+        const first = yield* edits.apply(thread.projectId, [...setup, keep([[0, 300]])], {
+          origin: "agent",
+          baseRevision: initial.revision,
+        });
+        let landed = false;
+        hook.afterRead = edits
+          .apply(thread.projectId, [keep([[0, 90]])], {
+            origin: "timeline",
+            baseRevision: first.revision,
+          })
+          .pipe(
+            Effect.tap(() => Effect.sync(() => (landed = true))),
+            Effect.orDie,
+          );
+
+        // The tool saw the 300-frame edit; the timeline write makes it 90; the undo restores 300.
+        const undo = yield* call("video_undo");
+        expect(landed).toBe(true);
+        expect(textOf(undo).join("")).toContain("Undone. The edit is now revision");
+        expect(textOf(undo).join("")).toContain("1 item on 1 track, 300 frames");
       }),
     ),
   );

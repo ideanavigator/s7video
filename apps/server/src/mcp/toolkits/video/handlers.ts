@@ -138,6 +138,23 @@ const refusePlanMode = Effect.fn("VideoHandlers.refusePlanMode")(function* (acti
   }
 });
 
+/**
+ * S7V-063: undo keeps clips in Assets (S7V-059), so a step over an import can leave the edit as
+ * it was. The step is still taken (one undo, one redo); the reply says nothing visible changed.
+ */
+const unchangedStep = (direction: "undo" | "redo", snapshot: EditSnapshot) => {
+  const more = direction === "undo" ? snapshot.canUndo : snapshot.canRedo;
+  const next =
+    direction === "undo"
+      ? more
+        ? "Say undo again to go back further."
+        : "There is nothing more to undo."
+      : more
+        ? "Say redo again to go forward."
+        : "There is nothing more to redo.";
+  return `Nothing on the timeline changed: that step only added or removed a clip in Assets, and clips stay in Assets when you undo or redo. ${next}`;
+};
+
 /** Undo and redo through the same service method as the edit.undo / edit.redo RPCs. */
 const stepEdit = (direction: "undo" | "redo") =>
   McpToolAccess.actsAsCaller(() =>
@@ -145,10 +162,12 @@ const stepEdit = (direction: "undo" | "redo") =>
       yield* refusePlanMode(direction);
       const project = yield* callerProject();
       const edits = yield* EditDocumentService.EditDocumentService;
-      return yield* edits[direction](project.projectId).pipe(
-        Effect.map((snapshot) => ({
+      return yield* edits.step(project.projectId, direction).pipe(
+        Effect.map(({ snapshot, changed }) => ({
           revision: snapshot.revision,
-          message: `${direction === "undo" ? "Undone" : "Redone"}. The edit is now ${editSummary(snapshot)}.`,
+          message: changed
+            ? `${direction === "undo" ? "Undone" : "Redone"}. The edit is now ${editSummary(snapshot)}.`
+            : unchangedStep(direction, snapshot),
         })),
         Effect.catchTags({
           EditUnavailableError: (error) =>
