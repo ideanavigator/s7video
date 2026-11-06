@@ -1094,7 +1094,7 @@ it.effect("edit.apply refuses a media entry from a client, so it cannot point at
       Layer.mock(UsageLimitSources.UsageLimitSources)({}),
       Layer.mock(RemoteOpenTargets.RemoteOpenTargets)({}),
       Layer.mock(DirectEndpoints.DirectEndpoints)({}),
-      Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({}),
+      Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({ namedProjectsRoot: "/unused" }),
       Layer.mock(ScratchThreadPromotion.ScratchThreadPromotion)({}),
       Layer.mock(ServerEnvironment.ServerEnvironment)({}),
       Layer.mock(EnvironmentAuth.EnvironmentAuth)({}),
