@@ -215,6 +215,7 @@ import * as ProjectService from "./project/ProjectService.ts";
 import { threadWorkspaceRoot } from "./project/threadWorkspaceRoot.ts";
 import * as ManagedProjectFolders from "./project/ManagedProjectFolders.ts";
 import * as EditDocumentService from "./edit/EditDocumentService.ts";
+import { refuseClientMediaOps } from "./edit/clientEditOps.ts";
 import * as MediaLibraryService from "./media/MediaLibraryService.ts";
 import * as ScratchThreadPromotion from "./project/ScratchThreadPromotion.ts";
 import { mutateProjectWithClone } from "./project/ProjectMutation.ts";
@@ -2728,10 +2729,14 @@ export const layerWsRpc = (
             ),
         [WS_METHODS.editGet]: (input) => editDocuments.read(input.projectId),
         [WS_METHODS.editApply]: (input) =>
-          editDocuments.apply(input.projectId, input.ops, {
-            origin: input.origin,
-            baseRevision: input.baseRevision,
-          }),
+          refuseClientMediaOps(input.ops).pipe(
+            Effect.andThen(
+              editDocuments.apply(input.projectId, input.ops, {
+                origin: input.origin,
+                baseRevision: input.baseRevision,
+              }),
+            ),
+          ),
         [WS_METHODS.editSubscribe]: (input) => editDocuments.subscribe(input.projectId),
         [WS_METHODS.editUndo]: (input) => editDocuments.undo(input.projectId),
         [WS_METHODS.editRedo]: (input) => editDocuments.redo(input.projectId),
