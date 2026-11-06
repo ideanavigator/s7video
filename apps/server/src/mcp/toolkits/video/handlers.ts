@@ -152,7 +152,7 @@ const handlers = {
   video_import: McpToolAccess.actsAsCaller(({ path }) =>
     Effect.gen(function* () {
       const project = yield* callerProject();
-      const file = yield* resolveSharedFile(project, path);
+      const { path: file, label } = yield* resolveSharedFile(project, path);
       const library = yield* MediaLibraryService.MediaLibraryService;
       const libraryFailure = (error: MediaLibraryError) =>
         new OrchestratorMcpFailure({
@@ -175,6 +175,7 @@ const handlers = {
           sourcePath: file,
           mode: "copy",
           origin: "agent",
+          ...(label === undefined ? {} : { label }),
         })
         .pipe(Effect.mapError(libraryFailure));
       return {

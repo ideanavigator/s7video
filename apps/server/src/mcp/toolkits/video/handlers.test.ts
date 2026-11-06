@@ -157,7 +157,12 @@ interface Fixture {
   readonly attachmentsDir: string;
   readonly sharedInA: string;
   readonly sharedInB: string;
-  readonly imports: Array<{ sourcePath: string; mode: string; origin: string | undefined }>;
+  readonly imports: Array<{
+    sourcePath: string;
+    mode: string;
+    origin: string | undefined;
+    label: string | undefined;
+  }>;
   readonly silences: Array<SilenceCutService.RemoveSilencesInput>;
   diskShort: boolean;
 }
@@ -314,6 +319,7 @@ const layerFor = (fixture: Fixture, cancelSignal: Deferred.Deferred<string>) => 
             sourcePath: input.sourcePath,
             mode: input.mode,
             origin: input.origin,
+            label: input.label,
           });
           return { mediaId: "shared-sound" };
         }),
@@ -326,6 +332,26 @@ const layerFor = (fixture: Fixture, cancelSignal: Deferred.Deferred<string>) => 
           providerInstanceId: ProviderInstanceId.make("claudeAgent"),
           projectId: projectOf.get(threadId) ?? ProjectId.make("project:mcp-test"),
         }),
+      // The user's message in thread A carries the shared file under its original name.
+      getProjectThreadRecords: (input) =>
+        Effect.succeed({
+          messages:
+            input.threadId === threadA
+              ? [
+                  {
+                    attachments: [
+                      {
+                        type: "file",
+                        id: NodePath.basename(fixture.sharedInA).replace(/\.m4a$/u, ""),
+                        name: "voice over.m4a",
+                        mimeType: "audio/mp4",
+                        sizeBytes: 5,
+                      },
+                    ],
+                  },
+                ]
+              : [],
+        } as never),
     }),
     Layer.mock(ProjectService.ProjectService)({
       getById: (projectId) =>
@@ -513,8 +539,14 @@ describe("video toolkit", () => {
         const local = yield* call(threadA, "video_import", { path: inProject });
         expect(local.isError).toBe(false);
         expect(fixture.imports).toEqual([
-          { sourcePath: fixture.sharedInA, mode: "copy", origin: "agent" },
-          { sourcePath: inProject, mode: "copy", origin: "agent" },
+          // A chat attachment keeps the name it was sent with, not its stored id.
+          {
+            sourcePath: fixture.sharedInA,
+            mode: "copy",
+            origin: "agent",
+            label: "voice over.m4a",
+          },
+          { sourcePath: inProject, mode: "copy", origin: "agent", label: undefined },
         ]);
       }),
     ),

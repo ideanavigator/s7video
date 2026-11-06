@@ -651,6 +651,123 @@ describe("MediaLibraryService", () => {
     ),
   );
 
+  it.effect("undo never takes an imported clip out of Assets, even past the import", () =>
+    withLibrary(({ projectId, desktop, library, edits }) =>
+      Effect.gen(function* () {
+        const clip = writeClip(desktop, "cam.mp4");
+        yield* library.import({ projectId, sourcePath: clip, mode: "copy" });
+        const imported = yield* edits.read(projectId);
+        const edited = yield* edits.apply(
+          projectId,
+          [
+            { _tag: "addTrack", track: { kind: "video", id: "V1", items: [] } },
+            {
+              _tag: "setKeepRanges",
+              trackId: "V1",
+              mediaId: "cam",
+              ranges: [{ in: 0, duration: 120 }],
+            },
+          ],
+          { origin: "agent", baseRevision: imported.revision },
+        );
+        yield* edits.undo(projectId);
+        const undone = yield* edits.undo(projectId);
+        // Back to no edits, with the clip still in the library.
+        assert.deepEqual(undone.document.tracks, []);
+        assert.deepEqual(
+          undone.document.media.map((entry) => entry.id),
+          ["cam"],
+        );
+        assert.deepEqual(
+          (yield* library.list(projectId)).items.map((item) => [item.id, item.state]),
+          [["cam", "ready"]],
+        );
+        yield* edits.redo(projectId);
+        const redone = yield* edits.redo(projectId);
+        assert.deepEqual(redone.document, edited.document);
+      }),
+    ),
+  );
+
+  it.effect("picks a new clip's id against every id in the edit, not only clips", () =>
+    withLibrary(({ projectId, desktop, library, edits }) =>
+      Effect.gen(function* () {
+        const before = yield* edits.read(projectId);
+        yield* edits.apply(
+          projectId,
+          [{ _tag: "addTrack", track: { kind: "video", id: "music", items: [] } }],
+          { origin: "agent", baseRevision: before.revision },
+        );
+        const { mediaId } = yield* library.import({
+          projectId,
+          sourcePath: writeClip(desktop, "music.mp4"),
+          mode: "copy",
+        });
+        assert.equal(mediaId, "music-2");
+      }),
+    ),
+  );
+
+  it.effect("refuses an undo that would clash with a kept clip, and history stays usable", () =>
+    withLibrary(({ projectId, desktop, library, edits }) =>
+      Effect.gen(function* () {
+        const marked = yield* edits.apply(
+          projectId,
+          [{ _tag: "setMarkers", markers: [{ id: "cam", start: 0, duration: 30, label: "Cam" }] }],
+          { origin: "agent", baseRevision: (yield* edits.read(projectId)).revision },
+        );
+        yield* edits.apply(projectId, [{ _tag: "setMarkers", markers: [] }], {
+          origin: "agent",
+          baseRevision: marked.revision,
+        });
+        yield* library.import({
+          projectId,
+          sourcePath: writeClip(desktop, "cam.mp4"),
+          mode: "copy",
+        });
+        yield* edits.undo(projectId);
+        const refused = yield* Effect.flip(edits.undo(projectId));
+        assert.deepInclude(refused, {
+          _tag: "EditUnavailableError",
+          reason: "library-conflict",
+          explanation:
+            'This undo would clash with the clip "cam". Remove that clip from Assets first, then undo again.',
+        });
+        // Nothing moved: the clip is still listed and redo still works.
+        assert.deepEqual(
+          (yield* library.list(projectId)).items.map((item) => item.id),
+          ["cam"],
+        );
+        const redone = yield* edits.redo(projectId);
+        assert.deepEqual(
+          redone.document.media.map((entry) => entry.id),
+          ["cam"],
+        );
+        assert.isFalse(redone.canRedo);
+      }),
+    ),
+  );
+
+  it.effect("names a clip after the label it was given, never replacing a kept copy", () =>
+    withLibrary(({ projectId, root, desktop, library }) =>
+      Effect.gen(function* () {
+        const label = "talking-head-01.webm";
+        const first = writeClip(desktop, "f27e9a30-d05b-4c1e-9f00-c979f84adaf5.webm", 1);
+        const second = writeClip(desktop, "0b1c2d3e-0000-4c1e-9f00-c979f84adaf5.webm", 2);
+        const one = yield* library.import({ projectId, sourcePath: first, mode: "copy", label });
+        const two = yield* library.import({ projectId, sourcePath: second, mode: "copy", label });
+        assert.deepEqual([one.mediaId, two.mediaId], ["talking-head-01", "talking-head-01-2"]);
+        const media = editJson(root).media;
+        assert.deepInclude(media[0], { label, path: "assets/talking-head-01.webm" });
+        assert.deepInclude(media[1], { label, path: "assets/talking-head-01-2.webm" });
+        assert.deepEqual(
+          NodeFS.readFileSync(NodePath.join(root, "assets", "talking-head-01.webm")),
+          NodeFS.readFileSync(first),
+        );
+      }),
+    ),
+  );
+
   it.effect("two imports of same-named files at once keep both", () =>
     withLibrary(({ projectId, root, desktop, library }) =>
       Effect.gen(function* () {

@@ -112,11 +112,11 @@ describe("AssetsTab", () => {
       name: "big4k.mp4, length 2 minutes 40 seconds, ready",
     });
     await expect.element(big).toBeVisible();
-    await expect.element(big.getByText("2:40:00 · 3840×2160 · 2.1 GB")).toBeVisible();
+    await expect.element(big.getByText("2:40 · 3840×2160 · 2.1 GB")).toBeVisible();
     await expect.element(big.getByText("Linked")).toBeVisible();
     // Audio has no frame rate of its own; it counts at the edit's rate.
     const sound = screen.getByRole("listitem", { name: "whoosh.wav, length 2 seconds, ready" });
-    await expect.element(sound.getByText("0:02:00 · 195 KB")).toBeVisible();
+    await expect.element(sound.getByText("0:02 · 195 KB")).toBeVisible();
     await expect.element(sound.getByText("Copy")).toBeVisible();
   });
 

@@ -168,7 +168,10 @@ describe("video_undo and video_redo", () => {
         expect(once.isError).toBe(false);
         expect(readFile(root, "edit.json")).toBe(afterFirst);
         const twice = yield* call("video_undo");
-        expect(readFile(root, "edit.json")).toBe(beforeBoth);
+        // S7V-059: undo restores the edit, not the library, so the clip added with it stays.
+        const restored = JSON.parse(readFile(root, "edit.json"));
+        expect({ ...restored, media: [] }).toEqual(JSON.parse(beforeBoth));
+        expect(restored.media.map((entry: { id: string }) => entry.id)).toEqual(["cam"]);
         const revision = (yield* edits.read(thread.projectId)).revision;
         expect(twice.structuredContent).toEqual({
           revision,
