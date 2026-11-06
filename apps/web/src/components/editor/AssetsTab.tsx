@@ -6,7 +6,6 @@
  * S7V-029 mounts it in the Editor panel; nothing here knows about the panel.
  */
 import { LegendList } from "@legendapp/list/react";
-import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type {
   MediaAsset,
   MediaImporting,
@@ -27,6 +26,7 @@ import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "..
 import { Spinner } from "../ui/spinner";
 import { toastManager } from "../ui/toast";
 import { formatBytes, ImportDialog, type ImportRequest } from "./ImportDialog";
+import { explanationOf } from "./mediaErrorExplanation";
 import { formatMediaLength, spokenMediaLength } from "./mediaTimecode";
 
 const ROW_HEIGHT = 60;
@@ -273,15 +273,6 @@ function AssetThumbnail(props: {
   }
   return item.hasVideo ? <FilmIcon aria-hidden /> : <AudioLinesIcon aria-hidden />;
 }
-
-const explanationOf = (result: {
-  readonly cause: Parameters<typeof squashAtomCommandFailure>[0]["cause"];
-}) => {
-  const error = squashAtomCommandFailure(result);
-  return typeof error === "object" && error !== null && "explanation" in error
-    ? String(error.explanation)
-    : "Check that the project's server is running, then try again.";
-};
 
 /** Import, relink and remove for one project; the dialog state lives here. */
 export function useAssetsActions(projectRef: ScopedProjectRef) {

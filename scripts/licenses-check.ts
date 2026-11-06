@@ -139,10 +139,11 @@ const mediaExit = checkNoMedia(ROOT);
 
 // The video engine's Python dependencies (S7V-022), from packages/engine/uv.lock.
 const ENGINE_LOCK = "packages/engine/uv.lock";
+// `-B`: `-I` ignores PYTHONDONTWRITEBYTECODE, and `.pyc` under `packages/` restarts `vp run dev` (S7V-071).
 const pythonReport = JSON.parse(
   NodeChildProcess.execFileSync(
     "uv",
-    "run --frozen --offline --quiet --project packages/engine python -I -m s7engine.licences".split(
+    "run --frozen --offline --quiet --project packages/engine python -I -B -m s7engine.licences".split(
       " ",
     ),
     { cwd: ROOT, encoding: "utf8", maxBuffer: 16 * 1024 * 1024 },

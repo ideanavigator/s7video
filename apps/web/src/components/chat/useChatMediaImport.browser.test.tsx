@@ -13,6 +13,9 @@ const commands = vi.hoisted(() => ({
   readEdit: vi.fn(async () => ({ _tag: "Success", value: { document: { media: [{}] } } })),
 }));
 
+const toasts = vi.hoisted(() => ({ add: vi.fn((_toast: unknown) => "toast-id"), close: vi.fn() }));
+vi.mock(import("../ui/toast"), () => ({ toastManager: toasts as never }));
+
 vi.mock(import("../../state/use-atom-command"), () => ({
   useAtomCommand: ((command: { label: string }) =>
     command.label.endsWith("import-plan")
@@ -132,5 +135,120 @@ describe("useChatMediaImport", () => {
     using _bridge = stubGlobal("desktopBridge", undefined);
     expect(await dropped(projectId, [video])).toEqual([video]);
     expect(commands.plan).not.toHaveBeenCalled();
+  });
+
+  describe("when a chat drop cannot be imported (S7V-071)", () => {
+    interface ToastCall {
+      readonly type: string;
+      readonly title: string;
+      readonly description?: string;
+      readonly timeout?: number;
+      readonly actionProps?: { readonly children: string; readonly onClick: () => void };
+    }
+    const shown = () => toasts.add.mock.calls.map(([toast]) => toast as ToastCall);
+    const errors = () => shown().filter((toast) => toast.type === "error");
+    const notAVideo = failure(
+      new MediaLibraryError({ reason: "not-a-media-file", explanation: "Not a video." }),
+    );
+
+    function setUp() {
+      toasts.add.mockClear();
+      toasts.close.mockClear();
+      commands.importMedia.mockReset();
+      commands.readEdit.mockReset();
+      commands.readEdit.mockResolvedValue(editWithMedia(1));
+      commands.plan.mockResolvedValue({
+        _tag: "Success",
+        value: { suggestedMode: "reference", totalBytes: 60 * MIB, freeBytes: 900e9 },
+      });
+      return stubGlobal("desktopBridge", {
+        getPathForFile: (file: File) => `/Users/me/Desktop/${file.name}`,
+      });
+    }
+
+    it("shows why a dropped video could not be added, with Retry, and does not attach it", async () => {
+      using _bridge = setUp();
+      commands.importMedia.mockResolvedValue(notAVideo);
+      expect(await dropped(projectId, [video, notes])).toEqual([notes]);
+      expect(shown()).toEqual([
+        expect.objectContaining({
+          type: "error",
+          title: "Couldn't add interview.mov to Assets",
+          description: "Not a video.",
+          timeout: 0,
+          actionProps: expect.objectContaining({ children: "Retry" }),
+        }),
+      ]);
+    });
+
+    it("falls back to a plain reason when the failure carries none", async () => {
+      using _bridge = setUp();
+      commands.importMedia.mockResolvedValue(failure(new Error("socket closed")));
+      await dropped(projectId, [video]);
+      expect(errors().map((toast) => toast.description)).toEqual([
+        "Check that the project's server is running, then try again.",
+      ]);
+    });
+
+    it("Retry imports the file again and opens the Editor on success", async () => {
+      using _bridge = setUp();
+      commands.readEdit.mockResolvedValue(editWithMedia(0));
+      commands.importMedia
+        .mockResolvedValueOnce(notAVideo)
+        .mockResolvedValueOnce({ _tag: "Success", value: { mediaId: "x" } });
+      const opened = vi.fn();
+      await dropped(projectId, [video], opened);
+      expect(opened).not.toHaveBeenCalled();
+      errors()[0]!.actionProps!.onClick();
+      expect(toasts.close).toHaveBeenCalledWith("toast-id");
+      await vi.waitFor(() => expect(opened.mock.calls).toEqual([[projectId]]));
+      expect(commands.importMedia.mock.calls.map(([call]) => call.input)).toEqual([
+        { projectId, sourcePath: "/Users/me/Desktop/interview.mov", mode: "reference" },
+        { projectId, sourcePath: "/Users/me/Desktop/interview.mov", mode: "reference" },
+      ]);
+      expect(shown().at(-1)).toEqual({ type: "success", title: "Added to Assets" });
+    });
+
+    it("Retry that fails again shows the same message and nothing else", async () => {
+      using _bridge = setUp();
+      commands.importMedia.mockResolvedValue(notAVideo);
+      const opened = vi.fn();
+      await dropped(projectId, [video], opened);
+      errors()[0]!.actionProps!.onClick();
+      await vi.waitFor(() => expect(errors()).toHaveLength(2));
+      expect(errors()[1]!.title).toBe("Couldn't add interview.mov to Assets");
+      expect(shown().filter((toast) => toast.type === "success")).toEqual([]);
+      expect(opened).not.toHaveBeenCalled();
+    });
+
+    it("a failed audio drop is still attached and says why", async () => {
+      using _bridge = setUp();
+      commands.importMedia.mockResolvedValue(notAVideo);
+      expect(await dropped(projectId, [sound])).toEqual([sound]);
+      expect(errors().map(({ title, description }) => ({ title, description }))).toEqual([
+        {
+          title: "Couldn't add whoosh.m4a to Assets",
+          description: "Not a video. It's still attached to your message.",
+        },
+      ]);
+    });
+
+    it("two failed drops show one toast each, and each Retry retries only its own file", async () => {
+      using _bridge = setUp();
+      const take = new File([new Uint8Array(8)], "take-2.mp4", { type: "video/mp4" });
+      commands.importMedia.mockResolvedValue(notAVideo);
+      expect(await dropped(projectId, [video, take])).toEqual([]);
+      expect(errors().map((toast) => toast.title)).toEqual([
+        "Couldn't add interview.mov to Assets",
+        "Couldn't add take-2.mp4 to Assets",
+      ]);
+      commands.importMedia.mockClear();
+      commands.importMedia.mockResolvedValue({ _tag: "Success", value: { mediaId: "x" } });
+      errors()[1]!.actionProps!.onClick();
+      await vi.waitFor(() => expect(shown().at(-1)?.type).toBe("success"));
+      expect(commands.importMedia.mock.calls.map(([call]) => call.input.sourcePath)).toEqual([
+        "/Users/me/Desktop/take-2.mp4",
+      ]);
+    });
   });
 });
