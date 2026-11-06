@@ -1293,6 +1293,7 @@ it.effect("should hide tools without the video capability", () =>
         });
 
       expect(yield* listed("videoToken")).toEqual([
+        "video_canvas",
         "video_edit_read",
         "video_export",
         "video_frame",

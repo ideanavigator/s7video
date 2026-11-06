@@ -18,6 +18,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 
+import { CANVAS_FOR_RATIO } from "../../../edit/canvasForClip.ts";
 import * as EditDocumentService from "../../../edit/EditDocumentService.ts";
 import * as SilenceCutService from "../../../edit/SilenceCutService.ts";
 import * as EngineService from "../../../engine/EngineService.ts";
@@ -385,7 +386,7 @@ const handlers = {
     }),
   ),
   // Writes a file into the project, so plan-mode and read-only callers are refused.
-  video_export: McpToolAccess.actsAsCaller(({ preset, captions }) =>
+  video_export: McpToolAccess.actsAsCaller(({ captions }) =>
     Effect.gen(function* () {
       yield* refusePlanMode("export");
       const project = yield* callerProject();
@@ -393,7 +394,6 @@ const handlers = {
       return yield* exports
         .start({
           projectId: project.projectId,
-          ...(preset === undefined ? {} : { preset }),
           ...(captions === undefined ? {} : { captions }),
         })
         .pipe(
@@ -431,6 +431,38 @@ const handlers = {
         });
       }
       return { text };
+    }),
+  ),
+  // Writes the edit (one checkpoint), so plan-mode and read-only callers are refused.
+  video_canvas: McpToolAccess.actsAsCaller(({ ratio }) =>
+    Effect.gen(function* () {
+      yield* refusePlanMode("change the video's shape");
+      const project = yield* callerProject();
+      const canvas = CANVAS_FOR_RATIO[ratio];
+      const shape = `${ratio} (${canvas.width}×${canvas.height})`;
+      const { revision, document } = project.snapshot;
+      if (document.canvas.width === canvas.width && document.canvas.height === canvas.height) {
+        return { revision, message: `The video is already ${shape}.` };
+      }
+      const edits = yield* EditDocumentService.EditDocumentService;
+      return yield* edits
+        .apply(project.projectId, [{ _tag: "setCanvas", canvas }], {
+          origin: "agent",
+          baseRevision: revision,
+        })
+        .pipe(
+          Effect.map((after) => ({
+            revision: after.revision,
+            message: `The video is now ${shape}. Say undo to put it back.`,
+          })),
+          Effect.mapError(
+            (error) =>
+              new OrchestratorMcpFailure({
+                code: error._tag === "EditConflict" ? "invalid_request" : "orchestration_error",
+                message: error._tag === "EditUnavailableError" ? error.explanation : error.message,
+              }),
+          ),
+        );
     }),
   ),
   video_undo: stepEdit("undo"),
@@ -492,6 +524,7 @@ export const layerStandard = McpToolAccess.toLayer(VideoStandardToolkit, {
   video_undo: handlers.video_undo,
   video_redo: handlers.video_redo,
   video_remove_silences: handlers.video_remove_silences,
+  video_canvas: handlers.video_canvas,
 });
 
 export const layerFrame = McpToolAccess.toLayer(VideoFrameToolkit, {

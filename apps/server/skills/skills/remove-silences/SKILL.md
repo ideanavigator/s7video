@@ -29,7 +29,13 @@ The user asked you to cut the pauses from their clip. Do it with the video tools
    If the clip was already cut and the user wants pauses back ("looser", "keep the pause
    after ..."), call `video_undo` first, then `video_remove_silences` with the new setting.
 
-3. Reply in one or two plain sentences: how many seconds you removed and how many cuts you made,
+3. Do not export. Captions are added when the user exports; if they asked for captions, say so.
+   Call `video_export` only when this message asks for a video file ("export", "render", "make
+   the video"), never because an earlier message did. Call `video_canvas` only when the user names a
+   shape (reel or tall 9:16, wide 16:9, square 1:1, 4:5, 4:3); otherwise the video keeps the clip's
+   own shape.
+
+4. Reply in one or two plain sentences: how many seconds you removed and how many cuts you made,
    taken from the tool's result. If the result says a pause you asked to keep was cut by an
    earlier edit, tell the user it stays cut and offer to undo back to before that cut, then ask
    again. Describe a pause by the word next to it or in seconds, never by frame numbers. When

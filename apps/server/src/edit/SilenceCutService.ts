@@ -22,6 +22,7 @@ import * as EngineService from "../engine/EngineService.ts";
 import { projectFor, resolveMedia } from "../mcp/VideoProjectScope.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as TranscriptService from "../transcript/TranscriptService.ts";
+import { canvasForClip } from "./canvasForClip.ts";
 import * as EditDocumentService from "./EditDocumentService.ts";
 import { DEFAULT_MIN_GAP_SECONDS, type FrameRange, planSilenceCuts } from "./silencePlan.ts";
 
@@ -247,10 +248,21 @@ const make = Effect.gen(function* () {
     };
     // Nothing new to remove: the edit stays exactly as it is.
     if (plan.cuts === 0) return { ...summary, revision, changed: false };
+    // The first clip on an empty timeline gives the edit its shape, in the same checkpoint (S7V-061).
+    const empty = document.tracks.every(
+      (track) => track.kind !== "video" || track.items.length === 0,
+    );
+    const canvas = empty ? canvasForClip(media.probe) : undefined;
+    const reshape =
+      canvas === undefined ||
+      (canvas.width === document.canvas.width && canvas.height === document.canvas.height)
+        ? []
+        : [{ _tag: "setCanvas", canvas } as const];
     const after = yield* edits.apply(
       input.projectId,
       [
         ...target.addTrack,
+        ...reshape,
         {
           _tag: "setKeepRanges",
           trackId: target.trackId,
