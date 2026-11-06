@@ -1071,6 +1071,115 @@ describe("ClaudeAdapterV2 Auto-accept edits", () => {
   );
 });
 
+describe("ClaudeAdapterV2 built-in skills (S7V-048)", () => {
+  const startSkillTurn = Effect.fnUntraced(function* (video: boolean) {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+    const attachmentsDir = yield* fileSystem.makeTempDirectoryScoped({
+      prefix: "t3-claude-built-in-skills-",
+    });
+    const threadId = ThreadId.make(`thread-claude-built-in-skills-${video}`);
+    yield* mcpSessions.set({
+      environmentId: EnvironmentId.make("environment-built-in-skills"),
+      threadId,
+      providerSessionId: `mcp-session-${threadId}`,
+      providerInstanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
+      endpoint: "http://127.0.0.1:43123/mcp",
+      authorizationHeader: "Bearer dummy-mcp-credential",
+      browserToolsAvailable: false,
+      capabilities: new Set(video ? ["orchestration", "video"] : ["orchestration"]),
+    });
+    let openedOptions: ClaudeAdapterV2.ClaudeAgentSdkQueryOptions | undefined;
+    const offered: Array<unknown> = [];
+    const adapter = yield* ClaudeAdapterV2.makeClaudeAdapterV2({
+      instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
+      settings: { ...DEFAULT_CLAUDE_SETTINGS, homePath: attachmentsDir },
+      environment: {},
+      attachmentsDir,
+      fileSystem,
+      path,
+      crypto: yield* Crypto.Crypto,
+      idAllocator: yield* IdAllocator.IdAllocatorV2,
+      queryRunner: {
+        allocateSessionId: Effect.succeed(`native-${threadId}`),
+        open: (input) =>
+          Effect.sync(() => {
+            openedOptions = input.options;
+            return {
+              messages: Stream.never,
+              offer: (message: unknown) => Effect.sync(() => void offered.push(message)),
+              setModel: () => Effect.void,
+              applyFlagSettings: () => Effect.void,
+              setPermissionMode: () => Effect.void,
+              backgroundTasks: () => Effect.succeed(false),
+              stopTask: () => Effect.void,
+              interrupt: Effect.void,
+              close: Effect.void,
+            };
+          }),
+        forkSession: () => Effect.die("unused"),
+        subagentLaunchToolUseId: () => Effect.succeed(null),
+        assertComplete: Effect.void,
+      },
+    });
+    const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      cwd: attachmentsDir,
+    });
+    const runtime = yield* adapter.openSession({
+      threadId,
+      providerSessionId: ProviderSessionId.make(`provider-session-${threadId}`),
+      modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+      runtimePolicy,
+    });
+    const providerThread = yield* runtime.ensureThread({
+      threadId,
+      modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+      runtimePolicy,
+    });
+    yield* runtime.startTurn(
+      makeClaudeTestTurnInput({
+        threadId,
+        providerThread,
+        now: yield* DateTime.now,
+        attemptId: RunAttemptId.make(`attempt-${threadId}`),
+        text: "$video:remove-silences",
+        attachments: [],
+        runtimePolicy,
+      }),
+    );
+    return { options: openedOptions, offered: JSON.stringify(offered) };
+  });
+
+  it.effect("claude adapter passes the built-in plugin to video threads only", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const video = yield* startSkillTurn(true);
+        assert.deepEqual(video.options?.plugins, [
+          {
+            type: "local",
+            path: path.resolve(import.meta.dirname, "../../../skills"),
+            skipMcpDiscovery: true,
+          },
+        ]);
+        assert.include(video.offered, '"/video:remove-silences"');
+
+        const plain = yield* startSkillTurn(false);
+        assert.isUndefined(plain.options?.plugins);
+        assert.include(plain.offered, "$video:remove-silences");
+        assert.notInclude(plain.offered, '"/video:remove-silences"');
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+});
+
 describe("ClaudeAdapterV2 append-system-prompt-file launch argument", () => {
   const startTurnWithLaunchArgs = Effect.fnUntraced(function* (launchArgs: string, cwd: string) {
     const fileSystem = yield* FileSystem.FileSystem;

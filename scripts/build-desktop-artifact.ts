@@ -924,6 +924,9 @@ export const DESKTOP_FILE_EXCLUSIONS = [
   "!apps/desktop/prod-resources/wsl-runtime.tar.gz.sha256",
   "!apps/desktop/gnome-extension",
   "!apps/desktop/gnome-extension/**/*",
+  // Shipped once, as the `skills` extra resource (S7V-048).
+  "!apps/server/skills",
+  "!apps/server/skills/**/*",
 ] as const;
 // Windows terminal helpers cannot run on macOS and slow signing and notarization.
 export const MAC_FILE_EXCLUSIONS = [
@@ -3383,6 +3386,10 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
   if (options.platform !== "win") {
     yield* fs.copy(distDirs.serverDist, path.join(stageAppDir, "apps/server/dist"));
   }
+  yield* fs.copy(
+    path.join(repoRoot, "apps/server/skills"),
+    path.join(stageAppDir, "apps/server/skills"),
+  );
   yield* stageResourceMonitor({
     repoRoot,
     stageResourcesDir,

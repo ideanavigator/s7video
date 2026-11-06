@@ -38,6 +38,7 @@ path = [
   "packages/engine/.python-version",
   "packages/engine/uv.lock",
   "packages/engine/models.lock.json",
+  "apps/server/skills/**",
 ]
 precedence = "closest"
 SPDX-FileCopyrightText = "2026 s7video contributors"

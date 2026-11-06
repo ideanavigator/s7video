@@ -41,6 +41,7 @@ import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Predicate from "effect/Predicate";
 import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import { MCP_APP_OUTPUT_KEY, readMcpAppReference } from "@t3tools/shared/mcpApp";
 import { toolOutputImages } from "@t3tools/shared/toolOutput";
 import { resolveAttachmentPathById } from "../../attachmentStore.ts";
@@ -1069,6 +1070,65 @@ describe("CodexAdapterV2 session initialize", () => {
         failure.cause.message,
         "Codex 0.144.3 does not work with this s7video release. Update Codex to >=0.159.0, then retry.",
       );
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
+  );
+
+  it.effect("should give video threads the built-in skills folder for their process only", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const scenario = "codex-built-in-skills";
+      yield* (yield* McpProviderSessions.McpProviderSessions).set({
+        environmentId: EnvironmentId.make("environment-codex-skills"),
+        threadId: ThreadId.make(`thread-${scenario}`),
+        providerSessionId: `provider-session-${scenario}`,
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        endpoint: "http://127.0.0.1:43123/mcp",
+        authorizationHeader: "Bearer secret-codex-token",
+        browserToolsAvailable: false,
+        capabilities: new Set(["orchestration", "video"]),
+      });
+      const [initialize, initializeResult, initialized, ...thread] = replayPreamble(scenario);
+      const session = yield* openReplaySession(
+        makeCodexReplayTranscript({
+          scenario,
+          entries: [
+            initialize!,
+            {
+              ...initializeResult!,
+              frame: {
+                id: 1,
+                result: {
+                  userAgent: "s7video/0.166.0",
+                  codexHome: "/tmp/codex-home",
+                  platformFamily: "unix",
+                  platformOs: "macos",
+                },
+              },
+            } as CodexReplay.CodexAppServerReplayEntry,
+            initialized!,
+            {
+              type: "expect_outbound",
+              label: "skills/extraRoots/set",
+              frame: {
+                id: 2,
+                method: "skills/extraRoots/set",
+                params: {
+                  extraRoots: [path.resolve(import.meta.dirname, "../../../skills/skills")],
+                },
+              },
+            },
+            { type: "emit_inbound", label: "skills/extraRoots/set", frame: { id: 2, result: {} } },
+            ...thread.slice(0, 2).map((entry) => withReplayRequestId(entry, 3)),
+          ],
+        }),
+      );
+      const providerThread = yield* session.ensureThread(`thread-${scenario}`);
+      assert.equal(providerThread.nativeThreadRef?.nativeId, scenario);
     }).pipe(
       Effect.scoped,
       Effect.provide(

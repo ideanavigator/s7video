@@ -53,6 +53,8 @@ from; the per-ticket entries and how this file is compiled are in
   export without captions. (S7V-046)
 - Undo from chat: say "undo that" or "redo" and the assistant steps your edit back or forward. Your
   footage is never touched. (S7V-041)
+- Pick "Remove silences" from the chat's / menu, or ask for it, and the assistant cuts the pauses and
+  tells you how much it removed. It never does this unless you ask. (S7V-048)
 
 ### Changed
 

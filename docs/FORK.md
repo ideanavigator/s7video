@@ -305,6 +305,23 @@ undo history. These upstream files have small, additive edits:
 
 ACP agents do not get the line yet.
 
+## Built-in skills (S7V-048)
+
+`apps/server/skills/` is a Claude plugin folder (`.claude-plugin/plugin.json`, plugin name `video`)
+whose `skills/` subfolder holds one folder per skill, so both agents read the same files.
+`apps/server/src/skills/BuiltInSkills.ts` finds it by absolute path: `S7VIDEO_SKILLS_DIR` (set by the
+desktop app to `Resources/skills`), then the source tree, then a bundled server; never a folder in an
+asar archive. The skills only reach threads with the `video` capability, the same gate as the video
+tools. These upstream files have small edits:
+
+- `provider/Drivers/ClaudeSkills.ts`: `discoverClaudeSkills` takes app plugin folders and lists their skills with scope `system`.
+- `orchestration-v2/Adapters/ClaudeAdapterV2.ts`: `makeClaudeQueryOptions` takes `pluginDirs` (SDK `plugins`, `skipMcpDiscovery`); video threads pass the folder, and skill dispatch sees its skills.
+- `provider/ClaudeProvider.ts`: the per-folder snapshot lists the skills in edit projects (the `/` menu).
+- `orchestration-v2/Adapters/CodexAdapterV2.ts`: video threads call `skills/extraRoots/set` after `initialize`. The roots live in that app-server process only; Codex's own home and config are untouched.
+- `provider/CodexProvider.ts` (`probeCodexSkillsForCwd`), `Drivers/CodexDriver.ts`, `Drivers/CodexManagedProvider.ts`: the same call before `skills/list` in edit projects.
+- `scripts/build-desktop-artifact.ts` stages the folder and ships it as the `skills` extra resource, outside `app.asar`; `apps/desktop/src/backend/DesktopBackendConfiguration.ts` sets `S7VIDEO_SKILLS_DIR` when packaged.
+- `provider/agentContextBudget.json` gains `builtInSkillListingBytes`, the per-session cost of listing the skills.
+
 ## Licensing (S7V-004)
 
 `LICENSE` is T3 Code's MIT licence with a second line, `Copyright (c) 2026 s7video contributors`.
