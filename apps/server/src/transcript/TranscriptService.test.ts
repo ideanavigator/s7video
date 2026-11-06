@@ -340,7 +340,7 @@ describe("TranscriptService", () => {
       const service = yield* TranscriptService.TranscriptService;
       const error = yield* service.transcribe({ projectId, media: "cam" }).pipe(Effect.flip);
       expect(error).toMatchObject({ _tag: "EngineError", reason: "models_missing" });
-      expect(error.message).toContain("accept the download in the Editor panel");
+      expect(error.message).toContain("press Download speech model at the top of the Editor panel");
     }).pipe(Effect.provide(layer), Effect.ensuring(cleanup(project)));
   });
 

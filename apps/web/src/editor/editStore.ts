@@ -21,6 +21,7 @@ import {
   type ProjectId,
   type ScopedProjectRef,
   type Transcript,
+  type TranscribeModelsStatus,
   WS_METHODS,
 } from "@t3tools/contracts";
 import { Cause, Stream } from "effect";
@@ -29,6 +30,7 @@ import { useState } from "react";
 import { create } from "zustand";
 
 import { connectionAtomRuntime } from "../connection/runtime";
+import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentServerConfigsAtom } from "../state/server";
 import { acceptNewerSnapshot, applyJobsEvent, followExportJob } from "./editStreams";
 
@@ -206,21 +208,80 @@ export interface TranscriptionJobs {
   readonly download: EngineJob | null;
 }
 
-/** This project's running transcription and the model download, from the jobs stream. */
+/** This project's running transcription (none without a project) and the model download. */
 export function useTranscriptionJobs(
   environmentId: EnvironmentId,
-  projectId: ProjectId,
+  projectId: ProjectId | null,
 ): TranscriptionJobs {
   const jobs = useAtomValue(environmentJobsAtom(environmentId));
   let transcribe: EngineJob | null = null;
   let download: EngineJob | null = null;
   for (const job of jobs.values()) {
     if (job.state !== "running") continue;
-    if (job.kind === TRANSCRIBE_JOB_KIND && job.projectId === projectId) transcribe = job;
+    if (job.kind === TRANSCRIBE_JOB_KIND && projectId !== null && job.projectId === projectId)
+      transcribe = job;
     if (job.kind === MODELS_DOWNLOAD_JOB_KIND) download = job;
   }
   return { transcribe, download };
 }
+
+/** Bumped after the user answers the model question, so every reader of the status refetches. */
+const modelsAnswerRevisionAtom = Atom.family((_environmentId: EnvironmentId) =>
+  Atom.make(0).pipe(Atom.keepAlive),
+);
+
+const modelsStatusTriggerAtom = Atom.family((environmentId: EnvironmentId) =>
+  Atom.make((get) => {
+    let ended = 0;
+    for (const job of get(environmentJobsAtom(environmentId)).values()) {
+      if (job.kind === MODELS_DOWNLOAD_JOB_KIND && job.state !== "running") ended += 1;
+    }
+    return `${get(modelsAnswerRevisionAtom(environmentId))}:${ended}`;
+  }).pipe(Atom.withLabel(`web-models-status-trigger:${environmentId}`)),
+);
+
+const modelsStatusQuery = createEnvironmentRpcQueryAtomFamily(connectionAtomRuntime, {
+  label: "environment-data:transcribe:models-status-query",
+  tag: WS_METHODS.transcribeModelsStatus,
+  refreshTrigger: ({ environmentId }) => modelsStatusTriggerAtom(environmentId),
+});
+
+/** The speech model's status on this server, refetched when a download ends; null until known. */
+export function useSpeechModelStatus(environmentId: EnvironmentId): TranscribeModelsStatus | null {
+  const result = useAtomValue(modelsStatusQuery({ environmentId, input: {} }));
+  return AsyncResult.isSuccess(result) ? result.value : null;
+}
+
+export function refreshSpeechModelStatus(environmentId: EnvironmentId): void {
+  const revision = modelsAnswerRevisionAtom(environmentId);
+  appAtomRegistry.set(revision, appAtomRegistry.get(revision) + 1);
+}
+
+export const anySpeechModelReady = (status: TranscribeModelsStatus) =>
+  status.profiles.default.ready || status.profiles.light.ready;
+
+interface SpeechModelRequestStore {
+  /** Servers whose agent asked for the missing model since the user last answered (S7V-067). */
+  readonly requested: Readonly<Record<string, true>>;
+  request: (environmentId: EnvironmentId) => void;
+  clear: (environmentId: EnvironmentId) => void;
+}
+
+export const useSpeechModelRequests = create<SpeechModelRequestStore>()((set) => ({
+  requested: {},
+  request: (environmentId) =>
+    set((state) =>
+      state.requested[environmentId]
+        ? state
+        : { requested: { ...state.requested, [environmentId]: true } },
+    ),
+  clear: (environmentId) =>
+    set((state) => {
+      if (!state.requested[environmentId]) return state;
+      const { [environmentId]: _cleared, ...rest } = state.requested;
+      return { requested: rest };
+    }),
+}));
 
 const NO_STATUS = Atom.make(AsyncResult.initial<ExportStatus | null>()).pipe(
   Atom.withLabel("web-export-status:none"),

@@ -189,7 +189,7 @@ def require_ready(profile: str) -> list[Model]:
     if not all(_verified(model) for model in models):
         raise RpcError(
             MODELS_MISSING,
-            "the speech model is not downloaded; accept the download in the Editor panel",
+            "the speech model is not downloaded; press Download speech model in the Editor panel",
             {"profile": profile},
         )
     return models

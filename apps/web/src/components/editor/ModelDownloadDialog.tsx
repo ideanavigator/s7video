@@ -1,13 +1,13 @@
 // SPDX-FileCopyrightText: 2026 s7video contributors
 // SPDX-License-Identifier: MIT
 // The question before the speech model downloads (S7V-026, ADR-006). It only shows state: the
-// Transcript tab (S7V-030) opens it when the user asks to transcribe and no model is downloaded,
-// and wires the answers to transcribe.models.download / .dismiss and the download's engine job
-// (progress and cancel through engine.jobs.*). Nothing opens it unasked.
+// Transcript tab (S7V-030) and the Editor panel's prompt (S7V-067) open it when the user asks,
+// and wire the answers through useModelDownload. Nothing opens it unasked.
 import type { TranscribeModel, TranscribeModelsStatus } from "@t3tools/contracts";
 import { useId, useState } from "react";
 
 import { APP_BASE_NAME } from "../../branding";
+import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import {
   Dialog,
@@ -27,7 +27,7 @@ export type ModelDownloadState =
   | { readonly phase: "failed"; readonly message: string };
 
 /** Decimal gigabytes, as download sizes are usually given: 3744329895 bytes is "3.7 GB". */
-function formatGigabytes(bytes: number): string {
+export function formatGigabytes(bytes: number): string {
   return `${(bytes / 1e9).toFixed(1)} GB`;
 }
 
@@ -37,8 +37,53 @@ const CHOICES: ReadonlyArray<{
   readonly hint: string;
 }> = [
   { model: "default", label: "Standard", hint: "The most accurate." },
-  { model: "light", label: "Light", hint: "Smaller and faster, a few more mistakes." },
+  {
+    model: "light",
+    label: "Light",
+    hint: "Smaller and faster, a few more mistakes. Suits Macs with 8 GB of memory or less.",
+  },
 ];
+
+/** Standard or Light with their sizes; the server's recommendation (ADR-006) is marked. */
+export function ModelChoice(props: {
+  readonly status: TranscribeModelsStatus;
+  readonly value: TranscribeModel;
+  readonly onChange: (model: TranscribeModel) => void;
+  readonly disabled?: boolean;
+}) {
+  const id = useId();
+  return (
+    <RadioGroup
+      aria-label="Speech model"
+      value={props.value}
+      disabled={props.disabled ?? false}
+      onValueChange={(value) => {
+        if (value === "default" || value === "light") props.onChange(value);
+      }}
+    >
+      {CHOICES.map((choice) => (
+        <div key={choice.model} className="flex items-start gap-3">
+          <Radio id={`${id}-${choice.model}`} value={choice.model} />
+          <Label htmlFor={`${id}-${choice.model}`}>
+            <span className="flex flex-col gap-0.5">
+              <span className="flex flex-wrap items-center gap-1.5">
+                <span>
+                  {choice.label}, {formatGigabytes(props.status.profiles[choice.model].sizeBytes)}
+                </span>
+                {props.status.recommended === choice.model ? (
+                  <Badge variant="secondary" size="sm">
+                    Recommended
+                  </Badge>
+                ) : null}
+              </span>
+              <span className="text-muted-foreground text-sm">{choice.hint}</span>
+            </span>
+          </Label>
+        </div>
+      ))}
+    </RadioGroup>
+  );
+}
 
 export function ModelDownloadDialog(props: {
   readonly open: boolean;
@@ -48,7 +93,6 @@ export function ModelDownloadDialog(props: {
   readonly onCancelDownload: () => void;
   readonly onDismiss: () => void;
 }) {
-  const id = useId();
   const [model, setModel] = useState<TranscribeModel>(props.status.recommended);
   const size = formatGigabytes(props.status.profiles[model].sizeBytes);
   const { state } = props;
@@ -90,28 +134,7 @@ export function ModelDownloadDialog(props: {
               </p>
             </div>
           ) : (
-            <RadioGroup
-              aria-label="Speech model"
-              value={model}
-              onValueChange={(value) => {
-                if (value === "default" || value === "light") setModel(value);
-              }}
-            >
-              {CHOICES.map((choice) => (
-                <div key={choice.model} className="flex items-start gap-3">
-                  <Radio id={`${id}-${choice.model}`} value={choice.model} />
-                  <Label htmlFor={`${id}-${choice.model}`}>
-                    <span className="flex flex-col gap-0.5">
-                      <span>
-                        {choice.label},{" "}
-                        {formatGigabytes(props.status.profiles[choice.model].sizeBytes)}
-                      </span>
-                      <span className="text-muted-foreground text-sm">{choice.hint}</span>
-                    </span>
-                  </Label>
-                </div>
-              ))}
-            </RadioGroup>
+            <ModelChoice status={props.status} value={model} onChange={setModel} />
           )}
           {state.phase === "failed" ? (
             <p role="alert" className="mt-3 text-destructive text-sm">

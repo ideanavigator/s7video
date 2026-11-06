@@ -40,7 +40,7 @@ describe("ModelDownloadDialog", () => {
     await expect.element(screen.getByText("Standard, 3.7 GB")).toBeVisible();
     await expect.element(screen.getByText("Light, 2.3 GB")).toBeVisible();
     await expect
-      .element(screen.getByText("Smaller and faster, a few more mistakes."))
+      .element(screen.getByText(/Smaller and faster.*8 GB of memory or less/))
       .toBeVisible();
     await expect.element(screen.getByRole("radio", { name: /Standard/ })).toBeChecked();
     await press("Download 3.7 GB");

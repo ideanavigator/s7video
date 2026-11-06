@@ -40,6 +40,7 @@ import { toastManager } from "../ui/toast";
 import { AssetsTab, useAssetsActions } from "./AssetsTab";
 import { EditPlayer } from "./EditPlayer";
 import { ImportDialog } from "./ImportDialog";
+import { SpeechModelPrompt } from "./SpeechModelPrompt";
 import { TranscriptTab } from "./TranscriptTab";
 
 type EditorTab = "transcript" | "assets";
@@ -418,6 +419,7 @@ export default function EditorPanel(props: {
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-2 p-2" data-testid="editor-panel">
+      <SpeechModelPrompt projectRef={projectRef} />
       <div className="flex min-h-7 items-center justify-between gap-2">
         <div className="flex min-w-0 items-center gap-2 text-sm">
           {view._tag === "play" && view.mode === "clip" ? (

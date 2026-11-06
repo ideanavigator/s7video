@@ -494,7 +494,7 @@ def test_missing_model_returns_models_missing(
 ) -> None:
     reply = _run(wire, talk, tmp_path / "cache")
     assert reply["error"]["code"] == models.MODELS_MISSING
-    assert "accept the download in the Editor panel" in reply["error"]["message"]
+    assert "press Download speech model in the Editor panel" in reply["error"]["message"]
     assert reply["error"]["data"] == {"profile": "default"}
     assert fake_models.count == 0
 

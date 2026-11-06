@@ -13,6 +13,7 @@ import { AudioLinesIcon, FileTextIcon, TriangleAlertIcon } from "lucide-react";
 import { useEffect, useId, useRef, useState, type KeyboardEvent, type MouseEvent } from "react";
 
 import {
+  anySpeechModelReady,
   editEnvironment,
   rememberedPlayerFrame,
   requestPlayerSeek,
@@ -32,8 +33,9 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { Button } from "../ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "../ui/empty";
 import { Spinner } from "../ui/spinner";
-import { ModelDownloadDialog, type ModelDownloadState } from "./ModelDownloadDialog";
+import { ModelDownloadDialog } from "./ModelDownloadDialog";
 import { createTranscriptMarks, type TranscriptMarks } from "./transcriptMarks";
+import { commandErrorMessage, engineErrorReason, useModelDownload } from "./useModelDownload";
 
 export interface TranscriptTabProps {
   readonly projectRef: ScopedProjectRef;
@@ -42,21 +44,6 @@ export interface TranscriptTabProps {
   /** The player's rate and kept ranges; null when nothing plays and nothing is cut. */
   readonly playback: TranscriptPlayback | null;
 }
-
-const errorMessage = (error: unknown, fallback: string) =>
-  error instanceof Error && error.message.length > 0 ? error.message : fallback;
-
-const engineReason = (error: unknown) =>
-  typeof error === "object" &&
-  error !== null &&
-  "_tag" in error &&
-  error._tag === "EngineError" &&
-  "reason" in error
-    ? error.reason
-    : null;
-
-const anyModelReady = (status: TranscribeModelsStatus) =>
-  status.profiles.default.ready || status.profiles.light.ready;
 
 function Message(props: {
   readonly icon: React.ReactNode;
@@ -76,11 +63,6 @@ function Message(props: {
   );
 }
 
-interface DialogState {
-  readonly status: TranscribeModelsStatus;
-  readonly state: ModelDownloadState;
-}
-
 /** "Not transcribed yet", Transcribe, its progress, and the one-time model question. */
 function TranscribePrompt(props: {
   readonly projectRef: ScopedProjectRef;
@@ -89,96 +71,56 @@ function TranscribePrompt(props: {
   const { environmentId, projectId } = props.projectRef;
   const run = useAtomCommand(editEnvironment.transcribeRun, { reportFailure: false });
   const readStatus = useAtomCommand(editEnvironment.modelsStatus, { reportFailure: false });
-  const download = useAtomCommand(editEnvironment.modelsDownload, { reportFailure: false });
-  const dismiss = useAtomCommand(editEnvironment.modelsDismiss, { reportFailure: false });
-  const cancel = useAtomCommand(editEnvironment.cancelJob, { reportFailure: false });
   const jobs = useTranscriptionJobs(environmentId, projectId);
+  const model = useModelDownload(environmentId, projectId);
   const [pending, setPending] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
-  const [dialog, setDialog] = useState<DialogState | null>(null);
-  // A Cancel pressed before the download's job is in the jobs stream waits here for its id.
-  const cancelQueued = useRef(false);
-  const cancelRequested = useRef(false);
-  const downloadJobId = jobs.download?.id ?? null;
-
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- sends a queued cancel to the server once the download's job id arrives in the jobs stream
-  useEffect(() => {
-    if (!cancelQueued.current || downloadJobId === null) return;
-    cancelQueued.current = false;
-    void cancel({ environmentId, input: { jobId: downloadJobId } });
-  }, [cancel, downloadJobId, environmentId]);
-
-  const cancelDownload = () => {
-    cancelRequested.current = true;
-    if (downloadJobId === null) cancelQueued.current = true;
-    else void cancel({ environmentId, input: { jobId: downloadJobId } });
-  };
+  const [asking, setAsking] = useState<TranscribeModelsStatus | null>(null);
 
   const askForModel = async () => {
     const status = await readStatus({ environmentId, input: {} });
     if (status._tag === "Failure") {
       setFailure(
-        errorMessage(squashAtomCommandFailure(status), "The speech model can't be checked."),
+        commandErrorMessage(squashAtomCommandFailure(status), "The speech model can't be checked."),
       );
       return false;
     }
-    if (anyModelReady(status.value)) return true;
-    setDialog({ status: status.value, state: { phase: "asking" } });
+    if (anySpeechModelReady(status.value)) return true;
+    model.reset();
+    setAsking(status.value);
     return false;
   };
 
-  const transcribe = async (model?: TranscribeModel) => {
+  const transcribe = async (choice?: TranscribeModel) => {
     setFailure(null);
     setPending(true);
-    if (model === undefined && !(await askForModel())) {
+    if (choice === undefined && !(await askForModel())) {
       setPending(false);
       return;
     }
     const result = await run({
       environmentId,
-      input: { projectId, media: props.mediaId, ...(model === undefined ? {} : { model }) },
+      input: {
+        projectId,
+        media: props.mediaId,
+        ...(choice === undefined ? {} : { model: choice }),
+      },
     });
     setPending(false);
     if (result._tag === "Success") return;
     const error = squashAtomCommandFailure(result);
-    const reason = engineReason(error);
+    const reason = engineErrorReason(error);
     if (reason === "models_missing") await askForModel();
     else if (reason !== "cancelled")
-      setFailure(errorMessage(error, "The clip couldn't be transcribed."));
+      setFailure(commandErrorMessage(error, "The clip couldn't be transcribed."));
   };
 
-  const downloadModel = async (model: TranscribeModel) => {
-    if (dialog === null) return;
-    cancelRequested.current = false;
-    setDialog({ ...dialog, state: { phase: "downloading", progress: 0 } });
-    const result = await download({ environmentId, input: { model, projectId } });
-    cancelQueued.current = false;
-    if (cancelRequested.current) {
-      // Cancelled, or finished just as the user cancelled: either way, no transcription now.
-      setDialog(null);
-      return;
-    }
-    if (result._tag === "Success") {
-      setDialog(null);
-      await transcribe(model);
-      return;
-    }
-    const error = squashAtomCommandFailure(result);
-    if (engineReason(error) === "cancelled") setDialog(null);
-    else {
-      setDialog({
-        ...dialog,
-        state: { phase: "failed", message: errorMessage(error, "The download stopped.") },
-      });
-    }
+  const downloadModel = async (choice: TranscribeModel) => {
+    const outcome = await model.start(choice);
+    if (outcome === "failed") return;
+    setAsking(null);
+    if (outcome === "downloaded") await transcribe(choice);
   };
-
-  const dialogState: ModelDownloadState | null =
-    dialog === null
-      ? null
-      : dialog.state.phase === "downloading"
-        ? { phase: "downloading", progress: jobs.download?.progress ?? dialog.state.progress }
-        : dialog.state;
 
   const running = jobs.transcribe !== null || pending;
   const progress = Math.round((jobs.transcribe?.progress ?? 0) * 100);
@@ -221,16 +163,16 @@ function TranscribePrompt(props: {
           )}
         </Message>
       )}
-      {dialog === null || dialogState === null ? null : (
+      {asking === null ? null : (
         <ModelDownloadDialog
           open
-          status={dialog.status}
-          state={dialogState}
-          onDownload={(model) => void downloadModel(model)}
-          onCancelDownload={cancelDownload}
+          status={asking}
+          state={model.state ?? { phase: "asking" }}
+          onDownload={(choice) => void downloadModel(choice)}
+          onCancelDownload={model.cancel}
           onDismiss={() => {
-            setDialog(null);
-            void dismiss({ environmentId, input: {} });
+            setAsking(null);
+            void model.notNow();
           }}
         />
       )}
