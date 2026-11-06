@@ -60,6 +60,8 @@ interface Scenario {
   jobs: Array<{ kind: string; method: string; params: unknown; projectId: unknown }>;
   /** Runs inside each `silence` job before it succeeds (a gate, or a failure). */
   job: Effect.Effect<void, EngineError>;
+  /** What each `silence` job measures, when not the transcript's own clock. */
+  measured: { rate: { num: number; den: number }; durationFrames: number };
   /** Runs in each `silence` job before it has its id. */
   beforeStart: Effect.Effect<void>;
   /** Runs on each `levels` read. */
@@ -111,6 +113,7 @@ const withProject = <A, E>(
       job: Effect.void,
       beforeStart: Effect.void,
       asked: Effect.void,
+      measured: { rate: { num: 30, den: 1 }, durationFrames: FRAMES },
     };
     const engine = Layer.mock(EngineService.EngineService)({
       // No quick engine call at all: the levels come from the cache file or a job.
@@ -131,9 +134,8 @@ const withProject = <A, E>(
           // The job wrote the levels file.
           scenario.levelsCached = true;
           return {
-            rate: { num: 30, den: 1 },
-            durationFrames: FRAMES,
-            levels: levelsOf(scenario.words),
+            ...scenario.measured,
+            levels: levelsOf(scenario.words).slice(0, scenario.measured.durationFrames),
           } as never;
         }),
     });
@@ -582,6 +584,50 @@ describe("SilenceCutService", () => {
         // Both planned from the same edit: one cuts, the other finds it changed meanwhile.
         const cut = outcomes.flatMap((exit) => (Exit.isSuccess(exit) ? [exit.value.cuts] : []));
         assert.deepEqual(cut, [4]);
+      }),
+    ),
+  );
+
+  it.effect("a caller cut off while the job runs leaves it running for the next call", () =>
+    withProject(({ projectId, scenario, silences }) =>
+      Effect.gen(function* () {
+        const running = yield* Deferred.make<void>();
+        const gate = yield* Deferred.make<void>();
+        scenario.levelsCached = false;
+        scenario.job = Deferred.succeed(running, undefined).pipe(
+          Effect.andThen(Deferred.await(gate)),
+        );
+        const call = yield* silences.removeSilences({ projectId }).pipe(Effect.forkChild);
+        yield* Deferred.await(running);
+        yield* Fiber.interrupt(call);
+        yield* Deferred.succeed(gate, undefined);
+        const next = yield* silences.removeSilences({ projectId });
+        assert.strictEqual(next.cuts, 4);
+        assert.strictEqual(scenario.jobs.length, 1);
+      }),
+    ),
+  );
+
+  it.effect("refuses levels measured on another clock than the transcript's", () =>
+    withProject(({ projectId, root, scenario, silences }) =>
+      Effect.gen(function* () {
+        scenario.levelsCached = false;
+        const before = readEdit(root);
+        for (const measured of [
+          { rate: { num: 30, den: 1 }, durationFrames: FRAMES - 1 },
+          { rate: { num: 25, den: 1 }, durationFrames: FRAMES },
+        ]) {
+          scenario.measured = measured;
+          const error = yield* silences.removeSilences({ projectId }).pipe(Effect.flip);
+          assert.strictEqual(error._tag === "SilenceCutError" && error.reason, "no-transcript");
+          assert.strictEqual(
+            error.message,
+            "cam changed since it was transcribed. Run video_transcribe again.",
+          );
+          assert.strictEqual(readEdit(root), before);
+          scenario.levelsCached = false;
+        }
+        assert.strictEqual(scenario.jobs.length, 2);
       }),
     ),
   );

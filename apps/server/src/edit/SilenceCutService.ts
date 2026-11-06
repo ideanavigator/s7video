@@ -180,12 +180,10 @@ const make = Effect.gen(function* () {
     const key = `${source.cacheDir}\0${source.fingerprint.sha256}`;
     let entry = measuring.get(key);
     if (entry === undefined) {
-      // In the map before the job starts, so a call arriving meanwhile joins this one.
+      // In the map before the job has its id, so a call arriving meanwhile joins this one.
       const own: Measuring = { started: Deferred.makeUnsafe(), result: Deferred.makeUnsafe() };
       entry = own;
-      measuring.set(key, own);
-      // In the service's scope, so the job keeps going when this call stops waiting or is cut off.
-      yield* engine
+      const job = engine
         .runJob({
           kind: "silence",
           method: "silence.detect",
@@ -205,8 +203,18 @@ const make = Effect.gen(function* () {
               );
             }),
           ),
-          Effect.forkIn(serviceScope),
+          // The job itself stays interruptible (the service's scope ends it on shutdown).
+          Effect.interruptible,
         );
+      // Set and fork as one step: a caller cut off between them would leave an entry with no
+      // job, and every later call for the clip would wait on it forever. In the service's scope,
+      // so the job keeps going when this call stops waiting or is cut off.
+      yield* Effect.uninterruptible(
+        Effect.suspend(() => {
+          measuring.set(key, own);
+          return Effect.forkIn(job, serviceScope);
+        }),
+      );
     }
     const done = yield* Deferred.await(entry.result).pipe(Effect.timeoutOption(MEASURE_WAIT));
     if (done._tag === "Some") return done.value;
