@@ -90,6 +90,52 @@ interface ReadHook {
   afterRead: Effect.Effect<void> | undefined;
 }
 
+/** A wide 300-frame clip with three spoken phrases and room tone between them (S7V-061). */
+const wideClip = {
+  ...media,
+  probe: { durationFrames: 300, hasVideo: true, hasAudio: true, width: 1894, height: 1080 },
+} as const;
+const PHRASES = [
+  [30, 90],
+  [120, 180],
+  [210, 270],
+] as const;
+const spokenClip = Layer.mergeAll(
+  Layer.mock(EngineService.EngineService)({
+    subscribeJobs: Stream.make({ type: "snapshot" as const, jobs: [] }),
+    recentJobs: Effect.succeed([]),
+    call: (method) =>
+      method === "silence.detect"
+        ? Effect.succeed({
+            rate: { num: 30, den: 1 },
+            durationFrames: 300,
+            levels: Array.from({ length: 300 }, (_, frame) =>
+              PHRASES.some(([from, to]) => from <= frame && frame < to) ? -18 : -50,
+            ),
+          } as never)
+        : Effect.die(`unexpected ${method}`),
+  }),
+  Layer.mock(TranscriptService.TranscriptService)({
+    get: () =>
+      Effect.succeed({
+        transcriptVersion: 1,
+        mediaFingerprint: wideClip.fingerprint,
+        model: "test",
+        revision: "test",
+        fps: { num: 30, den: 1 },
+        durationFrames: 300,
+        words: PHRASES.map(([startFrame, endFrame], index) => ({
+          text: `w${index}`,
+          startFrame,
+          endFrame,
+          confidence: null,
+          speaker: "S1",
+        })),
+        createdAt: "2026-11-07T00:00:00.000Z",
+      }),
+  }),
+);
+
 /** The real edit services over git in a temp home, behind the video toolkit. */
 const withProject = <A, E>(
   body: (input: {
@@ -102,6 +148,8 @@ const withProject = <A, E>(
       args?: Record<string, unknown>,
     ) => Effect.Effect<McpSchema.CallToolResult, McpSchema.InternalError | McpSchema.InvalidParams>;
   }) => Effect.Effect<A, E, never>,
+  /** "real": the real SilenceCutService over a scripted transcript and sound levels. */
+  silences: "mock" | "real" = "mock",
 ) =>
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
@@ -138,14 +186,18 @@ const withProject = <A, E>(
             projectId: thread.projectId,
           })),
       }),
-      Layer.mock(EngineService.EngineService)({
-        subscribeJobs: Stream.make({ type: "snapshot" as const, jobs: [] }),
-        recentJobs: Effect.succeed([]),
-      }),
       Layer.mock(ExportService.ExportService)({}),
       Layer.mock(MediaLibraryService.MediaLibraryService)({}),
-      Layer.mock(TranscriptService.TranscriptService)({}),
-      Layer.mock(SilenceCutService.SilenceCutService)({}),
+      silences === "real"
+        ? SilenceCutService.layer.pipe(Layer.provideMerge(spokenClip))
+        : Layer.mergeAll(
+            Layer.mock(EngineService.EngineService)({
+              subscribeJobs: Stream.make({ type: "snapshot" as const, jobs: [] }),
+              recentJobs: Effect.succeed([]),
+            }),
+            Layer.mock(TranscriptService.TranscriptService)({}),
+            Layer.mock(SilenceCutService.SilenceCutService)({}),
+          ),
     ).pipe(Layer.provideMerge(editLayer));
     return yield* Effect.gen(function* () {
       const folders = yield* ManagedProjectFolders.ManagedProjectFolders;
@@ -442,6 +494,38 @@ describe("video_undo and video_redo", () => {
         const refused = yield* call("video_canvas", { ratio: "21:9" }).pipe(Effect.flip);
         expect(String(refused)).toMatch(/ratio/u);
       }),
+    ),
+  );
+
+  // Round-2 review: "make it a reel and remove the silences" on a wide clip stays a reel.
+  it.effect("video_canvas on the default shape still keeps the first cut from reshaping", () =>
+    withProject(
+      ({ root, thread, edits, call }) =>
+        Effect.gen(function* () {
+          NodeFS.mkdirSync(NodePath.join(root, "assets"), { recursive: true });
+          NodeFS.writeFileSync(NodePath.join(root, "assets", "cam.mp4"), "original media");
+          const initial = yield* edits.read(thread.projectId);
+          yield* edits.apply(thread.projectId, [{ _tag: "putMedia", media: wideClip }], {
+            origin: "import",
+            baseRevision: initial.revision,
+          });
+          const start = yield* edits.read(thread.projectId);
+          expect(start.document.canvas).toEqual({ width: 1080, height: 1920 });
+
+          const reel = yield* call("video_canvas", { ratio: "9:16" });
+          expect(reel.isError).toBe(false);
+          expect(reel.structuredContent).toMatchObject({
+            revision: start.revision + 1,
+            message: "The video is now 9:16 (1080×1920). Say undo to put it back.",
+          });
+
+          const cut = yield* call("video_remove_silences", {});
+          expect(cut.isError, textOf(cut).join("")).toBe(false);
+          const after = yield* edits.read(thread.projectId);
+          expect(after.document.tracks[0]?.items.length).toBe(3);
+          expect(after.document.canvas).toEqual({ width: 1080, height: 1920 });
+        }),
+      "real",
     ),
   );
 

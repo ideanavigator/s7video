@@ -441,7 +441,10 @@ const handlers = {
       const canvas = CANVAS_FOR_RATIO[ratio];
       const shape = `${ratio} (${canvas.width}×${canvas.height})`;
       const { revision, document } = project.snapshot;
-      if (document.canvas.width === canvas.width && document.canvas.height === canvas.height) {
+      const same =
+        document.canvas.width === canvas.width && document.canvas.height === canvas.height;
+      // A shape equal to the default must still be recorded as chosen, or the first cut resets it.
+      if (same && document.metadata.canvasChosen === true) {
         return { revision, message: `The video is already ${shape}.` };
       }
       const edits = yield* EditDocumentService.EditDocumentService;
