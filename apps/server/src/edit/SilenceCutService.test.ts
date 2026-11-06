@@ -281,6 +281,55 @@ describe("SilenceCutService", () => {
     ),
   );
 
+  it.effect("message names already-cut keeps", () =>
+    withProject(
+      ({ projectId, root, silences }) =>
+        Effect.gen(function* () {
+          // 130-150 lies in the retake removed by hand: it stays cut, the other pauses go.
+          const first = yield* silences.removeSilences({
+            projectId,
+            keep: [{ fromFrame: 130, toFrame: 150 }],
+          });
+          assert.isTrue(first.changed);
+          assert.strictEqual(first.keptRequests, 0);
+          assert.match(
+            first.message,
+            /^Removed .* earlier cuts\. The pause you asked to keep at 130-150 was already cut, so it stays cut; say undo to bring it back\.$/,
+          );
+          const afterFirst = readEdit(root);
+
+          // Nothing new to cut: the sentence follows the unchanged message.
+          const again = yield* silences.removeSilences({
+            projectId,
+            keep: [
+              { fromFrame: 130, toFrame: 150 },
+              { fromFrame: 160, toFrame: 170 },
+            ],
+          });
+          assert.isFalse(again.changed);
+          assert.strictEqual(again.keptRequests, 0);
+          assert.strictEqual(
+            again.message,
+            "No more pauses to cut; the edit is unchanged. The pauses you asked to keep at 130-150 and 160-170 were already cut, so they stay cut; say undo to bring them back.",
+          );
+          assert.strictEqual(readEdit(root), afterFirst);
+        }),
+      [
+        { _tag: "putMedia", media: camera },
+        { _tag: "addTrack", track: { kind: "video", id: "V1", items: [] } },
+        {
+          _tag: "setKeepRanges",
+          trackId: "V1",
+          mediaId: "cam",
+          ranges: [
+            { in: 0, duration: 115 },
+            { in: 185, duration: 115 },
+          ],
+        },
+      ],
+    ),
+  );
+
   it.effect("refuses a keep that starts after the clip ends", () =>
     withProject(({ projectId, root, silences }) =>
       Effect.gen(function* () {

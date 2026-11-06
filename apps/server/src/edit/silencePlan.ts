@@ -49,8 +49,13 @@ export type SilencePlan =
       readonly cuts: number;
       readonly removedFrames: number;
       readonly shortestFrames: number;
-      /** Requested keep ranges that would have been cut and play in the result. */
+      /**
+       * Requested keep ranges that would have been cut and play in the result. A part of a
+       * request inside an earlier cut never counts.
+       */
       readonly keptRequests: number;
+      /** The parts of requested keeps that an earlier edit already cut (source frames, in order). */
+      readonly alreadyCut: ReadonlyArray<FrameRange>;
     }
   | { readonly _tag: "no-speech" };
 
@@ -124,15 +129,17 @@ function subtractAll(spans: ReadonlyArray<Span>, removed: ReadonlyArray<Span>): 
 const total = (spans: ReadonlyArray<Span>) => spans.reduce((sum, [from, to]) => sum + to - from, 0);
 
 /**
- * Keeps shorter than `minimum` are joined into the cuts around them when they hold nothing
- * protected (words, requested keeps). Otherwise they widen into the newly planned part of the
- * shorter neighbouring cut; an earlier removal (`fixed`) is never given back. Returns the cuts.
+ * Keeps under `minimum` holding nothing protected join their cuts. One holding a word takes the
+ * shorter neighbouring planned cut; one holding only requests grows just to `minimum` (shorter
+ * side first; a whole neighbour if the rest would be under `minGap`). `fixed` is never given back.
  */
 function enforceMinimum(
   cuts: ReadonlyArray<Span>,
   length: number,
   minimum: number,
-  protect: ReadonlyArray<Span>,
+  minGap: number,
+  words: ReadonlyArray<Span>,
+  requests: ReadonlyArray<Span>,
   fixed: ReadonlyArray<Span>,
 ): Span[] {
   let current = union(cuts);
@@ -143,7 +150,8 @@ function enforceMinimum(
     const short = keeps.find(([from, to]) => to - from < minimum && !settled.has(from));
     if (short === undefined) return current;
     const [from, to] = short;
-    if (!overlaps(protect, short)) {
+    const holdsWord = overlaps(words, short);
+    if (!holdsWord && !overlaps(requests, short)) {
       current = union([...current, short]);
       continue;
     }
@@ -151,16 +159,20 @@ function enforceMinimum(
     const after = current.findIndex(([start]) => start === to);
     // How far the keep may grow into each neighbour before it would reach an earlier removal.
     let leftEdge = from;
+    let leftStart = from;
     if (before !== -1) {
       const [a] = current[before]!;
+      leftStart = a;
       leftEdge = Math.max(
         a,
         ...fixed.filter(([f0, f1]) => f0 < from && f1 > a).map(([, f1]) => Math.min(f1, from)),
       );
     }
     let rightEdge = to;
+    let rightEnd = to;
     if (after !== -1) {
       const [, b] = current[after]!;
+      rightEnd = b;
       rightEdge = Math.min(
         b,
         ...fixed.filter(([f0, f1]) => f0 < b && f1 > to).map(([f0]) => Math.max(f0, to)),
@@ -172,9 +184,19 @@ function enforceMinimum(
       settled.add(from);
       continue;
     }
-    const widen: Span =
-      left > 0 && (right === 0 || left <= right) ? [leftEdge, from] : [to, rightEdge];
-    current = subtractAll(current, [widen]);
+    const leftFirst = left > 0 && (right === 0 || left <= right);
+    if (holdsWord) {
+      current = subtractAll(current, [leftFirst ? [leftEdge, from] : [to, rightEdge]]);
+      continue;
+    }
+    // Only the frames still missing, from one side; the loop comes back for the other side.
+    const need = minimum - (to - from);
+    const room = leftFirst ? left : right;
+    const size = leftFirst ? from - leftStart : rightEnd - to;
+    // A neighbour with no earlier cut in it is taken whole rather than left as a sliver.
+    const grow =
+      room === size && size - need > 0 && size - need < minGap ? room : Math.min(need, room);
+    current = subtractAll(current, [leftFirst ? [from - grow, from] : [to, to + grow]]);
   }
 }
 
@@ -227,12 +249,20 @@ export function planSilenceCuts(input: SilencePlanInput): SilencePlan {
     if (cut[1] <= cut[0]) continue;
     if (meanLevel(input.levels, [cut]) <= quietBelow) planned.push(cut);
   }
-  let cuts = enforceMinimum([...planned, ...fixed], length, minSegment, words, fixed);
+  let cuts = enforceMinimum([...planned, ...fixed], length, minSegment, minGap, words, [], fixed);
   const before = subtractAll(cuts, fixed);
 
-  const requests = input.keep
+  const asked = input.keep
     .map(({ fromFrame, toFrame }): Span => [Math.max(0, fromFrame), Math.min(length, toFrame)])
     .filter(([from, to]) => to > from);
+  // The tool only cuts more: a requested part inside an earlier cut stays cut and is reported.
+  const alreadyCut = union(
+    asked.flatMap(([from, to]) =>
+      fixed.flatMap(([start, end]): Span[] => [[Math.max(from, start), Math.min(to, end)]]),
+    ),
+  );
+  const pieces = asked.map((range) => subtractAll([range], fixed));
+  const requests = pieces.flat();
   if (requests.length > 0) {
     let mine = before;
     for (const range of requests) {
@@ -244,11 +274,13 @@ export function planSilenceCuts(input: SilencePlanInput): SilencePlan {
           : pieces.filter(([from, to]) => to - from >= minGap);
       });
     }
-    cuts = enforceMinimum([...mine, ...fixed], length, minSegment, [...words, ...requests], fixed);
+    cuts = enforceMinimum([...mine, ...fixed], length, minSegment, minGap, words, requests, fixed);
   }
   const after = subtractAll(cuts, fixed);
-  const keptRequests = requests.filter(
-    (range) => overlaps(before, range) && !overlaps(after, range),
+  const keptRequests = pieces.filter(
+    (parts) =>
+      parts.some((range) => overlaps(before, range)) &&
+      !parts.some((range) => overlaps(after, range)),
   ).length;
 
   // To document frames: keeps round outward, so no word or air is lost to rounding; then they
@@ -274,5 +306,6 @@ export function planSilenceCuts(input: SilencePlanInput): SilencePlan {
     removedFrames: total(removed),
     shortestFrames: Math.min(...ranges.map((range) => range.duration)),
     keptRequests,
+    alreadyCut: alreadyCut.map(([fromFrame, toFrame]) => ({ fromFrame, toFrame })),
   };
 }

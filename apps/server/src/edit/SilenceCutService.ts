@@ -238,10 +238,12 @@ const make = Effect.gen(function* () {
       keptSegments: plan.ranges.length,
       shortestSegmentFrames: plan.shortestFrames,
       keptRequests: plan.keptRequests,
-      message:
+      message: [
         plan.cuts === 0
           ? "No more pauses to cut; the edit is unchanged."
           : `Removed ${seconds(plan.removedFrames)} s in ${plan.cuts} cuts${plan.keptRequests > 0 ? `, keeping ${plan.keptRequests} pause(s) as asked` : ""}. This only cuts more; it never restores earlier cuts.`,
+        ...alreadyCutSentence(plan.alreadyCut),
+      ].join(" "),
     };
     // Nothing new to remove: the edit stays exactly as it is.
     if (plan.cuts === 0) return { ...summary, revision, changed: false };
@@ -264,5 +266,20 @@ const make = Effect.gen(function* () {
 
   return SilenceCutService.of({ removeSilences });
 });
+
+/** One sentence naming requested keeps that lie in an earlier cut, or none. */
+function alreadyCutSentence(ranges: ReadonlyArray<FrameRange>): string[] {
+  if (ranges.length === 0) return [];
+  const names = ranges.map((range) => `${range.fromFrame}-${range.toFrame}`);
+  const list =
+    names.length === 1 ? names[0] : `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`;
+  return ranges.length === 1
+    ? [
+        `The pause you asked to keep at ${list} was already cut, so it stays cut; say undo to bring it back.`,
+      ]
+    : [
+        `The pauses you asked to keep at ${list} were already cut, so they stay cut; say undo to bring them back.`,
+      ];
+}
 
 export const layer = Layer.effect(SilenceCutService, make);

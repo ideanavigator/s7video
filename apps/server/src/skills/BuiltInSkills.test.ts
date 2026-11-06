@@ -120,7 +120,10 @@ it.layer(NodeServices.layer)("built-in skills", (it) => {
         assert.include(text, state);
       }
       assert.include(text, "Never start a\n     transcription the user cancelled again.");
-      assert.include(text, "Say undo to put it back.");
+      assert.include(text, 'End with: "Say undo to put\n   it back."');
+      // S7V-056: an already-cut keep is passed on with an offer to undo.
+      assert.include(text, "was already cut");
+      assert.include(text, "offer to undo");
       assert.include(text, "Never edit `edit.json` yourself and never use git on it.");
     }),
   );
