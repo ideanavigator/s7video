@@ -31,10 +31,10 @@ above 4K, or 4K above 60 fps); ordinary 4K plays from the original.
 
 Import records the media in `edit.json` right after the probe and fingerprint (and the copy), so
 the Assets row appears before the thumbnail is made: on a 4K clip that is a full-frame decode. The
-thumbnail is written next and the list is published again, so the row picks it up without a
-reload; a failed thumbnail leaves the film placeholder. The clip is marked as proxy-checked before
-the edit lands, or the list that edit triggers would probe the file a second time while the import
-decides its proxy (S7V-064).
+thumbnail is made next, beside the proxy decision's keyframe scan, and the list is published
+again, so the row picks it up without a reload; a failed thumbnail leaves the film placeholder.
+The clip is marked as proxy-checked before the edit lands, or the list that edit triggers would
+probe the file a second time while the import decides its proxy (S7V-064).
 
 ## Serving is scoped to `edit.json`
 
