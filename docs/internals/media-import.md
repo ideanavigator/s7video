@@ -45,8 +45,9 @@ is S7V-054. Originals are also served only with a known video or audio extension
 
 Video and audio dropped into a video project's chat import by path (`useChatMediaImport`). A failed
 import shows "Couldn't add <name> to Assets" with the same reason the Assets tab shows
-(`mediaErrorExplanation.ts`) and Retry for that file; a failed video is never attached to the
-message instead (S7V-071). The engine runs Python with `-I -B`: `-I` ignores
+(`mediaErrorExplanation.ts`) and Retry for that file, and stays until closed. A failed video is
+never attached to the message instead; a failed audio file stays attached, and its toast says so
+(S7V-071). The engine runs Python with `-I -B`: `-I` ignores
 `PYTHONDONTWRITEBYTECODE`, and `.pyc` writes under the watched `packages/` restart `vp run dev`.
 
 ## Where things live

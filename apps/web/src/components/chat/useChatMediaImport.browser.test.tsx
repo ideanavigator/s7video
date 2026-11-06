@@ -142,6 +142,7 @@ describe("useChatMediaImport", () => {
       readonly type: string;
       readonly title: string;
       readonly description?: string;
+      readonly timeout?: number;
       readonly actionProps?: { readonly children: string; readonly onClick: () => void };
     }
     const shown = () => toasts.add.mock.calls.map(([toast]) => toast as ToastCall);
@@ -174,6 +175,7 @@ describe("useChatMediaImport", () => {
           type: "error",
           title: "Couldn't add interview.mov to Assets",
           description: "Not a video.",
+          timeout: 0,
           actionProps: expect.objectContaining({ children: "Retry" }),
         }),
       ]);
@@ -223,7 +225,12 @@ describe("useChatMediaImport", () => {
       using _bridge = setUp();
       commands.importMedia.mockResolvedValue(notAVideo);
       expect(await dropped(projectId, [sound])).toEqual([sound]);
-      expect(errors().map((toast) => toast.title)).toEqual(["Couldn't add whoosh.m4a to Assets"]);
+      expect(errors().map(({ title, description }) => ({ title, description }))).toEqual([
+        {
+          title: "Couldn't add whoosh.m4a to Assets",
+          description: "Not a video. It's still attached to your message.",
+        },
+      ]);
     });
 
     it("two failed drops show one toast each, and each Retry retries only its own file", async () => {

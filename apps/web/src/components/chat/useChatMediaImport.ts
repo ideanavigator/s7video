@@ -49,7 +49,13 @@ export function useChatMediaImport(
     const id = toastManager.add({
       type: "error",
       title: `Couldn't add ${file.name} to Assets`,
-      description: explanationOf(result),
+      // Audio stays attached for the agent; video does not, so say which.
+      description:
+        droppedMediaKind(file) === "audio"
+          ? `${explanationOf(result)} It's still attached to your message.`
+          : explanationOf(result),
+      // Stays until closed: a failed video is not in the message either.
+      timeout: 0,
       actionProps: {
         children: "Retry",
         onClick: () => {
