@@ -20,6 +20,7 @@ import { McpSchema, Tool, Toolkit } from "effect/ai";
 
 import * as ServerConfig from "../../../config.ts";
 import * as EditDocumentService from "../../../edit/EditDocumentService.ts";
+import * as SilenceCutService from "../../../edit/SilenceCutService.ts";
 import * as EngineService from "../../../engine/EngineService.ts";
 import * as ExportService from "../../../export/ExportService.ts";
 import * as MediaLibraryService from "../../../media/MediaLibraryService.ts";
@@ -214,6 +215,32 @@ const VideoRedoTool = Tool.make("video_redo", {
   .annotate(Tool.Title, "Redo edit")
   .annotateMerge(videoAnnotations(false));
 
+// S7V-027: user-triggered only (PO rule). `keep` is text ("9-30,60-90", end exclusive) in clip
+// frames, as video_transcript_read shows them: a list of objects would not fit the 250 B budget.
+const VideoRemoveSilencesTool = Tool.make("video_remove_silences", {
+  description: "Cut video silences only if user asks. keep: clip frames 9-30,60-90",
+  parameters: Schema.Struct({
+    media: Schema.optional(Schema.String),
+    minGapSeconds: Schema.optional(Schema.Finite),
+    keep: Schema.optional(Schema.String),
+  }),
+  success: Schema.Struct({
+    media: Schema.String,
+    removedSeconds: Schema.Number,
+    cuts: Schema.Int,
+    keptSegments: Schema.Int,
+    shortestSegmentFrames: Schema.Int,
+    keptRequests: Schema.Int,
+    message: Schema.String,
+    revision: Schema.Int,
+    changed: Schema.Boolean,
+  }),
+  failure: OrchestratorMcpFailure,
+  dependencies: [...dependencies, SilenceCutService.SilenceCutService],
+})
+  .annotate(Tool.Title, "Remove silences")
+  .annotateMerge(videoAnnotations(false));
+
 /** Tools that return JSON. A new tool goes here, with its handler in `handlers.ts`. */
 export const VideoStandardToolkit = Toolkit.make(
   VideoImportTool,
@@ -226,6 +253,7 @@ export const VideoStandardToolkit = Toolkit.make(
   VideoTranscriptReadTool,
   VideoUndoTool,
   VideoRedoTool,
+  VideoRemoveSilencesTool,
 );
 
 /** `video_frame` returns image content, so it registers on its own (`registerVideoFrame`). */
@@ -242,5 +270,6 @@ export const VideoToolkit = Toolkit.make(
   VideoTranscriptReadTool,
   VideoUndoTool,
   VideoRedoTool,
+  VideoRemoveSilencesTool,
   VideoFrameTool,
 );

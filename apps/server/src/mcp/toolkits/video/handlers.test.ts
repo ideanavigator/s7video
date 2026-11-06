@@ -19,6 +19,7 @@ import {
   type MediaProbeResult,
   ProjectId,
   ProviderInstanceId,
+  SilenceCutError,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
@@ -36,6 +37,7 @@ import * as NodePath from "node:path";
 
 import * as ServerConfig from "../../../config.ts";
 import * as EditDocumentService from "../../../edit/EditDocumentService.ts";
+import * as SilenceCutService from "../../../edit/SilenceCutService.ts";
 import * as EngineService from "../../../engine/EngineService.ts";
 import * as ExportService from "../../../export/ExportService.ts";
 import * as MediaLibraryService from "../../../media/MediaLibraryService.ts";
@@ -48,7 +50,7 @@ import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpSessionRegistry from "../../McpSessionRegistry.ts";
 import * as McpToolAccessTestkit from "../../McpToolAccess.testkit.ts";
 import { NOT_IN_PROJECT, NOT_SHARED } from "../../VideoProjectScope.ts";
-import { editDurationFrames, NO_ROOM_TO_COPY } from "./handlers.ts";
+import { editDurationFrames, KEEP_FORMAT, KEEP_OVERLAP, NO_ROOM_TO_COPY } from "./handlers.ts";
 import { VideoToolkit } from "./tools.ts";
 
 const environmentId = EnvironmentId.make("environment-video-test");
@@ -156,6 +158,7 @@ interface Fixture {
   readonly sharedInA: string;
   readonly sharedInB: string;
   readonly imports: Array<{ sourcePath: string; mode: string; origin: string | undefined }>;
+  readonly silences: Array<SilenceCutService.RemoveSilencesInput>;
   diskShort: boolean;
 }
 
@@ -223,6 +226,7 @@ const makeFixture = (): Fixture => {
     sharedInA,
     sharedInB,
     imports: [],
+    silences: [],
     diskShort: false,
   };
 };
@@ -268,6 +272,30 @@ const layerFor = (fixture: Fixture, cancelSignal: Deferred.Deferred<string>) => 
   });
   return Layer.mergeAll(
     exportService,
+    Layer.mock(SilenceCutService.SilenceCutService)({
+      removeSilences: (input) =>
+        Effect.suspend(() => {
+          fixture.silences.push(input);
+          return input.media === "silent"
+            ? Effect.fail(
+                new SilenceCutError({
+                  reason: "no-speech",
+                  detail: "silent has no speech in its transcript.",
+                }),
+              )
+            : Effect.succeed({
+                media: input.media ?? "cam",
+                removedSeconds: 3.2,
+                cuts: 4,
+                keptSegments: 5,
+                shortestSegmentFrames: 12,
+                keptRequests: input.keep?.length ?? 0,
+                message: "Removed 3.2 s in 4 cuts.",
+                revision: 8,
+                changed: true,
+              });
+        }),
+    }),
     Layer.mock(MediaLibraryService.MediaLibraryService)({
       plan: (input) =>
         Effect.succeed(
@@ -448,6 +476,7 @@ describe("video toolkit", () => {
           "video_job_status",
           "video_probe",
           "video_redo",
+          "video_remove_silences",
           "video_transcribe",
           "video_transcript_read",
           "video_undo",
@@ -467,6 +496,8 @@ describe("video toolkit", () => {
         expect(described.video_transcript_read).toContain("transcript");
         expect(described.video_undo).toMatch(/\bundo\b.*\bedit\b/iu);
         expect(described.video_redo).toMatch(/\bredo\b.*\bedit\b/iu);
+        // S7V-027: user-triggered only; the agent never cuts silences on its own.
+        expect(described.video_remove_silences).toContain("only if user asks");
       }),
     ),
   );
@@ -497,6 +528,7 @@ describe("video toolkit", () => {
         expect(result.isError).toBe(true);
         expect(textOf(result)).toEqual([NO_ROOM_TO_COPY]);
         expect(fixture.imports).toEqual([]);
+        expect(fixture.silences).toEqual([]);
       }),
     ),
   );
@@ -716,6 +748,57 @@ describe("video toolkit", () => {
     ),
   );
 
+  it.effect("video_remove_silences cuts the caller's project and reports the result", () =>
+    withTools(({ fixture, call }) =>
+      Effect.gen(function* () {
+        const result = yield* call(threadA, "video_remove_silences", {
+          minGapSeconds: 0.8,
+          keep: "30-60, 90-120",
+        });
+        expect(result.isError).toBe(false);
+        expect(result.structuredContent).toMatchObject({ removedSeconds: 3.2, cuts: 4 });
+        expect(fixture.silences).toEqual([
+          {
+            projectId: projectA,
+            minGapSeconds: 0.8,
+            keep: [
+              { fromFrame: 30, toFrame: 60 },
+              { fromFrame: 90, toFrame: 120 },
+            ],
+          },
+        ]);
+        for (const [keep, reason] of [
+          ["after hello", KEEP_FORMAT],
+          ["60-30", KEEP_FORMAT],
+          ["30-30", KEEP_FORMAT],
+          ["30-60,", KEEP_FORMAT],
+          ["30-60,,90-120", KEEP_FORMAT],
+          ["-5-10", KEEP_FORMAT],
+          ["30-60, 50-80", KEEP_OVERLAP],
+          ["90-120,10-95", KEEP_OVERLAP],
+        ] as const) {
+          const refused = yield* call(threadA, "video_remove_silences", { keep });
+          expect(textOf(refused), keep).toEqual([reason]);
+        }
+        // Spaces are fine, and ranges may come in any order.
+        yield* call(threadA, "video_remove_silences", { keep: " 90 - 120 ,30-60 " });
+        expect(fixture.silences.at(-1)?.keep).toEqual([
+          { fromFrame: 30, toFrame: 60 },
+          { fromFrame: 90, toFrame: 120 },
+        ]);
+
+        const refused = yield* call(threadA, "video_remove_silences", { media: "silent" });
+        expect(refused.isError).toBe(true);
+        expect(textOf(refused)).toEqual(["silent has no speech in its transcript."]);
+
+        const readOnly = { sessionId: "session-ro", label: "Viewer", access: "read-only" as const };
+        const blocked = yield* call(threadA, "video_remove_silences", {}, undefined, readOnly);
+        expect(blocked.isError).toBe(true);
+        expect(fixture.silences).toHaveLength(3);
+      }),
+    ),
+  );
+
   it.effect("video_transcript_read returns frame-stamped text, or asks for video_transcribe", () =>
     withTools(({ fixture, call }) =>
       Effect.gen(function* () {
@@ -781,6 +864,7 @@ describe("video toolkit", () => {
           ["video_import", { path: "/tmp/x.mp4" }],
           ["video_undo", {}],
           ["video_redo", {}],
+          ["video_remove_silences", {}],
         ] as const) {
           // A hidden tool is not callable at all: the server answers as for an unknown tool.
           const error = yield* call(threadA, tool, args, ["orchestration"]).pipe(Effect.flip);
@@ -1068,6 +1152,7 @@ it.effect("should hide tools without the video capability", () =>
         "video_job_status",
         "video_probe",
         "video_redo",
+        "video_remove_silences",
         "video_transcribe",
         "video_transcript_read",
         "video_undo",

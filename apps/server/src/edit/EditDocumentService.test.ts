@@ -125,6 +125,31 @@ describe("EditDocumentService", () => {
     ),
   );
 
+  it.effect("records no revision or checkpoint when the ops leave edit.json unchanged", () =>
+    withProject(({ projectId, edits, root }) =>
+      Effect.gen(function* () {
+        const initial = yield* edits.read(projectId);
+        const first = yield* edits.apply(projectId, [...setup, keep([[0, 300]])], {
+          origin: "agent",
+          baseRevision: initial.revision,
+        });
+        const before = readEdit(root);
+        const checkpoints = git(root, "for-each-ref").trim();
+        const again = yield* edits.apply(projectId, [keep([[0, 300]])], {
+          origin: "agent",
+          baseRevision: first.revision,
+        });
+        assert.strictEqual(again.revision, first.revision);
+        assert.strictEqual(readEdit(root), before);
+        assert.strictEqual(git(root, "for-each-ref").trim(), checkpoints);
+
+        // One undo still goes back past the first apply.
+        yield* edits.undo(projectId);
+        assert.isFalse((yield* edits.read(projectId)).canUndo);
+      }),
+    ),
+  );
+
   it.effect("should return EditConflict on stale base revision and change nothing", () =>
     withProject(({ projectId, edits, root }) =>
       Effect.gen(function* () {

@@ -55,6 +55,9 @@ from; the per-ticket entries and how this file is compiled are in
   footage is never touched. (S7V-041)
 - Pick "Remove silences" from the chat's / menu, or ask for it, and the assistant cuts the pauses and
   tells you how much it removed. It never does this unless you ask. (S7V-048)
+- Ask the assistant to remove the silences and it cuts the pauses between your sentences without
+  clipping words. It leaves in pauses with laughter or music, keeps any pause you ask for, and says
+  how much it removed. Undo brings the previous edit back. (S7V-027)
 
 ### Changed
 

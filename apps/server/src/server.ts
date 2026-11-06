@@ -116,6 +116,7 @@ import * as ProjectCloneTracker from "./project/ProjectCloneTracker.ts";
 import * as EngineService from "./engine/EngineService.ts";
 import * as ExportService from "./export/ExportService.ts";
 import * as TranscriptService from "./transcript/TranscriptService.ts";
+import * as SilenceCutService from "./edit/SilenceCutService.ts";
 import * as GitWorkflowService from "./git/GitWorkflowService.ts";
 import * as ReviewService from "./review/ReviewService.ts";
 import * as SourceControlProviderRegistry from "./sourceControl/SourceControlProviderRegistry.ts";
@@ -590,6 +591,7 @@ const layerRuntimeCoreDependencies = layerRuntimeCoreDependenciesBase.pipe(
 // Export and transcription resolve projects and their edit documents, so they sit above both;
 // imports and the project-media asset route share one library (S7V-025).
 const layerRuntimeDependencies = MediaLibraryService.layer.pipe(
+  Layer.provideMerge(SilenceCutService.layer),
   Layer.provideMerge(ExportService.layer.pipe(Layer.provideMerge(TranscriptService.layer))),
   Layer.provideMerge(layerEditDocument),
   Layer.provideMerge(layerRuntimeCoreDependencies),
