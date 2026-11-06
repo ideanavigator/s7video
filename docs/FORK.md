@@ -370,6 +370,9 @@ wire them in:
 - `observability/RpcInstrumentation.ts` gives these methods the `engine`, `edit` and `media`
   metric groups; `auth/RpcAuthorization.ts` and `contracts/clientRpcPermissions.ts` give reads
   read scope and changes operate scope.
+- `packages/contracts/src/rpc.ts` (the sprint's RPC definitions and `WS_METHODS` entries) and
+  `packages/contracts/src/index.ts` (re-exports of the new contract modules) are the biggest
+  upstream-file changes, and the likeliest merge-conflict spots in an upstream merge.
 
 ## Licensing (S7V-004)
 
