@@ -197,22 +197,167 @@ describe("silencePlan", () => {
     expect(plan.removedFrames).toBeGreaterThan(0);
   });
 
-  it("keeps a requested pause shorter than the minimum segment", () => {
-    // Review finding 1: keep 140-145 (0.17 s) inside a long pause must still play.
+  it("grows a short keep only to the minimum segment", () => {
+    // keep 140-145 (0.17 s) inside a long pause plays 0.3 s, not the pause from 63 on.
     const words: Array<readonly [number, number]> = [
       [30, 60],
       [240, 270],
     ];
     const plan = planned(clip(words, 300, { keep: [{ fromFrame: 140, toFrame: 145 }] }));
-    expect(plan.ranges.some((range) => range.in <= 140 && range.in + range.duration >= 145)).toBe(
-      true,
-    );
     expect(plan.keptRequests).toBe(1);
-    expect(plan.shortestFrames).toBeGreaterThanOrEqual(Math.ceil(MIN_SEGMENT_SECONDS * 30));
-    expect(plan.ranges).not.toEqual(planned(clip(words, 300)).ranges);
+    expect(plan.alreadyCut).toEqual([]);
+    expect(spans(plan)).toEqual([
+      [27, 63],
+      [136, 145],
+      [237, 273],
+    ]);
+    expect(spans(planned(clip(words, 300)))).toEqual([
+      [27, 63],
+      [237, 273],
+    ]);
   });
 
-  it("never brings back what the current edit removed", () => {
+  it("grows into the other neighbour when the shorter one is too small", () => {
+    // 60-63 was cut earlier, so the planned cut left of keep 66-71 has only 3 frames to give.
+    const words: Array<readonly [number, number]> = [
+      [30, 60],
+      [120, 150],
+    ];
+    const current = [
+      { in: 0, duration: 60 },
+      { in: 63, duration: 117 },
+    ];
+    const plan = planned(
+      clip(words, 180, { current, minGapSeconds: 0.1, keep: [{ fromFrame: 66, toFrame: 71 }] }),
+    );
+    expect(plan.keptRequests).toBe(1);
+    expect(spans(plan)).toEqual([
+      [27, 60],
+      [63, 72],
+      [117, 153],
+    ]);
+  });
+
+  it("takes the whole neighbour when the leftover would be a sliver", () => {
+    // Growing keep 77-82 by 4 frames would leave 63-73, a 10-frame cut under the 12-frame gap.
+    const words: Array<readonly [number, number]> = [
+      [30, 60],
+      [240, 270],
+    ];
+    const plan = planned(clip(words, 300, { keep: [{ fromFrame: 77, toFrame: 82 }] }));
+    expect(plan.keptRequests).toBe(1);
+    expect(spans(plan)).toEqual([
+      [27, 82],
+      [237, 273],
+    ]);
+  });
+
+  it("a short keep next to an earlier cut widens only into the planned cut", () => {
+    const words: Array<readonly [number, number]> = [
+      [30, 60],
+      [240, 270],
+    ];
+    // 60-138 was cut earlier: keep 140-145 (with 138-140, too short to cut) grows to the right.
+    const oneSide = planned(
+      clip(words, 300, {
+        current: [
+          { in: 0, duration: 60 },
+          { in: 138, duration: 162 },
+        ],
+        keep: [{ fromFrame: 140, toFrame: 145 }],
+      }),
+    );
+    expect(oneSide.keptRequests).toBe(1);
+    expect(spans(oneSide)).toEqual([
+      [27, 60],
+      [138, 147],
+      [237, 273],
+    ]);
+  });
+
+  it("a short keep between two earlier cuts stays as it is", () => {
+    const words: Array<readonly [number, number]> = [
+      [30, 60],
+      [240, 270],
+    ];
+    const plan = planned(
+      clip(words, 300, {
+        current: [
+          { in: 0, duration: 60 },
+          { in: 138, duration: 7 },
+          { in: 200, duration: 100 },
+        ],
+        keep: [{ fromFrame: 140, toFrame: 145 }],
+      }),
+    );
+    expect(plan.keptRequests).toBe(1);
+    expect(spans(plan)).toEqual([
+      [27, 60],
+      [138, 145],
+      [237, 273],
+    ]);
+  });
+
+  it("rounds the minimum up for requests at 29.97 and 23.976 fps", () => {
+    for (const [rate, minimum] of [
+      [{ num: 30000, den: 1001 }, 9],
+      [{ num: 24000, den: 1001 }, 8],
+    ] as const) {
+      const words: Array<readonly [number, number]> = [
+        [30, 60],
+        [240, 270],
+      ];
+      const plan = planned(
+        clip(words, 300, {
+          sourceRate: rate,
+          documentRate: rate,
+          keep: [{ fromFrame: 140, toFrame: 143 }],
+        }),
+      );
+      const kept = plan.ranges.find((range) => range.in <= 140 && range.in + range.duration >= 143);
+      expect(kept?.duration).toBe(minimum);
+      expect(plan.keptRequests).toBe(1);
+    }
+  });
+
+  it("changes nothing when run again on its own result with a keep", () => {
+    const words: Array<readonly [number, number]> = [
+      [30, 60],
+      [240, 270],
+    ];
+    const keep = [{ fromFrame: 140, toFrame: 145 }];
+    const first = planned(clip(words, 300, { keep }));
+    const second = planned(clip(words, 300, { keep, current: first.ranges }));
+    expect(second.ranges).toEqual(first.ranges);
+    // The pause would still be cut without the keep, so it still counts as kept.
+    expect(second).toMatchObject({ cuts: 0, removedFrames: 0, keptRequests: 1, alreadyCut: [] });
+  });
+
+  it("reports the cut part of a keep that straddles an earlier cut", () => {
+    const words: Array<readonly [number, number]> = [
+      [30, 60],
+      [170, 200],
+    ];
+    const current = [
+      { in: 0, duration: 100 },
+      { in: 130, duration: 100 },
+    ];
+    const plan = planned(clip(words, 230, { current, keep: [{ fromFrame: 80, toFrame: 140 }] }));
+    expect(plan.alreadyCut).toEqual([{ fromFrame: 100, toFrame: 130 }]);
+    // 80-100 and 130-140 would have been cut and now play; 100-130 stays cut.
+    expect(plan.keptRequests).toBe(1);
+    const plays = (frame: number) =>
+      plan.ranges.some((range) => range.in <= frame && frame < range.in + range.duration);
+    for (let frame = 80; frame < 140; frame++)
+      expect(plays(frame), `${frame}`).toBe(frame < 100 || frame >= 130);
+    // Without the keep, those parts are cut.
+    const without = planned(clip(words, 230, { current }));
+    expect(without.ranges.some((range) => range.in <= 80 && 80 < range.in + range.duration)).toBe(
+      false,
+    );
+  });
+
+  it("reports a keep inside an earlier cut and never brings it back", () => {
     const words: Array<readonly [number, number]> = [
       [30, 60],
       [90, 120],
@@ -231,8 +376,10 @@ describe("silencePlan", () => {
       );
       expect(inside, `${range.in}+${range.duration}`).toBe(true);
     }
-    // A keep inside the earlier removal is not a restore request, so it is not counted.
+    // A keep inside the earlier removal is not a restore request: not counted, but reported.
     expect(plan.keptRequests).toBe(0);
+    expect(plan.alreadyCut).toEqual([{ fromFrame: 95, toFrame: 110 }]);
+    expect(plan.ranges).toEqual(planned(clip(words, 210, { current })).ranges);
     expect(plan.removedFrames).toBe(140 - plan.ranges.reduce((sum, r) => sum + r.duration, 0));
   });
 

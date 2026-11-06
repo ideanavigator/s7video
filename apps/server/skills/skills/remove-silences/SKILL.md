@@ -30,7 +30,11 @@ The user asked you to cut the pauses from their clip. Do it with the video tools
    after ..."), call `video_undo` first, then `video_remove_silences` with the new setting.
 
 3. Reply in one or two plain sentences: how many seconds you removed and how many cuts you made,
-   taken from the tool's result. End with: "Say undo to put it back."
+   taken from the tool's result. If the result says a pause you asked to keep was cut by an
+   earlier edit, tell the user it stays cut and offer to undo back to before that cut, then ask
+   again. Describe a pause by the word next to it or in seconds, never by frame numbers. When
+   the result says `changed: true`, end with: "Say undo to put it back." When nothing new was
+   cut (`changed: false`), say the edit is unchanged and do not offer that undo.
 
 Never edit `edit.json` yourself and never use git on it. If a tool fails, say what went wrong in
 plain words and stop.

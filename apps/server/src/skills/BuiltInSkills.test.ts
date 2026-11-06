@@ -120,7 +120,21 @@ it.layer(NodeServices.layer)("built-in skills", (it) => {
         assert.include(text, state);
       }
       assert.include(text, "Never start a\n     transcription the user cancelled again.");
-      assert.include(text, "Say undo to put it back.");
+      // Whitespace collapsed, so re-wrapping the skill text does not break these checks.
+      const flat = text.replace(/\s+/g, " ");
+      // S7V-056 round 2: the undo offer only follows a call that cut something.
+      assert.include(
+        flat,
+        'When the result says `changed: true`, end with: "Say undo to put it back."',
+      );
+      assert.include(
+        flat,
+        "(`changed: false`), say the edit is unchanged and do not offer that undo.",
+      );
+      // S7V-056: an already-cut keep is passed on with an offer to undo back to before that cut.
+      assert.include(flat, "was cut by an earlier edit");
+      assert.include(flat, "offer to undo back to before that cut, then ask again");
+      assert.include(flat, "never by frame numbers");
       assert.include(text, "Never edit `edit.json` yourself and never use git on it.");
     }),
   );

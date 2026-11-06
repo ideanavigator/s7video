@@ -238,10 +238,12 @@ const make = Effect.gen(function* () {
       keptSegments: plan.ranges.length,
       shortestSegmentFrames: plan.shortestFrames,
       keptRequests: plan.keptRequests,
-      message:
+      message: [
         plan.cuts === 0
           ? "No more pauses to cut; the edit is unchanged."
           : `Removed ${seconds(plan.removedFrames)} s in ${plan.cuts} cuts${plan.keptRequests > 0 ? `, keeping ${plan.keptRequests} pause(s) as asked` : ""}. This only cuts more; it never restores earlier cuts.`,
+        ...alreadyCutSentence(plan.alreadyCut),
+      ].join(" "),
     };
     // Nothing new to remove: the edit stays exactly as it is.
     if (plan.cuts === 0) return { ...summary, revision, changed: false };
@@ -264,5 +266,21 @@ const make = Effect.gen(function* () {
 
   return SilenceCutService.of({ removeSilences });
 });
+
+/** One sentence naming requested keeps that lie in an earlier cut, or none. */
+function alreadyCutSentence(ranges: ReadonlyArray<FrameRange>): string[] {
+  if (ranges.length === 0) return [];
+  const names = ranges.map((range) => `${range.fromFrame}-${range.toFrame}`);
+  const list =
+    names.length === 1 ? names[0] : `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`;
+  // One undo may only take back this call's cuts, so the hint never promises that.
+  return ranges.length === 1
+    ? [
+        `The pause you asked to keep at clip frames ${list} was cut by an earlier edit, so it stays cut. To get it back, undo until that pause plays again, then ask to keep it.`,
+      ]
+    : [
+        `The pauses you asked to keep at clip frames ${list} were cut by an earlier edit, so they stay cut. To get them back, undo until those pauses play again, then ask to keep them.`,
+      ];
+}
 
 export const layer = Layer.effect(SilenceCutService, make);

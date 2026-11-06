@@ -281,6 +281,62 @@ describe("SilenceCutService", () => {
     ),
   );
 
+  it.effect("message names already-cut keeps", () =>
+    withProject(
+      ({ projectId, root, silences }) =>
+        Effect.gen(function* () {
+          // 130-150 lies in the retake removed by hand: it stays cut, the other pauses go.
+          const first = yield* silences.removeSilences({
+            projectId,
+            keep: [{ fromFrame: 130, toFrame: 150 }],
+          });
+          assert.isTrue(first.changed);
+          assert.strictEqual(first.keptRequests, 0);
+          assert.match(
+            first.message,
+            /^Removed .* s in \d+ cuts\. This only cuts more; it never restores earlier cuts\. /,
+          );
+          assert.isTrue(
+            first.message.endsWith(
+              " The pause you asked to keep at clip frames 130-150 was cut by an earlier edit, so it stays cut. To get it back, undo until that pause plays again, then ask to keep it.",
+            ),
+          );
+          // One undo would only take back this call's cuts: the message must not promise it.
+          assert.notInclude(first.message, "say undo");
+          const afterFirst = readEdit(root);
+
+          // Nothing new to cut: the sentence follows the unchanged message.
+          const again = yield* silences.removeSilences({
+            projectId,
+            keep: [
+              { fromFrame: 130, toFrame: 150 },
+              { fromFrame: 160, toFrame: 170 },
+            ],
+          });
+          assert.isFalse(again.changed);
+          assert.strictEqual(again.keptRequests, 0);
+          assert.strictEqual(
+            again.message,
+            "No more pauses to cut; the edit is unchanged. The pauses you asked to keep at clip frames 130-150 and 160-170 were cut by an earlier edit, so they stay cut. To get them back, undo until those pauses play again, then ask to keep them.",
+          );
+          assert.strictEqual(readEdit(root), afterFirst);
+        }),
+      [
+        { _tag: "putMedia", media: camera },
+        { _tag: "addTrack", track: { kind: "video", id: "V1", items: [] } },
+        {
+          _tag: "setKeepRanges",
+          trackId: "V1",
+          mediaId: "cam",
+          ranges: [
+            { in: 0, duration: 115 },
+            { in: 185, duration: 115 },
+          ],
+        },
+      ],
+    ),
+  );
+
   it.effect("refuses a keep that starts after the clip ends", () =>
     withProject(({ projectId, root, silences }) =>
       Effect.gen(function* () {
