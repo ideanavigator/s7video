@@ -19,7 +19,6 @@ import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 
 import * as EditDocumentService from "../../../edit/EditDocumentService.ts";
-import { editFileContents } from "../../../edit/EditProjectLayout.ts";
 import * as SilenceCutService from "../../../edit/SilenceCutService.ts";
 import * as EngineService from "../../../engine/EngineService.ts";
 import * as ExportService from "../../../export/ExportService.ts";
@@ -153,7 +152,7 @@ const unchangedStep = (direction: "undo" | "redo", snapshot: EditSnapshot) => {
       : more
         ? "Say redo again to go forward."
         : "There is nothing more to redo.";
-  return `Nothing on the timeline changed: that step only added or removed clips in Assets, and undo keeps clips there. ${next}`;
+  return `Nothing on the timeline changed: that step only added or removed a clip in Assets, and clips stay in Assets when you undo or redo. ${next}`;
 };
 
 /** Undo and redo through the same service method as the edit.undo / edit.redo RPCs. */
@@ -163,13 +162,12 @@ const stepEdit = (direction: "undo" | "redo") =>
       yield* refusePlanMode(direction);
       const project = yield* callerProject();
       const edits = yield* EditDocumentService.EditDocumentService;
-      return yield* edits[direction](project.projectId).pipe(
-        Effect.map((snapshot) => ({
+      return yield* edits.step(project.projectId, direction).pipe(
+        Effect.map(({ snapshot, changed }) => ({
           revision: snapshot.revision,
-          message:
-            editFileContents(snapshot.document) === editFileContents(project.snapshot.document)
-              ? unchangedStep(direction, snapshot)
-              : `${direction === "undo" ? "Undone" : "Redone"}. The edit is now ${editSummary(snapshot)}.`,
+          message: changed
+            ? `${direction === "undo" ? "Undone" : "Redone"}. The edit is now ${editSummary(snapshot)}.`
+            : unchangedStep(direction, snapshot),
         })),
         Effect.catchTags({
           EditUnavailableError: (error) =>

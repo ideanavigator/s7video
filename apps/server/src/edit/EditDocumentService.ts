@@ -55,6 +55,18 @@ export class EditDocumentService extends Context.Service<
     readonly subscribe: (projectId: ProjectId) => Stream.Stream<EditSnapshot, EditUnavailableError>;
     readonly undo: (projectId: ProjectId) => Effect.Effect<EditSnapshot, EditUnavailableError>;
     readonly redo: (projectId: ProjectId) => Effect.Effect<EditSnapshot, EditUnavailableError>;
+    /**
+     * Undo or redo, and whether the step changed the edit, decided inside the project's lock so
+     * a write landing just before it cannot make the answer wrong. Clip-list order is ignored:
+     * undo and redo put kept clips at the end. For the agent's reply; the RPCs use undo/redo.
+     */
+    readonly step: (
+      projectId: ProjectId,
+      direction: "undo" | "redo",
+    ) => Effect.Effect<
+      { readonly snapshot: EditSnapshot; readonly changed: boolean },
+      EditUnavailableError
+    >;
   }
 >()("t3/edit/EditDocumentService") {}
 
@@ -62,6 +74,18 @@ const decodeJson = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unkno
 const decodeProjectFile = Schema.decodeUnknownOption(
   Schema.fromJsonString(EditProjectLayout.EditProjectFile),
 );
+
+/** Two edits are the same when only the order of their clip lists differs. */
+const sameEdit = (left: EditDocument, right: EditDocument) => {
+  const byId = (document: EditDocument) => ({
+    ...document,
+    media: document.media.toSorted((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)),
+  });
+  return (
+    EditProjectLayout.editFileContents(byId(left)) ===
+    EditProjectLayout.editFileContents(byId(right))
+  );
+};
 
 const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
@@ -366,37 +390,39 @@ const make = Effect.gen(function* () {
     return EditProjectLayout.editFileContents(merged.document);
   });
 
-  const step = (direction: "undo" | "redo") =>
-    Effect.fn(`EditDocumentService.${direction}`)(function* (projectId: ProjectId) {
-      const root = yield* resolveRoot(projectId);
-      return yield* lockFor(root).withPermit(
-        Effect.gen(function* () {
-          const before = yield* loadReconciled(projectId, root, "write");
-          const moved = yield* history
-            .step(root, direction, (editJson, revision) =>
-              keepLibrary(projectId, direction, editJson, before.document).pipe(
-                Effect.tap((text) => writeEdit(projectId, root, text, revision, before.editText)),
-              ),
-            )
-            .pipe(
-              Effect.mapError((error) =>
-                error._tag === "EditHistoryError" ? historyError(projectId)(error) : error,
-              ),
-            );
-          if (Option.isNone(moved)) {
-            return yield* unavailable(
-              projectId,
-              direction === "undo" ? "nothing-to-undo" : "nothing-to-redo",
-              direction === "undo" ? "There is nothing to undo." : "There is nothing to redo.",
-            );
-          }
-          const current = yield* load(projectId, root);
-          const snapshot = yield* snapshotOf(root, current.revision, current.document);
-          yield* publish(root, snapshot);
-          return snapshot;
-        }),
-      );
-    });
+  const step = Effect.fn("EditDocumentService.step")(function* (
+    projectId: ProjectId,
+    direction: "undo" | "redo",
+  ) {
+    const root = yield* resolveRoot(projectId);
+    return yield* lockFor(root).withPermit(
+      Effect.gen(function* () {
+        const before = yield* loadReconciled(projectId, root, "write");
+        const moved = yield* history
+          .step(root, direction, (editJson, revision) =>
+            keepLibrary(projectId, direction, editJson, before.document).pipe(
+              Effect.tap((text) => writeEdit(projectId, root, text, revision, before.editText)),
+            ),
+          )
+          .pipe(
+            Effect.mapError((error) =>
+              error._tag === "EditHistoryError" ? historyError(projectId)(error) : error,
+            ),
+          );
+        if (Option.isNone(moved)) {
+          return yield* unavailable(
+            projectId,
+            direction === "undo" ? "nothing-to-undo" : "nothing-to-redo",
+            direction === "undo" ? "There is nothing to undo." : "There is nothing to redo.",
+          );
+        }
+        const current = yield* load(projectId, root);
+        const snapshot = yield* snapshotOf(root, current.revision, current.document);
+        yield* publish(root, snapshot);
+        return { snapshot, changed: !sameEdit(before.document, current.document) };
+      }),
+    );
+  });
 
   const subscribe: EditDocumentService["Service"]["subscribe"] = (projectId) =>
     Stream.unwrap(
@@ -413,8 +439,13 @@ const make = Effect.gen(function* () {
     read,
     apply,
     subscribe,
-    undo: step("undo"),
-    redo: step("redo"),
+    undo: Effect.fn("EditDocumentService.undo")(function* (projectId) {
+      return (yield* step(projectId, "undo")).snapshot;
+    }),
+    redo: Effect.fn("EditDocumentService.redo")(function* (projectId) {
+      return (yield* step(projectId, "redo")).snapshot;
+    }),
+    step,
   });
 });
 
