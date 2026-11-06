@@ -5,7 +5,7 @@
  * top of the panel, so the user finds what the assistant asked for without the Transcript tab.
  * After "Not now" it stays away until the assistant asks again. The download still needs a yes.
  */
-import type { ScopedProjectRef } from "@t3tools/contracts";
+import type { ScopedProjectRef, TranscribeModel } from "@t3tools/contracts";
 import { AudioLinesIcon } from "lucide-react";
 import { useState } from "react";
 
@@ -17,7 +17,7 @@ import {
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "../ui/alert";
 import { Button } from "../ui/button";
 import { toastManager } from "../ui/toast";
-import { ModelDownloadDialog } from "./ModelDownloadDialog";
+import { type FoundModel, ModelDownloadDialog } from "./ModelDownloadDialog";
 import { useModelDownload } from "./useModelDownload";
 
 export function SpeechModelPrompt(props: { readonly projectRef: ScopedProjectRef }) {
@@ -29,6 +29,19 @@ export function SpeechModelPrompt(props: { readonly projectRef: ScopedProjectRef
 
   if (status === null || anySpeechModelReady(status)) return null;
   if (status.consent === "dismissed" && !requested && !open) return null;
+
+  const take = async (choice: TranscribeModel, reuse?: FoundModel["reuse"]) => {
+    const outcome = await model.start(choice, reuse);
+    if (outcome === "failed") return;
+    setOpen(false);
+    if (outcome === "downloaded") {
+      toastManager.add({
+        type: "success",
+        title: "Speech model ready",
+        description: "Ask the assistant to go on with your edit.",
+      });
+    }
+  };
 
   const running = model.job !== null && model.state === null;
   const progress = Math.round((model.job?.progress ?? 0) * 100);
@@ -66,19 +79,9 @@ export function SpeechModelPrompt(props: { readonly projectRef: ScopedProjectRef
           open
           status={status}
           state={model.state ?? { phase: "asking" }}
-          onDownload={(choice) =>
-            void model.start(choice).then((outcome) => {
-              if (outcome === "failed") return;
-              setOpen(false);
-              if (outcome === "downloaded") {
-                toastManager.add({
-                  type: "success",
-                  title: "Speech model ready",
-                  description: "Ask the assistant to go on with your edit.",
-                });
-              }
-            })
-          }
+          onDownload={(choice) => void take(choice)}
+          onUse={(found) => void take(found.model, found.reuse)}
+          hideFound={model.reuseRefused}
           onCancelDownload={model.cancel}
           onDismiss={() => {
             setOpen(false);

@@ -7,7 +7,12 @@
  * "Not now". It never starts a download by itself.
  */
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import type { EnvironmentId, ProjectId, TranscribeModel } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  ProjectId,
+  TranscribeModel,
+  TranscribeModelsDownloadInput,
+} from "@t3tools/contracts";
 import { useEffect, useRef, useState } from "react";
 
 import {
@@ -39,6 +44,8 @@ export function useModelDownload(environmentId: EnvironmentId, projectId: Projec
   const cancel = useAtomCommand(editEnvironment.cancelJob, { reportFailure: false });
   const job = useTranscriptionJobs(environmentId, projectId).download;
   const [state, setState] = useState<ModelDownloadState | null>(null);
+  // A found copy that failed its check is not offered again; the normal download still is.
+  const [reuseRefused, setReuseRefused] = useState(false);
   // A Cancel pressed before the download's job is in the jobs stream waits here for its id.
   const cancelQueued = useRef(false);
   const cancelRequested = useRef(false);
@@ -56,12 +63,19 @@ export function useModelDownload(environmentId: EnvironmentId, projectId: Projec
     refreshSpeechModelStatus(environmentId);
   };
 
-  const start = async (model: TranscribeModel): Promise<ModelDownloadOutcome> => {
+  const start = async (
+    model: TranscribeModel,
+    reuse?: TranscribeModelsDownloadInput["reuse"],
+  ): Promise<ModelDownloadOutcome> => {
     cancelRequested.current = false;
     setState({ phase: "downloading", progress: 0 });
     const result = await download({
       environmentId,
-      input: projectId === null ? { model } : { model, projectId },
+      input: {
+        model,
+        ...(projectId === null ? {} : { projectId }),
+        ...(reuse === undefined ? {} : { reuse }),
+      },
     });
     cancelQueued.current = false;
     if (cancelRequested.current) {
@@ -80,6 +94,7 @@ export function useModelDownload(environmentId: EnvironmentId, projectId: Projec
       setState(null);
       return "cancelled";
     }
+    if (reuse !== undefined) setReuseRefused(true);
     setState({ phase: "failed", message: commandErrorMessage(error, "The download stopped.") });
     return "failed";
   };
@@ -106,6 +121,7 @@ export function useModelDownload(environmentId: EnvironmentId, projectId: Projec
     state: view,
     /** A download running on this server, whoever started it. */
     job,
+    reuseRefused,
     start,
     cancel: cancelDownload,
     notNow,

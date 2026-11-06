@@ -73,10 +73,19 @@ const EngineModelState = Schema.Struct({
   ready: Schema.Boolean,
 });
 
+/**
+ * A copy of the pinned models already in another Hugging Face cache on this Mac (S7V-067), every
+ * file at its locked size; using it checks each sha256. `copyBytes` is the free space it takes:
+ * 0 when the files can be cloned (same volume), else the size of a plain copy.
+ */
+export const TranscribeFoundCopy = Schema.Struct({ copyBytes: NonNegativeInt });
+export type TranscribeFoundCopy = typeof TranscribeFoundCopy.Type;
+
 const EngineProfileState = Schema.Struct({
   models: Schema.Array(Schema.String),
   sizeBytes: NonNegativeInt,
   ready: Schema.Boolean,
+  found: Schema.optional(Schema.NullOr(TranscribeFoundCopy)),
 });
 
 /** `transcribe.models.status` as the engine answers it. */
@@ -102,6 +111,8 @@ export const TranscribeProfileStatus = Schema.Struct({
   sizeBytes: NonNegativeInt,
   downloadedBytes: NonNegativeInt,
   ready: Schema.Boolean,
+  /** Set when a copy on this Mac can be used instead of downloading. */
+  found: Schema.optional(TranscribeFoundCopy),
 });
 export type TranscribeProfileStatus = typeof TranscribeProfileStatus.Type;
 
@@ -142,6 +153,11 @@ export const TranscribeModelsDownloadInput = Schema.Struct({
   model: TranscribeModel,
   /** The project the user accepted the download in, so its agents can follow the job. */
   projectId: Schema.optional(ProjectId),
+  /**
+   * Use the copy found on this Mac instead of the network: `clone` only clones it, `copy` (the
+   * user agreed to the space it takes) may copy it.
+   */
+  reuse: Schema.optional(Schema.Literals(["clone", "copy"])),
 });
 export type TranscribeModelsDownloadInput = typeof TranscribeModelsDownloadInput.Type;
 

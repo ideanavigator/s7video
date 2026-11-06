@@ -6,6 +6,7 @@ import {
   type EngineJob,
   type TranscribeModelsStatus,
 } from "@t3tools/contracts";
+import { Cause } from "effect";
 import { useSyncExternalStore } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
 
@@ -57,10 +58,19 @@ import { SpeechModelSetup } from "./SpeechModelSetup";
 
 const environmentId = EnvironmentId.make("env-1");
 
-const status = (recommended: "default" | "light", ready = false): TranscribeModelsStatus => ({
+const status = (
+  recommended: "default" | "light",
+  ready = false,
+  lightFound?: { copyBytes: number },
+): TranscribeModelsStatus => ({
   profiles: {
     default: { sizeBytes: 3_744_329_895, downloadedBytes: 0, ready },
-    light: { sizeBytes: 2_287_244_626, downloadedBytes: 0, ready: false },
+    light: {
+      sizeBytes: 2_287_244_626,
+      downloadedBytes: 0,
+      ready: false,
+      ...(lightFound ? { found: lightFound } : {}),
+    },
   },
   recommended,
   consent: "unasked",
@@ -169,6 +179,47 @@ describe("SpeechModelSetup", () => {
     await expect.element(screen.getByText("Standard, 3.7 GB")).toBeVisible();
     expect(commands.download).not.toHaveBeenCalled();
     expect(commands.dismiss).not.toHaveBeenCalled();
+  });
+
+  it("offers a copy found on this Mac with Use, which reuses it only on the press", async () => {
+    reset();
+    store.set({ status: status("light", false, { copyBytes: 0 }) });
+    await using screen = await renderSetup();
+    await expect.element(screen.getByText("Found on this Mac, ready to use")).toBeVisible();
+    await expect.element(screen.getByText(/takes no extra space/)).toBeVisible();
+    expect(commands.download).not.toHaveBeenCalled();
+    commands.download.mockResolvedValue({ _tag: "Success", value: {} });
+    await press("Use");
+    expect(commands.download).toHaveBeenCalledWith({
+      environmentId,
+      input: { model: "light", reuse: "clone" },
+    });
+  });
+
+  it("says how much space a copy on another disk takes, and hides a copy that failed its check", async () => {
+    reset();
+    store.set({ status: status("light", false, { copyBytes: 2_287_244_626 }) });
+    commands.download.mockResolvedValue({
+      _tag: "Failure",
+      cause: Cause.fail(
+        new Error(
+          "The video engine rejected transcribe.models.download: the copy on this Mac does not match the pinned speech model; download it instead.",
+        ),
+      ),
+    });
+    await using screen = await renderSetup();
+    await expect
+      .element(screen.getByText(/on another disk, so using it copies 2\.3 GB/))
+      .toBeVisible();
+    await press("Use");
+    expect(commands.download).toHaveBeenCalledWith({
+      environmentId,
+      input: { model: "light", reuse: "copy" },
+    });
+    await expect.element(screen.getByText(/the copy on this Mac does not match/)).toBeVisible();
+    expect(document.body.textContent).not.toContain("Found on this Mac, ready to use");
+    // The normal download is still offered.
+    await expect.element(screen.getByRole("radio", { name: /Light/ })).toBeVisible();
   });
 
   it("shows nothing while the status is unknown", async () => {

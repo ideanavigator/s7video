@@ -45,6 +45,7 @@ import * as EngineProcess from "./EngineProcess.ts";
 import {
   engineCommandArgs,
   engineEnvironment,
+  huggingFaceCacheDirs,
   resolveEngineProjectDir,
   resolveEngineTools,
 } from "./enginePaths.ts";
@@ -182,6 +183,7 @@ const make = Effect.fn("EngineService.make")(function* (options: EngineServiceOp
         testMethods: options.testMethods ?? false,
         transcribeIdleUnloadSeconds:
           (options.transcribeIdleUnloadMinutes ?? TRANSCRIBE_IDLE_UNLOAD_MINUTES) * 60,
+        huggingFaceCacheDirs: huggingFaceCacheDirs(env, homeDir, config.engineModelsDir),
       }),
       logFile: path.join(config.engineLogsDir, "engine.log"),
       startTimeout: options.startTimeout ?? START_TIMEOUT,

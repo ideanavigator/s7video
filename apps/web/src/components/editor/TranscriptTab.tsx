@@ -33,7 +33,7 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { Button } from "../ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "../ui/empty";
 import { Spinner } from "../ui/spinner";
-import { ModelDownloadDialog } from "./ModelDownloadDialog";
+import { type FoundModel, ModelDownloadDialog } from "./ModelDownloadDialog";
 import { createTranscriptMarks, type TranscriptMarks } from "./transcriptMarks";
 import { commandErrorMessage, engineErrorReason, useModelDownload } from "./useModelDownload";
 
@@ -115,8 +115,8 @@ function TranscribePrompt(props: {
       setFailure(commandErrorMessage(error, "The clip couldn't be transcribed."));
   };
 
-  const downloadModel = async (choice: TranscribeModel) => {
-    const outcome = await model.start(choice);
+  const downloadModel = async (choice: TranscribeModel, reuse?: FoundModel["reuse"]) => {
+    const outcome = await model.start(choice, reuse);
     if (outcome === "failed") return;
     setAsking(null);
     if (outcome === "downloaded") await transcribe(choice);
@@ -169,6 +169,8 @@ function TranscribePrompt(props: {
           status={asking}
           state={model.state ?? { phase: "asking" }}
           onDownload={(choice) => void downloadModel(choice)}
+          onUse={(found) => void downloadModel(found.model, found.reuse)}
+          hideFound={model.reuseRefused}
           onCancelDownload={model.cancel}
           onDismiss={() => {
             setAsking(null);

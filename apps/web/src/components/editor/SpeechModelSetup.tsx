@@ -12,8 +12,11 @@ import { useState } from "react";
 
 import { anySpeechModelReady, useSpeechModelStatus } from "../../editor/editStore";
 import { Button } from "../ui/button";
-import { formatGigabytes, ModelChoice } from "./ModelDownloadDialog";
+import { formatGigabytes, foundModel, FoundOnThisMac, ModelChoice } from "./ModelDownloadDialog";
 import { useModelDownload } from "./useModelDownload";
+
+/** The engine's stage while it checks a copy found on this Mac (`models.py`). */
+const REUSE_STAGE = "checking the copy on this Mac";
 
 export function SpeechModelSetup(props: { readonly environmentId: EnvironmentId }) {
   const status = useSpeechModelStatus(props.environmentId);
@@ -21,6 +24,7 @@ export function SpeechModelSetup(props: { readonly environmentId: EnvironmentId 
   const [choice, setChoice] = useState<TranscribeModel | null>(null);
 
   const ready = status !== null && anySpeechModelReady(status);
+  const found = status === null || model.reuseRefused ? null : foundModel(status);
   const selected = choice ?? status?.recommended ?? "default";
   // A download started here, or one already running on this server (the panel or the agent's ask).
   const progress =
@@ -36,8 +40,10 @@ export function SpeechModelSetup(props: { readonly environmentId: EnvironmentId 
   const summary = ready
     ? "Ready. Transcripts, silence cuts and captions work offline."
     : downloading
-      ? `Downloading, ${percent}%. You can keep setting up.`
-      : "Not downloaded. Needed to read clips, cut silences and add captions.";
+      ? `${model.job?.stage === REUSE_STAGE ? "Checking the copy on this Mac" : "Downloading"}, ${percent}%. You can keep setting up.`
+      : found !== null
+        ? "Found on this Mac. Needed to read clips, cut silences and add captions."
+        : "Not downloaded. Needed to read clips, cut silences and add captions.";
 
   return (
     <section
@@ -71,7 +77,15 @@ export function SpeechModelSetup(props: { readonly environmentId: EnvironmentId 
               <div className="h-full bg-primary" style={{ width: `${percent}%` }} />
             </div>
           ) : (
-            <ModelChoice status={status} value={selected} onChange={setChoice} />
+            <>
+              {found === null ? null : (
+                <FoundOnThisMac
+                  found={found}
+                  onUse={(copy) => void model.start(copy.model, copy.reuse)}
+                />
+              )}
+              <ModelChoice status={status} value={selected} onChange={setChoice} />
+            </>
           )}
           {model.state?.phase === "failed" ? (
             <p role="alert" className="text-destructive text-sm">

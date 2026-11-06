@@ -522,7 +522,7 @@ def _models_status(_params: dict[str, Any], _job: JobContext) -> dict[str, Any]:
 
 
 def _models_download(params: dict[str, Any], job: JobContext) -> dict[str, Any]:
-    return models.download(params["model"], job)
+    return models.download(params["model"], job, params.get("reuse"))
 
 
 FINGERPRINT_SCHEMA = {
@@ -566,7 +566,11 @@ METHODS = [
             "type": "object",
             "additionalProperties": False,
             "required": ["jobId", "model"],
-            "properties": {"jobId": {"type": "string"}, "model": PROFILE_SCHEMA},
+            "properties": {
+                "jobId": {"type": "string"},
+                "model": PROFILE_SCHEMA,
+                "reuse": {"enum": ["clone", "copy"]},
+            },
         },
         job=True,
     ),

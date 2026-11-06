@@ -69,6 +69,32 @@ describe("ModelDownloadDialog", () => {
     expect(handlers.onCancelDownload).toHaveBeenCalledOnce();
   });
 
+  it("offers a copy found on this Mac first, and Use hands it back with how to take it", async () => {
+    const onUse = vi.fn();
+    const found = status("default");
+    const withCopy: TranscribeModelsStatus = {
+      ...found,
+      profiles: {
+        ...found.profiles,
+        default: { ...found.profiles.default, found: { copyBytes: 0 } },
+      },
+    };
+    await using screen = await render(
+      <ModelDownloadDialog
+        open
+        status={withCopy}
+        state={{ phase: "asking" }}
+        onDownload={vi.fn()}
+        onUse={onUse}
+        onCancelDownload={vi.fn()}
+        onDismiss={vi.fn()}
+      />,
+    );
+    await expect.element(screen.getByText("Found on this Mac, ready to use")).toBeVisible();
+    await press("Use");
+    expect(onUse).toHaveBeenCalledWith({ model: "default", copyBytes: 0, reuse: "clone" });
+  });
+
   it("shows a failed download's reason and offers to try again", async () => {
     const message =
       "The video engine rejected transcribe.models.download: there is not enough free disk space for the speech model.";
