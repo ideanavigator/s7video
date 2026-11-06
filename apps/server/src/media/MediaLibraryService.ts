@@ -702,13 +702,19 @@ const make = Effect.fn("MediaLibraryService.make")(function* (options: MediaLibr
           : Effect.void,
       ),
     );
-    // The row is in the list already; its thumbnail (a 4K decode on big clips) follows.
-    if (yield* thumbnailFor(root, real, fingerprint.sha256, probe)) {
-      yield* notify(input.projectId);
-    }
+    // The row is in the list already. Its thumbnail (a 4K decode on big clips) and the proxy
+    // decision (a keyframe scan) run side by side in the engine's workers.
     // Proxies read the project's copy when there is one, so a moved original cannot break them.
     const readable = location.path !== undefined ? path.join(root, location.path) : real;
-    const jobId = yield* startProxy(input.projectId, root, readable, fingerprint.sha256, probe);
+    const [, jobId] = yield* Effect.all(
+      [
+        thumbnailFor(root, real, fingerprint.sha256, probe).pipe(
+          Effect.flatMap((made) => (made ? notify(input.projectId) : Effect.void)),
+        ),
+        startProxy(input.projectId, root, readable, fingerprint.sha256, probe),
+      ],
+      { concurrency: 2 },
+    );
     return { mediaId, ...(jobId === undefined ? {} : { jobId }) } satisfies MediaImportResult;
   });
 
