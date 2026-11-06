@@ -197,7 +197,7 @@ const VideoImportTool = Tool.make("video_import", {
 const EditStep = Schema.Struct({ revision: Schema.Int, message: Schema.String });
 
 const VideoUndoTool = Tool.make("video_undo", {
-  description: "Undo the last video edit change.",
+  description: "Undo the last edit to this video project. Use this, not git.",
   success: EditStep,
   failure: OrchestratorMcpFailure,
   dependencies,
@@ -206,7 +206,7 @@ const VideoUndoTool = Tool.make("video_undo", {
   .annotateMerge(videoAnnotations(false));
 
 const VideoRedoTool = Tool.make("video_redo", {
-  description: "Redo the last undone video edit change.",
+  description: "Redo the last undone edit to this video project. Use this, not git.",
   success: EditStep,
   failure: OrchestratorMcpFailure,
   dependencies,
