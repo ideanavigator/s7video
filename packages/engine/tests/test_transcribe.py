@@ -806,15 +806,85 @@ def test_a_partial_copy_or_another_revision_is_not_offered(cache: Path, tmp_path
     assert caught.value.code == models.CACHE_MISMATCH
 
 
-def test_a_copy_that_cannot_be_cloned_is_copied_only_when_allowed(cache: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def _blobs_on_another_disk(monkeypatch: pytest.MonkeyPatch, cache: Path) -> None:
+    """The blobs the cache's symlinks point to look like another volume (an external disk)."""
+    real = models._file_device
+
+    def device(path: Path) -> int:
+        return -1 if Path(os.path.realpath(path)).is_relative_to(cache.resolve()) else real(path)
+
+    monkeypatch.setattr(models, "_file_device", device)
+
+
+def test_a_copy_on_another_disk_says_its_size_and_copies_only_when_allowed(
+    cache: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     _fake_cache(cache)
-    monkeypatch.setattr(models, "_clone", lambda _source, _target: False)
+    _blobs_on_another_disk(monkeypatch, cache)
+    light = len(FILES["small.bin"]) + len(FILES["aligner.bin"])
+    assert models.status()["profiles"]["light"]["found"] == {"copyBytes": light}
+    clones: list[Path] = []
+    monkeypatch.setattr(models, "_clonefile", lambda source, _target: clones.append(source) or False)
+    # Without the user's yes to the space, nothing is cloned or copied.
+    with pytest.raises(rpc.RpcError) as caught:
+        models.download("light", JobContext("r", None), "clone")
+    assert caught.value.code == models.CACHE_NEEDS_COPY and clones == []
+    assert list(models.snapshot_dir(models.load_lock()["asr-0.6b"]).parent.rglob("*.reuse")) == []
+    # Not enough free space: refused before any copy.
+    real_usage = models.shutil.disk_usage
+    monkeypatch.setattr(models.shutil, "disk_usage", lambda _path: type("U", (), {"free": 1024})())
+    with pytest.raises(rpc.RpcError) as full:
+        models.download("light", JobContext("r", None), "copy")
+    assert full.value.code == models.DISK_FULL and clones == []
+    monkeypatch.setattr(models.shutil, "disk_usage", real_usage)
+    models.download("light", JobContext("r", None), "copy")
+    assert models.status()["profiles"]["light"]["ready"] is True
+
+
+def test_a_refused_clone_never_turns_into_a_silent_copy(cache: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """`clonefile(2)` fails instead of copying (EXDEV, ENOTSUP); a refusal is not papered over."""
+    _fake_cache(cache)
+
+    class Refusing:
+        @staticmethod
+        def clonefile(_source: bytes, _target: bytes, _flags: int) -> int:
+            return -1
+
+    monkeypatch.setattr(models, "_LIBSYSTEM", Refusing())
     with pytest.raises(rpc.RpcError) as caught:
         models.download("light", JobContext("r", None), "clone")
     assert caught.value.code == models.CACHE_NEEDS_COPY
+    folder = models.snapshot_dir(models.load_lock()["asr-0.6b"])
+    assert not (folder / "small.bin").exists() and list(folder.glob("*.reuse")) == []
+
+
+def test_the_real_clonefile_clones_a_blob_through_its_symlink(cache: Path) -> None:
+    _fake_cache(cache)
+    entry = cache / "models--test--asr-small" / "snapshots" / ("0" * 40) / "small.bin"
+    target = cache.parent / "clone.bin"
+    assert models._clonefile(entry, target) is True
+    assert target.read_bytes() == FILES["small.bin"] and not target.is_symlink()
+
+
+def test_cancel_during_a_copy_leaves_nothing_behind(cache: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _fake_cache(cache)
+    _blobs_on_another_disk(monkeypatch, cache)
+    monkeypatch.setattr(models, "_clonefile", lambda _source, _target: False)
+    job = JobContext("r", None)
+    written: list[int] = []
+
+    def write_then_cancel(handle: Any, chunk: bytes) -> None:
+        handle.write(chunk)
+        written.append(len(chunk))
+        job.cancel()
+
+    monkeypatch.setattr(models, "_write", write_then_cancel)
+    with pytest.raises(Cancelled):
+        models.download("light", job, "copy")
+    assert written == [len(FILES["small.bin"])]
+    folder = models.snapshot_dir(models.load_lock()["asr-0.6b"])
+    assert list(folder.glob("*")) == []
     assert models.status()["profiles"]["light"]["ready"] is False
-    models.download("light", JobContext("r", None), "copy")
-    assert models.status()["profiles"]["light"]["ready"] is True
 
 
 def test_our_own_folder_and_relative_paths_are_never_searched(hub: FakeHub, monkeypatch: pytest.MonkeyPatch) -> None:
