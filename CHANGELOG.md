@@ -87,5 +87,7 @@ from; the per-ticket entries and how this file is compiled are in
 ### Fixed
 
 - No visible change: the Editor panel's video-retry tests no longer fail on a busy machine. (S7V-060)
+- Chats open again with the default settings: the Git actions row no longer crashes the page looking
+  for a code-hosting site to publish to, and shows no publish option while none is set up. (S7V-057)
 
 [Unreleased]: https://github.com/ideanavigator/s7video/commits/main
