@@ -701,7 +701,11 @@ describe("ClaudeAdapterV2 video edit instructions", () => {
 });
 
 describe("ClaudeAdapterV2 device instructions", () => {
-  const options = (input: { readonly mcp: boolean; readonly deviceToolsAvailable: boolean }) =>
+  const options = (input: {
+    readonly mcp: boolean;
+    readonly deviceToolsAvailable: boolean;
+    readonly videoToolsAvailable?: boolean;
+  }) =>
     ClaudeAdapterV2.makeClaudeQueryOptions({
       modelSelection: {
         instanceId: ProviderInstanceId.make("claudeAgent"),
@@ -714,6 +718,9 @@ describe("ClaudeAdapterV2 device instructions", () => {
         ? { mcpServers: { "t3-code": { type: "http" as const, url: "http://127.0.0.1/mcp" } } }
         : {}),
       deviceToolsAvailable: input.deviceToolsAvailable,
+      ...(input.videoToolsAvailable === undefined
+        ? {}
+        : { videoToolsAvailable: input.videoToolsAvailable }),
       environment: {},
     });
   const append = (input: { readonly mcp: boolean; readonly deviceToolsAvailable: boolean }) =>
@@ -730,11 +737,12 @@ describe("ClaudeAdapterV2 device instructions", () => {
     assert.notInclude(append({ mcp: false, deviceToolsAvailable: true }), "## T3 Code devices");
   });
 
-  it("gives native subagents the device block only in a session with device access", async () => {
+  it("gives native subagents the device and video blocks only in sessions with that access", async () => {
     // Subagents start from their task prompt, not the parent's system prompt.
     const subagentContext = (input: {
       readonly mcp: boolean;
       readonly deviceToolsAvailable: boolean;
+      readonly videoToolsAvailable?: boolean;
     }) =>
       Promise.all(
         (options(input).hooks?.SubagentStart ?? []).flatMap((matcher) =>
@@ -762,8 +770,28 @@ describe("ClaudeAdapterV2 device instructions", () => {
         },
       },
     ]);
+    const context = (additionalContext: string) => [
+      { hookSpecificOutput: { hookEventName: "SubagentStart" as const, additionalContext } },
+    ];
+    assert.deepEqual(
+      await subagentContext({ mcp: true, deviceToolsAvailable: false, videoToolsAvailable: true }),
+      context(T3_CODE_VIDEO_EDIT_INSTRUCTIONS_WITH_TOOL_SEARCH),
+    );
+    assert.deepEqual(
+      await subagentContext({ mcp: true, deviceToolsAvailable: true, videoToolsAvailable: true }),
+      context(
+        `${T3_CODE_DEVICE_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH}\n\n${T3_CODE_VIDEO_EDIT_INSTRUCTIONS_WITH_TOOL_SEARCH}`,
+      ),
+    );
+    assert.deepEqual(
+      await subagentContext({ mcp: true, deviceToolsAvailable: false, videoToolsAvailable: false }),
+      [],
+    );
     assert.deepEqual(await subagentContext({ mcp: true, deviceToolsAvailable: false }), []);
-    assert.deepEqual(await subagentContext({ mcp: false, deviceToolsAvailable: true }), []);
+    assert.deepEqual(
+      await subagentContext({ mcp: false, deviceToolsAvailable: true, videoToolsAvailable: true }),
+      [],
+    );
   });
 });
 

@@ -295,14 +295,15 @@ undo history. These upstream files have small, additive edits:
 
 - `packages/provider-core/src/server/orchestrationInstructions.ts` adds
   `T3_CODE_VIDEO_EDIT_INSTRUCTIONS` and its `_WITH_TOOL_SEARCH` variant for Claude.
-- `orchestration-v2/Adapters/ClaudeAdapterV2.ts` takes `videoToolsAvailable` and appends the line
-  to the system prompt.
+- `orchestration-v2/Adapters/ClaudeAdapterV2.ts` takes `videoToolsAvailable`, appends the line to
+  the system prompt, and adds it to the `SubagentStart` hook for native subagents. The hook now
+  carries the device text, the video line, or both, and is registered when either applies.
 - `orchestration-v2/Adapters/CodexAdapterV2.ts` and `provider/CodexDeveloperInstructions.ts` add it
   to `t3_code_tools` through an optional `video` flag.
 - `provider/AgentContextBudget.test.ts` and `agentContextBudget.json` measure the video-on context
   as `claudeSystemAppendVideoBytes` and `codexAdditionalContextVideoBytes`.
 
-ACP agents and Claude's native subagents do not get the line yet.
+ACP agents do not get the line yet.
 
 ## Licensing (S7V-004)
 
