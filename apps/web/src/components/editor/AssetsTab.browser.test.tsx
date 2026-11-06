@@ -6,6 +6,7 @@ import { page, userEvent } from "vite-plus/test/browser";
 
 import { act, render } from "../../../test/render";
 import type { MediaLibraryState } from "../../state/media";
+import { BROWSER_ADD_MEDIA_HINT } from "./addMediaHint";
 import { AssetsList, type AssetsListProps } from "./AssetsTab";
 import { ImportDialog } from "./ImportDialog";
 
@@ -82,10 +83,41 @@ describe("AssetsTab", () => {
     expect(props.onAddMedia).toHaveBeenCalledOnce();
   });
 
-  it("cannot add files without the desktop app", async () => {
+  it("explains a disabled Add media without the desktop app", async () => {
     const { screen: rendering } = renderList({ canAddFiles: false });
     await using screen = await rendering;
-    await expect.element(screen.getByRole("button", { name: "Add media" })).toBeDisabled();
+    const button = screen.getByRole("button", { name: "Add media" });
+    await expect.element(button).toBeDisabled();
+    await expect.element(button).toHaveAccessibleDescription(BROWSER_ADD_MEDIA_HINT);
+    // The header hint and the empty list both give the advice; neither offers a drop here.
+    await expect.poll(() => screen.getByText(BROWSER_ADD_MEDIA_HINT).elements().length).toBe(2);
+    expect(screen.getByText("Drop clips here", { exact: false }).query()).toBeNull();
+  });
+
+  it("shows no hint in the desktop app", async () => {
+    const { screen: rendering } = renderList({});
+    await using screen = await rendering;
+    await expect.element(screen.getByRole("button", { name: "Add media" })).toBeEnabled();
+    await expect
+      .element(screen.getByText("Drop clips here or Add media.", { exact: false }))
+      .toBeVisible();
+    expect(screen.getByText(BROWSER_ADD_MEDIA_HINT).query()).toBeNull();
+    expect(
+      screen.getByRole("button", { name: "Add media" }).element().hasAttribute("aria-describedby"),
+    ).toBe(false);
+  });
+
+  it("keeps the hint above a list of clips without the desktop app", async () => {
+    const { screen: rendering } = renderList({
+      canAddFiles: false,
+      state: ready([asset({ id: "cam" })]),
+    });
+    await using screen = await rendering;
+    await expect.element(screen.getByRole("listitem", { name: /^cam\.mp4/u })).toBeVisible();
+    await expect.element(screen.getByText(BROWSER_ADD_MEDIA_HINT)).toBeVisible();
+    await expect
+      .element(screen.getByRole("button", { name: "Add media" }))
+      .toHaveAccessibleDescription(BROWSER_ADD_MEDIA_HINT);
   });
 
   it("lists each clip with its length, resolution, size and how it is kept", async () => {

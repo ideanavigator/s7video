@@ -14,7 +14,7 @@ import type {
   ScopedProjectRef,
 } from "@t3tools/contracts";
 import { AudioLinesIcon, FilmIcon, PlusIcon, TriangleAlertIcon } from "lucide-react";
-import { useState, type DragEvent, type KeyboardEvent, type ReactNode } from "react";
+import { useId, useState, type DragEvent, type KeyboardEvent, type ReactNode } from "react";
 
 import { useAssetUrlState } from "../../assets/assetUrls";
 import { requestConfirmDialog } from "../../confirmDialog";
@@ -25,6 +25,7 @@ import { Button } from "../ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "../ui/empty";
 import { Spinner } from "../ui/spinner";
 import { toastManager } from "../ui/toast";
+import { BROWSER_ADD_MEDIA_HINT } from "./addMediaHint";
 import { formatBytes, ImportDialog, type ImportRequest } from "./ImportDialog";
 import { explanationOf } from "./mediaErrorExplanation";
 import { formatMediaLength, spokenMediaLength } from "./mediaTimecode";
@@ -153,6 +154,7 @@ function ImportingRow({ entry }: { readonly entry: MediaImporting }) {
 
 export function AssetsList(props: AssetsListProps) {
   const [dragging, setDragging] = useState(false);
+  const hintId = useId();
   const acceptsDrop = (event: DragEvent<HTMLDivElement>) =>
     props.canAddFiles && event.dataTransfer.types.includes("Files");
   const onDragOver = (event: DragEvent<HTMLDivElement>) => {
@@ -196,7 +198,11 @@ export function AssetsList(props: AssetsListProps) {
               <FilmIcon />
             </EmptyMedia>
             <EmptyTitle>No clips yet</EmptyTitle>
-            <EmptyDescription>Drop clips here or Add media. Nothing is uploaded.</EmptyDescription>
+            <EmptyDescription>
+              {props.canAddFiles
+                ? "Drop clips here or Add media. Nothing is uploaded."
+                : BROWSER_ADD_MEDIA_HINT}
+            </EmptyDescription>
           </EmptyHeader>
         </Empty>
       );
@@ -241,12 +247,18 @@ export function AssetsList(props: AssetsListProps) {
           size="xs"
           variant="outline"
           disabled={!props.canAddFiles}
+          aria-describedby={props.canAddFiles ? undefined : hintId}
           onClick={props.onAddMedia}
         >
           <PlusIcon aria-hidden />
           Add media
         </Button>
       </div>
+      {props.canAddFiles ? null : (
+        <p id={hintId} className="text-xs text-muted-foreground">
+          {BROWSER_ADD_MEDIA_HINT}
+        </p>
+      )}
       {body}
     </div>
   );

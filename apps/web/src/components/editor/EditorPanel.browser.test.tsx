@@ -11,6 +11,7 @@ import {
 import * as Cause from "effect/Cause";
 import { useSyncExternalStore } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
+import { page } from "vite-plus/test/browser";
 
 import { act, render } from "../../../test/render";
 import type { ProjectEditState, ProjectExport } from "../../editor/editStore";
@@ -90,6 +91,7 @@ vi.mock(import("../../assets/assetUrls"), () => ({
 
 import "../../index.css";
 
+import { BROWSER_ADD_MEDIA_HINT } from "./addMediaHint";
 import EditorPanel from "./EditorPanel";
 
 const FPS = { num: 30, den: 1 };
@@ -180,8 +182,27 @@ const exportJob = (overrides: Partial<EngineJob> = {}): EngineJob => ({
 describe("EditorPanel", () => {
   it("should handle an empty edit: invites a drop and runs no player", async () => {
     setState([], false);
+    window.desktopBridge = {} as NonNullable<typeof window.desktopBridge>;
+    try {
+      await using screen = await renderPanel();
+      await expect.element(screen.getByText("Drop a clip here or into the chat.")).toBeVisible();
+      await expect.element(screen.getByRole("button", { name: "Add media" }).first()).toBeEnabled();
+      expect(screen.getByText(BROWSER_ADD_MEDIA_HINT).query()).toBeNull();
+      expect(document.querySelector("video")).toBeNull();
+    } finally {
+      delete window.desktopBridge;
+    }
+  });
+
+  it("the empty player explains how to add a clip in the browser", async () => {
+    setState([], false);
     await using screen = await renderPanel();
-    await expect.element(screen.getByText("Drop a clip here or into the chat.")).toBeVisible();
+    const player = screen.getByText("No clips yet").first().element().closest("[data-slot=empty]");
+    expect(player).not.toBeNull();
+    const button = page.elementLocator(player!).getByRole("button", { name: "Add media" });
+    await expect.element(button).toBeDisabled();
+    await expect.element(button).toHaveAccessibleDescription(BROWSER_ADD_MEDIA_HINT);
+    expect(screen.getByText("Drop a clip here", { exact: false }).query()).toBeNull();
     expect(document.querySelector("video")).toBeNull();
   });
 
