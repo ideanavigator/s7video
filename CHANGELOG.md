@@ -86,6 +86,8 @@ from; the per-ticket entries and how this file is compiled are in
 
 ### Fixed
 
+- In the browser, the greyed-out Add media button and the empty Assets list and player now explain
+  what to do instead: drop files into the chat, or use the desktop app for large files. (S7V-065)
 - When an undo or redo makes no visible difference, such as going back past adding a clip (which
   stays in Assets), the assistant says so and tells you whether there is more to undo, instead of
   saying "Undone". (S7V-063)
