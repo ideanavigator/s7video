@@ -484,6 +484,30 @@ export function claudeLaunchArgDirectories(launchArgs?: string): ReadonlyArray<s
   return directories;
 }
 
+/** The friendly name Codex also reads, from `agents/openai.yaml` (`interface.display_name`). */
+const readSkillDisplayName = Effect.fn("readSkillDisplayName")(function* (skillDir: string) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const contents = yield* fileSystem
+    .readFileString(path.join(skillDir, "agents", "openai.yaml"))
+    .pipe(Effect.orElseSucceed(() => undefined));
+  if (contents === undefined) return undefined;
+  try {
+    const parsed: unknown = parseYamlDocument(contents);
+    const interfaceRecord =
+      typeof parsed === "object" && parsed !== null
+        ? (parsed as Record<string, unknown>).interface
+        : undefined;
+    const value =
+      typeof interfaceRecord === "object" && interfaceRecord !== null
+        ? (interfaceRecord as Record<string, unknown>).display_name
+        : undefined;
+    return typeof value === "string" && value.trim() ? value.trim() : undefined;
+  } catch {
+    return undefined;
+  }
+});
+
 /** Skill roots of plugin folders the app passes with `--plugin-dir` (s7video built-in skills). */
 const localPluginSkillRoots = Effect.fn("localPluginSkillRoots")(function* (
   pluginDirs: ReadonlyArray<string>,
@@ -586,6 +610,8 @@ export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* 
         continue;
       }
 
+      const displayName =
+        root.scope === "system" ? yield* readSkillDisplayName(path.dirname(skillPath)) : undefined;
       const override = root.prefix ? undefined : skillOverrides.get(name);
       const userInvocationOnly =
         (frontmatter.kind === "parsed" && frontmatter.userInvocationOnly === true) ||
@@ -598,6 +624,7 @@ export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* 
         ...(frontmatter.kind === "parsed" && frontmatter.description
           ? { description: frontmatter.description }
           : {}),
+        ...(displayName ? { displayName } : {}),
         ...(userInvocationOnly ? { userInvocationOnly: true } : {}),
         ...(frontmatter.kind === "parsed" && frontmatter.userInvocable === false
           ? { userInvocable: false }

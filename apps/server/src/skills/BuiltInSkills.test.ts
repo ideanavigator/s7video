@@ -88,6 +88,7 @@ it.layer(NodeServices.layer)("built-in skills", (it) => {
           scope: "system",
           description:
             "Remove silences - cut the pauses from the user's clip. Use only when the user asks for it.",
+          displayName: "Remove silences",
         },
       ]);
       assert.deepEqual(yield* fs.readDirectory(home), []);
