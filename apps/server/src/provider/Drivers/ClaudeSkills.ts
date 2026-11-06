@@ -484,6 +484,24 @@ export function claudeLaunchArgDirectories(launchArgs?: string): ReadonlyArray<s
   return directories;
 }
 
+function parseSkillDisplayName(contents: string): string | undefined {
+  let parsed: unknown;
+  try {
+    parsed = parseYamlDocument(contents);
+  } catch {
+    return undefined;
+  }
+  const interfaceRecord =
+    typeof parsed === "object" && parsed !== null
+      ? (parsed as Record<string, unknown>).interface
+      : undefined;
+  const value =
+    typeof interfaceRecord === "object" && interfaceRecord !== null
+      ? (interfaceRecord as Record<string, unknown>).display_name
+      : undefined;
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
 /** The friendly name Codex also reads, from `agents/openai.yaml` (`interface.display_name`). */
 const readSkillDisplayName = Effect.fn("readSkillDisplayName")(function* (skillDir: string) {
   const fileSystem = yield* FileSystem.FileSystem;
@@ -491,21 +509,7 @@ const readSkillDisplayName = Effect.fn("readSkillDisplayName")(function* (skillD
   const contents = yield* fileSystem
     .readFileString(path.join(skillDir, "agents", "openai.yaml"))
     .pipe(Effect.orElseSucceed(() => undefined));
-  if (contents === undefined) return undefined;
-  try {
-    const parsed: unknown = parseYamlDocument(contents);
-    const interfaceRecord =
-      typeof parsed === "object" && parsed !== null
-        ? (parsed as Record<string, unknown>).interface
-        : undefined;
-    const value =
-      typeof interfaceRecord === "object" && interfaceRecord !== null
-        ? (interfaceRecord as Record<string, unknown>).display_name
-        : undefined;
-    return typeof value === "string" && value.trim() ? value.trim() : undefined;
-  } catch {
-    return undefined;
-  }
+  return contents === undefined ? undefined : parseSkillDisplayName(contents);
 });
 
 /** Skill roots of plugin folders the app passes with `--plugin-dir` (s7video built-in skills). */
