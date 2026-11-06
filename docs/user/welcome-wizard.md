@@ -59,7 +59,8 @@ terminal metadata while the terminal process can use them.
 Below the agents, **Speech model** offers the model that reads your clips for transcripts,
 silence cuts and captions. Choose **Standard** (most accurate) or **Light** (smaller; recommended
 on Macs with 8 GB of memory or less), then **Download**. It downloads once and stays on your Mac.
-You can skip it: the Editor panel asks again when an edit needs it, and it is also in
+If the model is already in a Hugging Face cache on your Mac, it says **Found on this Mac, ready to
+use**: press **Use** to take it without downloading. You can skip it: the Editor panel asks again when an edit needs it, and it is also in
 **Settings → Providers**.
 
 ## Import your projects
