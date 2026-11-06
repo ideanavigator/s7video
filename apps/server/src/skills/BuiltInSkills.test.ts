@@ -135,6 +135,10 @@ it.layer(NodeServices.layer)("built-in skills", (it) => {
       assert.include(flat, "was cut by an earlier edit");
       assert.include(flat, "offer to undo back to before that cut, then ask again");
       assert.include(flat, "never by frame numbers");
+      // S7V-061: editing never exports; captions come with the export the user asks for.
+      assert.include(flat, "Do not export.");
+      assert.include(flat, "Call `video_export` only when this message asks for a video file");
+      assert.include(flat, "Call `video_canvas` only when the user names a shape");
       assert.include(text, "Never edit `edit.json` yourself and never use git on it.");
     }),
   );

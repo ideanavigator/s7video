@@ -509,6 +509,7 @@ describe("video toolkit", () => {
       Effect.sync(() => {
         const tools = server.tools.map(({ tool }) => tool);
         expect(tools.map((tool) => tool.name).toSorted()).toEqual([
+          "video_canvas",
           "video_edit_read",
           "video_export",
           "video_frame",
@@ -533,6 +534,11 @@ describe("video toolkit", () => {
         expect(described.video_job_status).toContain("job");
         expect(described.video_job_cancel).toContain("job");
         expect(described.video_export).toContain("job");
+        // S7V-061: exports and shape changes are user-triggered only.
+        expect(described.video_export).toContain("only if user asks");
+        expect(described.video_canvas).toContain("only if user asks");
+        const exportTool = tools.find((tool) => tool.name === "video_export");
+        expect(Object.keys(exportTool?.inputSchema.properties ?? {})).toEqual(["captions"]);
         expect(described.video_transcribe).toContain("Transcribe");
         expect(described.video_transcript_read).toContain("transcript");
         expect(described.video_undo).toMatch(/\bundo\b.*\bedit\b/iu);
@@ -906,6 +912,7 @@ describe("video toolkit", () => {
           ["video_job_status", {}],
           ["video_job_cancel", { jobId: "engine-job-1" }],
           ["video_export", {}],
+          ["video_canvas", { ratio: "16:9" }],
           ["video_transcribe", { media: "cam" }],
           ["video_transcript_read", { media: "cam" }],
           ["video_import", { path: "/tmp/x.mp4" }],
@@ -1171,14 +1178,15 @@ describe("video toolkit", () => {
     () =>
       withTools(({ fixture, call }) =>
         Effect.gen(function* () {
-          const started = yield* call(threadA, "video_export", { preset: "reel-9x16" });
+          // S7V-061: no preset; the export takes the edit's canvas, which video_canvas changes.
+          const started = yield* call(threadA, "video_export", {});
           expect(started.isError).toBe(false);
           expect(started.structuredContent).toEqual({
             jobId: "engine-job-export-1",
             path: "exports/my-reel-20261106-0930.mp4",
           });
           // Always the caller's own project: the tool takes no project argument.
-          expect(fixture.exports).toEqual([{ projectId: projectA, preset: "reel-9x16" }]);
+          expect(fixture.exports).toEqual([{ projectId: projectA }]);
 
           const mine = yield* call(threadA, "video_job_status", { jobId: "engine-job-export-1" });
           expect(mine.structuredContent).toMatchObject({

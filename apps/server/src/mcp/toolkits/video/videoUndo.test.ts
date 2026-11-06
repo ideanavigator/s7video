@@ -395,6 +395,7 @@ describe("video_undo and video_redo", () => {
           ["video_redo", {}],
           ["video_remove_silences", {}],
           ["video_export", {}],
+          ["video_canvas", { ratio: "1:1" }],
           ["video_import", { path: NodePath.join(root, "clip.mp4") }],
           ["video_transcribe", { media: "cam" }],
         ];
@@ -409,6 +410,37 @@ describe("video_undo and video_redo", () => {
         for (const tool of ["video_edit_read", "video_job_status"]) {
           expect((yield* call(tool)).isError, tool).toBe(false);
         }
+      }),
+    ),
+  );
+
+  // S7V-061: the user can change the video's shape on request, as one undoable step.
+  it.effect("video_canvas sets the shape as one undoable step, and a repeat changes nothing", () =>
+    withProject(({ root, thread, edits, call }) =>
+      Effect.gen(function* () {
+        const before = readFile(root, "edit.json");
+        const start = yield* edits.read(thread.projectId);
+        expect(start.document.canvas).toEqual({ width: 1080, height: 1920 });
+
+        const wide = yield* call("video_canvas", { ratio: "16:9" });
+        expect(wide.isError).toBe(false);
+        const after = yield* edits.read(thread.projectId);
+        expect(after.document.canvas).toEqual({ width: 1920, height: 1080 });
+        expect(wide.structuredContent).toEqual({
+          revision: after.revision,
+          message: "The video is now 16:9 (1920×1080). Say undo to put it back.",
+        });
+
+        const again = yield* call("video_canvas", { ratio: "16:9" });
+        expect(again.structuredContent).toEqual({
+          revision: after.revision,
+          message: "The video is already 16:9 (1920×1080).",
+        });
+
+        yield* call("video_undo");
+        expect(readFile(root, "edit.json")).toBe(before);
+        const refused = yield* call("video_canvas", { ratio: "21:9" }).pipe(Effect.flip);
+        expect(String(refused)).toMatch(/ratio/u);
       }),
     ),
   );
