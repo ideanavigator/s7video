@@ -33,6 +33,8 @@ Import records the media in `edit.json` right after the probe and fingerprint (a
 the Assets row appears before the thumbnail is made: on a 4K clip that is a full-frame decode. The
 thumbnail is made next, beside the proxy decision's keyframe scan, and the list is published
 again, so the row picks it up without a reload; a failed thumbnail leaves the film placeholder.
+The thumbnail runs in the service's scope, so an import cut short after its edit landed (app quit,
+closed RPC, stopped tool) still gets one, and importing the same file again makes a missing one.
 The clip is marked as proxy-checked before the edit lands, or the list that edit triggers would
 probe the file a second time while the import decides its proxy (S7V-064).
 

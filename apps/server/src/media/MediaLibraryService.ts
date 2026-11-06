@@ -35,6 +35,7 @@ import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -504,6 +505,23 @@ const make = Effect.fn("MediaLibraryService.make")(function* (options: MediaLibr
       );
   });
 
+  /**
+   * Makes a missing thumbnail and republishes the list, in the service scope: an import cut short
+   * after its edit landed (app quit, closed RPC, stopped tool) still gets its thumbnail.
+   */
+  const thumbnailInBackground = (
+    projectId: ProjectId,
+    root: string,
+    source: string,
+    sha256: string,
+    probe: MediaProbeResult,
+  ) =>
+    thumbnailFor(root, source, sha256, probe).pipe(
+      Effect.flatMap((made) => (made ? notify(projectId) : Effect.void)),
+      Effect.forkIn(serviceScope),
+      Effect.flatMap(Fiber.join),
+    );
+
   /** Starts a background proxy when the policy asks for one; returns its job id. */
   const startProxy = (
     projectId: ProjectId,
@@ -662,10 +680,16 @@ const make = Effect.fn("MediaLibraryService.make")(function* (options: MediaLibr
         media.fingerprint.size === fingerprint.size,
     );
     if (existing !== undefined && (yield* isPresent(root, existing))) {
-      // Importing again retries a proxy that failed or was cut short when the app quit.
+      // Importing again retries a thumbnail or proxy that failed or was cut short.
       proxyChecked.add(`${input.projectId}\0${fingerprint.sha256}`);
       const source = originalPath(root, existing) ?? real;
-      const retried = yield* startProxy(input.projectId, root, source, fingerprint.sha256, probe);
+      const [, retried] = yield* Effect.all(
+        [
+          thumbnailInBackground(input.projectId, root, source, fingerprint.sha256, probe),
+          startProxy(input.projectId, root, source, fingerprint.sha256, probe),
+        ],
+        { concurrency: 2 },
+      );
       return { mediaId: existing.id, ...(retried === undefined ? {} : { jobId: retried }) };
     }
     const label =
@@ -708,9 +732,7 @@ const make = Effect.fn("MediaLibraryService.make")(function* (options: MediaLibr
     const readable = location.path !== undefined ? path.join(root, location.path) : real;
     const [, jobId] = yield* Effect.all(
       [
-        thumbnailFor(root, real, fingerprint.sha256, probe).pipe(
-          Effect.flatMap((made) => (made ? notify(input.projectId) : Effect.void)),
-        ),
+        thumbnailInBackground(input.projectId, root, real, fingerprint.sha256, probe),
         startProxy(input.projectId, root, readable, fingerprint.sha256, probe),
       ],
       { concurrency: 2 },
