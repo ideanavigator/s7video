@@ -409,7 +409,7 @@ export type SilenceDetectResult = typeof SilenceDetectResult.Type;
 
 /** Why silence removal did not run; the message tells the agent what to do next. */
 export class SilenceCutError extends Schema.TaggedError<SilenceCutError>()("SilenceCutError", {
-  reason: Schema.Literals(["media", "no-transcript", "no-speech", "linked-audio", "edit"]),
+  reason: Schema.Literals(["media", "no-transcript", "no-speech", "linked-audio", "keep"]),
   detail: Schema.String,
 }) {
   override get message(): string {

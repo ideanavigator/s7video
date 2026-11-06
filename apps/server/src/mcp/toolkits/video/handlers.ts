@@ -64,17 +64,23 @@ const noSuchJob = () =>
 export const KEEP_FORMAT =
   "keep is clip-frame ranges as video_transcript_read shows them, end exclusive: 9-30,60-90.";
 
-/** `"9-30, 60-90"` as frame ranges; null unless every part is `from-to` with from < to. */
+export const KEEP_OVERLAP = "keep ranges overlap; give each pause once, for example 9-30,60-90.";
+
+/** `"9-30, 60-90"` as frame ranges, or the plain reason it is not one. */
 const parseKeep = (text: string) => {
-  const ranges = [];
+  const ranges: Array<{ fromFrame: number; toFrame: number }> = [];
   for (const part of text.split(",")) {
     const match = /^\s*(\d+)\s*-\s*(\d+)\s*$/u.exec(part);
-    if (match === null) return null;
+    if (match === null) return { error: KEEP_FORMAT };
     const [fromFrame, toFrame] = [Number(match[1]), Number(match[2])];
-    if (!(fromFrame < toFrame)) return null;
+    if (!(fromFrame < toFrame)) return { error: KEEP_FORMAT };
     ranges.push({ fromFrame, toFrame });
   }
-  return ranges;
+  ranges.sort((a, b) => a.fromFrame - b.fromFrame);
+  if (ranges.some((range, index) => index > 0 && range.fromFrame < ranges[index - 1]!.toFrame)) {
+    return { error: KEEP_OVERLAP };
+  }
+  return { ranges };
 };
 
 /** The edit's length: the end of its last item on any track. */
@@ -362,10 +368,14 @@ const handlers = {
   // Writes the edit (one checkpoint), so plan-mode and read-only callers are refused.
   video_remove_silences: McpToolAccess.actsAsCaller(({ media, minGapSeconds, keep }) =>
     Effect.gen(function* () {
-      const ranges = keep === undefined ? undefined : parseKeep(keep);
-      if (ranges === null) {
-        return yield* new OrchestratorMcpFailure({ code: "invalid_request", message: KEEP_FORMAT });
+      const parsed = keep === undefined ? undefined : parseKeep(keep);
+      if (parsed !== undefined && "error" in parsed) {
+        return yield* new OrchestratorMcpFailure({
+          code: "invalid_request",
+          message: parsed.error,
+        });
       }
+      const ranges = parsed?.ranges;
       if (minGapSeconds !== undefined && (minGapSeconds <= 0 || minGapSeconds > 60)) {
         return yield* new OrchestratorMcpFailure({
           code: "invalid_request",

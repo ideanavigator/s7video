@@ -41,6 +41,8 @@ export interface RemoveSilencesResult {
   readonly keptSegments: number;
   readonly shortestSegmentFrames: number;
   readonly keptRequests: number;
+  /** One plain sentence for the agent to pass on. */
+  readonly message: string;
   readonly revision: number;
   /** False when the edit already had exactly these cuts, or there was nothing to cut. */
   readonly changed: boolean;
@@ -197,6 +199,16 @@ const make = Effect.gen(function* () {
       );
     }
 
+    const outside = (input.keep ?? []).find(
+      (range) => range.fromFrame >= transcript.durationFrames,
+    );
+    if (outside !== undefined) {
+      return yield* refuse(
+        "keep",
+        `keep ${outside.fromFrame}-${outside.toFrame} starts after the clip ends (${transcript.durationFrames} frames).`,
+      );
+    }
+    const target = placement(document, media);
     const plan = planSilenceCuts({
       words: transcript.words,
       levels: detected.levels,
@@ -206,6 +218,9 @@ const make = Effect.gen(function* () {
       mediaFrames,
       minGapSeconds: input.minGapSeconds ?? DEFAULT_MIN_GAP_SECONDS,
       keep: input.keep ?? [],
+      ...(target.own.length === 0
+        ? {}
+        : { current: target.own.map((item) => ({ in: item.in, duration: item.duration })) }),
     });
     if (plan._tag === "no-speech") {
       return yield* refuse(
@@ -214,7 +229,6 @@ const make = Effect.gen(function* () {
       );
     }
 
-    const target = placement(document, media);
     const seconds = (frames: number) =>
       Math.round(((frames * document.fps.den) / document.fps.num) * 10) / 10;
     const summary = {
@@ -224,11 +238,13 @@ const make = Effect.gen(function* () {
       keptSegments: plan.ranges.length,
       shortestSegmentFrames: plan.shortestFrames,
       keptRequests: plan.keptRequests,
+      message:
+        plan.cuts === 0
+          ? "No more pauses to cut; the edit is unchanged."
+          : `Removed ${seconds(plan.removedFrames)} s in ${plan.cuts} cuts${plan.keptRequests > 0 ? `, keeping ${plan.keptRequests} pause(s) as asked` : ""}. This only cuts more; it never restores earlier cuts.`,
     };
-    // A clip not yet on the timeline with nothing to cut stays as it is.
-    if (plan.cuts === 0 && target.own.length === 0) {
-      return { ...summary, revision, changed: false };
-    }
+    // Nothing new to remove: the edit stays exactly as it is.
+    if (plan.cuts === 0) return { ...summary, revision, changed: false };
     const after = yield* edits.apply(
       input.projectId,
       [

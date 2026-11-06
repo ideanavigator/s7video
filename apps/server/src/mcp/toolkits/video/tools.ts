@@ -231,6 +231,7 @@ const VideoRemoveSilencesTool = Tool.make("video_remove_silences", {
     keptSegments: Schema.Int,
     shortestSegmentFrames: Schema.Int,
     keptRequests: Schema.Int,
+    message: Schema.String,
     revision: Schema.Int,
     changed: Schema.Boolean,
   }),

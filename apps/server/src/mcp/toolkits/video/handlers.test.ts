@@ -50,7 +50,7 @@ import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpSessionRegistry from "../../McpSessionRegistry.ts";
 import * as McpToolAccessTestkit from "../../McpToolAccess.testkit.ts";
 import { NOT_IN_PROJECT, NOT_SHARED } from "../../VideoProjectScope.ts";
-import { editDurationFrames, KEEP_FORMAT, NO_ROOM_TO_COPY } from "./handlers.ts";
+import { editDurationFrames, KEEP_FORMAT, KEEP_OVERLAP, NO_ROOM_TO_COPY } from "./handlers.ts";
 import { VideoToolkit } from "./tools.ts";
 
 const environmentId = EnvironmentId.make("environment-video-test");
@@ -290,6 +290,7 @@ const layerFor = (fixture: Fixture, cancelSignal: Deferred.Deferred<string>) => 
                 keptSegments: 5,
                 shortestSegmentFrames: 12,
                 keptRequests: input.keep?.length ?? 0,
+                message: "Removed 3.2 s in 4 cuts.",
                 revision: 8,
                 changed: true,
               });
@@ -766,8 +767,25 @@ describe("video toolkit", () => {
             ],
           },
         ]);
-        const malformed = yield* call(threadA, "video_remove_silences", { keep: "after hello" });
-        expect(textOf(malformed)).toEqual([KEEP_FORMAT]);
+        for (const [keep, reason] of [
+          ["after hello", KEEP_FORMAT],
+          ["60-30", KEEP_FORMAT],
+          ["30-30", KEEP_FORMAT],
+          ["30-60,", KEEP_FORMAT],
+          ["30-60,,90-120", KEEP_FORMAT],
+          ["-5-10", KEEP_FORMAT],
+          ["30-60, 50-80", KEEP_OVERLAP],
+          ["90-120,10-95", KEEP_OVERLAP],
+        ] as const) {
+          const refused = yield* call(threadA, "video_remove_silences", { keep });
+          expect(textOf(refused), keep).toEqual([reason]);
+        }
+        // Spaces are fine, and ranges may come in any order.
+        yield* call(threadA, "video_remove_silences", { keep: " 90 - 120 ,30-60 " });
+        expect(fixture.silences.at(-1)?.keep).toEqual([
+          { fromFrame: 30, toFrame: 60 },
+          { fromFrame: 90, toFrame: 120 },
+        ]);
 
         const refused = yield* call(threadA, "video_remove_silences", { media: "silent" });
         expect(refused.isError).toBe(true);
@@ -776,7 +794,7 @@ describe("video toolkit", () => {
         const readOnly = { sessionId: "session-ro", label: "Viewer", access: "read-only" as const };
         const blocked = yield* call(threadA, "video_remove_silences", {}, undefined, readOnly);
         expect(blocked.isError).toBe(true);
-        expect(fixture.silences).toHaveLength(2);
+        expect(fixture.silences).toHaveLength(3);
       }),
     ),
   );

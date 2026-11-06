@@ -144,6 +144,7 @@ describe("SilenceCutService", () => {
           keptSegments: 3,
           shortestSegmentFrames: 66,
           keptRequests: 0,
+          message: "Removed 3.4 s in 4 cuts. This only cuts more; it never restores earlier cuts.",
           revision: start.revision + 1,
           changed: true,
         });
@@ -177,21 +178,69 @@ describe("SilenceCutService", () => {
     ),
   );
 
-  it.effect("re-plans an existing cut when the user asks to keep a pause", () =>
+  it.effect("keeps a pause the user asked for", () =>
     withProject(({ projectId, edits, silences }) =>
       Effect.gen(function* () {
-        const first = yield* silences.removeSilences({ projectId });
         const kept = yield* silences.removeSilences({
           projectId,
           keep: [{ fromFrame: 95, toFrame: 115 }],
         });
-        assert.isTrue(kept.changed);
         assert.strictEqual(kept.keptRequests, 1);
-        assert.strictEqual(kept.cuts, first.cuts - 1);
+        assert.strictEqual(kept.cuts, 3);
         const items = (yield* edits.read(projectId)).document.tracks[0]!.items;
         assert.isTrue(
           items.some((item) => "in" in item && item.in <= 95 && item.in + item.duration >= 115),
         );
+      }),
+    ),
+  );
+
+  it.effect("a removed retake stays removed, and a second run changes nothing", () =>
+    withProject(
+      ({ projectId, root, edits, silences }) =>
+        Effect.gen(function* () {
+          const first = yield* silences.removeSilences({ projectId });
+          assert.isTrue(first.changed);
+          const items = (yield* edits.read(projectId)).document.tracks[0]!.items;
+          for (const item of items) {
+            const from = "in" in item ? item.in : -1;
+            assert.isTrue(from + item.duration <= 115 || from >= 185, `item at ${from}`);
+          }
+          const afterFirst = readEdit(root);
+          const again = yield* silences.removeSilences({ projectId });
+          assert.isFalse(again.changed);
+          assert.strictEqual(again.cuts, 0);
+          assert.strictEqual(readEdit(root), afterFirst);
+        }),
+      // The middle phrase (a retake) was removed by hand: only 0-115 and 185-300 play.
+      [
+        { _tag: "putMedia", media: camera },
+        { _tag: "addTrack", track: { kind: "video", id: "V1", items: [] } },
+        {
+          _tag: "setKeepRanges",
+          trackId: "V1",
+          mediaId: "cam",
+          ranges: [
+            { in: 0, duration: 115 },
+            { in: 185, duration: 115 },
+          ],
+        },
+      ],
+    ),
+  );
+
+  it.effect("refuses a keep that starts after the clip ends", () =>
+    withProject(({ projectId, root, silences }) =>
+      Effect.gen(function* () {
+        const before = readEdit(root);
+        const error = yield* silences
+          .removeSilences({ projectId, keep: [{ fromFrame: 5000, toFrame: 6000 }] })
+          .pipe(Effect.flip);
+        assert.strictEqual(
+          error.message,
+          "keep 5000-6000 starts after the clip ends (300 frames).",
+        );
+        assert.strictEqual(readEdit(root), before);
       }),
     ),
   );
