@@ -1081,54 +1081,73 @@ describe("CodexAdapterV2 session initialize", () => {
   it.effect("should give video threads the built-in skills folder for their process only", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
-      const scenario = "codex-built-in-skills";
-      yield* (yield* McpProviderSessions.McpProviderSessions).set({
-        environmentId: EnvironmentId.make("environment-codex-skills"),
-        threadId: ThreadId.make(`thread-${scenario}`),
-        providerSessionId: `provider-session-${scenario}`,
-        providerInstanceId: ProviderInstanceId.make("codex"),
-        endpoint: "http://127.0.0.1:43123/mcp",
-        authorizationHeader: "Bearer secret-codex-token",
-        browserToolsAvailable: false,
-        capabilities: new Set(["orchestration", "video"]),
-      });
-      const [initialize, initializeResult, initialized, ...thread] = replayPreamble(scenario);
-      const session = yield* openReplaySession(
-        makeCodexReplayTranscript({
-          scenario,
-          entries: [
-            initialize!,
-            {
-              ...initializeResult!,
-              frame: {
-                id: 1,
-                result: {
-                  userAgent: "s7video/0.166.0",
-                  codexHome: "/tmp/codex-home",
-                  platformFamily: "unix",
-                  platformOs: "macos",
-                },
-              },
-            } as CodexReplay.CodexAppServerReplayEntry,
-            initialized!,
-            {
-              type: "expect_outbound",
-              label: "skills/extraRoots/set",
-              frame: {
-                id: 2,
-                method: "skills/extraRoots/set",
-                params: {
-                  extraRoots: [path.resolve(import.meta.dirname, "../../../skills/skills")],
-                },
-              },
-            },
-            { type: "emit_inbound", label: "skills/extraRoots/set", frame: { id: 2, result: {} } },
-            ...thread.slice(0, 2).map((entry) => withReplayRequestId(entry, 3)),
-          ],
-        }),
-      );
-      const providerThread = yield* session.ensureThread(`thread-${scenario}`);
-      assert.equal(providerThread.nativeThreadRef?.nativeId, scenario);
+      const opened = (scenario: string, capabilities: ReadonlyArray<string>) =>
+        Effect.gen(function* () {
+          yield* (yield* McpProviderSessions.McpProviderSessions).set({
+            environmentId: EnvironmentId.make("environment-codex-skills"),
+            threadId: ThreadId.make(`thread-${scenario}`),
+            providerSessionId: `provider-session-${scenario}`,
+            providerInstanceId: ProviderInstanceId.make("codex"),
+            endpoint: "http://127.0.0.1:43123/mcp",
+            authorizationHeader: "Bearer secret-codex-token",
+            browserToolsAvailable: false,
+            capabilities: new Set(capabilities),
+          });
+          const video = capabilities.includes("video");
+          const [initialize, initializeResult, initialized, ...thread] = replayPreamble(scenario);
+          // The replay fails on any outbound frame it does not expect, so the plain thread
+          // proves Codex is never asked to load the built-in skills.
+          const session = yield* openReplaySession(
+            makeCodexReplayTranscript({
+              scenario,
+              entries: [
+                initialize!,
+                {
+                  ...initializeResult!,
+                  frame: {
+                    id: 1,
+                    result: {
+                      userAgent: "s7video/0.166.0",
+                      codexHome: "/tmp/codex-home",
+                      platformFamily: "unix",
+                      platformOs: "macos",
+                    },
+                  },
+                } as CodexReplay.CodexAppServerReplayEntry,
+                initialized!,
+                ...(video
+                  ? ([
+                      {
+                        type: "expect_outbound",
+                        label: "skills/extraRoots/set",
+                        frame: {
+                          id: 2,
+                          method: "skills/extraRoots/set",
+                          params: {
+                            extraRoots: [
+                              path.resolve(import.meta.dirname, "../../../skills/skills"),
+                            ],
+                          },
+                        },
+                      },
+                      {
+                        type: "emit_inbound",
+                        label: "skills/extraRoots/set",
+                        frame: { id: 2, result: {} },
+                      },
+                    ] satisfies Array<CodexReplay.CodexAppServerReplayEntry>)
+                  : []),
+                ...thread.slice(0, 2).map((entry) => withReplayRequestId(entry, video ? 3 : 2)),
+              ],
+            }),
+          );
+          return yield* session.ensureThread(`thread-${scenario}`);
+        });
+
+      const video = yield* opened("codex-built-in-skills", ["orchestration", "video"]);
+      assert.equal(video.nativeThreadRef?.nativeId, "codex-built-in-skills");
+      const plain = yield* opened("codex-no-built-in-skills", ["orchestration"]);
+      assert.equal(plain.nativeThreadRef?.nativeId, "codex-no-built-in-skills");
     }).pipe(
       Effect.scoped,
       Effect.provide(
