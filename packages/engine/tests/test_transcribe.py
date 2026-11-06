@@ -852,6 +852,69 @@ def test_a_link_into_another_models_blobs_is_not_offered(cache: Path) -> None:
     assert caught.value.code == models.CACHE_MISMATCH
 
 
+def _assert_refused_unread(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Not offered, and reuse in either mode is refused before any file is read."""
+    assert models.status()["profiles"]["light"]["found"] is None
+    read: list[Path] = []
+    monkeypatch.setattr(models, "_clonefile", lambda source, _target: read.append(source) or False)
+    monkeypatch.setattr(models, "_copy_file", lambda source, *_rest: read.append(source))
+    for mode in ("clone", "copy"):
+        with pytest.raises(rpc.RpcError) as caught:
+            models.download("light", JobContext("r", None), mode)
+        assert caught.value.code == models.CACHE_MISMATCH
+    assert read == []
+    folder = models.snapshot_dir(models.load_lock()["aligner-0.6b"])
+    assert not folder.exists() or list(folder.rglob("*")) == []
+
+
+def test_a_blobs_folder_linked_outside_the_cache_is_not_offered(
+    cache: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review of S7V-068: `blobs/` itself is a link, so its entries resolve outside the cache."""
+    _fake_cache(cache)
+    blobs = cache / "models--test--aligner" / "blobs"
+    outside = tmp_path / "outside" / "blobs"
+    outside.parent.mkdir(parents=True)
+    blobs.rename(outside)
+    blobs.symlink_to(outside, target_is_directory=True)
+    _assert_refused_unread(monkeypatch)
+
+
+def test_a_blobs_folder_linked_into_another_model_is_not_offered(cache: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _fake_cache(cache)
+    blobs = cache / "models--test--aligner" / "blobs"
+    other = cache / "models--test--asr-small" / "blobs"
+    for blob in blobs.iterdir():
+        blob.rename(other / blob.name)
+    blobs.rmdir()
+    blobs.symlink_to(other, target_is_directory=True)
+    _assert_refused_unread(monkeypatch)
+
+
+def test_a_linked_model_folder_is_not_offered(cache: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _fake_cache(cache)
+    base = cache / "models--test--aligner"
+    outside = tmp_path / "outside" / base.name
+    outside.parent.mkdir(parents=True)
+    base.rename(outside)
+    base.symlink_to(outside, target_is_directory=True)
+    _assert_refused_unread(monkeypatch)
+
+
+def test_a_blob_swapped_for_a_link_after_the_check_is_not_copied(cache: Path, tmp_path: Path) -> None:
+    """Review of S7V-068: the copy opens the checked blob without following a link."""
+    _fake_cache(cache)
+    blob = models.cached_snapshot(models.load_lock()["aligner-0.6b"])["aligner.bin"]  # type: ignore[index]
+    planted = tmp_path / "planted.bin"
+    planted.write_bytes(FILES["aligner.bin"])
+    blob.unlink()
+    blob.symlink_to(planted)
+    target = tmp_path / "copy.bin"
+    with pytest.raises(rpc.RpcError) as caught:
+        models._copy_file(blob, target, len(FILES["aligner.bin"]), JobContext("r", None))
+    assert caught.value.code == models.CACHE_MISMATCH and not target.exists()
+
+
 def _blobs_on_another_disk(monkeypatch: pytest.MonkeyPatch, cache: Path) -> None:
     """The blobs the cache's symlinks point to look like another volume (an external disk)."""
     real = models._file_device
@@ -905,11 +968,19 @@ def test_a_refused_clone_never_turns_into_a_silent_copy(cache: Path, monkeypatch
 
 
 def test_the_real_clonefile_clones_a_blob_through_its_symlink(cache: Path) -> None:
+    """The snapshot entry's link is resolved and checked first; the checked blob is cloned. The
+    link itself is never followed by `clonefile` (CLONE_NOFOLLOW): cloning it is refused."""
     _fake_cache(cache)
     entry = cache / "models--test--asr-small" / "snapshots" / ("0" * 40) / "small.bin"
+    blob = models.cached_snapshot(models.load_lock()["asr-0.6b"])["small.bin"]  # type: ignore[index]
+    assert blob == Path(os.path.realpath(entry))
     target = cache.parent / "clone.bin"
-    assert models._clonefile(entry, target) is True
+    assert models._clonefile(blob, target) is True
     assert target.read_bytes() == FILES["small.bin"] and not target.is_symlink()
+    linked = cache.parent / "clone-of-link.bin"
+    with pytest.raises(rpc.RpcError) as caught:
+        models._clonefile(entry, linked)
+    assert caught.value.code == models.CACHE_MISMATCH and not linked.is_symlink() and not linked.exists()
 
 
 def test_cancel_during_a_copy_leaves_nothing_behind(cache: Path, monkeypatch: pytest.MonkeyPatch) -> None:

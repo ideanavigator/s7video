@@ -194,11 +194,14 @@ def _cache_roots() -> list[Path]:
 def _blob_source(root: Path, model: Model, file: ModelFile) -> Path | None:
     """The file a snapshot entry in `root` really is, only when it lies in that model's own
     `blobs/` folder and is a regular file of the locked size. A link that points anywhere else
-    (another model's blobs, a file outside the cache) is not a source."""
-    base = root / f"models--{model.repo.replace('/', '--')}"
+    (another model's blobs, a file outside the cache) is not a source, and neither is a model
+    folder or `blobs/` folder that is itself a link: only the cache root is resolved."""
+    name = f"models--{model.repo.replace('/', '--')}"
     try:
-        blobs = Path(os.path.realpath(base / "blobs"))
-        source = Path(os.path.realpath(base / "snapshots" / model.revision / file.path))
+        blobs = Path(os.path.realpath(root)) / name / "blobs"
+        if Path(os.path.realpath(root / name / "blobs")) != blobs:
+            return None
+        source = Path(os.path.realpath(root / name / "snapshots" / model.revision / file.path))
         if source == blobs or not _inside(source, blobs):
             return None
         info = os.stat(source)
@@ -466,29 +469,54 @@ def _mark_verified(model: Model, folder: Path) -> None:
 _LIBSYSTEM: Any = None
 
 
+#: `CLONE_NOFOLLOW` from `<sys/clonefile.h>`: a link is cloned as a link, never followed.
+_CLONE_NOFOLLOW = 0x0001
+_NOT_THE_BLOB = "the copy on this Mac changed while it was being used; download the speech model instead"
+
+
 def _clonefile(source: Path, target: Path) -> bool:
     """`clonefile(2)`: an APFS clone or nothing. Unlike `cp -c`, it never falls back to copying;
     it fails (EXDEV, ENOTSUP) across volumes or on a file system that can't clone. `source` is the
-    checked blob from `_blob_source` (with no flags, `clonefile` would follow a link anyway)."""
+    checked blob from `_blob_source`. With `CLONE_NOFOLLOW`, a blob swapped for a link after the
+    check is cloned as that link, and the clone is refused unless it is a regular file."""
     global _LIBSYSTEM
     try:
         if _LIBSYSTEM is None:
             _LIBSYSTEM = ctypes.CDLL("/usr/lib/libSystem.B.dylib")
-        result = _LIBSYSTEM.clonefile(os.fsencode(source), os.fsencode(target), 0)
+        result = _LIBSYSTEM.clonefile(os.fsencode(source), os.fsencode(target), _CLONE_NOFOLLOW)
     except (OSError, AttributeError):
         return False
-    return result == 0
+    if result != 0:
+        return False
+    try:
+        regular = stat.S_ISREG(os.lstat(target).st_mode)
+    except OSError:
+        regular = False
+    if not regular:
+        with contextlib.suppress(OSError):
+            os.unlink(target)
+        raise RpcError(CACHE_MISMATCH, _NOT_THE_BLOB)
+    return True
 
 
-def _copy_file(source: Path, target: Path, job: JobContext) -> None:
-    """A plain copy in chunks, so Cancel stops it between chunks. `source` is the checked blob."""
-    with source.open("rb") as reader, target.open("wb") as writer:
-        while True:
-            job.raise_if_cancelled()
-            chunk = reader.read(_CHUNK * 8)
-            if not chunk:
-                break
-            _write(writer, chunk)
+def _copy_file(source: Path, target: Path, size: int, job: JobContext) -> None:
+    """A plain copy in chunks, so Cancel stops it between chunks. `source` is the checked blob,
+    opened without following a link and checked again on the open file (regular, locked size)."""
+    try:
+        descriptor = os.open(source, os.O_RDONLY | os.O_NOFOLLOW)
+    except OSError:
+        raise RpcError(CACHE_MISMATCH, _NOT_THE_BLOB) from None
+    with os.fdopen(descriptor, "rb") as reader:
+        info = os.fstat(reader.fileno())
+        if not stat.S_ISREG(info.st_mode) or info.st_size != size:
+            raise RpcError(CACHE_MISMATCH, _NOT_THE_BLOB)
+        with target.open("wb") as writer:
+            while True:
+                job.raise_if_cancelled()
+                chunk = reader.read(_CHUNK * 8)
+                if not chunk:
+                    break
+                _write(writer, chunk)
 
 
 _REUSE_STAGE = "checking the copy on this Mac"
@@ -499,12 +527,12 @@ def _reuse(profile: str, job: JobContext, allow_copy: bool) -> dict[str, Any]:
     models = profile_models(profile)
     pending = [model for model in models if not _verified(model)]
     total = sum(model.size for model in models)
-    sources = {model.key: cached_snapshot(model) for model in pending}
-    if any(folder is None for folder in sources.values()):
+    blobs_by_model = {model.key: cached_snapshot(model) for model in pending}
+    if any(blobs is None for blobs in blobs_by_model.values()):
         raise RpcError(CACHE_MISMATCH, "the copy on this Mac is not complete; download the speech model instead")
     own = _device(models_root())
     try:
-        copy_bytes = sum(_copy_bytes(model, sources[model.key], own) for model in pending)  # type: ignore[arg-type]
+        copy_bytes = sum(_copy_bytes(model, blobs_by_model[model.key], own) for model in pending)  # type: ignore[arg-type]
     except OSError:
         raise RpcError(CACHE_MISMATCH, "the copy on this Mac is not complete; download the speech model instead") from None
     # Nothing is copied unless the user agreed to the space it takes, and that space is free.
@@ -515,8 +543,8 @@ def _reuse(profile: str, job: JobContext, allow_copy: bool) -> dict[str, Any]:
     progress = _Progress(total, total - sum(model.size for model in pending), job, _REUSE_STAGE)
     job.progress(progress.done / progress.total, _REUSE_STAGE)
     for model in pending:
-        source = sources[model.key]
-        assert source is not None
+        blobs = blobs_by_model[model.key]
+        assert blobs is not None
         folder = snapshot_dir(model)
         folder.mkdir(parents=True, exist_ok=True)
         placed: list[tuple[Path, Path]] = []
@@ -529,12 +557,12 @@ def _reuse(profile: str, job: JobContext, allow_copy: bool) -> dict[str, Any]:
                 staged.unlink(missing_ok=True)
                 # Registered first, so a failed, refused or cancelled copy is cleaned up too.
                 placed.append((staged, target))
-                if not _clonefile(source[file.path], staged):
+                if not _clonefile(blobs[file.path], staged):
                     staged.unlink(missing_ok=True)
                     if not allow_copy:
                         raise RpcError(CACHE_NEEDS_COPY, _NEEDS_COPY)
                     _check_disk(folder, file.size)
-                    _copy_file(source[file.path], staged, job)
+                    _copy_file(blobs[file.path], staged, file.size, job)
                 # The check runs on our own copy, so a file changed after the size check is caught.
                 digest = hashlib.sha256()
                 with staged.open("rb") as handle:
