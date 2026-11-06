@@ -128,11 +128,15 @@ function layRanges(
   start: number,
 ): DraftItem[] {
   const previous = track.items.filter((item) => "media" in item && item.media === mediaId);
-  const matches = ranges.map((range) =>
-    previous.find(
-      (item) => "in" in item && item.in === range.in && item.duration === range.duration,
-    ),
-  );
+  const used = new Set<DraftItem>();
+  const matches = ranges.map((range) => {
+    const match = previous.find(
+      (item) =>
+        !used.has(item) && "in" in item && item.in === range.in && item.duration === range.duration,
+    );
+    if (match !== undefined) used.add(match);
+    return match;
+  });
   // Freed ids are reused, but never one a matched range keeps (S7V-058).
   const taken = allIds(document);
   for (const item of previous) taken.delete(item.id);

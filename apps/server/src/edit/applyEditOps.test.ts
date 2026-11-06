@@ -116,6 +116,26 @@ describe("applyEditOps", () => {
       cut,
     );
     expect(items(tighter).map((item) => item.id)).toEqual(["v1", "v3", "v2"]);
+    // A repeated source span: each old item is matched once, so both keep their own id.
+    const twice = run([
+      keep([
+        [0, 90],
+        [0, 90],
+      ]),
+    ]);
+    expect(
+      items(
+        run(
+          [
+            keep([
+              [0, 90],
+              [0, 90],
+            ]),
+          ],
+          twice,
+        ),
+      ).map((item) => item.id),
+    ).toEqual(["v1", "v2"]);
   });
 
   it("splits, trims, moves and ripple-deletes on integer frames", () => {
