@@ -287,6 +287,23 @@ there. If any per-project browser or device access override existed, access fell
 `runtimeLayer.production.test.ts` guards the wiring. If upstream fixes the wiring itself, drop our line and
 keep the test.
 
+## Video edit instructions (S7V-041)
+
+Threads with the `video` capability get one more instruction line: change, undo and redo the edit
+only with the `video_` tools, never with git or a shell. A git restore of `edit.json` skips the
+undo history. These upstream files have small, additive edits:
+
+- `packages/provider-core/src/server/orchestrationInstructions.ts` adds
+  `T3_CODE_VIDEO_EDIT_INSTRUCTIONS` and its `_WITH_TOOL_SEARCH` variant for Claude.
+- `orchestration-v2/Adapters/ClaudeAdapterV2.ts` takes `videoToolsAvailable` and appends the line
+  to the system prompt.
+- `orchestration-v2/Adapters/CodexAdapterV2.ts` and `provider/CodexDeveloperInstructions.ts` add it
+  to `t3_code_tools` through an optional `video` flag.
+- `provider/AgentContextBudget.test.ts` and `agentContextBudget.json` measure the video-on context
+  as `claudeSystemAppendVideoBytes` and `codexAdditionalContextVideoBytes`.
+
+ACP agents and Claude's native subagents do not get the line yet.
+
 ## Licensing (S7V-004)
 
 `LICENSE` is T3 Code's MIT licence with a second line, `Copyright (c) 2026 s7video contributors`.

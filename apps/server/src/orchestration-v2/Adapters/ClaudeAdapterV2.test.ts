@@ -80,7 +80,10 @@ import { attachmentRelativePath } from "../../attachmentStore.ts";
 import { WorkflowAgentTranscriptReadObserver } from "../workflowAgentTranscript.ts";
 import * as ServerConfig from "../../config.ts";
 import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
-import { T3_CODE_DEVICE_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH } from "@t3tools/provider-core/server/orchestrationInstructions";
+import {
+  T3_CODE_DEVICE_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH,
+  T3_CODE_VIDEO_EDIT_INSTRUCTIONS_WITH_TOOL_SEARCH,
+} from "@t3tools/provider-core/server/orchestrationInstructions";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import { PreviewControlsToolkit } from "../../mcp/toolkits/previewControls/tools.ts";
 import { HtmlToolkit } from "../../mcp/toolkits/html/tools.ts";
@@ -659,6 +662,41 @@ describe("ClaudeAdapterV2 native protocol logging", () => {
     const logged = ClaudeAdapterV2.loggedClaudeQueryOptions(options);
     assert.deepEqual(logged.settingKeys, ["env", "showThinkingSummaries"]);
     assert.notInclude(JSON.stringify(logged), "secret-settings-key");
+  });
+});
+
+describe("ClaudeAdapterV2 video edit instructions", () => {
+  const append = (input: { readonly mcp: boolean; readonly videoToolsAvailable: boolean }) =>
+    (
+      ClaudeAdapterV2.makeClaudeQueryOptions({
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("claudeAgent"),
+          model: "claude-haiku-5-5",
+        },
+        nativeThreadId: "native-thread-claude-video",
+        resume: false,
+        cwd: "/workspace",
+        ...(input.mcp
+          ? { mcpServers: { "t3-code": { type: "http" as const, url: "http://127.0.0.1/mcp" } } }
+          : {}),
+        videoToolsAvailable: input.videoToolsAvailable,
+        environment: {},
+      }).systemPrompt as { readonly append?: string }
+    ).append ?? "";
+
+  it("tells a video session to undo with the video tools and how to load them", () => {
+    const text = append({ mcp: true, videoToolsAvailable: true });
+    assert.include(text, T3_CODE_VIDEO_EDIT_INSTRUCTIONS_WITH_TOOL_SEARCH);
+    assert.include(text, "select:mcp__t3-code__video_undo,mcp__t3-code__video_redo");
+    assert.isAtMost(
+      Buffer.byteLength(T3_CODE_VIDEO_EDIT_INSTRUCTIONS_WITH_TOOL_SEARCH, "utf8"),
+      250,
+    );
+  });
+
+  it("leaves the video line out without the video capability or without T3 tools", () => {
+    assert.notInclude(append({ mcp: true, videoToolsAvailable: false }), "video_ tools");
+    assert.notInclude(append({ mcp: false, videoToolsAvailable: true }), "video_ tools");
   });
 });
 
