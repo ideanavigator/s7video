@@ -89,5 +89,7 @@ from; the per-ticket entries and how this file is compiled are in
 - No visible change: the Editor panel's video-retry tests no longer fail on a busy machine. (S7V-060)
 - Chats open again with the default settings: the Git actions row no longer crashes the page looking
   for a code-hosting site to publish to, and shows no publish option while none is set up. (S7V-057)
+- Undo and redo no longer take an imported clip out of Assets. Clips attached in chat keep their
+  original file name, and Assets lengths read as minutes and seconds (2:19, not 2:19:20). (S7V-059)
 
 [Unreleased]: https://github.com/ideanavigator/s7video/commits/main
