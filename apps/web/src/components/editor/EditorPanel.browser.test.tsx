@@ -79,8 +79,11 @@ vi.mock(import("../../assets/assetUrls"), () => ({
     resource: { readonly variant?: string } | null,
     revision?: string | null,
   ) => {
-    state.urlRevisions.push(revision);
-    if (resource?.variant !== undefined) state.urlVariants.push(resource.variant);
+    // Only the player's source counts: Assets thumbnails render on their own schedule.
+    if (resource !== null && resource.variant !== "thumbnail") {
+      state.urlRevisions.push(revision);
+      state.urlVariants.push(resource.variant);
+    }
     return { _tag: "Success", url: "" };
   }) as never,
 }));
@@ -153,6 +156,14 @@ const renderPanel = () => render(panel(), { container: sized(), router: false })
 
 const videoOf = async (screen: Awaited<ReturnType<typeof renderPanel>>) =>
   (await screen.getByLabelText("clip-0.mov", { exact: true }).findElement()) as HTMLVideoElement;
+
+/** The Assets tab's scrolling list; needs enough clips to overflow. */
+const assetsScroller = () =>
+  [...document.getElementById("editor-tabpanel-assets")!.querySelectorAll<HTMLElement>("*")].find(
+    (element) =>
+      element.scrollHeight > element.clientHeight + 100 &&
+      ["auto", "scroll"].includes(getComputedStyle(element).overflowY),
+  )!;
 
 const PROXY_READY = { proxy: { status: "ready" } } as const;
 
@@ -227,12 +238,7 @@ describe("EditorPanel", () => {
       .element(screen.getByRole("tab", { name: "Assets" }))
       .toHaveAttribute("aria-selected", "true");
     await expect.element(screen.getByRole("listitem", { name: /^clip-0\.mov/u })).toBeVisible();
-    const panel = document.getElementById("editor-tabpanel-assets")!;
-    const scroller = [...panel.querySelectorAll<HTMLElement>("*")].find(
-      (element) =>
-        element.scrollHeight > element.clientHeight + 100 &&
-        ["auto", "scroll"].includes(getComputedStyle(element).overflowY),
-    )!;
+    const scroller = assetsScroller();
     await act(() => {
       scroller.scrollTop = 600;
     });
@@ -361,10 +367,19 @@ describe("EditorPanel", () => {
   });
 
   it("gives a source that loaded its quiet retry back", async () => {
-    setState([asset("clip-0")], true);
+    setState(
+      Array.from({ length: 40 }, (_, index) => asset(`clip-${index}`)),
+      true,
+    );
     state.urlRevisions = [];
     await using screen = await renderPanel();
     await act(async () => (await videoOf(screen)).dispatchEvent(new Event("error")));
+    // Assets rows that render after the retry (a busy machine, a scroll) must not hide it.
+    const list = assetsScroller();
+    await act(() => {
+      list.scrollTop = list.scrollHeight;
+    });
+    await expect.element(screen.getByRole("listitem", { name: /^clip-39\.mov/u })).toBeVisible();
     expect(state.urlRevisions.at(-1)).toBe("1");
     await act(async () => (await videoOf(screen)).dispatchEvent(new Event("loadeddata")));
     // An hour later the URL expires again: still a quiet retry, not the message.
