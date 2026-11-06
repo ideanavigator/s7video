@@ -506,7 +506,7 @@ describe("MediaLibraryService", () => {
         const clip = writeClip(desktop, "retry.mp4", 26);
         yield* library.import({ projectId, sourcePath: clip, mode: "reference" });
         assert.isFalse((yield* library.list(projectId)).items[0]!.hasThumbnail);
-        fake.thumbnailHold = undefined;
+        delete fake.thumbnailHold;
         assert.deepEqual(
           yield* library.import({ projectId, sourcePath: clip, mode: "reference" }),
           { mediaId: "retry" },
