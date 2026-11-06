@@ -294,8 +294,15 @@ describe("SilenceCutService", () => {
           assert.strictEqual(first.keptRequests, 0);
           assert.match(
             first.message,
-            /^Removed .* earlier cuts\. The pause you asked to keep at 130-150 was already cut, so it stays cut; say undo to bring it back\.$/,
+            /^Removed .* s in \d+ cuts\. This only cuts more; it never restores earlier cuts\. /,
           );
+          assert.isTrue(
+            first.message.endsWith(
+              " The pause you asked to keep at clip frames 130-150 was cut by an earlier edit, so it stays cut. To get it back, undo until that pause plays again, then ask to keep it.",
+            ),
+          );
+          // One undo would only take back this call's cuts: the message must not promise it.
+          assert.notInclude(first.message, "say undo");
           const afterFirst = readEdit(root);
 
           // Nothing new to cut: the sentence follows the unchanged message.
@@ -310,7 +317,7 @@ describe("SilenceCutService", () => {
           assert.strictEqual(again.keptRequests, 0);
           assert.strictEqual(
             again.message,
-            "No more pauses to cut; the edit is unchanged. The pauses you asked to keep at 130-150 and 160-170 were already cut, so they stay cut; say undo to bring them back.",
+            "No more pauses to cut; the edit is unchanged. The pauses you asked to keep at clip frames 130-150 and 160-170 were cut by an earlier edit, so they stay cut. To get them back, undo until those pauses play again, then ask to keep them.",
           );
           assert.strictEqual(readEdit(root), afterFirst);
         }),

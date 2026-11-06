@@ -120,10 +120,13 @@ it.layer(NodeServices.layer)("built-in skills", (it) => {
         assert.include(text, state);
       }
       assert.include(text, "Never start a\n     transcription the user cancelled again.");
-      assert.include(text, 'End with: "Say undo to put\n   it back."');
-      // S7V-056: an already-cut keep is passed on with an offer to undo.
-      assert.include(text, "was already cut");
-      assert.include(text, "offer to undo");
+      // Whitespace collapsed, so re-wrapping the skill text does not break these checks.
+      const flat = text.replace(/\s+/g, " ");
+      assert.include(flat, 'End with: "Say undo to put it back."');
+      // S7V-056: an already-cut keep is passed on with an offer to undo back to before that cut.
+      assert.include(flat, "was cut by an earlier edit");
+      assert.include(flat, "offer to undo back to before that cut, then ask again");
+      assert.include(flat, "never by frame numbers");
       assert.include(text, "Never edit `edit.json` yourself and never use git on it.");
     }),
   );

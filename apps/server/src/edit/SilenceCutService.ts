@@ -273,12 +273,13 @@ function alreadyCutSentence(ranges: ReadonlyArray<FrameRange>): string[] {
   const names = ranges.map((range) => `${range.fromFrame}-${range.toFrame}`);
   const list =
     names.length === 1 ? names[0] : `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`;
+  // One undo may only take back this call's cuts, so the hint never promises that.
   return ranges.length === 1
     ? [
-        `The pause you asked to keep at ${list} was already cut, so it stays cut; say undo to bring it back.`,
+        `The pause you asked to keep at clip frames ${list} was cut by an earlier edit, so it stays cut. To get it back, undo until that pause plays again, then ask to keep it.`,
       ]
     : [
-        `The pauses you asked to keep at ${list} were already cut, so they stay cut; say undo to bring them back.`,
+        `The pauses you asked to keep at clip frames ${list} were cut by an earlier edit, so they stay cut. To get them back, undo until those pauses play again, then ask to keep them.`,
       ];
 }
 
