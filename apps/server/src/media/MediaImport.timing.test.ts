@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 s7video contributors
 // SPDX-License-Identifier: MIT
 // @effect-diagnostics nodeBuiltinImport:off globalConsole:off globalConsoleInEffect:off - hashes big files, drives Electron and prints timings for the ticket.
-// Big-file checks for S7V-025 AC-1, AC-2, AC-3, AC-5 and AC-9, run by hand on a Mac with the
+// Big-file checks for S7V-025 AC-1 (row and thumbnail split by S7V-064), AC-2, AC-3, AC-5 and AC-9, run by hand on a Mac with the
 // real engine, the real /api/assets route and Electron's own Chromium for playback:
 //   S7VIDEO_MEDIA_TIMING=1 S7VIDEO_BIG_CLIP=/abs/big4k.mp4 S7VIDEO_GOP10_CLIP=/abs/gop10.mp4 \
 //     vp test run src/media/MediaImport.timing.test.ts
@@ -43,6 +43,7 @@ const BIG_CLIP = process.env.S7VIDEO_BIG_CLIP ?? "";
 const GOP10_CLIP = process.env.S7VIDEO_GOP10_CLIP ?? "";
 const SEEK_LIMIT_MS = 500;
 const APPEAR_LIMIT_MS = 2_000;
+const THUMBNAIL_LIMIT_MS = 3_000;
 const CLONE_LIMIT_MS = 2_000;
 
 const sha256OfFile = (file: string) =>
@@ -254,7 +255,8 @@ describe.runIf(ENABLED)("media import timing (S7V-025)", () => {
           const before = yield* Effect.promise(() => fileState(BIG_CLIP));
           expect(NodeFS.statSync(BIG_CLIP).size).toBeGreaterThan(2_000_000_000);
 
-          // AC-1: by reference, in Assets with length, resolution and thumbnail within 2 s.
+          // AC-1: by reference, in Assets with length and resolution within 2 s; the thumbnail
+          // follows within 3 s (S7V-064).
           const referenced = yield* newProject("Big reference");
           // The engine is already running in a session that imports; time a warm import.
           const engine = yield* EngineService.EngineService;
@@ -267,32 +269,44 @@ describe.runIf(ENABLED)("media import timing (S7V-025)", () => {
           console.log(
             `AC-1 steps: engine start ${cold.ms.toFixed(0)} ms, probe ${steps.probe.toFixed(0)} ms, fingerprint ${steps.fingerprint.toFixed(0)} ms, keyframe scan ${steps.keyframes.toFixed(0)} ms`,
           );
-          // Until the row, with its thumbnail, is in the live Assets list.
-          const appeared = yield* timed(
-            Effect.gen(function* () {
-              const fiber = yield* library.subscribe(referenced.projectId).pipe(
-                Stream.filter((snapshot) => snapshot.items.some((entry) => entry.hasThumbnail)),
-                Stream.runHead,
-                Effect.forkChild,
-              );
-              yield* library.import({
-                projectId: referenced.projectId,
-                sourcePath: BIG_CLIP,
-                mode: "reference",
-              });
-              return yield* Fiber.join(fiber);
-            }),
+          const start = yield* Clock.currentTimeNanos;
+          const since = Effect.map(Clock.currentTimeNanos, (now) => Number(now - start) / 1e6);
+          // Times when the live Assets list first has the row, and then its thumbnail.
+          const watched = yield* library.subscribe(referenced.projectId).pipe(
+            Stream.mapEffect((snapshot) =>
+              Effect.map(since, (ms) => ({ ms, item: snapshot.items[0] })),
+            ),
+            Stream.filter((seen) => seen.item !== undefined),
+            Stream.takeUntil((seen) => seen.item!.hasThumbnail),
+            Stream.runCollect,
+            Effect.forkChild,
           );
-          const imported = { ms: appeared.ms, value: yield* library.list(referenced.projectId) };
-          const [item] = imported.value.items;
-          console.log(`AC-1: reference import to Assets row in ${imported.ms.toFixed(0)} ms`);
-          expect(imported.ms).toBeLessThan(APPEAR_LIMIT_MS);
-          expect(item).toMatchObject({
-            storage: "reference",
-            state: "ready",
+          yield* library.import({
+            projectId: referenced.projectId,
+            sourcePath: BIG_CLIP,
+            mode: "reference",
+          });
+          const replyMs = yield* since;
+          const seen = Array.from(yield* Fiber.join(watched));
+          const row = seen[0]!;
+          const thumbnail = seen.at(-1)!;
+          console.log(
+            `AC-1: reference import to Assets row in ${row.ms.toFixed(0)} ms; thumbnail in ${thumbnail.ms.toFixed(0)} ms; import reply in ${replyMs.toFixed(0)} ms`,
+          );
+          expect(row.ms).toBeLessThan(APPEAR_LIMIT_MS);
+          expect(row.item).toMatchObject({
+            label: NodePath.basename(BIG_CLIP),
+            sizeBytes: NodeFS.statSync(BIG_CLIP).size,
             width: 3840,
             height: 2160,
             durationFrames: 4800,
+          });
+          expect(thumbnail.item!.hasThumbnail).toBe(true);
+          expect(thumbnail.ms).toBeLessThan(THUMBNAIL_LIMIT_MS);
+          const [item] = (yield* library.list(referenced.projectId)).items;
+          expect(item).toMatchObject({
+            storage: "reference",
+            state: "ready",
             hasThumbnail: true,
             proxy: { status: "none" },
           });
