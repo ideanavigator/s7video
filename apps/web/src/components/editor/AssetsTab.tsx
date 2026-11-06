@@ -27,7 +27,7 @@ import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "..
 import { Spinner } from "../ui/spinner";
 import { toastManager } from "../ui/toast";
 import { formatBytes, ImportDialog, type ImportRequest } from "./ImportDialog";
-import { formatMediaTimecode, spokenMediaLength } from "./mediaTimecode";
+import { formatMediaLength, spokenMediaLength } from "./mediaTimecode";
 
 const ROW_HEIGHT = 60;
 
@@ -48,7 +48,7 @@ const lengthOf = (item: MediaAsset, snapshot: MediaLibrarySnapshot) =>
   item.durationFrames === undefined
     ? null
     : {
-        timecode: formatMediaTimecode(item.durationFrames, item.fps ?? snapshot.fps),
+        text: formatMediaLength(item.durationFrames, item.fps ?? snapshot.fps),
         spoken: spokenMediaLength(item.durationFrames, item.fps ?? snapshot.fps),
       };
 
@@ -73,7 +73,7 @@ function AssetRow(props: {
   const length = lengthOf(item, props.snapshot);
   const resolution =
     item.width !== undefined && item.height !== undefined ? `${item.width}×${item.height}` : null;
-  const details = [length?.timecode, resolution, formatBytes(item.sizeBytes)].filter(Boolean);
+  const details = [length?.text, resolution, formatBytes(item.sizeBytes)].filter(Boolean);
   const missing = item.state === "missing";
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     if (event.target !== event.currentTarget) return;

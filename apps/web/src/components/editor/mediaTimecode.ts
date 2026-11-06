@@ -2,21 +2,15 @@
 // SPDX-License-Identifier: MIT
 import type { EditRational } from "@t3tools/contracts";
 
-/**
- * A length in frames as `m:ss:ff` (or `h:mm:ss:ff`) at the media's own rate. Integer arithmetic
- * only; NTSC rates count frames against a 30 (or 24, 60) frame second, without drop-frame.
- */
-export function formatMediaTimecode(frames: number, rate: EditRational): string {
-  const perSecond = Math.max(1, Math.round(rate.num / rate.den));
-  const total = Math.max(0, Math.trunc(frames));
-  const ff = total % perSecond;
-  const seconds = Math.floor(total / perSecond);
+/** A clip length as `m:ss`, or `h:mm:ss` from one hour up, in whole seconds at the media's rate. */
+export function formatMediaLength(frames: number, rate: EditRational): string {
+  const seconds = Math.floor((Math.max(0, Math.trunc(frames)) * rate.den) / rate.num);
   const ss = seconds % 60;
   const minutes = Math.floor(seconds / 60);
   const pad = (value: number) => String(value).padStart(2, "0");
   return minutes >= 60
-    ? `${Math.floor(minutes / 60)}:${pad(minutes % 60)}:${pad(ss)}:${pad(ff)}`
-    : `${minutes}:${pad(ss)}:${pad(ff)}`;
+    ? `${Math.floor(minutes / 60)}:${pad(minutes % 60)}:${pad(ss)}`
+    : `${minutes}:${pad(ss)}`;
 }
 
 /** A spoken length for screen readers: "1 minute 5 seconds". */

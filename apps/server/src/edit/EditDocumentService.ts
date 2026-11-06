@@ -321,6 +321,34 @@ const make = Effect.gen(function* () {
     },
   );
 
+  /**
+   * Undo and redo restore the edit, not the library: a clip in the library now stays there, even
+   * when the restored edit is from before its import. Entries the restored edit has keep their
+   * recorded form. With nothing to add, the checkpoint's bytes are written as they are.
+   */
+  const keepLibrary = Effect.fnUntraced(function* (
+    projectId: ProjectId,
+    restoredText: string,
+    current: EditDocument,
+  ) {
+    const unreadable = () =>
+      unavailable(projectId, "unreadable", "The saved version of this edit could not be read.");
+    const parsed = yield* decodeJson(restoredText).pipe(Effect.mapError(unreadable));
+    const migrated = migrateEditDocument(parsed);
+    if (migrated._tag !== "current") return yield* unreadable();
+    const restored = validateEditDocument(migrated.document);
+    if (!restored.ok) return yield* unreadable();
+    const ids = new Set(restored.document.media.map((media) => media.id));
+    const kept = current.media.filter((media) => !ids.has(media.id));
+    if (kept.length === 0) return restoredText;
+    const merged = validateEditDocument({
+      ...restored.document,
+      media: [...restored.document.media, ...kept],
+    });
+    if (!merged.ok) return yield* unreadable();
+    return EditProjectLayout.editFileContents(merged.document);
+  });
+
   const step = (direction: "undo" | "redo") =>
     Effect.fn(`EditDocumentService.${direction}`)(function* (projectId: ProjectId) {
       const root = yield* resolveRoot(projectId);
@@ -329,7 +357,9 @@ const make = Effect.gen(function* () {
           const before = yield* loadReconciled(projectId, root, "write");
           const moved = yield* history
             .step(root, direction, (editJson, revision) =>
-              writeEdit(projectId, root, editJson, revision, before.editText),
+              keepLibrary(projectId, editJson, before.document).pipe(
+                Effect.tap((text) => writeEdit(projectId, root, text, revision, before.editText)),
+              ),
             )
             .pipe(
               Effect.mapError((error) =>

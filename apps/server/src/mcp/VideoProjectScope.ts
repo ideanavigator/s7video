@@ -169,8 +169,9 @@ export const resolveMedia = Effect.fn("VideoProjectScope.resolveMedia")(function
 });
 
 /**
- * A file the agent may import: one attached to this thread's messages, or one already inside the
- * project folder. Anything else is refused without saying whether it exists.
+ * A file the agent may import: one attached to this thread's messages (with the name it was sent
+ * with), or one already inside the project folder. Anything else is refused without saying whether
+ * it exists.
  */
 export const resolveSharedFile = Effect.fn("VideoProjectScope.resolveSharedFile")(function* (
   project: VideoProject,
@@ -198,5 +199,28 @@ export const resolveSharedFile = Effect.fn("VideoProjectScope.resolveSharedFile"
     parseThreadSegmentFromAttachmentId(attachmentId) === segment;
   const inProject = real.startsWith(project.root + path.sep);
   if (!sharedHere && !inProject) return yield* notShared();
-  return real;
+  return {
+    path: real,
+    label: sharedHere ? yield* attachmentName(project, scope, attachmentId) : undefined,
+  };
+});
+
+/** The name a chat attachment was sent with; its stored file is named by its id. */
+const attachmentName = Effect.fnUntraced(function* (
+  project: VideoProject,
+  scope: McpInvocationContext.McpThreadInvocationScope,
+  attachmentId: string,
+) {
+  const threads = yield* ThreadManagementService.ThreadManagementService;
+  const records = yield* threads
+    .getProjectThreadRecords({ projectId: project.projectId, threadId: scope.thread.threadId }, [
+      "messages",
+    ])
+    .pipe(Effect.option);
+  if (Option.isNone(records)) return undefined;
+  for (const message of records.value.messages) {
+    const found = message.attachments.find((attachment) => attachment.id === attachmentId);
+    if (found !== undefined) return found.name;
+  }
+  return undefined;
 });

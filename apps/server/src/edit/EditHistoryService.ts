@@ -114,13 +114,14 @@ export class EditHistoryService extends Context.Service<
     readonly isKnown: (cwd: string, editJson: string) => Effect.Effect<boolean>;
     /**
      * Steps back or forward. Only `edit.json` comes from the checkpoint: `write` saves it with the
-     * new revision, so no other file (styles, README, notes) is ever restored or deleted.
+     * new revision, so no other file (styles, README, notes) is ever restored or deleted. `write`
+     * returns the text it saved, which may keep more than the checkpoint (clips in the library).
      * None when there is nothing to undo or redo.
      */
     readonly step: <E>(
       cwd: string,
       direction: "undo" | "redo",
-      write: (editJson: string, revision: number) => Effect.Effect<void, E>,
+      write: (editJson: string, revision: number) => Effect.Effect<string, E>,
     ) => Effect.Effect<Option.Option<number>, EditHistoryError | E>;
     readonly status: (cwd: string) => Effect.Effect<EditHistoryStatus>;
   }
@@ -286,12 +287,12 @@ const make = Effect.gen(function* () {
         })
         .pipe(Effect.mapError(checkpointFailed(cwd)));
       const revision = state.highestRevision + 1;
-      yield* write(shown.stdout, revision);
+      const written = yield* write(shown.stdout, revision);
       yield* writeState(cwd, {
         ...state,
         cursor,
         highestRevision: revision,
-        knownEdit: yield* hashOf(shown.stdout),
+        knownEdit: yield* hashOf(written),
       });
       return Option.some(revision);
     },
