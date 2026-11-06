@@ -30,6 +30,22 @@ Cases are JSON lines in `cases/`, one file per area. The case schema in `run.ts`
 
 Check that the case builds with `--dry-run --case <id>`. Then run it on the text before your fix, where it must fail, and on the text after, where it must pass.
 
+## Video cases (s7video)
+
+`cases/video-export.ndjson` checks that editing never exports or changes the video's shape unasked (S7V-061, from the S7V-021 N2 re-run). A case with `setup.video: true` sees what a thread in a video project sees: the video tools, T3's video edit line, and the built-in skills from `apps/server/skills` (listed as a reminder; `Skill` returns the skill's body from this checkout). Video tool results come from the case's `mocks`. These cases run on Claude only (`setup.harness: "claude"`), and the cheapest agent model, `claude-haiku-5-5`, is the one the bug was seen on.
+
+| Case                              | Kind    | What it checks                                                                                        |
+| --------------------------------- | ------- | ----------------------------------------------------------------------------------------------------- |
+| `video-export-captions-no-export` | bad     | "remove the silences and add captions" cuts, does not export, and says captions come with the export. |
+| `video-export-tighter-no-export`  | bad     | After a turn that exported, "make the cuts tighter" cuts tighter and does not export again.           |
+| `video-export-asked`              | control | "export it" exports once and leaves the shape alone.                                                  |
+| `video-export-as-reel`            | control | "now export it as a reel" sets 9:16 with `video_canvas`, then exports once.                           |
+
+```sh
+pnpm mcp-tool-use --dry-run --case video-export-captions-no-export
+pnpm mcp-tool-use --model claude-haiku-5-5 --samples 3 --out runs/s7v-061 --case video-export-captions-no-export,video-export-tighter-no-export,video-export-asked,video-export-as-reel
+```
+
 ## Device manager cases
 
 `cases/device-manager.ndjson` ports nine mechanisms from the [device-routing investigation described in #25661](https://github.com/pingdotgg/t3code/pull/25661) and adds seven cases from t3dotgg’s 2026-10-26 fleet device investigation. All prompts, files, hosts and prior turns are authored Acme data; the fleet cases cite finding ids without carrying source transcripts or identifiers.
