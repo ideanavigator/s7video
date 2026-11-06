@@ -209,6 +209,12 @@ describe("SilenceCutService", () => {
           if (!plays(afterFirst, frame)) assert.isFalse(plays(afterTighter, frame), `${frame}`);
         }
 
+        // Undo gives pass 1 back exactly, and redo the tighter cut, ids included.
+        yield* edits.undo(projectId);
+        assert.deepEqual(yield* spans, afterFirst);
+        yield* edits.redo(projectId);
+        assert.deepEqual(yield* spans, afterTighter);
+
         // A third pass, at either threshold, finds nothing new and brings nothing back.
         const afterTighterText = readEdit(root);
         for (const minGapSeconds of [undefined, 0.25]) {
