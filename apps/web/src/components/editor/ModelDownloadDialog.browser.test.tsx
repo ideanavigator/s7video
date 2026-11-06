@@ -95,6 +95,19 @@ describe("ModelDownloadDialog", () => {
     expect(onUse).toHaveBeenCalledWith({ model: "default", copyBytes: 0, reuse: "clone" });
   });
 
+  it("says it is checking a found copy, not downloading, at that stage", async () => {
+    const { screen } = await renderDialog("default", {
+      phase: "downloading",
+      progress: 0.3,
+      checking: true,
+    });
+    await using _ = screen;
+    const bar = screen.getByRole("progressbar", { name: "Checking the speech model copy" });
+    await expect.element(bar).toHaveAttribute("aria-valuenow", "30");
+    await expect.element(screen.getByText(/Checking the copy on this Mac, 30%/)).toBeVisible();
+    expect(document.body.textContent).not.toContain("the download continues");
+  });
+
   it("shows a failed download's reason and offers to try again", async () => {
     const message =
       "The video engine rejected transcribe.models.download: there is not enough free disk space for the speech model.";

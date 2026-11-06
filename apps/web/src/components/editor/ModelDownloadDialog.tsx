@@ -27,7 +27,12 @@ import { Radio, RadioGroup } from "../ui/radio-group";
 
 export type ModelDownloadState =
   | { readonly phase: "asking" }
-  | { readonly phase: "downloading"; readonly progress: number }
+  | {
+      readonly phase: "downloading";
+      readonly progress: number;
+      /** Checking a copy found on this Mac rather than downloading (S7V-067). */
+      readonly checking?: boolean;
+    }
   | { readonly phase: "failed"; readonly message: string };
 
 /** Decimal gigabytes, as download sizes are usually given: 3744329895 bytes is "3.7 GB". */
@@ -167,11 +172,13 @@ export function ModelDownloadDialog(props: {
             <div className="flex flex-col gap-2">
               <div
                 role="progressbar"
-                aria-label="Speech model download"
+                aria-label={
+                  state.checking ? "Checking the speech model copy" : "Speech model download"
+                }
                 aria-valuemin={0}
                 aria-valuemax={100}
                 aria-valuenow={Math.round(state.progress * 100)}
-                aria-valuetext={`${Math.round(state.progress * 100)}% of ${size}`}
+                aria-valuetext={`${Math.round(state.progress * 100)}% ${state.checking ? "checked" : `of ${size}`}`}
                 className="h-2 w-full overflow-hidden rounded-full bg-muted"
               >
                 <div
@@ -180,8 +187,9 @@ export function ModelDownloadDialog(props: {
                 />
               </div>
               <p className="text-muted-foreground text-sm">
-                {Math.round(state.progress * 100)}% of {size}. You can keep working; the download
-                continues where it stopped if it is interrupted.
+                {state.checking
+                  ? `Checking the copy on this Mac, ${Math.round(state.progress * 100)}%. Every file is compared with the pinned model before it is used; nothing downloads.`
+                  : `${Math.round(state.progress * 100)}% of ${size}. You can keep working; the download continues where it stopped if it is interrupted.`}
               </p>
             </div>
           ) : (

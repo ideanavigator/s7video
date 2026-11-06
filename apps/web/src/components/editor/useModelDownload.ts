@@ -36,6 +36,9 @@ export const engineErrorReason = (error: unknown) =>
     ? error.reason
     : null;
 
+/** The engine job's stage while it checks a copy found on this Mac (`models.py`). */
+export const REUSE_STAGE = "checking the copy on this Mac";
+
 export type ModelDownloadOutcome = "downloaded" | "cancelled" | "failed";
 
 export function useModelDownload(environmentId: EnvironmentId, projectId: ProjectId | null) {
@@ -113,7 +116,11 @@ export function useModelDownload(environmentId: EnvironmentId, projectId: Projec
 
   const view: ModelDownloadState | null =
     state?.phase === "downloading"
-      ? { phase: "downloading", progress: job?.progress ?? state.progress }
+      ? {
+          phase: "downloading",
+          progress: job?.progress ?? state.progress,
+          checking: job?.stage === REUSE_STAGE,
+        }
       : state;
 
   return {

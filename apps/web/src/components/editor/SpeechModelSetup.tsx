@@ -13,10 +13,7 @@ import { useState } from "react";
 import { anySpeechModelReady, useSpeechModelStatus } from "../../editor/editStore";
 import { Button } from "../ui/button";
 import { formatGigabytes, foundModel, FoundOnThisMac, ModelChoice } from "./ModelDownloadDialog";
-import { useModelDownload } from "./useModelDownload";
-
-/** The engine's stage while it checks a copy found on this Mac (`models.py`). */
-const REUSE_STAGE = "checking the copy on this Mac";
+import { REUSE_STAGE, useModelDownload } from "./useModelDownload";
 
 export function SpeechModelSetup(props: { readonly environmentId: EnvironmentId }) {
   const status = useSpeechModelStatus(props.environmentId);

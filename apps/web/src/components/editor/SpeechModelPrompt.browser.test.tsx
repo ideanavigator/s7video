@@ -175,6 +175,30 @@ describe("SpeechModelPrompt", () => {
     await expect.element(screen.getByText(/25% downloaded/)).toBeVisible();
     expect(document.body.textContent).not.toContain("Download speech model");
   });
+
+  it("says it is checking, not downloading, while it takes a copy found on this Mac", async () => {
+    reset();
+    store.set({
+      status: status({ consent: "accepted" }),
+      jobs: {
+        transcribe: null,
+        download: {
+          id: EngineJobId.make("job-3"),
+          kind: "transcribe.models.download",
+          progress: 0.5,
+          stage: "checking the copy on this Mac",
+          state: "running",
+        },
+      },
+    });
+    await using screen = await render(<SpeechModelPrompt projectRef={projectRef} />, {
+      router: false,
+    });
+    await expect
+      .element(screen.getByText("Checking the speech model copy on this Mac…"))
+      .toBeVisible();
+    await expect.element(screen.getByText(/50% checked/)).toBeVisible();
+  });
 });
 
 describe("useOpenEditorOnModelsMissing", () => {

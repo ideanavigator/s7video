@@ -18,7 +18,7 @@ import { Alert, AlertAction, AlertDescription, AlertTitle } from "../ui/alert";
 import { Button } from "../ui/button";
 import { toastManager } from "../ui/toast";
 import { type FoundModel, ModelDownloadDialog } from "./ModelDownloadDialog";
-import { useModelDownload } from "./useModelDownload";
+import { REUSE_STAGE, useModelDownload } from "./useModelDownload";
 
 export function SpeechModelPrompt(props: { readonly projectRef: ScopedProjectRef }) {
   const { environmentId, projectId } = props.projectRef;
@@ -44,6 +44,7 @@ export function SpeechModelPrompt(props: { readonly projectRef: ScopedProjectRef
   };
 
   const running = model.job !== null && model.state === null;
+  const checking = model.job?.stage === REUSE_STAGE;
   const progress = Math.round((model.job?.progress ?? 0) * 100);
 
   return (
@@ -52,12 +53,14 @@ export function SpeechModelPrompt(props: { readonly projectRef: ScopedProjectRef
         <AudioLinesIcon aria-hidden />
         <AlertTitle>
           {running
-            ? "Downloading the speech model…"
+            ? checking
+              ? "Checking the speech model copy on this Mac…"
+              : "Downloading the speech model…"
             : "The assistant needs the speech model to read your clip"}
         </AlertTitle>
         <AlertDescription>
           {running
-            ? `${progress}% downloaded. Edits that need it can go ahead when it's done.`
+            ? `${progress}% ${checking ? "checked" : "downloaded"}. Edits that need it can go ahead when it's done.`
             : "Cutting silences and captions use it. It downloads once and stays on this Mac."}
         </AlertDescription>
         {running ? null : (
