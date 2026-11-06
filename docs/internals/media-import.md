@@ -56,6 +56,6 @@ Copies go to `assets/<name>.<ext>`, named from the file (a chat attachment by th
 ignores, so the edit history's media guard never sees them. The final name is taken with a hard
 link, an exclusive create: a kept copy of a removed clip or a concurrent same-name import is never
 replaced, and the name moves on to `<name>-2`. A media counts as present only when the file at its
-path still has its fingerprint, so an undo to an older entry never plays other bytes. Undo and redo never take a clip out of the list: entries the restored edit lacks are kept. Thumbnails and proxies go to `.s7cache/thumbs/` and
+path still has its fingerprint, so an undo to an older entry never plays other bytes. Undo and redo never take a clip out of the list: entries the restored edit lacks are kept. When that leaves the edit as it was (a step over an import), the agent's `video_undo` / `video_redo` reply says nothing on the timeline changed and whether there is more to step, but the step is still taken (S7V-063). Thumbnails and proxies go to `.s7cache/thumbs/` and
 `.s7cache/proxies/`, named by the media's fingerprint. Import and proxy progress live in memory and
 `media.subscribe`, never in `edit.json`.

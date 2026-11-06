@@ -19,6 +19,7 @@ import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 
 import * as EditDocumentService from "../../../edit/EditDocumentService.ts";
+import { editFileContents } from "../../../edit/EditProjectLayout.ts";
 import * as SilenceCutService from "../../../edit/SilenceCutService.ts";
 import * as EngineService from "../../../engine/EngineService.ts";
 import * as ExportService from "../../../export/ExportService.ts";
@@ -138,6 +139,23 @@ const refusePlanMode = Effect.fn("VideoHandlers.refusePlanMode")(function* (acti
   }
 });
 
+/**
+ * S7V-063: undo keeps clips in Assets (S7V-059), so a step over an import can leave the edit as
+ * it was. The step is still taken (one undo, one redo); the reply says nothing visible changed.
+ */
+const unchangedStep = (direction: "undo" | "redo", snapshot: EditSnapshot) => {
+  const more = direction === "undo" ? snapshot.canUndo : snapshot.canRedo;
+  const next =
+    direction === "undo"
+      ? more
+        ? "Say undo again to go back further."
+        : "There is nothing more to undo."
+      : more
+        ? "Say redo again to go forward."
+        : "There is nothing more to redo.";
+  return `Nothing on the timeline changed: that step only added or removed clips in Assets, and undo keeps clips there. ${next}`;
+};
+
 /** Undo and redo through the same service method as the edit.undo / edit.redo RPCs. */
 const stepEdit = (direction: "undo" | "redo") =>
   McpToolAccess.actsAsCaller(() =>
@@ -148,7 +166,10 @@ const stepEdit = (direction: "undo" | "redo") =>
       return yield* edits[direction](project.projectId).pipe(
         Effect.map((snapshot) => ({
           revision: snapshot.revision,
-          message: `${direction === "undo" ? "Undone" : "Redone"}. The edit is now ${editSummary(snapshot)}.`,
+          message:
+            editFileContents(snapshot.document) === editFileContents(project.snapshot.document)
+              ? unchangedStep(direction, snapshot)
+              : `${direction === "undo" ? "Undone" : "Redone"}. The edit is now ${editSummary(snapshot)}.`,
         })),
         Effect.catchTags({
           EditUnavailableError: (error) =>

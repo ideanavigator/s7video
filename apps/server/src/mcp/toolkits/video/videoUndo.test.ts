@@ -192,6 +192,92 @@ describe("video_undo and video_redo", () => {
     ),
   );
 
+  // S7V-063: undo keeps clips in Assets (S7V-059), so stepping back past an import changes nothing.
+  it.effect("video_undo says when a step changes nothing on the timeline", () =>
+    withProject(({ root, thread, edits, call }) =>
+      Effect.gen(function* () {
+        const initial = yield* edits.read(thread.projectId);
+        const imported = yield* edits.apply(thread.projectId, [{ _tag: "putMedia", media }], {
+          origin: "agent",
+          baseRevision: initial.revision,
+        });
+        const before = readFile(root, "edit.json");
+
+        const undo = yield* call("video_undo");
+        expect(undo.isError).toBe(false);
+        expect(readFile(root, "edit.json")).toBe(before);
+        const revision = (yield* edits.read(thread.projectId)).revision;
+        expect(revision).not.toBe(imported.revision);
+        expect(undo.structuredContent).toEqual({
+          revision,
+          message:
+            "Nothing on the timeline changed: that step only added or removed clips in Assets, and undo keeps clips there. There is nothing more to undo.",
+        });
+        const restored = JSON.parse(readFile(root, "edit.json"));
+        expect(restored.media.map((entry: { id: string }) => entry.id)).toEqual(["cam"]);
+      }),
+    ),
+  );
+
+  it.effect("video_redo says when a step changes nothing on the timeline", () =>
+    withProject(({ root, thread, edits, call }) =>
+      Effect.gen(function* () {
+        const initial = yield* edits.read(thread.projectId);
+        yield* edits.apply(thread.projectId, [{ _tag: "putMedia", media }], {
+          origin: "agent",
+          baseRevision: initial.revision,
+        });
+        yield* call("video_undo");
+        const before = readFile(root, "edit.json");
+
+        const redo = yield* call("video_redo");
+        expect(redo.isError).toBe(false);
+        expect(readFile(root, "edit.json")).toBe(before);
+        const revision = (yield* edits.read(thread.projectId)).revision;
+        expect(redo.structuredContent).toEqual({
+          revision,
+          message:
+            "Nothing on the timeline changed: that step only added or removed clips in Assets, and undo keeps clips there. There is nothing more to redo.",
+        });
+      }),
+    ),
+  );
+
+  it.effect("a no-op undo with more history left says undo again", () =>
+    withProject(({ root, thread, edits, call }) =>
+      Effect.gen(function* () {
+        const initial = yield* edits.read(thread.projectId);
+        const first = yield* edits.apply(thread.projectId, [...setup, keep([[0, 300]])], {
+          origin: "agent",
+          baseRevision: initial.revision,
+        });
+        yield* edits.apply(
+          thread.projectId,
+          [{ _tag: "putMedia", media: { ...media, id: "mic", path: "assets/mic.mp4" } }],
+          { origin: "agent", baseRevision: first.revision },
+        );
+
+        const noop = yield* call("video_undo");
+        expect(textOf(noop).join("")).toContain(
+          "Nothing on the timeline changed: that step only added or removed clips in Assets, and undo keeps clips there. Say undo again to go back further.",
+        );
+        const real = yield* call("video_undo");
+        expect(textOf(real).join("")).toContain("Undone. The edit is now revision");
+        const restored = JSON.parse(readFile(root, "edit.json"));
+        expect(restored.tracks).toEqual([]);
+        expect(restored.media.map((entry: { id: string }) => entry.id)).toEqual(["cam", "mic"]);
+
+        // One redo per undo: the first comes back to the edit, the second over the no-op import.
+        const redone = yield* call("video_redo");
+        expect(textOf(redone).join("")).toContain("Redone. The edit is now revision");
+        const again = yield* call("video_redo");
+        expect(textOf(again).join("")).toContain(
+          "Nothing on the timeline changed: that step only added or removed clips in Assets, and undo keeps clips there. There is nothing more to redo.",
+        );
+      }),
+    ),
+  );
+
   it.effect("should report nothing to undo or redo and change nothing", () =>
     withProject(({ root, call }) =>
       Effect.gen(function* () {
