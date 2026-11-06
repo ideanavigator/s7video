@@ -439,12 +439,14 @@ describe("TranscriptService", () => {
         NodeFS.writeFileSync(levelsFile, typeof value === "string" ? value : JSON.stringify(value));
 
       // No transcript yet: nothing to check the levels against.
-      expect(yield* service.levels(input)).toEqual({ cached: null, measure });
-      writeCache(project, transcriptFor(project.fingerprint));
+      expect(yield* service.levels(input)).toEqual({ transcript: null, cached: null, measure });
+      const transcript = transcriptFor(project.fingerprint);
+      writeCache(project, transcript);
       // A transcript cached before S7V-055 has no levels file.
-      expect(yield* service.levels(input)).toEqual({ cached: null, measure });
+      expect(yield* service.levels(input)).toEqual({ transcript, cached: null, measure });
       writeLevels(good);
-      expect(yield* service.levels(input)).toEqual({ cached: good, measure });
+      // One read gives both, so silence removal never reads the transcript twice.
+      expect(yield* service.levels(input)).toEqual({ transcript, cached: good, measure });
       // The same media by path.
       expect((yield* service.levels({ projectId, media: "assets/clip.webm" })).cached).toEqual(
         good,
@@ -460,7 +462,7 @@ describe("TranscriptService", () => {
         JSON.stringify(good).slice(0, 200),
       ]) {
         writeLevels(bad);
-        expect(yield* service.levels(input)).toEqual({ cached: null, measure });
+        expect(yield* service.levels(input)).toEqual({ transcript, cached: null, measure });
       }
       // The same rate written another way still matches.
       writeLevels({ ...good, fps: { num: 60, den: 2 } });

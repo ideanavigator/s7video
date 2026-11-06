@@ -143,7 +143,6 @@ describe.skipIf(!available)("silence-cut-talking-head golden", () => {
       const services = SilenceCutService.layer.pipe(
         Layer.provideMerge(
           Layer.mock(TranscriptService.TranscriptService)({
-            get: () => Effect.succeed(words),
             levels: (input) =>
               Effect.sync(() => {
                 const cached = NodeFS.existsSync(levelsFile)
@@ -151,6 +150,7 @@ describe.skipIf(!available)("silence-cut-talking-head golden", () => {
                   : null;
                 sources.push(cached === null ? "job" : "file");
                 return {
+                  transcript: words,
                   cached,
                   measure: {
                     projectId: input.projectId,

@@ -448,15 +448,16 @@ def test_transcribe_writes_levels_equal_to_silence_detect(
     cache = tmp_path / "cache"
     levels_file = cache / f"{_fingerprint(talk)['sha256']}.levels.json"
     real_write = transcribe._write_cache
-    seen: list[bool] = []
+    written: list[str] = []
 
-    def write_cache(target: str, transcript: dict[str, Any], job: JobContext) -> None:
-        seen.append(levels_file.exists())
-        real_write(target, transcript, job)
+    def write_cache(target: str, document: dict[str, Any], job: JobContext) -> None:
+        written.append(Path(target).name)
+        real_write(target, document, job)
 
     monkeypatch.setattr(transcribe, "_write_cache", write_cache)
     result = _run(wire, talk, cache)["result"]
-    assert seen == [True]  # A transcript on disk never lacks its levels.
+    # Levels first: a transcript on disk never lacks its levels.
+    assert written == [levels_file.name, Path(result["path"]).name]
     transcript = json.loads(Path(result["path"]).read_text())
     levels = json.loads(levels_file.read_text())
     detected = wire.call("silence.detect", {"jobId": "d", "path": str(talk)})["result"]
@@ -464,7 +465,7 @@ def test_transcribe_writes_levels_equal_to_silence_detect(
     assert levels["fps"] == transcript["fps"] == detected["rate"]
     assert levels["durationFrames"] == transcript["durationFrames"] == detected["durationFrames"]
     assert levels["mediaFingerprint"] == transcript["mediaFingerprint"]
-    assert silence_method.read_levels(str(cache), _fingerprint(talk)) == levels
+    assert levels["levelsVersion"] == silence_method.LEVELS_VERSION
 
 
 def test_progress_moves_through_model_load_and_word_timing(

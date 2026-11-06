@@ -432,7 +432,8 @@ def _summary(path: str, transcript: dict[str, Any], cached: bool) -> dict[str, A
     }
 
 
-def _write_cache(target: str, transcript: dict[str, Any], job: JobContext) -> None:
+def _write_cache(target: str, document: dict[str, Any], job: JobContext) -> None:
+    """Writes a transcript or levels file whole or not at all (`.part`, then `os.replace`)."""
     try:
         os.makedirs(os.path.dirname(target), exist_ok=True)
     except OSError:
@@ -440,7 +441,7 @@ def _write_cache(target: str, transcript: dict[str, Any], job: JobContext) -> No
     partial = f"{target}.{os.getpid()}.{threading.get_ident()}.part"
     job.track_output(partial)
     with open(partial, "w", encoding="utf-8") as handle:
-        json.dump(transcript, handle, ensure_ascii=False, separators=(",", ":"))
+        json.dump(document, handle, ensure_ascii=False, separators=(",", ":"))
     job.raise_if_cancelled()
     os.replace(partial, target)
     job.keep_output(partial)
@@ -466,7 +467,7 @@ def _run(params: dict[str, Any], job: JobContext) -> dict[str, Any]:
     info = _media_clock(path, job)
     pcm = decode_audio(path, job)
     # The sound levels for silence removal, from this same audio on this same clock (S7V-055).
-    from .silence import frame_levels, levels_document, write_levels
+    from .silence import frame_levels, levels_document, levels_path
 
     frames = frame_levels(pcm, info.clock, info.duration_frames)
     levels = levels_document(fingerprint, info.clock.rate, info.duration_frames, frames)
@@ -501,7 +502,7 @@ def _run(params: dict[str, Any], job: JobContext) -> dict[str, Any]:
         "createdAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     }
     # Levels first: a transcript on disk always has its levels next to it.
-    write_levels(cache_dir, levels, job)
+    _write_cache(levels_path(cache_dir, fingerprint), levels, job)
     _write_cache(target, transcript, job)
     result = _summary(target, transcript, cached=False)
     result["timings"] = {

@@ -12,6 +12,7 @@ import {
 } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -59,6 +60,10 @@ interface Scenario {
   jobs: Array<{ kind: string; method: string; params: unknown; projectId: unknown }>;
   /** Runs inside each `silence` job before it succeeds (a gate, or a failure). */
   job: Effect.Effect<void, EngineError>;
+  /** Runs in each `silence` job before it has its id. */
+  beforeStart: Effect.Effect<void>;
+  /** Runs on each `levels` read. */
+  asked: Effect.Effect<void>;
 }
 
 const transcriptOf = (words: Scenario["words"]): Transcript => ({
@@ -104,6 +109,8 @@ const withProject = <A, E>(
       levelsCached: true,
       jobs: [],
       job: Effect.void,
+      beforeStart: Effect.void,
+      asked: Effect.void,
     };
     const engine = Layer.mock(EngineService.EngineService)({
       // No quick engine call at all: the levels come from the cache file or a job.
@@ -116,6 +123,7 @@ const withProject = <A, E>(
             params: input.params,
             projectId: input.projectId,
           });
+          yield* scenario.beforeStart;
           if (input.onStart) {
             yield* input.onStart(EngineJobId.make(`engine-job-${scenario.jobs.length}`));
           }
@@ -130,30 +138,31 @@ const withProject = <A, E>(
         }),
     });
     const transcripts = Layer.mock(TranscriptService.TranscriptService)({
-      get: () =>
+      // Only `levels`: one read gives the transcript and its levels (S7V-055 review).
+      levels: () =>
         scenario.between.pipe(
+          Effect.andThen(scenario.asked),
           Effect.andThen(
-            Effect.sync(() => (scenario.transcribed ? transcriptOf(scenario.words) : null)),
+            Effect.sync(() => ({
+              transcript: scenario.transcribed ? transcriptOf(scenario.words) : null,
+              cached: scenario.levelsCached
+                ? {
+                    levelsVersion: 1 as const,
+                    mediaFingerprint: camera.fingerprint,
+                    fps: { num: 30, den: 1 },
+                    durationFrames: FRAMES,
+                    levels: levelsOf(scenario.words),
+                  }
+                : null,
+              measure: {
+                projectId: "project" as ProjectId,
+                path: "/project/assets/cam.mp4",
+                cacheDir: "/project/.s7cache/transcripts",
+                fingerprint: camera.fingerprint,
+              },
+            })),
           ),
         ),
-      levels: () =>
-        Effect.sync(() => ({
-          cached: scenario.levelsCached
-            ? {
-                levelsVersion: 1 as const,
-                mediaFingerprint: camera.fingerprint,
-                fps: { num: 30, den: 1 },
-                durationFrames: FRAMES,
-                levels: levelsOf(scenario.words),
-              }
-            : null,
-          measure: {
-            projectId: "project" as ProjectId,
-            path: "/project/assets/cam.mp4",
-            cacheDir: "/project/.s7cache/transcripts",
-            fingerprint: camera.fingerprint,
-          },
-        })),
     });
     const services = SilenceCutService.layer.pipe(
       Layer.provideMerge(Layer.mergeAll(engine, transcripts)),
@@ -546,6 +555,33 @@ describe("SilenceCutService", () => {
         const done = yield* silences.removeSilences({ projectId });
         assert.strictEqual(done.cuts, 4);
         assert.strictEqual(scenario.jobs.length, 1);
+      }),
+    ),
+  );
+
+  it.effect("two calls at once share one silence job, even before it has its id", () =>
+    withProject(({ projectId, scenario, silences }) =>
+      Effect.gen(function* () {
+        const bothAsked = yield* Deferred.make<void>();
+        const gate = yield* Deferred.make<void>();
+        let asks = 0;
+        scenario.levelsCached = false;
+        scenario.asked = Effect.suspend(() =>
+          ++asks === 2 ? Deferred.succeed(bothAsked, undefined) : Effect.void,
+        ).pipe(Effect.asVoid);
+        // The job gets its id only once both calls have read the (missing) levels.
+        scenario.beforeStart = Deferred.await(bothAsked).pipe(Effect.andThen(Deferred.await(gate)));
+        const call = silences.removeSilences({ projectId }).pipe(Effect.exit);
+        const both = yield* Effect.all([call, call], { concurrency: "unbounded" }).pipe(
+          Effect.forkChild,
+        );
+        yield* Deferred.await(bothAsked);
+        yield* Deferred.succeed(gate, undefined);
+        const outcomes = yield* Fiber.join(both);
+        assert.strictEqual(scenario.jobs.length, 1);
+        // Both planned from the same edit: one cuts, the other finds it changed meanwhile.
+        const cut = outcomes.flatMap((exit) => (Exit.isSuccess(exit) ? [exit.value.cuts] : []));
+        assert.deepEqual(cut, [4]);
       }),
     ),
   );

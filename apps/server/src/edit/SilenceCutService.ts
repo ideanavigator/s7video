@@ -18,7 +18,7 @@ import {
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
-import * as Fiber from "effect/Fiber";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
@@ -60,10 +60,10 @@ export interface RemoveSilencesResult {
  */
 const MEASURE_WAIT = "20 seconds";
 
-/** A running `silence` job; both fields are set once the job has its id. */
+/** A running `silence` job: its id once the engine has it, and its outcome. */
 interface Measuring {
-  fiber?: Fiber.Fiber<SilenceDetectResult, EngineError>;
-  jobId?: EngineJobId;
+  readonly started: Deferred.Deferred<EngineJobId, EngineError>;
+  readonly result: Deferred.Deferred<SilenceDetectResult, EngineError>;
 }
 
 export class SilenceCutService extends Context.Service<
@@ -178,37 +178,39 @@ const make = Effect.gen(function* () {
     source: TranscriptService.TranscriptLevels["measure"],
   ) {
     const key = `${source.cacheDir}\0${source.fingerprint.sha256}`;
-    const running = measuring.get(key);
-    let fiber = running?.fiber;
-    let jobId = running?.jobId;
-    if (fiber === undefined || jobId === undefined) {
-      const started = yield* Deferred.make<EngineJobId>();
-      const own: Measuring = {};
+    let entry = measuring.get(key);
+    if (entry === undefined) {
+      // In the map before the job starts, so a call arriving meanwhile joins this one.
+      const own: Measuring = { started: Deferred.makeUnsafe(), result: Deferred.makeUnsafe() };
+      entry = own;
       measuring.set(key, own);
       // In the service's scope, so the job keeps going when this call stops waiting or is cut off.
-      fiber = yield* engine
+      yield* engine
         .runJob({
           kind: "silence",
           method: "silence.detect",
           params: { path: source.path, cacheDir: source.cacheDir, fingerprint: source.fingerprint },
           success: SilenceDetectResult,
           projectId: source.projectId,
-          onStart: (id) => Deferred.succeed(started, id).pipe(Effect.asVoid),
+          onStart: (id) => Deferred.succeed(own.started, id).pipe(Effect.asVoid),
         })
         .pipe(
-          Effect.onExit(() =>
-            Effect.sync(() => {
+          Effect.onExit((exit) =>
+            Effect.suspend(() => {
               if (measuring.get(key) === own) measuring.delete(key);
+              return Deferred.done(own.result, exit).pipe(
+                Effect.andThen(
+                  Exit.isFailure(exit) ? Deferred.failCause(own.started, exit.cause) : Effect.void,
+                ),
+              );
             }),
           ),
           Effect.forkIn(serviceScope),
         );
-      jobId = yield* Deferred.await(started);
-      own.fiber = fiber;
-      own.jobId = jobId;
     }
-    const done = yield* Fiber.join(fiber).pipe(Effect.timeoutOption(MEASURE_WAIT));
+    const done = yield* Deferred.await(entry.result).pipe(Effect.timeoutOption(MEASURE_WAIT));
     if (done._tag === "Some") return done.value;
+    const jobId = yield* Deferred.await(entry.started);
     return yield* refuse(
       "measuring",
       `Measuring the sound of ${mediaId} first (video job ${jobId}). Wait for it with video_job_status, then call video_remove_silences again.`,
@@ -240,24 +242,23 @@ const make = Effect.gen(function* () {
       Effect.mapError(scopeFailure),
       Effect.provideContext(context),
     );
-    const transcript = yield* transcripts
-      .get({ projectId: input.projectId, media: media.id })
+    const found = yield* transcripts
+      .levels({ projectId: input.projectId, media: media.id })
       .pipe(Effect.mapError((error) => refuse("no-transcript", error.message)));
+    const { transcript } = found;
     if (transcript === null) {
       return yield* refuse(
         "no-transcript",
         `${media.id} has no transcript yet. Run video_transcribe first.`,
       );
     }
-    const found = yield* transcripts
-      .levels({ projectId: input.projectId, media: media.id })
-      .pipe(Effect.mapError((error) => refuse("no-transcript", error.message)));
     // The cached file was already checked against the transcript (file, rate and frame count).
     const detected = found.cached ?? (yield* measure(media.id, found.measure));
     const detectedRate = "fps" in detected ? detected.fps : detected.rate;
-    const sameRate =
-      detectedRate.num * transcript.fps.den === transcript.fps.num * detectedRate.den;
-    if (!sameRate) {
+    const sameClock =
+      detectedRate.num * transcript.fps.den === transcript.fps.num * detectedRate.den &&
+      detected.durationFrames === transcript.durationFrames;
+    if (!sameClock) {
       return yield* refuse(
         "no-transcript",
         `${media.id} changed since it was transcribed. Run video_transcribe again.`,

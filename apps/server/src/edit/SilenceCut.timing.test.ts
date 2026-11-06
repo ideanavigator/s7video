@@ -77,10 +77,10 @@ describe.skipIf(!ENABLED || FFMPEG === undefined)("silence removal on a 30-minut
         const services = SilenceCutService.layer.pipe(
           Layer.provideMerge(
             Layer.mock(TranscriptService.TranscriptService)({
-              get: () => Effect.succeed(transcript),
               // As TranscriptService.levels does: read and decode the file the job wrote.
               levels: (input) =>
                 Effect.sync(() => ({
+                  transcript,
                   cached: NodeFS.existsSync(levelsFile)
                     ? decodeLevels(NodeFS.readFileSync(levelsFile, "utf8"))
                     : null,

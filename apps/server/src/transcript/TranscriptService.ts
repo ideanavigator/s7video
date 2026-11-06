@@ -65,11 +65,12 @@ export type TranscribeStartResult =
   | { readonly cached: true; readonly wordCount: number; readonly durationFrames: number };
 
 /**
- * A clip's per-frame sound levels: `cached` when `<sha256>.levels.json` matches its transcript
- * (same file, frame rate and frame count), else null; `measure` is what a `silence.detect` job
- * needs to measure them and write that file.
+ * A clip's cached transcript (null if none) and its per-frame sound levels: `cached` when
+ * `<sha256>.levels.json` matches that transcript (same file, frame rate and frame count), else
+ * null; `measure` is what a `silence.detect` job needs to measure them and write that file.
  */
 export interface TranscriptLevels {
+  readonly transcript: Transcript | null;
   readonly cached: SilenceLevels | null;
   readonly measure: {
     readonly projectId: ProjectId;
@@ -97,7 +98,7 @@ export class TranscriptService extends Context.Service<
     readonly get: (
       input: TranscriptMediaInput,
     ) => Effect.Effect<Transcript | null, TranscriptError>;
-    /** The cached sound levels, checked against the cached transcript (S7V-055). */
+    /** The cached transcript with its sound levels, checked against it (S7V-055). */
     readonly levels: (
       input: TranscriptMediaInput,
     ) => Effect.Effect<TranscriptLevels, TranscriptError>;
@@ -263,7 +264,7 @@ const make = Effect.fn("TranscriptService.make")(function* (options: TranscriptS
       fingerprint: resolved.fingerprint,
     };
     const transcript = yield* readCache(resolved);
-    if (transcript === null) return { cached: null, measure };
+    if (transcript === null) return { transcript, cached: null, measure };
     const file = path.join(resolved.cacheDir, `${resolved.fingerprint.sha256}.levels.json`);
     const text = yield* fileSystem.readFileString(file).pipe(Effect.option);
     // Missing, half-written or another file's levels are measured again, never used.
@@ -276,7 +277,7 @@ const make = Effect.fn("TranscriptService.make")(function* (options: TranscriptS
       found.fps.num * transcript.fps.den === transcript.fps.num * found.fps.den &&
       found.durationFrames === transcript.durationFrames &&
       found.levels.length === found.durationFrames;
-    return { cached: matches ? found : null, measure };
+    return { transcript, cached: matches ? found : null, measure };
   });
 
   const readText = Effect.fn("TranscriptService.readText")(function* (input: TranscriptTextInput) {

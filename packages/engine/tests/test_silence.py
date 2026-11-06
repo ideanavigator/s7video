@@ -149,9 +149,7 @@ def _detect(engine: Wire, clip: Path, cache: Path, job_id: str, fingerprint: dic
 
 
 @pytest.mark.usefixtures("tools")
-def test_silence_detect_writes_and_reuses_the_cache(
-    beep: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_silence_detect_writes_the_levels_file(beep: Path, tmp_path: Path) -> None:
     cache = tmp_path / "transcripts"
     engine = Wire()
     try:
@@ -168,45 +166,39 @@ def test_silence_detect_writes_and_reuses_the_cache(
         assert [path.name for path in cache.iterdir()] == [file.name]
         progress = [m["params"]["stage"] for m in engine.messages if m.get("method") == "progress"]
         assert progress and set(progress) == {"measuring the sound"}
-
-        def no_decode(*_args: Any) -> None:
-            raise AssertionError("decoded the clip although its levels are cached")
-
-        monkeypatch.setattr(silence, "decode_audio", no_decode)
-        monkeypatch.setattr(silence, "_media_clock", no_decode)
-        assert _detect(engine, beep, cache, "b")["result"] == first
     finally:
         engine.close()
 
 
 @pytest.mark.usefixtures("tools")
-@pytest.mark.parametrize("damage", ["truncated", "fingerprint", "count", "version", "fps"])
-def test_silence_detect_ignores_a_bad_levels_file(beep: Path, tmp_path: Path, damage: str) -> None:
+@pytest.mark.parametrize("damage", ["frames", "fps", "truncated"])
+def test_silence_detect_always_measures_and_replaces_the_file(beep: Path, tmp_path: Path, damage: str) -> None:
+    """The server starts the job only when it rejected the file (it checks it against the
+    transcript), so the job never answers from it: a well-formed file for another frame count or
+    rate is measured again and replaced (S7V-055 review)."""
     cache = tmp_path / "transcripts"
+    cache.mkdir()
+    file = cache / f"{_fingerprint(beep)['sha256']}.levels.json"
+    stale = {
+        "levelsVersion": 1,
+        "mediaFingerprint": _fingerprint(beep),
+        "fps": {"num": 30000, "den": 1001},
+        "durationFrames": 59,
+        "levels": [-20] * 59,
+    }
+    if damage == "fps":
+        stale = {**stale, "fps": {"num": 25, "den": 1}, "durationFrames": 60, "levels": [-20] * 60}
+    file.write_text(json.dumps(stale)[: 50 if damage == "truncated" else None])
     engine = Wire()
     try:
-        good = _detect(engine, beep, cache, "a")["result"]
-        file = cache / f"{_fingerprint(beep)['sha256']}.levels.json"
-        text = file.read_text()
-        data = json.loads(text)
-        if damage == "truncated":
-            file.write_text(text[: len(text) // 2])
-        else:
-            if damage == "fingerprint":
-                data["mediaFingerprint"] = {**data["mediaFingerprint"], "size": 1}
-            elif damage == "count":
-                data["levels"] = data["levels"][:-1]
-            elif damage == "version":
-                data["levelsVersion"] = 2
-            else:
-                data["fps"] = "30"
-            file.write_text(json.dumps(data))
-        assert silence.read_levels(str(cache), _fingerprint(beep)) is None
-        # Measured again and written whole again.
-        assert _detect(engine, beep, cache, "b")["result"] == good
-        assert silence.read_levels(str(cache), _fingerprint(beep)) is not None
+        result = _detect(engine, beep, cache, "a")["result"]
     finally:
         engine.close()
+    assert result["rate"] == {"num": 30000, "den": 1001}
+    assert result["durationFrames"] == len(result["levels"]) == 60
+    assert result["levels"] != [-20] * 60
+    data = json.loads(file.read_text())
+    assert (data["fps"], data["durationFrames"], data["levels"]) == (result["rate"], 60, result["levels"])
 
 
 @pytest.mark.usefixtures("tools")
@@ -272,15 +264,13 @@ def test_should_handle_a_30_minute_clip(tmp_path: Path) -> None:
             started = time.perf_counter()
             fallback = _detect(engine, clip, cache, "long")["result"]
             fallback_s = time.perf_counter() - started
-            started = time.perf_counter()
-            cached = _detect(engine, clip, cache, "again")["result"]
-            cached_s = time.perf_counter() - started
         finally:
             engine.close()
-        assert fallback["durationFrames"] == 54_000 == len(fallback["levels"]) and cached == fallback
+        assert fallback["durationFrames"] == 54_000 == len(fallback["levels"])
+        written = json.loads((cache / f"{_fingerprint(clip)['sha256']}.levels.json").read_text())
+        assert written["levels"] == fallback["levels"]
         # A job has no quick-call limit, but the agent tool waits 20 s for it before handing it back.
         assert fallback_s < 20, fallback_s
-        assert cached_s < 2, cached_s
 
         info = transcribe._media_clock(str(clip), JobContext.detached())
         pcm = transcribe.decode_audio(str(clip), JobContext.detached())
@@ -292,7 +282,7 @@ def test_should_handle_a_30_minute_clip(tmp_path: Path) -> None:
         finally:
             tracemalloc.stop()
         assert levels == fallback["levels"] == whole_clip_levels(pcm, info.clock, info.duration_frames)
-        print(f"\n30-minute clip: job {fallback_s:.2f} s, cached {cached_s * 1000:.0f} ms, levels add {extra / 1e6:.1f} MB")
+        print(f"\n30-minute clip: job {fallback_s:.2f} s, levels add {extra / 1e6:.1f} MB")
         assert extra < 50 * 10**6, extra
     finally:
         clip.unlink(missing_ok=True)

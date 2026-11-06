@@ -8,22 +8,21 @@ gaps are quiet enough to cut (S7V-027); the engine only measures.
 
 The transcribe job measures them from the audio it already decoded and caches them next to the
 transcript as `<cacheDir>/<sha256>.levels.json` (S7V-055), so silence removal never decodes the
-clip again. `silence.detect` is the job that measures them when that file is missing.
+clip again. The server checks that file against the transcript; `silence.detect` is the job it
+starts when the file is missing or does not match, so it always measures and rewrites it.
 """
 
 from __future__ import annotations
 
-import json
 import os
-import threading
 from fractions import Fraction
 from typing import TYPE_CHECKING, Any
 
 from .. import timebase
 from ..jobs import JobContext
-from ..rpc import INVALID_PARAMS, OUTPUT_ERROR, Method, RpcError
+from ..rpc import INVALID_PARAMS, Method, RpcError
 from ._media import PATH_SCHEMA, media_file
-from .transcribe import FINGERPRINT_SCHEMA, SAMPLE_RATE, FrameClock, _media_clock, decode_audio
+from .transcribe import FINGERPRINT_SCHEMA, SAMPLE_RATE, FrameClock, _media_clock, _write_cache, decode_audio
 
 if TYPE_CHECKING:
     import numpy as np
@@ -94,41 +93,6 @@ def levels_document(
     }
 
 
-def read_levels(cache_dir: str, fingerprint: dict[str, Any]) -> dict[str, Any] | None:
-    """The cached levels for this media, or None if missing, half-written or for another file."""
-    try:
-        with open(levels_path(cache_dir, fingerprint), encoding="utf-8") as handle:
-            data = json.load(handle)
-    except (OSError, ValueError):
-        return None
-    if not isinstance(data, dict) or data.get("levelsVersion") != LEVELS_VERSION:
-        return None
-    if data.get("mediaFingerprint") != fingerprint:
-        return None
-    levels, frames, fps = data.get("levels"), data.get("durationFrames"), data.get("fps")
-    if not isinstance(levels, list) or not isinstance(frames, int) or len(levels) != frames:
-        return None
-    if not isinstance(fps, dict) or not all(isinstance(fps.get(key), int) for key in ("num", "den")):
-        return None
-    return data
-
-
-def write_levels(cache_dir: str, document: dict[str, Any], job: JobContext) -> None:
-    """Writes `<sha256>.levels.json` whole or not at all (`.part`, then `os.replace`)."""
-    target = levels_path(cache_dir, document["mediaFingerprint"])
-    try:
-        os.makedirs(cache_dir, exist_ok=True)
-    except OSError:
-        raise RpcError(OUTPUT_ERROR, "the transcript folder cannot be created") from None
-    partial = f"{target}.{os.getpid()}.{threading.get_ident()}.part"
-    job.track_output(partial)
-    with open(partial, "w", encoding="utf-8") as handle:
-        json.dump(document, handle, separators=(",", ":"))
-    job.raise_if_cancelled()
-    os.replace(partial, target)
-    job.keep_output(partial)
-
-
 # --- Method -----------------------------------------------------------------------------------
 
 
@@ -141,10 +105,6 @@ def _detect(params: dict[str, Any], job: JobContext) -> dict[str, Any]:
     if cache_dir is not None and not os.path.isabs(cache_dir):
         raise RpcError(INVALID_PARAMS, "invalid params at cacheDir: must be absolute")
     media_file(path)
-    if cache_dir is not None:
-        cached = read_levels(cache_dir, fingerprint)
-        if cached is not None:
-            return {"rate": cached["fps"], "durationFrames": cached["durationFrames"], "levels": cached["levels"]}
     job.progress(0.0, "measuring the sound")
     info = _media_clock(path, job)
     pcm = decode_audio(path, job)
@@ -153,7 +113,8 @@ def _detect(params: dict[str, Any], job: JobContext) -> dict[str, Any]:
     del pcm
     job.raise_if_cancelled()
     if cache_dir is not None:
-        write_levels(cache_dir, levels_document(fingerprint, info.clock.rate, info.duration_frames, levels), job)
+        document = levels_document(fingerprint, info.clock.rate, info.duration_frames, levels)
+        _write_cache(levels_path(cache_dir, fingerprint), document, job)
     return {
         "rate": timebase.rational(Fraction(info.clock.rate)),
         "durationFrames": info.duration_frames,
