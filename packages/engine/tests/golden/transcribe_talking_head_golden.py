@@ -46,7 +46,7 @@ def models_dir(monkeypatch: pytest.MonkeyPatch) -> Path:
     folder = os.environ.get("S7VIDEO_TEST_MODELS_DIR", "")
     if not folder:
         pytest.skip(SKIP_REASON)
-    # The engine refuses a relative HF_HOME, so `.t3/test-models` is resolved from the working folder.
+    # The engine refuses a relative HF_HOME, so a relative folder is resolved from the working folder.
     home = Path(folder).resolve()
     monkeypatch.setenv("HF_HOME", str(home))
     monkeypatch.delenv("S7_MODELS_LOCK", raising=False)
