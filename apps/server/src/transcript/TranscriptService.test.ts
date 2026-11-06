@@ -412,6 +412,74 @@ describe("TranscriptService", () => {
       expect(error).toMatchObject({ _tag: "TranscriptError", reason: "cache_unreadable" });
     }).pipe(Effect.provide(layer), Effect.ensuring(cleanup(project)));
   });
+
+  it.effect("levels: the cached file when it matches the transcript, else null (S7V-055)", () => {
+    const { layer, calls, project } = setup({ totalMemoryBytes: 36 * GB });
+    return Effect.gen(function* () {
+      const service = yield* TranscriptService.TranscriptService;
+      const input = { projectId, media: "cam" };
+      const measure = {
+        projectId,
+        path: project.clip,
+        cacheDir: project.cacheDir,
+        fingerprint: project.fingerprint,
+      };
+      const levelsFile = NodePath.join(
+        project.cacheDir,
+        `${project.fingerprint.sha256}.levels.json`,
+      );
+      const good = {
+        levelsVersion: 1,
+        mediaFingerprint: project.fingerprint,
+        fps: { num: 30, den: 1 },
+        durationFrames: 300,
+        levels: Array.from({ length: 300 }, (_, index) => (index < 10 ? -100 : -20)),
+      };
+      const writeLevels = (value: unknown) =>
+        NodeFS.writeFileSync(levelsFile, typeof value === "string" ? value : JSON.stringify(value));
+
+      // No transcript yet: nothing to check the levels against.
+      expect(yield* service.levels(input)).toEqual({ transcript: null, cached: null, measure });
+      const transcript = transcriptFor(project.fingerprint);
+      writeCache(project, transcript);
+      // A transcript cached before S7V-055 has no levels file.
+      expect(yield* service.levels(input)).toEqual({ transcript, cached: null, measure });
+      writeLevels(good);
+      // One read gives both, so silence removal never reads the transcript twice.
+      expect(yield* service.levels(input)).toEqual({ transcript, cached: good, measure });
+      // The same media by path.
+      expect((yield* service.levels({ projectId, media: "assets/clip.webm" })).cached).toEqual(
+        good,
+      );
+
+      for (const bad of [
+        { ...good, mediaFingerprint: { ...project.fingerprint, size: 6 } },
+        { ...good, mediaFingerprint: { ...project.fingerprint, sha256: "0".repeat(64) } },
+        { ...good, fps: { num: 25, den: 1 } },
+        { ...good, durationFrames: 299, levels: good.levels.slice(1) },
+        { ...good, levels: good.levels.slice(1) },
+        { ...good, levelsVersion: 2 },
+        JSON.stringify(good).slice(0, 200),
+      ]) {
+        writeLevels(bad);
+        expect(yield* service.levels(input)).toEqual({ transcript, cached: null, measure });
+      }
+      // The same rate written another way still matches.
+      writeLevels({ ...good, fps: { num: 60, den: 2 } });
+      expect((yield* service.levels(input)).cached).not.toBeNull();
+      // Reading levels never starts the engine.
+      expect(calls.jobs).toEqual([]);
+    }).pipe(Effect.provide(layer), Effect.ensuring(cleanup(project)));
+  });
+
+  it.effect("levels refuses media outside the project", () => {
+    const { layer, project } = setup({ totalMemoryBytes: 36 * GB });
+    return Effect.gen(function* () {
+      const service = yield* TranscriptService.TranscriptService;
+      const error = yield* service.levels({ projectId, media: "escape" }).pipe(Effect.flip);
+      expect(error).toMatchObject({ _tag: "TranscriptError", reason: "media_refused" });
+    }).pipe(Effect.provide(layer), Effect.ensuring(cleanup(project)));
+  });
 });
 
 describe("mediaFingerprint", () => {

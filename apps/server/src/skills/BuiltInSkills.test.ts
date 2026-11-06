@@ -139,6 +139,11 @@ it.layer(NodeServices.layer)("built-in skills", (it) => {
       assert.include(flat, "Do not export.");
       assert.include(flat, "Call `video_export` only when this message asks for a video file");
       assert.include(flat, "Call `video_canvas` only when the user names a shape");
+      // S7V-055: a still-measuring silence job is waited out; the cut is retried only on success.
+      assert.include(
+        flat,
+        "If it says the sound is still being measured, call `video_job_status` with that `jobId` and `waitSeconds: 30` until the job ends. If it `succeeded`, call `video_remove_silences` again; if it `failed` or was `cancelled`, tell the user and stop.",
+      );
       assert.include(text, "Never edit `edit.json` yourself and never use git on it.");
     }),
   );

@@ -81,3 +81,12 @@ replaced, and the name moves on to `<name>-2`. A media counts as present only wh
 path still has its fingerprint, so an undo to an older entry never plays other bytes. Undo and redo never take a clip out of the list: entries the restored edit lacks are kept. When that leaves the edit as it was (a step over an import; the order of the clip list is ignored, since kept clips go to the end), the agent's `video_undo` / `video_redo` reply says nothing on the timeline changed and whether there is more to step, but the step is still taken. `EditDocumentService.step` decides this inside the project's lock (S7V-063). Thumbnails and proxies go to `.s7cache/thumbs/` and
 `.s7cache/proxies/`, named by the media's fingerprint. Import and proxy progress live in memory and
 `media.subscribe`, never in `edit.json`.
+
+Transcripts go to `.s7cache/transcripts/<sha256>.json`. The transcribe job also writes the clip's
+per-frame sound levels beside it, as `<sha256>.levels.json`, before the transcript, from the audio it
+already decoded (S7V-055). Silence removal uses that file only when its fingerprint, frame rate and
+frame count match the transcript; otherwise a `silence.detect` job measures the clip once and
+writes it. The agent tool waits up to 20 s for that job, then hands back its id, so a slow disk
+never hits an agent's tool time limit. Levels are summed in 1 Mi-sample blocks with the running
+total carried over, which gives the same integers as one whole-clip sum without a 64-bit copy of
+the audio (about 460 MB for 30 minutes).

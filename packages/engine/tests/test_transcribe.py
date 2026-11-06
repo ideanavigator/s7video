@@ -26,6 +26,7 @@ from engine_support import Wire
 
 from s7engine import models, rpc
 from s7engine.jobs import Cancelled, JobContext
+from s7engine.methods import silence as silence_method
 from s7engine.methods import transcribe
 from s7engine.methods.transcribe import Chunk, FrameClock, Word
 
@@ -437,6 +438,34 @@ def test_transcribe_writes_frames_and_returns_a_path(
         assert all(isinstance(word[key], int) for key in ("startFrame", "endFrame"))
     # No float seconds anywhere in the cached file.
     assert "start\"" not in Path(result["path"]).read_text()
+
+
+def test_transcribe_writes_levels_equal_to_silence_detect(
+    hub: FakeHub, fake_models: Loads, tools: None, wire: Wire, talk: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """S7V-055: the transcribe job measures the levels from its own audio, before the transcript."""
+    _download()
+    cache = tmp_path / "cache"
+    levels_file = cache / f"{_fingerprint(talk)['sha256']}.levels.json"
+    real_write = transcribe._write_cache
+    written: list[str] = []
+
+    def write_cache(target: str, document: dict[str, Any], job: JobContext) -> None:
+        written.append(Path(target).name)
+        real_write(target, document, job)
+
+    monkeypatch.setattr(transcribe, "_write_cache", write_cache)
+    result = _run(wire, talk, cache)["result"]
+    # Levels first: a transcript on disk never lacks its levels.
+    assert written == [levels_file.name, Path(result["path"]).name]
+    transcript = json.loads(Path(result["path"]).read_text())
+    levels = json.loads(levels_file.read_text())
+    detected = wire.call("silence.detect", {"jobId": "d", "path": str(talk)})["result"]
+    assert levels["levels"] == detected["levels"]
+    assert levels["fps"] == transcript["fps"] == detected["rate"]
+    assert levels["durationFrames"] == transcript["durationFrames"] == detected["durationFrames"]
+    assert levels["mediaFingerprint"] == transcript["mediaFingerprint"]
+    assert levels["levelsVersion"] == silence_method.LEVELS_VERSION
 
 
 def test_progress_moves_through_model_load_and_word_timing(

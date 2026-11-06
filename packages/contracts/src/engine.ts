@@ -416,9 +416,19 @@ export const SilenceDetectResult = Schema.Struct({
 });
 export type SilenceDetectResult = typeof SilenceDetectResult.Type;
 
-/** Why silence removal did not run; the message tells the agent what to do next. */
+/**
+ * Why silence removal did not run; the message tells the agent what to do next. `measuring`: the
+ * clip's sound is still being measured by a `silence` job, to wait for and then call again (S7V-055).
+ */
 export class SilenceCutError extends Schema.TaggedError<SilenceCutError>()("SilenceCutError", {
-  reason: Schema.Literals(["media", "no-transcript", "no-speech", "linked-audio", "keep"]),
+  reason: Schema.Literals([
+    "media",
+    "no-transcript",
+    "no-speech",
+    "linked-audio",
+    "keep",
+    "measuring",
+  ]),
   detail: Schema.String,
 }) {
   override get message(): string {

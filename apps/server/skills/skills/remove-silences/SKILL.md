@@ -29,6 +29,10 @@ The user asked you to cut the pauses from their clip. Do it with the video tools
    If the clip was already cut and the user wants pauses back ("looser", "keep the pause
    after ..."), call `video_undo` first, then `video_remove_silences` with the new setting.
 
+   If it says the sound is still being measured, call `video_job_status` with that `jobId` and
+   `waitSeconds: 30` until the job ends. If it `succeeded`, call `video_remove_silences` again;
+   if it `failed` or was `cancelled`, tell the user and stop.
+
 3. Do not export. Captions are added when the user exports; if they asked for captions, say so.
    Call `video_export` only when this message asks for a video file ("export", "render", "make
    the video"), never because an earlier message did. Call `video_canvas` only when the user names a
