@@ -2,7 +2,11 @@ import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretReso
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
+  AuthOrchestrationOperateScope,
+  AuthOrchestrationReadScope,
   AuthSessionId,
+  type EditOp,
+  EditUnavailableError,
   EnvironmentId,
   ProjectId,
   ThreadId,
@@ -10,6 +14,7 @@ import {
   ProviderInstanceId,
   WS_METHODS,
   WsServerRefreshProvidersRpc,
+  WsRpcGroup,
   WsSubscribeServerConfigRpc,
   type OrchestrationV2StoredEvent,
   type OrchestrationV2ThreadShell,
@@ -29,6 +34,7 @@ import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import { Headers } from "effect/http";
 import { RpcGroup, RpcMessage, RpcServer } from "effect/rpc";
+import * as RpcTest from "effect/rpc/RpcTest";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
@@ -126,6 +132,7 @@ import * as ExternalLauncher from "./process/externalLauncher.ts";
 import * as ProjectEnrichment from "./project/ProjectEnrichmentService.ts";
 import * as ProjectService from "./project/ProjectService.ts";
 import * as EditDocumentService from "./edit/EditDocumentService.ts";
+import * as RpcAuthorization from "./auth/RpcAuthorization.ts";
 import {
   layerWsRpc,
   resolveOpenDiscoveryForConfig,
@@ -1059,5 +1066,92 @@ it.effect("thread resume across compacted history keeps message order and final 
         Layer.provideMerge(ReplayTestLayer),
       ),
     ),
+  ),
+);
+
+// S7V-066: media enters edit.json only through the media library, which needs filesystem read.
+it.effect("edit.apply refuses a media entry from a client, so it cannot point at any file", () =>
+  Effect.gen(function* () {
+    const applied: Array<ReadonlyArray<EditOp>> = [];
+    const services = Layer.mergeAll(
+      layerUnusedConfigRpcServices,
+      Layer.mock(EditDocumentService.EditDocumentService)({
+        apply: (projectId, ops) =>
+          Effect.sync(() => applied.push(ops)).pipe(
+            Effect.andThen(
+              Effect.fail(
+                new EditUnavailableError({
+                  projectId,
+                  reason: "unknown-project",
+                  explanation: "reached the edit service",
+                }),
+              ),
+            ),
+          ),
+      }),
+      Layer.mock(ExternalLauncher.ExternalLauncher)({}),
+      Layer.mock(ProviderRegistry.ProviderRegistry)({}),
+      Layer.mock(UsageLimitSources.UsageLimitSources)({}),
+      Layer.mock(RemoteOpenTargets.RemoteOpenTargets)({}),
+      Layer.mock(DirectEndpoints.DirectEndpoints)({}),
+      Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({ namedProjectsRoot: "/unused" }),
+      Layer.mock(ScratchThreadPromotion.ScratchThreadPromotion)({}),
+      Layer.mock(ServerEnvironment.ServerEnvironment)({}),
+      Layer.mock(EnvironmentAuth.EnvironmentAuth)({}),
+    );
+    const client = yield* RpcTest.makeClient(WsRpcGroup).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          layerWsRpc(
+            {
+              sessionId: AuthSessionId.make("edit-test"),
+              subject: "edit-test",
+              method: "browser-session-cookie",
+              scopes: [AuthOrchestrationReadScope, AuthOrchestrationOperateScope],
+            },
+            {},
+            yield* ServerBrowser.ServerBrowser,
+            () => Effect.void,
+          ).pipe(Layer.provide(services)),
+          RpcAuthorization.layer([AuthOrchestrationReadScope, AuthOrchestrationOperateScope]),
+        ),
+      ),
+    );
+    const outside: EditOp = {
+      _tag: "putMedia",
+      media: {
+        id: "stolen",
+        kind: "audio",
+        reference: "/Users/someone/Private/voice-memo.m4a",
+        fingerprint: { sha256: "0".repeat(64), size: 1 },
+        probe: { hasVideo: false, hasAudio: true },
+      },
+    };
+    const error = yield* client[WS_METHODS.editApply]({
+      projectId: ProjectId.make("project"),
+      baseRevision: 0,
+      origin: "import",
+      ops: [{ _tag: "removeMedia", mediaId: "old" }, outside],
+    }).pipe(Effect.flip);
+    assert.deepInclude(error, { _tag: "EditOpError", opIndex: 1, op: "putMedia" });
+    assert.isEmpty(applied);
+    // Removing media (the Assets tab) still reaches the service.
+    const removed = yield* client[WS_METHODS.editApply]({
+      projectId: ProjectId.make("project"),
+      baseRevision: 0,
+      origin: "timeline",
+      ops: [{ _tag: "removeMedia", mediaId: "old" }],
+    }).pipe(Effect.flip);
+    assert.deepInclude(removed, { _tag: "EditUnavailableError" });
+    assert.lengthOf(applied, 1);
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        Layer.fresh(layerConfigSources),
+        Layer.mock(PreviewAutomationBroker.PreviewAutomationBroker)({}),
+        Layer.mock(ServerBrowser.ServerBrowser)({}),
+      ),
+    ),
+    Effect.scoped,
   ),
 );

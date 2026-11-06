@@ -124,19 +124,25 @@ const editSummary = ({ revision, document }: EditSnapshot) => {
 };
 
 /**
- * Undo and redo through the same service method as the edit.undo / edit.redo RPCs. They change
- * the edit, so a plan-mode thread may not run them.
+ * Plan mode is read-only: a tool that changes the edit or writes into the project (import,
+ * transcribe, silence cut, export, undo, redo) refuses a plan-mode thread. `actsAsCaller` only
+ * refuses read-only clients and dead callers.
  */
+const refusePlanMode = Effect.fn("VideoHandlers.refusePlanMode")(function* (action: string) {
+  const caller = yield* loadCaller();
+  if (caller.limits.interactionMode === "plan") {
+    return yield* new OrchestratorMcpFailure({
+      code: "capability_denied",
+      message: `This thread is in plan mode, so it cannot change the project. Switch out of plan mode to ${action}.`,
+    });
+  }
+});
+
+/** Undo and redo through the same service method as the edit.undo / edit.redo RPCs. */
 const stepEdit = (direction: "undo" | "redo") =>
   McpToolAccess.actsAsCaller(() =>
     Effect.gen(function* () {
-      const caller = yield* loadCaller();
-      if (caller.limits.interactionMode === "plan") {
-        return yield* new OrchestratorMcpFailure({
-          code: "capability_denied",
-          message: `This thread is in plan mode, so it cannot change the edit. Switch out of plan mode to ${direction}.`,
-        });
-      }
+      yield* refusePlanMode(direction);
       const project = yield* callerProject();
       const edits = yield* EditDocumentService.EditDocumentService;
       return yield* edits[direction](project.projectId).pipe(
@@ -163,6 +169,7 @@ const handlers = {
   // Always a copy: chat attachments live in the app's store, which may clean them up later.
   video_import: McpToolAccess.actsAsCaller(({ path }) =>
     Effect.gen(function* () {
+      yield* refusePlanMode("import");
       const project = yield* callerProject();
       const { path: file, label } = yield* resolveSharedFile(project, path);
       const library = yield* MediaLibraryService.MediaLibraryService;
@@ -361,6 +368,7 @@ const handlers = {
   // Writes a file into the project, so plan-mode and read-only callers are refused.
   video_export: McpToolAccess.actsAsCaller(({ preset, captions }) =>
     Effect.gen(function* () {
+      yield* refusePlanMode("export");
       const project = yield* callerProject();
       const exports = yield* ExportService.ExportService;
       return yield* exports
@@ -379,9 +387,10 @@ const handlers = {
     }),
   ),
   // Acts on the environment: it loads a 4-6 GB model and writes the project's .s7cache, and the
-  // matching transcribe.run RPC needs operate scope, so read-only clients are refused.
+  // matching transcribe.run RPC needs operate scope, so plan-mode and read-only callers are refused.
   video_transcribe: McpToolAccess.actsAsCaller(({ media }) =>
     Effect.gen(function* () {
+      yield* refusePlanMode("transcribe");
       const project = yield* callerProject();
       const transcripts = yield* TranscriptService.TranscriptService;
       return yield* transcripts
@@ -410,6 +419,7 @@ const handlers = {
   // Writes the edit (one checkpoint), so plan-mode and read-only callers are refused.
   video_remove_silences: McpToolAccess.actsAsCaller(({ media, minGapSeconds, keep }) =>
     Effect.gen(function* () {
+      yield* refusePlanMode("remove silences");
       const parsed = keep === undefined ? undefined : parseKeep(keep);
       if (parsed !== undefined && "error" in parsed) {
         return yield* new OrchestratorMcpFailure({

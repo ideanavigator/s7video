@@ -323,6 +323,57 @@ tools. These upstream files have small edits:
 - `provider/agentContextBudget.json` gains `builtInSkillListingBytes`, the per-session cost of listing the skills.
 - `apps/web/src/components/chat/useComposerMenuItems.ts` and `ComposerCommandMenu.tsx`: a `/` menu skill row with a `displayName` (built-in skills read it from `agents/openai.yaml`) shows that name instead of `/skill:<name>`. Skills without one keep the upstream label; search is unchanged.
 
+## Media import (S7V-025)
+
+Clips enter a project only through `apps/server/src/media/MediaLibraryService.ts` (new code). These
+upstream files have small, additive edits:
+
+- `assets/AssetAccess.ts` and `contracts/assets.ts` add a `project-media` resource and its
+  `project-media-exact` claim. A token is issued only for media recorded in the project's
+  `edit.json`, and every request re-checks that the record still points at the same file.
+- `contracts/clientRpcPermissions.ts` and `auth/RpcAuthorization.ts` add the `media.*` methods:
+  readers list and follow the library; import, import plan and relink need operate **and**
+  filesystem read, because they read any file on the machine. `edit.apply` refuses `putMedia`, so
+  an operate-only client cannot record a path that the asset route would then serve (S7V-066).
+- Desktop IPC adds `pickMediaFiles` (`ipc/channels.ts`, `ipc/methods/window.ts`,
+  `ipc/DesktopIpcHandlers.ts`, `preload.ts`, `contracts/ipc.ts`): a native picker for video and
+  audio that returns paths for the server to import, since a browser file has no path.
+- `components/chat/ChatComposer.tsx` sends dropped video and audio to the import
+  (`useChatMediaImport.ts`) and opens the Editor; other files stay chat attachments as upstream.
+- `client-runtime/package.json` exports `./state/media`.
+
+## Editor panel (S7V-029, S7V-030)
+
+The Editor is one more right-panel kind, `editor`, keyed by project. The panel itself is new code
+in `apps/web/src/components/editor/` and `apps/web/src/editor/`. These upstream files have small edits:
+
+- `rightPanelStore.ts` adds the kind and `openEditor`, keeps a stored editor surface only when it
+  names a project, and bumps the storage version from 14 to 15.
+- `RightPanelTabs.tsx`, `chat/RightPanelSurfaceContent.tsx`, `chat/useRightPanelActions.ts`,
+  `ChatView.tsx`, `closedViewStore.ts` and `reopenClosedView.ts` add its menu entry (shortcut E,
+  only when the thread has a project), its lazy-loaded content, and reopen support.
+- `chat/TimelineWorkEntryRow.tsx` shows an "Open in Editor" button on `video_` tool rows.
+- `client-runtime/src/rpc/client.ts` adds `media.subscribe`, `edit.subscribe` and
+  `engine.jobs.subscribe` to the subscriptions that resubscribe after a reconnect.
+- `apps/web/vite.config.ts` and `apps/web/tsconfig.json` add the `golden` browser project, which
+  plays cached test clips in the real player (`pnpm test:golden`).
+
+## Edit, export and transcription wiring (S7V-024 to S7V-028, S7V-046)
+
+The services are new code (`edit/`, `export/`, `transcript/`, `engine/`). The upstream files only
+wire them in:
+
+- `server.ts` builds the edit, media, silence-cut, export, transcript and engine layers above the
+  core runtime, so WebSocket handlers, agent tools and the asset route share one instance of each.
+- `ws.ts` adds thin handlers for `edit.*`, `media.*`, `export.*`, `transcript.get` and
+  `transcribe.*`.
+- `observability/RpcInstrumentation.ts` gives these methods the `engine`, `edit` and `media`
+  metric groups; `auth/RpcAuthorization.ts` and `contracts/clientRpcPermissions.ts` give reads
+  read scope and changes operate scope.
+- `packages/contracts/src/rpc.ts` (the sprint's RPC definitions and `WS_METHODS` entries) and
+  `packages/contracts/src/index.ts` (re-exports of the new contract modules) are the biggest
+  upstream-file changes, and the likeliest merge-conflict spots in an upstream merge.
+
 ## Licensing (S7V-004)
 
 `LICENSE` is T3 Code's MIT licence with a second line, `Copyright (c) 2026 s7video contributors`.

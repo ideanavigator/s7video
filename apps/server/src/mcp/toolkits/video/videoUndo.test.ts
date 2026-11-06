@@ -14,6 +14,7 @@ import {
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Stream from "effect/Stream";
 import { McpSchema, McpServer } from "effect/ai";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
@@ -92,6 +93,7 @@ const withProject = <A, E>(
     readonly edits: EditDocumentService.EditDocumentService["Service"];
     readonly call: (
       name: string,
+      args?: Record<string, unknown>,
     ) => Effect.Effect<McpSchema.CallToolResult, McpSchema.InternalError | McpSchema.InvalidParams>;
   }) => Effect.Effect<A, E, never>,
 ) =>
@@ -113,7 +115,10 @@ const withProject = <A, E>(
             projectId: thread.projectId,
           })),
       }),
-      Layer.mock(EngineService.EngineService)({}),
+      Layer.mock(EngineService.EngineService)({
+        subscribeJobs: Stream.make({ type: "snapshot" as const, jobs: [] }),
+        recentJobs: Effect.succeed([]),
+      }),
       Layer.mock(ExportService.ExportService)({}),
       Layer.mock(MediaLibraryService.MediaLibraryService)({}),
       Layer.mock(TranscriptService.TranscriptService)({}),
@@ -125,9 +130,9 @@ const withProject = <A, E>(
       const server = yield* McpServer.McpServer;
       const created = yield* folders.createNamedProject({ name: "Undo test" });
       thread.projectId = created.projectId;
-      const call = (name: string) =>
+      const call = (name: string, args: Record<string, unknown> = {}) =>
         server
-          .callTool({ name, arguments: {} })
+          .callTool({ name, arguments: args })
           .pipe(
             Effect.provideService(McpInvocationContext.McpInvocationContext, scopeFor(thread)),
             Effect.provideService(McpSchema.McpServerClient, client),
@@ -203,7 +208,8 @@ describe("video_undo and video_redo", () => {
     ),
   );
 
-  it.effect("should refuse in a plan-mode thread and change nothing", () =>
+  // S7V-066: plan mode is read-only for every video tool that changes the project.
+  it.effect("should refuse every changing tool in a plan-mode thread and change nothing", () =>
     withProject(({ root, thread, edits, call }) =>
       Effect.gen(function* () {
         const initial = yield* edits.read(thread.projectId);
@@ -213,14 +219,26 @@ describe("video_undo and video_redo", () => {
         });
         const before = readFile(root, "edit.json");
         thread.interactionMode = "plan";
-        for (const tool of ["video_undo", "video_redo"]) {
-          const result = yield* call(tool);
+        // The service mocks die if reached, so only the plan-mode refusal can answer.
+        const changing: ReadonlyArray<readonly [string, Record<string, unknown>]> = [
+          ["video_undo", {}],
+          ["video_redo", {}],
+          ["video_remove_silences", {}],
+          ["video_export", {}],
+          ["video_import", { path: NodePath.join(root, "clip.mp4") }],
+          ["video_transcribe", { media: "cam" }],
+        ];
+        for (const [tool, args] of changing) {
+          const result = yield* call(tool, args);
           expect(result.isError, tool).toBe(true);
           expect(textOf(result).join(""), tool).toContain(
-            "This thread is in plan mode, so it cannot change the edit.",
+            "This thread is in plan mode, so it cannot change the project.",
           );
         }
         expect(readFile(root, "edit.json")).toBe(before);
+        for (const tool of ["video_edit_read", "video_job_status"]) {
+          expect((yield* call(tool)).isError, tool).toBe(false);
+        }
       }),
     ),
   );
