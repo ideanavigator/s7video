@@ -84,4 +84,8 @@ from; the per-ticket entries and how this file is compiled are in
   marketing site, the Cursor, Grok, OpenCode, Pi, Muse and fx providers, GitHub, GitLab, Bitbucket,
   Azure DevOps, Forgejo and GitCafe integrations, and the 1Password secret store. (S7V-002)
 
+### Fixed
+
+- No visible change: the Editor panel's video-retry tests no longer fail on a busy machine. (S7V-060)
+
 [Unreleased]: https://github.com/ideanavigator/s7video/commits/main
