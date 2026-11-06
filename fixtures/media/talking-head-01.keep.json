@@ -1,0 +1,47 @@
+{
+  "clip": "talking-head-01",
+  "sha256": "54ad0a3805394516438f2ba8e7f6ea75a7f77d18d391b8ed1a18e3bc6e1a0722",
+  "fps": "24000/1001",
+  "frameRule": "Keep ranges are [from, to) frames of the clip at fps; everything else is cut.",
+  "method": [
+    "Word gaps of at least 0.4 s from the S7V-026 transcript (talking-head-01.transcript.json), with 0.1 s of air kept next to each word, cut only when the gap's sound is at least 6 dB below the speech level (power mean over the word frames, from silence.detect).",
+    "Made with a separate script, not the app's planner, then reviewed against the hand-marked words (talking-head-01.words.json): the two gaps the level test keeps hold the words 'request' (2264-2272) and 'encyclopedia' (2736-2755), which the transcriber missed.",
+    "Not yet reviewed by ear: the PO should play each cut and confirm no word is clipped."
+  ],
+  "speechDb": -20.2,
+  "keptLoudGaps": {
+    "note": "[from, to, dB relative to speech] of gaps over 0.4 s left in because they are loud",
+    "gaps": [
+      [2240, 2273, -3.2],
+      [2741, 2765, -2.9]
+    ]
+  },
+  "keep": [
+    [18, 108],
+    [114, 180],
+    [193, 401],
+    [417, 468],
+    [480, 623],
+    [635, 705],
+    [715, 818],
+    [831, 847],
+    [873, 914],
+    [945, 1144],
+    [1156, 1230],
+    [1242, 1395],
+    [1409, 1422],
+    [1438, 1483],
+    [1492, 1667],
+    [1684, 2062],
+    [2070, 2217],
+    [2224, 2370],
+    [2380, 2640],
+    [2672, 2707],
+    [2716, 2827],
+    [2840, 2946],
+    [2953, 2989],
+    [2997, 3228],
+    [3241, 3295],
+    [3313, 3356]
+  ]
+}

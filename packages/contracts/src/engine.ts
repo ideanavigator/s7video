@@ -398,3 +398,21 @@ export class ExportStartError extends Schema.TaggedError<ExportStartError>()("Ex
       : "Could not create the project's exports folder.";
   }
 }
+
+/** `silence.detect`: whole-decibel RMS dBFS of the sound under each video frame (S7V-027). */
+export const SilenceDetectResult = Schema.Struct({
+  rate: EngineRational,
+  durationFrames: NonNegativeInt,
+  levels: Schema.Array(Schema.Int),
+});
+export type SilenceDetectResult = typeof SilenceDetectResult.Type;
+
+/** Why silence removal did not run; the message tells the agent what to do next. */
+export class SilenceCutError extends Schema.TaggedError<SilenceCutError>()("SilenceCutError", {
+  reason: Schema.Literals(["media", "no-transcript", "no-speech", "linked-audio", "edit"]),
+  detail: Schema.String,
+}) {
+  override get message(): string {
+    return this.detail;
+  }
+}

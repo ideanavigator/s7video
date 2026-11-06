@@ -37,12 +37,13 @@ Attribution text:
 
 ## Our files
 
-| File                                                               | What it is                                                                                                                                | Licence |
-| ------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------- | ------- |
-| [manifest.json](manifest.json)                                     | URL, mirrors, sha256, size and licence of each downloaded clip                                                                            | MIT     |
-| [talking-head-01.words.json](talking-head-01.words.json)           | 40 hand-marked words of `talking-head-01` with start and end frames, for transcription timing                                             | MIT     |
-| [talking-head-01.transcript.json](talking-head-01.transcript.json) | The transcript cache file of one real Qwen3-ASR 1.7B + ForcedAligner run on `talking-head-01` (S7V-026), so export goldens need no models | MIT     |
-| [synth.ts](synth.ts)                                               | Generator for deterministic synthetic clips (`testsrc2` video, tone and silence audio)                                                    | MIT     |
+| File                                                               | What it is                                                                                                                                                             | Licence |
+| ------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
+| [manifest.json](manifest.json)                                     | URL, mirrors, sha256, size and licence of each downloaded clip                                                                                                         | MIT     |
+| [talking-head-01.words.json](talking-head-01.words.json)           | 40 hand-marked words of `talking-head-01` with start and end frames, for transcription timing                                                                          | MIT     |
+| [talking-head-01.transcript.json](talking-head-01.transcript.json) | The transcript cache file of one real Qwen3-ASR 1.7B + ForcedAligner run on `talking-head-01` (S7V-026), so export goldens need no models                              | MIT     |
+| [talking-head-01.keep.json](talking-head-01.keep.json)             | Reference keep ranges for silence removal on `talking-head-01` (S7V-027), made by a separate script and checked against the hand-marked words; not yet reviewed by ear | MIT     |
+| [synth.ts](synth.ts)                                               | Generator for deterministic synthetic clips (`testsrc2` video, tone and silence audio)                                                                                 | MIT     |
 
 ### Where the transcript came from
 

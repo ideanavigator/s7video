@@ -12,7 +12,8 @@ The user asked you to cut the pauses from their clip. Do it with the video tools
 2. Call `video_remove_silences`. Use its defaults. Pass a setting only when the user asked for one:
    - "only the long pauses" or "looser": a larger `minGapSeconds` (the default is 0.4);
    - "tighter": a smaller `minGapSeconds`;
-   - "keep the pause after ...": a `keep` frame range (read `video_transcript_read` to find it);
+   - "keep the pause after ...": `keep` as clip-frame ranges `from-to`, comma-separated, end
+     exclusive, for example `412-436` (read `video_transcript_read` to find the frames);
    - a named clip: `media`.
 3. Reply in one or two plain sentences: how many seconds you removed and how many cuts you made,
    taken from the tool's result. End with: "Say undo to put it back."

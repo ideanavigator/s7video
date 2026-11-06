@@ -17,6 +17,7 @@ import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 
 import * as EditDocumentService from "../../../edit/EditDocumentService.ts";
+import * as SilenceCutService from "../../../edit/SilenceCutService.ts";
 import * as EngineService from "../../../engine/EngineService.ts";
 import * as ExportService from "../../../export/ExportService.ts";
 import * as TranscriptService from "../../../transcript/TranscriptService.ts";
@@ -59,6 +60,22 @@ const noSuchJob = () =>
     code: "invalid_request",
     message: "There is no running video job with that id in this project.",
   });
+
+export const KEEP_FORMAT =
+  "keep is clip-frame ranges as video_transcript_read shows them, end exclusive: 9-30,60-90.";
+
+/** `"9-30, 60-90"` as frame ranges; null unless every part is `from-to` with from < to. */
+const parseKeep = (text: string) => {
+  const ranges = [];
+  for (const part of text.split(",")) {
+    const match = /^\s*(\d+)\s*-\s*(\d+)\s*$/u.exec(part);
+    if (match === null) return null;
+    const [fromFrame, toFrame] = [Number(match[1]), Number(match[2])];
+    if (!(fromFrame < toFrame)) return null;
+    ranges.push({ fromFrame, toFrame });
+  }
+  return ranges;
+};
 
 /** The edit's length: the end of its last item on any track. */
 export const editDurationFrames = (document: EditDocument) => {
@@ -342,6 +359,44 @@ const handlers = {
   ),
   video_undo: stepEdit("undo"),
   video_redo: stepEdit("redo"),
+  // Writes the edit (one checkpoint), so plan-mode and read-only callers are refused.
+  video_remove_silences: McpToolAccess.actsAsCaller(({ media, minGapSeconds, keep }) =>
+    Effect.gen(function* () {
+      const ranges = keep === undefined ? undefined : parseKeep(keep);
+      if (ranges === null) {
+        return yield* new OrchestratorMcpFailure({ code: "invalid_request", message: KEEP_FORMAT });
+      }
+      if (minGapSeconds !== undefined && (minGapSeconds <= 0 || minGapSeconds > 60)) {
+        return yield* new OrchestratorMcpFailure({
+          code: "invalid_request",
+          message: "minGapSeconds is a pause length in seconds, above 0 and at most 60.",
+        });
+      }
+      const project = yield* callerProject();
+      const silences = yield* SilenceCutService.SilenceCutService;
+      return yield* silences
+        .removeSilences({
+          projectId: project.projectId,
+          ...(media === undefined ? {} : { media }),
+          ...(minGapSeconds === undefined ? {} : { minGapSeconds }),
+          ...(ranges === undefined ? {} : { keep: ranges }),
+        })
+        .pipe(
+          Effect.mapError((error) =>
+            error._tag === "EngineError"
+              ? engineFailure(error)
+              : new OrchestratorMcpFailure({
+                  code:
+                    error._tag === "SilenceCutError" || error._tag === "EditConflict"
+                      ? "invalid_request"
+                      : "orchestration_error",
+                  message:
+                    error._tag === "EditUnavailableError" ? error.explanation : error.message,
+                }),
+          ),
+        );
+    }),
+  ),
 } satisfies McpToolAccess.Handlers<typeof VideoToolkit.tools>;
 
 export const layerStandard = McpToolAccess.toLayer(VideoStandardToolkit, {
@@ -355,6 +410,7 @@ export const layerStandard = McpToolAccess.toLayer(VideoStandardToolkit, {
   video_transcript_read: handlers.video_transcript_read,
   video_undo: handlers.video_undo,
   video_redo: handlers.video_redo,
+  video_remove_silences: handlers.video_remove_silences,
 });
 
 export const layerFrame = McpToolAccess.toLayer(VideoFrameToolkit, {

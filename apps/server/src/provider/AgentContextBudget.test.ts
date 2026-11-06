@@ -14,6 +14,7 @@ import { EditDocumentService } from "../edit/EditDocumentService.ts";
 import { EngineService } from "../engine/EngineService.ts";
 import { ExportService } from "../export/ExportService.ts";
 import { TranscriptService } from "../transcript/TranscriptService.ts";
+import { SilenceCutService } from "../edit/SilenceCutService.ts";
 import { MediaLibraryService } from "../media/MediaLibraryService.ts";
 import { ServerEnvironment } from "../environment/ServerEnvironment.ts";
 import { GitWorkflowService } from "../git/GitWorkflowService.ts";
@@ -60,6 +61,7 @@ const toolHandlerServices = Layer.mergeAll(
   Layer.mock(EngineService)({}),
   Layer.mock(ExportService)({}),
   Layer.mock(TranscriptService)({}),
+  Layer.mock(SilenceCutService)({}),
   Layer.mock(MediaLibraryService)({}),
   Layer.mock(GitVcsDriver)({}),
   Layer.mock(GitWorkflowService)({}),

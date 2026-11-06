@@ -21,6 +21,7 @@ import * as MediaLibraryService from "../../../media/MediaLibraryService.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as ManagedProjectFolders from "../../../project/ManagedProjectFolders.ts";
 import * as TranscriptService from "../../../transcript/TranscriptService.ts";
+import * as SilenceCutService from "../../../edit/SilenceCutService.ts";
 import * as McpHttpServer from "../../McpHttpServer.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccessTestkit from "../../McpToolAccess.testkit.ts";
@@ -80,6 +81,7 @@ describe.runIf(ENABLED)("video_edit_read timing", () => {
           Layer.provide(Layer.mock(EngineService.EngineService)({})),
           Layer.provide(Layer.mock(ExportService.ExportService)({})),
           Layer.provide(Layer.mock(TranscriptService.TranscriptService)({})),
+          Layer.provide(Layer.mock(SilenceCutService.SilenceCutService)({})),
           Layer.provide(Layer.mock(MediaLibraryService.MediaLibraryService)({})),
         );
         const durations: number[] = [];

@@ -282,6 +282,11 @@ const make = Effect.gen(function* () {
           if (applied._tag === "failed") return yield* applied.error;
           const validated = validateEditDocument(applied.document);
           if (!validated.ok) return yield* editValidationError(validated.issues);
+          const editText = EditProjectLayout.editFileContents(validated.document);
+          // Same bytes: no new revision and no checkpoint, so repeating an edit is free to undo.
+          if (editText === current.editText) {
+            return yield* snapshotOf(root, current.revision, current.document);
+          }
 
           yield* history.guard(root).pipe(Effect.mapError(historyError(projectId)));
           yield* history
@@ -295,7 +300,6 @@ const make = Effect.gen(function* () {
             fileSystem.readFileString(editFile),
             fileSystem.readFileString(projectFile),
           ]).pipe(Effect.orElseSucceed(() => null));
-          const editText = EditProjectLayout.editFileContents(validated.document);
           yield* writeEdit(projectId, root, editText, revision, current.editText);
           yield* history.record(root, revision, editText).pipe(
             Effect.mapError(historyError(projectId)),
