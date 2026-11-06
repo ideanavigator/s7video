@@ -104,6 +104,15 @@ const projectJobs = Effect.fn("VideoHandlers.projectJobs")(function* (project: V
   return jobs.filter((job) => job.projectId === project.projectId);
 });
 
+/** The project's jobs that ended in the last few minutes, newest first (S7V-058). */
+const finishedProjectJobs = Effect.fn("VideoHandlers.finishedProjectJobs")(function* (
+  project: VideoProject,
+) {
+  const engine = yield* EngineService.EngineService;
+  const recent = yield* engine.recentJobs;
+  return recent.filter((job) => job.projectId === project.projectId).toReversed();
+});
+
 const count = (n: number, noun: string) => `${n} ${noun}${n === 1 ? "" : "s"}`;
 
 const editSummary = ({ revision, document }: EditSnapshot) => {
@@ -283,7 +292,9 @@ const handlers = {
       const project = yield* callerProject();
       const seconds = Math.min(waitSeconds ?? 0, MAX_JOB_WAIT_SECONDS);
       if (jobId === undefined || seconds <= 0) {
-        const jobs = yield* projectJobs(project);
+        const running = yield* projectJobs(project);
+        const ended = yield* finishedProjectJobs(project);
+        const jobs = [...running.filter((job) => !ended.some((e) => e.id === job.id)), ...ended];
         return { jobs: jobId === undefined ? jobs : jobs.filter((job) => job.id === jobId) };
       }
       // S7V-058: one call that waits saves the agent from polling a long transcription.
@@ -305,7 +316,10 @@ const handlers = {
         Stream.runHead,
         Effect.timeoutOption(Duration.seconds(seconds)),
       );
-      return { jobs: latest === undefined ? [] : [latest] };
+      if (latest !== undefined) return { jobs: [latest] };
+      // Not running: it may have ended before this call.
+      const ended = (yield* finishedProjectJobs(project)).find((job) => job.id === jobId);
+      return { jobs: ended === undefined ? [] : [ended] };
     }),
   ),
   // Reads-level access on purpose: it stops only the caller's own project's job, which a

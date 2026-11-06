@@ -169,6 +169,8 @@ interface Fixture {
   diskShort: boolean;
   /** Runs as each job subscription starts. */
   onSubscribe: Effect.Effect<void>;
+  /** Jobs that ended recently, as `EngineService.recentJobs` answers. */
+  recent: Array<EngineJob>;
 }
 
 const makeFixture = (): Fixture => {
@@ -238,6 +240,7 @@ const makeFixture = (): Fixture => {
     silences: [],
     diskShort: false,
     onSubscribe: Effect.void,
+    recent: [],
   };
 };
 
@@ -407,6 +410,7 @@ const layerFor = (fixture: Fixture, cancelSignal: Deferred.Deferred<string>) => 
           ),
         ),
       ),
+      recentJobs: Effect.sync(() => fixture.recent),
       cancelJob: (jobId) =>
         Effect.sync(() => fixture.cancelled.push(jobId)).pipe(
           Effect.andThen(Deferred.succeed(cancelSignal, jobId)),
@@ -1093,6 +1097,60 @@ describe("video toolkit", () => {
         yield* TestClock.adjust("30 seconds");
         const result = yield* Fiber.join(waiting);
         expect(result.structuredContent).toEqual({ jobs: [job("engine-job-1", projectA)] });
+      }),
+    ),
+  );
+
+  it.effect("video_job_status reports a job that ended between two calls (S7V-058)", () =>
+    withTools(({ fixture, call }) =>
+      Effect.gen(function* () {
+        const ended = (id: string, state: "succeeded" | "failed" | "cancelled") => ({
+          ...job(id, projectA),
+          state,
+          ...(state === "failed" ? { message: "The speech model could not load." } : {}),
+        });
+        fixture.recent = [
+          ended("engine-job-7", "succeeded"),
+          ended("engine-job-8", "cancelled"),
+          ended("engine-job-9", "failed"),
+          { ...job("engine-job-10", projectB), state: "succeeded" },
+        ];
+        // Newest first, after the running job; only the caller's project.
+        const mine = yield* call(threadA, "video_job_status", {});
+        expect(mine.structuredContent).toEqual({
+          jobs: [
+            job("engine-job-1", projectA),
+            ended("engine-job-9", "failed"),
+            ended("engine-job-8", "cancelled"),
+            ended("engine-job-7", "succeeded"),
+          ],
+        });
+        for (const [id, state] of [
+          ["engine-job-7", "succeeded"],
+          ["engine-job-8", "cancelled"],
+          ["engine-job-9", "failed"],
+        ] as const) {
+          for (const waitSeconds of [undefined, 30]) {
+            const one = yield* call(threadA, "video_job_status", {
+              jobId: id,
+              ...(waitSeconds === undefined ? {} : { waitSeconds }),
+            });
+            expect(one.structuredContent).toEqual({ jobs: [ended(id, state)] });
+          }
+        }
+        // Another project's finished job stays hidden, waiting or not.
+        const foreign = yield* call(threadA, "video_job_status", {
+          jobId: "engine-job-10",
+          waitSeconds: 30,
+        });
+        expect(foreign.structuredContent).toEqual({ jobs: [] });
+        const theirs = yield* call(threadB, "video_job_status", {});
+        expect(theirs.structuredContent).toEqual({
+          jobs: [
+            job("engine-job-2", projectB),
+            { ...job("engine-job-10", projectB), state: "succeeded" },
+          ],
+        });
       }),
     ),
   );

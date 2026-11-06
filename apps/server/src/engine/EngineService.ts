@@ -12,6 +12,7 @@ import {
   MediaProbeResult,
   MediaProxyResult,
   MediaThumbnailResult,
+  type EngineJob,
   type EngineJobId,
   type EngineJobsEvent,
   type EngineTool,
@@ -115,6 +116,8 @@ export class EngineService extends Context.Service<
     readonly startJob: <A>(input: EngineJobInput<A>) => Effect.Effect<EngineJobId>;
     readonly cancelJob: (jobId: EngineJobId) => Effect.Effect<boolean>;
     readonly subscribeJobs: Stream.Stream<EngineJobsEvent>;
+    /** Jobs that ended in the last few minutes, with their final state (S7V-058). */
+    readonly recentJobs: Effect.Effect<ReadonlyArray<EngineJob>>;
     readonly status: Effect.Effect<EngineStatus>;
   }
 >()("t3/engine/EngineService") {}
@@ -122,6 +125,7 @@ export class EngineService extends Context.Service<
 const CALL_TIMEOUT = "30 seconds";
 const START_TIMEOUT = "30 seconds";
 const CANCEL_TIMEOUT = "5 seconds";
+const JOB_FAILED = "The video job failed. Try again; if it keeps failing, restart s7video.";
 const HEALTH_TIMEOUT = "5 seconds";
 const TRANSCRIBE_IDLE_UNLOAD_MINUTES = 10;
 
@@ -312,10 +316,13 @@ const make = Effect.fn("EngineService.make")(function* (options: EngineServiceOp
           // The caller went away: stop the engine side too.
           return cancelJob(jobId).pipe(Effect.andThen(jobs.finish(jobId, "cancelled")));
         }
-        const cancelled = exit.cause.reasons.some(
-          (reason) => Cause.isFailReason(reason) && reason.error.reason === "cancelled",
+        const errors = exit.cause.reasons.flatMap((reason) =>
+          Cause.isFailReason(reason) ? [reason.error] : [],
         );
-        return jobs.finish(jobId, cancelled ? "cancelled" : "failed");
+        if (errors.some((error) => error.reason === "cancelled")) {
+          return jobs.finish(jobId, "cancelled");
+        }
+        return jobs.finish(jobId, "failed", errors[0]?.message ?? JOB_FAILED);
       }),
     );
 
@@ -354,6 +361,7 @@ const make = Effect.fn("EngineService.make")(function* (options: EngineServiceOp
     startJob,
     cancelJob,
     subscribeJobs: jobs.subscribe,
+    recentJobs: jobs.recent,
     status: Effect.sync(() => ({ pid: current?.process.pid, starts, lastStartupMs })),
   });
 });

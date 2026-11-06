@@ -322,6 +322,8 @@ export const EngineJob = Schema.Struct({
   state: EngineJobState,
   /** The project the job works for; agents see only their own project's jobs. */
   projectId: Schema.optional(ProjectId),
+  /** Why a `failed` job failed, in plain words. */
+  message: Schema.optional(Schema.String),
 });
 export type EngineJob = typeof EngineJob.Type;
 

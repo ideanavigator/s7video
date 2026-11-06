@@ -92,6 +92,7 @@ from; the per-ticket entries and how this file is compiled are in
 - Undo and redo no longer take an imported clip out of Assets. Clips attached in chat keep their
   original file name, and Assets lengths read as minutes and seconds (2:19, not 2:19:20). (S7V-059)
 - A second, tighter silence cut no longer fails with a duplicate id, and the agent waits for a
-  first transcription to finish instead of stopping halfway. (S7V-058)
+  first transcription to finish instead of stopping halfway, and says so if it failed or was
+  stopped. (S7V-058)
 
 [Unreleased]: https://github.com/ideanavigator/s7video/commits/main

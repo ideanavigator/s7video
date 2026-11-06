@@ -499,6 +499,26 @@ describe.skipIf(!realEngineAvailable)("EngineService with the real engine", () =
         value: { type: "updated", job: { id: jobId, state: "succeeded", projectId } },
       });
       expect(yield* fileSystem.exists(output)).toBe(true);
+      // S7V-058: the ended job stays visible with its state, and a failure keeps its reason.
+      expect(yield* engine.recentJobs).toMatchObject([{ id: jobId, state: "succeeded" }]);
+      const ended = yield* engine.subscribeJobs.pipe(
+        Stream.filter((event) => event.type === "updated" && event.job.state !== "running"),
+        Stream.runHead,
+        Effect.forkChild,
+      );
+      yield* Effect.yieldNow;
+      const failedId = yield* engine.startJob({
+        kind: "test",
+        method: "test.noSuchMethod",
+        params: {},
+        success: SlowJobResult,
+        projectId,
+      });
+      yield* Fiber.join(ended);
+      const failed = (yield* engine.recentJobs).find((job) => job.id === failedId);
+      expect(failed?.state).toBe("failed");
+      expect(failed?.message).toEqual(expect.any(String));
+      expect(failed?.message).not.toBe("");
     }).pipe(Effect.scoped, Effect.provide(realLayer())),
   );
 
