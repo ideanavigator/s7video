@@ -173,7 +173,9 @@ export function engineEnvironment(input: EngineEnvironmentInput): Record<string,
 }
 
 export function engineCommandArgs(projectDir: string): ReadonlyArray<string> {
-  // `-I` keeps the working directory and PYTHON* variables out of Python's import path.
+  // `-I` keeps the working directory and PYTHON* variables out of Python's import path. It also
+  // ignores PYTHONDONTWRITEBYTECODE, so `-B` stops `.pyc` writes: under `packages/` they restart
+  // the dev server mid-job, and a shipped app must not write into its own bundle (S7V-071).
   return [
     "run",
     "--frozen",
@@ -183,6 +185,7 @@ export function engineCommandArgs(projectDir: string): ReadonlyArray<string> {
     projectDir,
     "python",
     "-I",
+    "-B",
     "-m",
     "s7engine",
   ];

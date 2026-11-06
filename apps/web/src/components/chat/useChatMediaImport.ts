@@ -1,10 +1,11 @@
 // SPDX-FileCopyrightText: 2026 s7video contributors
 // SPDX-License-Identifier: MIT
-import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
+import type { EnvironmentId, MediaImportMode, ProjectId } from "@t3tools/contracts";
 import { mediaKindFromPath } from "@t3tools/shared/mediaPreview";
 
 import { mediaEnvironment } from "../../state/media";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { explanationOf } from "../editor/mediaErrorExplanation";
 import { toastManager } from "../ui/toast";
 
 type DroppedKind = "video" | "audio" | "other";
@@ -17,10 +18,9 @@ export function droppedMediaKind(file: Pick<File, "name" | "type">): DroppedKind
 }
 
 /**
- * Video and audio dropped into a video project's chat go to its Assets by path, so footage never
- * meets the 50 MiB chat upload limit (S7V-025). Audio is attached as well, so the agent sees it in
- * the message; video is not. Elsewhere (no desktop path, not a video project) nothing changes.
- * Returns the files the composer should still attach; `onFirstMedia` opens the Editor (S7V-029).
+ * Video and audio dropped in a video project's chat go to Assets by path (S7V-025); audio is also
+ * attached for the agent. A failed import toasts with Retry and is never attached in its place
+ * (S7V-071). Returns the files to attach; `onFirstMedia` opens the Editor (S7V-029).
  */
 export function useChatMediaImport(
   environmentId: EnvironmentId,
@@ -30,6 +30,49 @@ export function useChatMediaImport(
   const plan = useAtomCommand(mediaEnvironment.plan, { reportFailure: false });
   const importMedia = useAtomCommand(mediaEnvironment.importMedia, { reportFailure: false });
   const readEdit = useAtomCommand(mediaEnvironment.readEdit, { reportFailure: false });
+
+  const hasNoMedia = async (projectId: ProjectId) => {
+    const edit = await readEdit({ environmentId, input: { projectId } });
+    return edit._tag === "Success" && edit.value.document.media.length === 0;
+  };
+
+  /** Imports one file; a failure says why, with Retry for that file only. */
+  const importOne = async (
+    projectId: ProjectId,
+    file: File,
+    sourcePath: string,
+    mode: MediaImportMode,
+  ): Promise<boolean> => {
+    const result = await importMedia({ environmentId, input: { projectId, sourcePath, mode } });
+    if (result._tag === "Success") return true;
+    const close = () => toastManager.close(id);
+    const id = toastManager.add({
+      type: "error",
+      title: `Couldn't add ${file.name} to Assets`,
+      description: explanationOf(result),
+      actionProps: {
+        children: "Retry",
+        onClick: () => {
+          close();
+          void retry(projectId, file, sourcePath, mode);
+        },
+      },
+    });
+    return false;
+  };
+
+  const retry = async (
+    projectId: ProjectId,
+    file: File,
+    sourcePath: string,
+    mode: MediaImportMode,
+  ) => {
+    const firstMedia = await hasNoMedia(projectId);
+    if (!(await importOne(projectId, file, sourcePath, mode))) return;
+    if (firstMedia) onFirstMedia?.(projectId);
+    toastManager.add({ type: "success", title: "Added to Assets" });
+  };
+
   return async (files: ReadonlyArray<File>): Promise<File[]> => {
     const getPath = window.desktopBridge?.getPathForFile;
     const media = files.filter((file) => droppedMediaKind(file) !== "other");
@@ -40,17 +83,10 @@ export function useChatMediaImport(
     const planned = await plan({ environmentId, input: { projectId, sourcePaths: paths } });
     // Not a video project, or a server on another machine that cannot see these paths.
     if (planned._tag === "Failure") return [...files];
-    const before = await readEdit({ environmentId, input: { projectId } });
-    const firstMedia = before._tag === "Success" && before.value.document.media.length === 0;
-    const failedVideo: File[] = [];
+    const firstMedia = await hasNoMedia(projectId);
     let added = 0;
     for (const [index, file] of media.entries()) {
-      const result = await importMedia({
-        environmentId,
-        input: { projectId, sourcePath: paths[index]!, mode: planned.value.suggestedMode },
-      });
-      if (result._tag === "Success") added += 1;
-      else if (droppedMediaKind(file) === "video") failedVideo.push(file);
+      if (await importOne(projectId, file, paths[index]!, planned.value.suggestedMode)) added += 1;
     }
     if (added > 0 && firstMedia) onFirstMedia?.(projectId);
     if (added > 0) {
@@ -59,6 +95,6 @@ export function useChatMediaImport(
         title: added === 1 ? "Added to Assets" : `Added ${added} files to Assets`,
       });
     }
-    return files.filter((file) => droppedMediaKind(file) !== "video" || failedVideo.includes(file));
+    return files.filter((file) => droppedMediaKind(file) !== "video");
   };
 }

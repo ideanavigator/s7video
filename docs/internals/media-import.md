@@ -41,6 +41,14 @@ machine (S7V-066). A direct write to `edit.json` (an agent's shell, a git restor
 accepted as a new revision, media entries included; refusing new media references in such writes
 is S7V-054. Originals are also served only with a known video or audio extension.
 
+## Chat drops
+
+Video and audio dropped into a video project's chat import by path (`useChatMediaImport`). A failed
+import shows "Couldn't add <name> to Assets" with the same reason the Assets tab shows
+(`mediaErrorExplanation.ts`) and Retry for that file; a failed video is never attached to the
+message instead (S7V-071). The engine runs Python with `-I -B`: `-I` ignores
+`PYTHONDONTWRITEBYTECODE`, and `.pyc` writes under the watched `packages/` restart `vp run dev`.
+
 ## Where things live
 
 Copies go to `assets/<name>.<ext>`, named from the file (a chat attachment by the name it was sent with, not its stored id), which the project's whitelist `.gitignore`

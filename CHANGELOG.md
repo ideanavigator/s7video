@@ -86,6 +86,9 @@ from; the per-ticket entries and how this file is compiled are in
 
 ### Fixed
 
+- A clip dropped into the chat that can't be added to Assets now says why, with Retry, instead of
+  being attached to the message silently. The video helper no longer writes Python bytecode into
+  the app's folders. (S7V-071)
 - The speech model can be downloaded from first-run setup, Settings → Providers or a prompt at the
   top of the Editor panel, which opens by itself when the assistant needs the model; before, only
   the Transcript tab asked. A copy already in a Hugging Face cache on your Mac can be used instead

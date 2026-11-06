@@ -164,6 +164,8 @@ describe("enginePaths", () => {
       "/repo/packages/engine",
       "python",
       "-I",
+      // `-I` ignores PYTHONDONTWRITEBYTECODE; `-B` keeps `.pyc` out of watched `packages/` (S7V-071).
+      "-B",
       "-m",
       "s7engine",
     ]);
