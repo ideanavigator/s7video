@@ -86,6 +86,8 @@ from; the per-ticket entries and how this file is compiled are in
 
 ### Fixed
 
+- Asking to keep a pause that was already cut now gets a plain answer and a hint to undo, and a
+  short pause you keep stays short (about a third of a second). (S7V-056)
 - In the browser, the greyed-out Add media button and the empty Assets list and player now explain
   what to do instead: drop files into the chat, or use the desktop app for large files. (S7V-065)
 - When an undo or redo makes no visible difference, such as going back past adding a clip (which
