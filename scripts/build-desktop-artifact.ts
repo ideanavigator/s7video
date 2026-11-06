@@ -1014,6 +1014,11 @@ export const DESKTOP_EXTRA_RESOURCES = [
     from: "apps/desktop/prod-resources/resource-monitor",
     to: "resource-monitor",
   },
+  // Built-in agent skills (S7V-048): agents read them, so they stay outside app.asar.
+  {
+    from: "apps/server/skills",
+    to: "skills",
+  },
 ] as const;
 export const LINUX_CAPTURE_EXTRA_RESOURCES = [
   {

@@ -56,6 +56,7 @@ import {
 } from "./codexUsageLimits.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import packageJson from "../../package.json" with { type: "json" };
+import { builtInSkillPluginDirsForCwd, builtInSkillsRoot } from "../skills/BuiltInSkills.ts";
 const isCodexAppServerSpawnError = Schema.is(CodexErrors.CodexAppServerSpawnError);
 const RATE_LIMITS_PROBE_TIMEOUT_MS = 3_000;
 
@@ -666,6 +667,21 @@ export const probeCodexSkillsForCwd = Effect.fn("probeCodexSkillsForCwd")(functi
   readonly environment?: NodeJS.ProcessEnv;
 }) {
   const { client } = yield* withCodexAppServerClient(input);
+  const path = yield* Path.Path;
+  // Built-in skills (S7V-048) show only in edit projects; extra roots live in this process only.
+  const extraRoots = (yield* builtInSkillPluginDirsForCwd(
+    input.cwd,
+    input.environment ?? process.env,
+  )).map((pluginDir) => builtInSkillsRoot(path, pluginDir));
+  if (extraRoots.length > 0) {
+    yield* client
+      .request("skills/extraRoots/set", { extraRoots })
+      .pipe(
+        Effect.catch((cause) =>
+          Effect.logDebug("Codex did not take the built-in skills folder.", { cause }),
+        ),
+      );
+  }
   const skillsResponse = yield* client.request("skills/list", { cwds: [input.cwd] });
   return parseCodexSkillsListResponse(skillsResponse, input.cwd);
 });

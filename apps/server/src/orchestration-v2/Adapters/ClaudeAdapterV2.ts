@@ -150,6 +150,7 @@ import {
   claudeLaunchArgDirectories,
   discoverClaudeSkills,
 } from "../../provider/Drivers/ClaudeSkills.ts";
+import { resolveBuiltInSkillsPluginDir } from "../../skills/BuiltInSkills.ts";
 import {
   compileClaudeModelSelection,
   type CompiledClaudeModelSelection,
@@ -1493,6 +1494,8 @@ export function makeClaudeQueryOptions(input: {
   readonly appendSystemPromptFileText?: string;
   // Flag settings, because a user's settings.json env beats the process env in Claude Code.
   readonly toolSearchOverride?: "true";
+  /** The app's own plugin folders (S7V-048 built-in skills); the user's config is untouched. */
+  readonly pluginDirs?: ReadonlyArray<string>;
 }): ClaudeAgentSdkQueryOptions {
   const compiledSelection = compileClaudeModelSelection(input.modelSelection);
   const {
@@ -1600,6 +1603,15 @@ export function makeClaudeQueryOptions(input: {
       : {}),
     ...(input.environment === undefined ? {} : { env: input.environment }),
     ...(input.mcpServers === undefined ? {} : { mcpServers: input.mcpServers }),
+    ...(input.pluginDirs === undefined || input.pluginDirs.length === 0
+      ? {}
+      : {
+          plugins: input.pluginDirs.map((pluginDir) => ({
+            type: "local" as const,
+            path: pluginDir,
+            skipMcpDiscovery: true,
+          })),
+        }),
     systemPrompt: {
       type: "preset" as const,
       preset: "claude_code" as const,
@@ -4710,12 +4722,29 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
     },
   );
 
-  const userInvocableSkills = (cwd: string | null) =>
-    discoverClaudeSkills(
-      adapterOptions.settings,
-      cwd ?? undefined,
-      adapterOptions.environment,
-    ).pipe(
+  // Built-in skills come with the video tools (S7V-023 gating), so only video threads load them.
+  const builtInPluginDirs = (
+    mcpSession: McpProviderSession.McpProviderSessionConfig | undefined,
+  ) =>
+    mcpSession?.capabilities?.has("video") === true
+      ? resolveBuiltInSkillsPluginDir(adapterOptions.environment).pipe(
+          Effect.map((pluginDir) => (pluginDir === undefined ? [] : [pluginDir])),
+          Effect.provideService(FileSystem.FileSystem, fileSystem),
+          Effect.provideService(Path.Path, path),
+        )
+      : Effect.succeed([]);
+
+  const userInvocableSkills = (cwd: string | null, threadId: ThreadId) =>
+    mcpSessions.read(threadId).pipe(
+      Effect.flatMap(builtInPluginDirs),
+      Effect.flatMap((pluginDirs) =>
+        discoverClaudeSkills(
+          adapterOptions.settings,
+          cwd ?? undefined,
+          adapterOptions.environment,
+          pluginDirs,
+        ),
+      ),
       Effect.map(
         (skills) =>
           new Map(
@@ -10394,6 +10423,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             supportedDialogKinds: ["resume_return"],
             ...(appendSystemPromptFileText === undefined ? {} : { appendSystemPromptFileText }),
             ...(toolSearchOverride === undefined ? {} : { toolSearchOverride }),
+            pluginDirs: yield* builtInPluginDirs(mcpSession),
           });
           const resolvedTurnCwd = yield* fileSystem
             .realPath(turnInput.runtimePolicy.cwd ?? ".")
@@ -10588,7 +10618,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     attachmentsDir,
                     fileSystem,
                     pdfReservation,
-                    skills: yield* userInvocableSkills(turnInput.runtimePolicy.cwd),
+                    skills: yield* userInvocableSkills(
+                      turnInput.runtimePolicy.cwd,
+                      turnInput.threadId,
+                    ),
                     uuid: promptUuid,
                   }).pipe(
                     Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
@@ -11035,7 +11068,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               attachmentsDir,
               fileSystem,
               pdfReservation,
-              skills: yield* userInvocableSkills(currentTurn.input.runtimePolicy.cwd),
+              skills: yield* userInvocableSkills(
+                currentTurn.input.runtimePolicy.cwd,
+                currentTurn.input.threadId,
+              ),
             }).pipe(
               Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
               Effect.provideService(Path.Path, path),
