@@ -24,6 +24,40 @@ from; the per-ticket entries and how this file is compiled are in
 - MIT licence naming T3 Tools Inc. and the s7video contributors, a `NOTICE` file, REUSE-compliant
   copyright information for every file (`pnpm reuse:lint`), `pnpm licenses:check` against the
   licence allowlist, and T3 Code and Chromium in the in-app open-source licences list. (S7V-004)
+- A free-licence (CC-BY-4.0) sample video that `pnpm media:fetch` downloads with a checksum into a
+  cache outside the repo, a guard that fails `pnpm licenses:check` if media or model weights are
+  committed, and engine golden tests in `pnpm test:golden`. (S7V-031)
+- A built-in video helper that reads clips and grabs frames on your Mac. It starts on demand,
+  restarts itself if it stops, and names any missing tool on a developer machine. (S7V-022)
+- Each new project keeps one edit record (`edit.json`) shared by the assistant and the editor;
+  every change can be undone and redone, and undo never touches your footage. (S7V-024)
+- The assistant can see your video: Claude, Codex and other agents can read a clip's details, look
+  at any frame and read the current edit, for files in your project only. Codex older than 0.159
+  gets a plain message asking to update it. (S7V-023)
+- Export your edit as an MP4 with captions burned in, at −14 LUFS, using your Mac's video hardware.
+  It runs with progress and cancel, and lands in the project's `exports/` folder. (S7V-028)
+- Transcription on your Mac, word by word with frame-accurate timings. s7video asks once before
+  downloading the speech model (about 3.7 GB, or 2.3 GB for the light model), then works offline,
+  and each clip is transcribed only once. Models are listed in `MODELS.md`. (S7V-026)
+- Bring in footage of any size: drop or pick clips into a project, keep a copy (instant on the same
+  drive) or point at the original, and see them in the new Assets tab with length, size and a
+  thumbnail. Awkward files get a smooth preview copy in the background, and a moved original can be
+  relinked. Video dropped into a video project's chat is imported instead of uploaded. (S7V-025)
+- An Editor panel beside the chat plays your edit as it stands, skipping the parts that were cut,
+  with tabs for the transcript and your project's clips and an Export button. Every chat in a project
+  shows the same edit, and the Editor opens by itself when a project gets its first clip. (S7V-029)
+- The Transcript tab shows every word, highlights the one being spoken, jumps the player when you
+  click a word, and crosses out words the edit removed. (S7V-030)
+- Exports now show captions made from your transcript, timed to your voice, with cut words left
+  out. Without a transcript, the Export button asks you to transcribe the clip first, or offers to
+  export without captions. (S7V-046)
+- Undo from chat: say "undo that" or "redo" and the assistant steps your edit back or forward. Your
+  footage is never touched. (S7V-041)
+- Pick "Remove silences" from the chat's / menu, or ask for it, and the assistant cuts the pauses and
+  tells you how much it removed. It never does this unless you ask. (S7V-048)
+- Ask the assistant to remove the silences and it cuts the pauses between your sentences without
+  clipping words. It leaves in pauses with laughter or music, keeps any pause you ask for, and says
+  how much it removed. Undo brings the previous edit back. (S7V-027)
 
 ### Changed
 
@@ -49,5 +83,23 @@ from; the per-ticket entries and how this file is compiled are in
 - Apps, agent providers and code-hosting integrations s7video does not use: the mobile app, the
   marketing site, the Cursor, Grok, OpenCode, Pi, Muse and fx providers, GitHub, GitLab, Bitbucket,
   Azure DevOps, Forgejo and GitCafe integrations, and the 1Password secret store. (S7V-002)
+
+### Fixed
+
+- The speech model can be downloaded from first-run setup, Settings → Providers or a prompt at the
+  top of the Editor panel, which opens by itself when the assistant needs the model; before, only
+  the Transcript tab asked. A copy already in a Hugging Face cache on your Mac can be used instead
+  of downloading. (S7V-067)
+- A chat in plan mode can look at your video but no longer imports, transcribes, cuts, exports,
+  undoes or redoes, and a device allowed to edit can no longer add a file from elsewhere on your Mac
+  to a project to play or download it. (S7V-066)
+- No visible change: the Editor panel's video-retry tests no longer fail on a busy machine. (S7V-060)
+- Chats open again with the default settings: the Git actions row no longer crashes the page looking
+  for a code-hosting site to publish to, and shows no publish option while none is set up. (S7V-057)
+- Undo and redo no longer take an imported clip out of Assets. Clips attached in chat keep their
+  original file name, and Assets lengths read as minutes and seconds (2:19, not 2:19:20). (S7V-059)
+- A second, tighter silence cut no longer fails with a duplicate id, and the agent waits for a
+  first transcription to finish instead of stopping halfway, and says so if it failed or was
+  stopped. (S7V-058)
 
 [Unreleased]: https://github.com/ideanavigator/s7video/commits/main

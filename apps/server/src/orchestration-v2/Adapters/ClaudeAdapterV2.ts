@@ -150,6 +150,7 @@ import {
   claudeLaunchArgDirectories,
   discoverClaudeSkills,
 } from "../../provider/Drivers/ClaudeSkills.ts";
+import { resolveBuiltInSkillsPluginDir } from "../../skills/BuiltInSkills.ts";
 import {
   compileClaudeModelSelection,
   type CompiledClaudeModelSelection,
@@ -187,6 +188,7 @@ import type { ManagedServerProvider } from "@t3tools/provider-core/server/snapsh
 import {
   T3_CODE_DEVICE_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH,
   T3_CODE_ORCHESTRATION_INSTRUCTIONS,
+  T3_CODE_VIDEO_EDIT_INSTRUCTIONS_WITH_TOOL_SEARCH,
 } from "@t3tools/provider-core/server/orchestrationInstructions";
 import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
 import {
@@ -1458,13 +1460,12 @@ To wait for a background command or Monitor you started (tests, a build), call \
 `;
 
 // Native subagents start from their task, not this session's system prompt.
-const subagentDeviceInstructions: HookCallback = () =>
-  Promise.resolve({
-    hookSpecificOutput: {
-      hookEventName: "SubagentStart",
-      additionalContext: T3_CODE_DEVICE_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH,
-    },
-  });
+const subagentInstructions =
+  (additionalContext: string): HookCallback =>
+  () =>
+    Promise.resolve({
+      hookSpecificOutput: { hookEventName: "SubagentStart", additionalContext },
+    });
 
 export function makeClaudeQueryOptions(input: {
   readonly modelSelection: ModelSelection;
@@ -1479,6 +1480,8 @@ export function makeClaudeQueryOptions(input: {
   readonly mcpServers?: ClaudeQueryOptions["mcpServers"];
   /** The thread's T3 MCP session holds the `device` capability. */
   readonly deviceToolsAvailable?: boolean;
+  /** The thread's T3 MCP session holds the `video` capability (an edit project). */
+  readonly videoToolsAvailable?: boolean;
   readonly tools?: ClaudeAgentSdkQueryTools;
   readonly allowedTools?: ReadonlyArray<string>;
   readonly disallowedTools?: ReadonlyArray<string>;
@@ -1491,6 +1494,8 @@ export function makeClaudeQueryOptions(input: {
   readonly appendSystemPromptFileText?: string;
   // Flag settings, because a user's settings.json env beats the process env in Claude Code.
   readonly toolSearchOverride?: "true";
+  /** The app's own plugin folders (S7V-048 built-in skills); the user's config is untouched. */
+  readonly pluginDirs?: ReadonlyArray<string>;
 }): ClaudeAgentSdkQueryOptions {
   const compiledSelection = compileClaudeModelSelection(input.modelSelection);
   const {
@@ -1547,6 +1552,11 @@ export function makeClaudeQueryOptions(input: {
           env: { ...compactQuerySettings?.env, ENABLE_TOOL_SEARCH: input.toolSearchOverride },
         } as ClaudeSdkSettings);
   const deviceInstructions = input.mcpServers !== undefined && input.deviceToolsAvailable === true;
+  const videoInstructions = input.mcpServers !== undefined && input.videoToolsAvailable === true;
+  const subagentContext = [
+    ...(deviceInstructions ? [T3_CODE_DEVICE_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH] : []),
+    ...(videoInstructions ? [T3_CODE_VIDEO_EDIT_INSTRUCTIONS_WITH_TOOL_SEARCH] : []),
+  ].join("\n\n");
   const options: ClaudeAgentSdkQueryOptions = {
     model: compiledSelection.apiModelId,
     tools: claudeAgentSdkQueryToolsForSdk(selectedTools),
@@ -1593,6 +1603,15 @@ export function makeClaudeQueryOptions(input: {
       : {}),
     ...(input.environment === undefined ? {} : { env: input.environment }),
     ...(input.mcpServers === undefined ? {} : { mcpServers: input.mcpServers }),
+    ...(input.pluginDirs === undefined || input.pluginDirs.length === 0
+      ? {}
+      : {
+          plugins: input.pluginDirs.map((pluginDir) => ({
+            type: "local" as const,
+            path: pluginDir,
+            skipMcpDiscovery: true,
+          })),
+        }),
     systemPrompt: {
       type: "preset" as const,
       preset: "claude_code" as const,
@@ -1604,13 +1623,14 @@ export function makeClaudeQueryOptions(input: {
               CLAUDE_BACKGROUND_WAIT_INSTRUCTIONS +
               (deviceInstructions
                 ? `\n${T3_CODE_DEVICE_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH}\n`
-                : "")),
+                : "") +
+              (videoInstructions ? `\n${T3_CODE_VIDEO_EDIT_INSTRUCTIONS_WITH_TOOL_SEARCH}\n` : "")),
         ...launchAppendSystemPrompt,
       ].join("\n\n"),
     },
-    ...(deviceInstructions
-      ? { hooks: { SubagentStart: [{ hooks: [subagentDeviceInstructions] }] } }
-      : {}),
+    ...(subagentContext === ""
+      ? {}
+      : { hooks: { SubagentStart: [{ hooks: [subagentInstructions(subagentContext)] }] } }),
     ...(Object.keys(extraArgs).length === 0 ? {} : { extraArgs }),
   };
   const additionalDirectories = [
@@ -4702,12 +4722,29 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
     },
   );
 
-  const userInvocableSkills = (cwd: string | null) =>
-    discoverClaudeSkills(
-      adapterOptions.settings,
-      cwd ?? undefined,
-      adapterOptions.environment,
-    ).pipe(
+  // Built-in skills come with the video tools (S7V-023 gating), so only video threads load them.
+  const builtInPluginDirs = (
+    mcpSession: McpProviderSession.McpProviderSessionConfig | undefined,
+  ) =>
+    mcpSession?.capabilities?.has("video") === true
+      ? resolveBuiltInSkillsPluginDir(adapterOptions.environment).pipe(
+          Effect.map((pluginDir) => (pluginDir === undefined ? [] : [pluginDir])),
+          Effect.provideService(FileSystem.FileSystem, fileSystem),
+          Effect.provideService(Path.Path, path),
+        )
+      : Effect.succeed([]);
+
+  const userInvocableSkills = (cwd: string | null, threadId: ThreadId) =>
+    mcpSessions.read(threadId).pipe(
+      Effect.flatMap(builtInPluginDirs),
+      Effect.flatMap((pluginDirs) =>
+        discoverClaudeSkills(
+          adapterOptions.settings,
+          cwd ?? undefined,
+          adapterOptions.environment,
+          pluginDirs,
+        ),
+      ),
       Effect.map(
         (skills) =>
           new Map(
@@ -10373,6 +10410,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               ? {}
               : { mcpServers: mcpOverrides.mcpServers }),
             deviceToolsAvailable: mcpSession?.capabilities?.has("device") === true,
+            videoToolsAvailable: mcpSession?.capabilities?.has("video") === true,
             permissionMode: queryPolicy.permissionMode,
             ...(queryPolicy.allowDangerouslySkipPermissions === undefined
               ? {}
@@ -10385,6 +10423,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             supportedDialogKinds: ["resume_return"],
             ...(appendSystemPromptFileText === undefined ? {} : { appendSystemPromptFileText }),
             ...(toolSearchOverride === undefined ? {} : { toolSearchOverride }),
+            pluginDirs: yield* builtInPluginDirs(mcpSession),
           });
           const resolvedTurnCwd = yield* fileSystem
             .realPath(turnInput.runtimePolicy.cwd ?? ".")
@@ -10579,7 +10618,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     attachmentsDir,
                     fileSystem,
                     pdfReservation,
-                    skills: yield* userInvocableSkills(turnInput.runtimePolicy.cwd),
+                    skills: yield* userInvocableSkills(
+                      turnInput.runtimePolicy.cwd,
+                      turnInput.threadId,
+                    ),
                     uuid: promptUuid,
                   }).pipe(
                     Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
@@ -11026,7 +11068,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               attachmentsDir,
               fileSystem,
               pdfReservation,
-              skills: yield* userInvocableSkills(currentTurn.input.runtimePolicy.cwd),
+              skills: yield* userInvocableSkills(
+                currentTurn.input.runtimePolicy.cwd,
+                currentTurn.input.threadId,
+              ),
             }).pipe(
               Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
               Effect.provideService(Path.Path, path),

@@ -41,6 +41,7 @@ import { Radio as RadioPrimitive } from "@base-ui/react/radio";
 import { RadioGroup } from "~/components/ui/radio-group";
 import { Spinner } from "~/components/ui/spinner";
 import { Toggle, ToggleGroup } from "~/components/ui/toggle-group";
+import { hasCodeHosts } from "~/lib/codeHosts";
 import { cn } from "~/lib/utils";
 import {
   buildMenuItems,
@@ -1092,6 +1093,7 @@ export default function GitActionsControl({
     isGitActionRunning,
     isDefaultRef,
     hasPrimaryRemote,
+    hasCodeHosts(),
   );
   const quickActionDisabledReason = !canWriteSourceControl
     ? "This connection cannot change source control."
@@ -1360,7 +1362,11 @@ export default function GitActionsControl({
   };
 
   const canPublishRepository =
-    canWriteSourceControl && isRepo && gitStatusForActions !== null && !hasPrimaryRemote;
+    hasCodeHosts() &&
+    canWriteSourceControl &&
+    isRepo &&
+    gitStatusForActions !== null &&
+    !hasPrimaryRemote;
 
   const initializeGit = () => {
     void (async () => {
@@ -1801,8 +1807,9 @@ export default function GitActionsControl({
         </DialogPopup>
       </Dialog>
 
-      {/* Its discovery query should stop when the Git actions row that opens it is hidden. */}
-      {showActions ? (
+      {/* Its discovery query should stop when the Git actions row that opens it is hidden.
+          With no code host registered (S7V-018) there is no provider to publish to. */}
+      {showActions && hasCodeHosts() ? (
         <PublishRepositoryDialog
           open={isPublishDialogOpen}
           onOpenChange={setIsPublishDialogOpen}

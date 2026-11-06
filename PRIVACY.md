@@ -18,6 +18,11 @@ differently; check their policy.
 - Proxies, thumbnails, waveforms, transcripts, edit documents, notes, versions, review comments and
   renders, in your project folder.
 - Chats with the agent, settings and app state, in the s7video data folder (`~/.s7video`).
+- The built-in video helper, which reads clips, grabs frames and transcribes speech, runs on your
+  Mac as a separate program and sends nothing anywhere. Transcription runs offline: the audio and
+  the transcript never leave your computer, and agents get only the transcript text they ask for.
+  The helper's log (`logs/engine/` in the data folder) records what it did and how long it took,
+  never your footage, transcripts or messages.
 - Secrets you save in settings, in the data folder. API keys for the planned bring-your-own-key
   mode will be kept in the macOS Keychain. Keys are never written to logs or project files.
 
@@ -33,6 +38,11 @@ You pick how the agent runs. The table says what each mode sends and where.
 | **Local**                    | Planned   | Nothing. Transcription and the language model run on your Mac.                                                                                                                                                             | Nobody                                                                                                                                  |
 | **Bring your own key**       | Planned   | Transcripts, the edit plan, your messages and a few sampled low-resolution frames. Never the raw video or audio files.                                                                                                     | The provider whose key you entered (for example Anthropic, OpenAI, OpenRouter or Google), under your key and its terms                  |
 | **s7video Cloud (Pro)**      | Planned   | The same as bring your own key: transcripts, the edit plan, your messages and a few sampled low-resolution frames, never the raw files.                                                                                    | The s7video proxy, which forwards them to the model provider                                                                            |
+
+In a video project the agent can also ask s7video for a clip's details (length, size, codecs), a
+summary of the current edit and single frames as small pictures (640 pixels wide unless it asks for
+another size). These go to the same provider as the rest of the chat, only when the agent asks, and
+only for files in that project.
 
 In the planned modes, s7video itself decides what is sent, and the rule is the one above: text and a
 few small frames, never the original media. In the installed-CLI mode the agent works like it does in
@@ -53,6 +63,14 @@ These carry no project content:
 - **Agent installs and sign-in:** when you install or sign in to an agent from the app, it talks to
   that agent's maker (for example Google for Antigravity, OpenAI for Codex).
 - **Pages you open:** the built-in browser and previews load the pages you ask for.
+- **Speech model download:** the first time you transcribe, the app asks before downloading its
+  speech model (about 3.7 GB, or 2.3 GB for the light model) from Hugging Face, and downloads
+  nothing until you agree. This is the transcription feature's only network use. The request names
+  only the model files ([MODELS.md](MODELS.md)), never anything about your projects. The files stay
+  in the data folder (`models/`) and are reused offline from then on.
+  If the same pinned files are already in a Hugging Face cache on your Mac (`$HF_HUB_CACHE`,
+  `$HF_HOME/hub` or `~/.cache/huggingface/hub`), the app offers to use them instead. It only reads
+  that folder, and copies or clones the files into its own only when you press Use.
 
 ## Usage data
 

@@ -1,6 +1,9 @@
 import * as NodeAssert from "node:assert/strict";
 
-import { T3_CODE_DEVICE_TOOL_INSTRUCTIONS } from "@t3tools/provider-core/server/orchestrationInstructions";
+import {
+  T3_CODE_DEVICE_TOOL_INSTRUCTIONS,
+  T3_CODE_VIDEO_EDIT_INSTRUCTIONS,
+} from "@t3tools/provider-core/server/orchestrationInstructions";
 import { describe, it } from "vite-plus/test";
 
 import {
@@ -86,6 +89,20 @@ describe("Codex device context", () => {
     NodeAssert.ok(tools(true).includes(T3_CODE_DEVICE_TOOL_INSTRUCTIONS));
     NodeAssert.ok(!tools(true).includes("ToolSearch"));
     NodeAssert.ok(!tools(false).includes("## T3 Code devices"));
+  });
+});
+
+describe("Codex video edit context", () => {
+  it("tells only a video session to undo with the video tools, not git", () => {
+    const tools = (video: boolean) =>
+      buildCodexAdditionalContext({ model: "gpt-6.1-sol" }, { browser: true, device: false, video })
+        .t3_code_tools?.value ?? "";
+
+    NodeAssert.ok(tools(true).includes(T3_CODE_VIDEO_EDIT_INSTRUCTIONS));
+    NodeAssert.ok(T3_CODE_VIDEO_EDIT_INSTRUCTIONS.includes("git"));
+    NodeAssert.ok(!tools(true).includes("ToolSearch"));
+    NodeAssert.ok(!tools(false).includes("video_ tools"));
+    NodeAssert.ok(Buffer.byteLength(T3_CODE_VIDEO_EDIT_INSTRUCTIONS, "utf8") <= 250);
   });
 });
 

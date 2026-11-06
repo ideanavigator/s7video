@@ -1,0 +1,62 @@
+{
+  "synth-testsrc2-30": {
+    "frame": 45,
+    "framePhash": "a60d33de01de37c8",
+    "summary": {
+      "audio": {
+        "channels": 2,
+        "codec": "aac",
+        "durationSamples": 192000,
+        "sampleRate": 48000
+      },
+      "container": "mov,mp4,m4a,3gp,3g2,mj2",
+      "durationFrames": 120,
+      "video": {
+        "codec": "h264",
+        "color": {
+          "primaries": null,
+          "range": null,
+          "space": null,
+          "transfer": null
+        },
+        "durationFrames": 120,
+        "frameCount": 120,
+        "frameRate": "30/1",
+        "height": 360,
+        "pixelFormat": "yuv420p",
+        "variableFrameRate": false,
+        "width": 640
+      }
+    }
+  },
+  "talking-head-01": {
+    "frame": 1200,
+    "framePhash": "969e31654fda9864",
+    "summary": {
+      "audio": {
+        "channels": 2,
+        "codec": "opus",
+        "durationSamples": 6720048,
+        "sampleRate": 48000
+      },
+      "container": "matroska,webm",
+      "durationFrames": 3356,
+      "video": {
+        "codec": "av1",
+        "color": {
+          "primaries": "bt709",
+          "range": "tv",
+          "space": "bt709",
+          "transfer": "bt709"
+        },
+        "durationFrames": 3356,
+        "frameCount": 3356,
+        "frameRate": "24000/1001",
+        "height": 1080,
+        "pixelFormat": "yuv420p",
+        "variableFrameRate": false,
+        "width": 1894
+      }
+    }
+  }
+}

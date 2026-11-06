@@ -1,0 +1,279 @@
+// SPDX-FileCopyrightText: 2026 s7video contributors
+// SPDX-License-Identifier: MIT
+// The `video` toolkit (ADR-004). Claude finds these through ToolSearch, so names start with `video_`
+// and descriptions say what they read: video, clip, frame, edit, job. Keep them short; every byte
+// is sent with each turn (AgentContextBudget.test.ts).
+import {
+  EditRational,
+  EngineJob,
+  EngineJobId,
+  EngineJobState,
+  ExportPreset,
+  MediaProbeResult,
+  OrchestratorMcpFailure,
+} from "@t3tools/contracts";
+import * as Context from "effect/Context";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
+import { McpSchema, Tool, Toolkit } from "effect/ai";
+
+import * as ServerConfig from "../../../config.ts";
+import * as EditDocumentService from "../../../edit/EditDocumentService.ts";
+import * as SilenceCutService from "../../../edit/SilenceCutService.ts";
+import * as EngineService from "../../../engine/EngineService.ts";
+import * as ExportService from "../../../export/ExportService.ts";
+import * as MediaLibraryService from "../../../media/MediaLibraryService.ts";
+import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
+import * as ProjectService from "../../../project/ProjectService.ts";
+import * as TranscriptService from "../../../transcript/TranscriptService.ts";
+import * as McpInvocationContext from "../../McpInvocationContext.ts";
+
+const dependencies = [
+  McpInvocationContext.McpInvocationContext,
+  ThreadManagementService.ThreadManagementService,
+  ProjectService.ProjectService,
+  EditDocumentService.EditDocumentService,
+  EngineService.EngineService,
+  FileSystem.FileSystem,
+  Path.Path,
+];
+
+const transcriptDependencies = [...dependencies, TranscriptService.TranscriptService];
+
+const Media = Schema.String.annotate({
+  description: "Media id or project file path.",
+});
+
+/** Every video tool is local and offered only to threads that have the `video` capability. */
+const videoAnnotations = (readonly: boolean) =>
+  Context.make(Tool.Readonly, readonly).pipe(
+    Context.add(Tool.Destructive, false),
+    Context.add(Tool.Idempotent, readonly),
+    Context.add(Tool.OpenWorld, false),
+    Context.add(McpSchema.EnabledWhen, McpInvocationContext.hiddenWithoutVideo),
+  );
+const READS = videoAnnotations(true);
+
+const VideoProbeTool = Tool.make("video_probe", {
+  description: "Read a video clip's length (frames), fps, size, codecs.",
+  parameters: Schema.Struct({ media: Media }),
+  success: Schema.Struct({ ...MediaProbeResult.fields, media: Schema.String }),
+  failure: OrchestratorMcpFailure,
+  dependencies,
+})
+  .annotate(Tool.Title, "Probe clip")
+  .annotateMerge(READS);
+
+export const VideoFrameTool = Tool.make("video_frame", {
+  description: "View one video frame as a PNG (frame: 0-based, clip fps).",
+  parameters: Schema.Struct({
+    media: Schema.String,
+    frame: Schema.Int,
+    maxWidth: Schema.optional(Schema.Int),
+  }),
+  success: Schema.Struct({
+    media: Schema.String,
+    frame: Schema.Int,
+    rate: EditRational,
+    screenshot: Schema.Struct({
+      mimeType: Schema.Literal("image/png"),
+      data: Schema.String,
+      width: Schema.Int,
+      height: Schema.Int,
+    }),
+  }),
+  failure: OrchestratorMcpFailure,
+  dependencies,
+})
+  .annotate(Tool.Title, "View frame")
+  .annotateMerge(READS);
+
+const VideoEditReadTool = Tool.make("video_edit_read", {
+  description: "Read the video edit: revision, fps, length, tracks, media ids.",
+  success: Schema.Struct({
+    revision: Schema.Int,
+    fps: EditRational,
+    canvas: Schema.Struct({ width: Schema.Int, height: Schema.Int }),
+    durationFrames: Schema.Int,
+    tracks: Schema.Array(
+      Schema.Struct({ id: Schema.String, kind: Schema.String, items: Schema.Int }),
+    ),
+    media: Schema.Array(
+      Schema.Struct({
+        id: Schema.String,
+        kind: Schema.String,
+        durationFrames: Schema.optional(Schema.Int),
+        label: Schema.optional(Schema.String),
+      }),
+    ),
+    markers: Schema.Int,
+    canUndo: Schema.Boolean,
+    canRedo: Schema.Boolean,
+  }),
+  failure: OrchestratorMcpFailure,
+  dependencies,
+})
+  .annotate(Tool.Title, "Read edit")
+  .annotateMerge(READS);
+
+const VideoJobStatusTool = Tool.make("video_job_status", {
+  description:
+    "List video jobs, running or recently ended. waitSeconds (max 30) waits for jobId to end.",
+  parameters: Schema.Struct({
+    jobId: Schema.optional(EngineJobId),
+    waitSeconds: Schema.optional(Schema.Int),
+  }),
+  success: Schema.Struct({ jobs: Schema.Array(EngineJob) }),
+  failure: OrchestratorMcpFailure,
+  dependencies,
+})
+  .annotate(Tool.Title, "Video job status")
+  .annotateMerge(READS);
+
+const VideoJobCancelTool = Tool.make("video_job_cancel", {
+  description: "Stop a video job.",
+  parameters: Schema.Struct({ jobId: EngineJobId }),
+  success: Schema.Struct({
+    jobId: EngineJobId,
+    state: Schema.Union([EngineJobState, Schema.Literal("stopping")]),
+  }),
+  failure: OrchestratorMcpFailure,
+  dependencies,
+})
+  .annotate(Tool.Title, "Cancel video job")
+  .annotateMerge(videoAnnotations(false));
+
+// Answers with the job at once; the agent follows it with video_job_status (S7V-028).
+const VideoExportTool = Tool.make("video_export", {
+  description: "Export the edit to MP4 with captions; returns a video job.",
+  parameters: Schema.Struct({
+    preset: Schema.optional(ExportPreset),
+    captions: Schema.optional(Schema.Boolean),
+  }),
+  success: Schema.Struct({ jobId: EngineJobId, path: Schema.String }),
+  failure: OrchestratorMcpFailure,
+  dependencies: [...dependencies, ExportService.ExportService],
+})
+  .annotate(Tool.Title, "Export video")
+  .annotateMerge(videoAnnotations(false));
+
+// Starts a job (S7V-026); the agent follows it with video_job_status. A cached clip answers at once.
+const VideoTranscribeTool = Tool.make("video_transcribe", {
+  description: "Transcribe a video clip's speech. Returns jobId, or cached.",
+  parameters: Schema.Struct({ media: Schema.String }),
+  success: Schema.Struct({
+    jobId: Schema.optional(EngineJobId),
+    cached: Schema.optional(Schema.Boolean),
+    wordCount: Schema.optional(Schema.Int),
+    durationFrames: Schema.optional(Schema.Int),
+  }),
+  failure: OrchestratorMcpFailure,
+  dependencies: transcriptDependencies,
+})
+  .annotate(Tool.Title, "Transcribe clip")
+  .annotateMerge(videoAnnotations(false));
+
+const VideoTranscriptReadTool = Tool.make("video_transcript_read", {
+  // No frame range: it would cost about 55 more bytes on every turn (AgentContextBudget).
+  description: "Read a video clip's transcript, frame-stamped lines.",
+  parameters: Schema.Struct({ media: Schema.String }),
+  success: Schema.Struct({ text: Schema.String }),
+  failure: OrchestratorMcpFailure,
+  dependencies: transcriptDependencies,
+})
+  .annotate(Tool.Title, "Read transcript")
+  .annotateMerge(READS);
+
+const VideoImportTool = Tool.make("video_import", {
+  description: "Import a file the user shared into the video project.",
+  parameters: Schema.Struct({ path: Schema.String }),
+  success: Schema.Struct({ media: Schema.String, jobId: Schema.optional(EngineJobId) }),
+  failure: OrchestratorMcpFailure,
+  dependencies: [
+    ...dependencies,
+    MediaLibraryService.MediaLibraryService,
+    ServerConfig.ServerConfig,
+  ],
+})
+  .annotate(Tool.Title, "Import clip")
+  .annotateMerge(videoAnnotations(false));
+
+const EditStep = Schema.Struct({ revision: Schema.Int, message: Schema.String });
+
+const VideoUndoTool = Tool.make("video_undo", {
+  description: "Undo the last edit to this video project. Use this, not git.",
+  success: EditStep,
+  failure: OrchestratorMcpFailure,
+  dependencies,
+})
+  .annotate(Tool.Title, "Undo edit")
+  .annotateMerge(videoAnnotations(false));
+
+const VideoRedoTool = Tool.make("video_redo", {
+  description: "Redo the last undone edit to this video project. Use this, not git.",
+  success: EditStep,
+  failure: OrchestratorMcpFailure,
+  dependencies,
+})
+  .annotate(Tool.Title, "Redo edit")
+  .annotateMerge(videoAnnotations(false));
+
+// S7V-027: user-triggered only (PO rule). `keep` is text ("9-30,60-90", end exclusive) in clip
+// frames, as video_transcript_read shows them: a list of objects would not fit the 250 B budget.
+const VideoRemoveSilencesTool = Tool.make("video_remove_silences", {
+  description: "Cut video silences only if user asks. keep: clip frames 9-30,60-90",
+  parameters: Schema.Struct({
+    media: Schema.optional(Schema.String),
+    minGapSeconds: Schema.optional(Schema.Finite),
+    keep: Schema.optional(Schema.String),
+  }),
+  success: Schema.Struct({
+    media: Schema.String,
+    removedSeconds: Schema.Number,
+    cuts: Schema.Int,
+    keptSegments: Schema.Int,
+    shortestSegmentFrames: Schema.Int,
+    keptRequests: Schema.Int,
+    message: Schema.String,
+    revision: Schema.Int,
+    changed: Schema.Boolean,
+  }),
+  failure: OrchestratorMcpFailure,
+  dependencies: [...dependencies, SilenceCutService.SilenceCutService],
+})
+  .annotate(Tool.Title, "Remove silences")
+  .annotateMerge(videoAnnotations(false));
+
+/** Tools that return JSON. A new tool goes here, with its handler in `handlers.ts`. */
+export const VideoStandardToolkit = Toolkit.make(
+  VideoImportTool,
+  VideoProbeTool,
+  VideoEditReadTool,
+  VideoJobStatusTool,
+  VideoJobCancelTool,
+  VideoExportTool,
+  VideoTranscribeTool,
+  VideoTranscriptReadTool,
+  VideoUndoTool,
+  VideoRedoTool,
+  VideoRemoveSilencesTool,
+);
+
+/** `video_frame` returns image content, so it registers on its own (`registerVideoFrame`). */
+export const VideoFrameToolkit = Toolkit.make(VideoFrameTool);
+
+export const VideoToolkit = Toolkit.make(
+  VideoImportTool,
+  VideoProbeTool,
+  VideoEditReadTool,
+  VideoJobStatusTool,
+  VideoJobCancelTool,
+  VideoExportTool,
+  VideoTranscribeTool,
+  VideoTranscriptReadTool,
+  VideoUndoTool,
+  VideoRedoTool,
+  VideoRemoveSilencesTool,
+  VideoFrameTool,
+);

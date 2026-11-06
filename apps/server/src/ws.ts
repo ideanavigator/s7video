@@ -214,9 +214,15 @@ import * as ProjectEnrichmentService from "./project/ProjectEnrichmentService.ts
 import * as ProjectService from "./project/ProjectService.ts";
 import { threadWorkspaceRoot } from "./project/threadWorkspaceRoot.ts";
 import * as ManagedProjectFolders from "./project/ManagedProjectFolders.ts";
+import * as EditDocumentService from "./edit/EditDocumentService.ts";
+import { refuseClientMediaOps } from "./edit/clientEditOps.ts";
+import * as MediaLibraryService from "./media/MediaLibraryService.ts";
 import * as ScratchThreadPromotion from "./project/ScratchThreadPromotion.ts";
 import { mutateProjectWithClone } from "./project/ProjectMutation.ts";
 import * as ProjectCloneTracker from "./project/ProjectCloneTracker.ts";
+import * as EngineService from "./engine/EngineService.ts";
+import * as ExportService from "./export/ExportService.ts";
+import * as TranscriptService from "./transcript/TranscriptService.ts";
 import * as RepositoryIdentityResolver from "./project/RepositoryIdentityResolver.ts";
 import * as WorktreeSetupTracker from "./project/WorktreeSetupTracker.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
@@ -1278,6 +1284,8 @@ export const layerWsRpc = (
       const projectStore = yield* ProjectStore.ProjectStoreV2;
       const projectService = yield* ProjectService.ProjectService;
       const managedFolders = yield* ManagedProjectFolders.ManagedProjectFolders;
+      const editDocuments = yield* EditDocumentService.EditDocumentService;
+      const mediaLibrary = yield* MediaLibraryService.MediaLibraryService;
       const scratchThreadPromotion = yield* ScratchThreadPromotion.ScratchThreadPromotion;
       const eventLoopMonitor = yield* EventLoopMonitor.EventLoopMonitor;
       const threadSearch = yield* ThreadSearch.ThreadSearch;
@@ -1335,6 +1343,9 @@ export const layerWsRpc = (
       const usageLimitSources = yield* UsageLimitSources.UsageLimitSources;
       const worktreeSetupTracker = yield* WorktreeSetupTracker.WorktreeSetupTracker;
       const projectCloneTracker = yield* ProjectCloneTracker.ProjectCloneTracker;
+      const engine = yield* EngineService.EngineService;
+      const exports = yield* ExportService.ExportService;
+      const transcripts = yield* TranscriptService.TranscriptService;
       const repositoryIdentityResolver =
         yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
       const projectEnrichment = yield* ProjectEnrichmentService.ProjectEnrichmentService;
@@ -2716,6 +2727,24 @@ export const layerWsRpc = (
                 (cause) => new OrchestrationDispatchCommandError({ message: cause.message, cause }),
               ),
             ),
+        [WS_METHODS.editGet]: (input) => editDocuments.read(input.projectId),
+        [WS_METHODS.editApply]: (input) =>
+          refuseClientMediaOps(input.ops).pipe(
+            Effect.andThen(
+              editDocuments.apply(input.projectId, input.ops, {
+                origin: input.origin,
+                baseRevision: input.baseRevision,
+              }),
+            ),
+          ),
+        [WS_METHODS.editSubscribe]: (input) => editDocuments.subscribe(input.projectId),
+        [WS_METHODS.editUndo]: (input) => editDocuments.undo(input.projectId),
+        [WS_METHODS.editRedo]: (input) => editDocuments.redo(input.projectId),
+        [WS_METHODS.mediaImportPlan]: (input) => mediaLibrary.plan(input),
+        [WS_METHODS.mediaImport]: (input) => mediaLibrary.import(input),
+        [WS_METHODS.mediaList]: (input) => mediaLibrary.list(input.projectId),
+        [WS_METHODS.mediaSubscribe]: (input) => mediaLibrary.subscribe(input.projectId),
+        [WS_METHODS.mediaRelink]: (input) => mediaLibrary.relink(input),
         [WS_METHODS.projectsCreateFromThread]: (input) =>
           scratchThreadPromotion
             .promote(input)
@@ -2729,6 +2758,18 @@ export const layerWsRpc = (
         [WS_METHODS.projectCloneRetry]: (input) =>
           projectCloneTracker.retry(input.projectId).pipe(Effect.map((applied) => ({ applied }))),
         [WS_METHODS.subscribeProjectClones]: () => projectCloneTracker.stream,
+        [WS_METHODS.engineJobsSubscribe]: () => engine.subscribeJobs,
+        [WS_METHODS.engineJobsCancel]: (input) =>
+          engine.cancelJob(input.jobId).pipe(Effect.map((applied) => ({ applied }))),
+        [WS_METHODS.exportStart]: (input) => exports.start(input),
+        [WS_METHODS.exportStatus]: (input) => exports.status(input.jobId),
+        [WS_METHODS.transcriptGet]: (input) =>
+          transcripts.get(input).pipe(Effect.map((transcript) => ({ transcript }))),
+        [WS_METHODS.transcribeRun]: (input) => transcripts.transcribe(input),
+        [WS_METHODS.transcribeModelsStatus]: () => transcripts.modelsStatus,
+        [WS_METHODS.transcribeModelsDownload]: (input) =>
+          transcripts.downloadModels(input.model, input.projectId, input.reuse),
+        [WS_METHODS.transcribeModelsDismiss]: () => transcripts.dismissDownload,
         [WS_METHODS.sourceControlPublishRepository]: (input) =>
           sourceControlRepositories.publishRepository(input).pipe(
             Effect.tap(() => repositoryIdentityResolver.resolve(input.cwd, { refresh: true })),
@@ -2846,6 +2887,8 @@ export const layerWsRpc = (
               input.resource._tag === "native-app-icon" ||
               input.resource._tag === "tool-output-image" ||
               input.resource._tag === SOURCE_CONTROL_MEDIA_ASSET ||
+              // Resolved through that project's edit.json; nothing else is served.
+              input.resource._tag === "project-media" ||
               // A network path is served only from the thread's project, looked up below.
               (input.resource._tag === "media-file" &&
                 path.isAbsolute(input.resource.path) &&

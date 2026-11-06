@@ -21,6 +21,7 @@ const ALL_MCP_CAPABILITIES = [
   "worktree",
   "device",
   "pull-requests",
+  "video",
 ] as const;
 export type McpCapability = (typeof ALL_MCP_CAPABILITIES)[number];
 
@@ -170,6 +171,13 @@ export const hiddenWhileLinksOff = (): boolean => {
   return scope?.linkedEnvironments !== false;
 };
 
+/** `McpSchema.EnabledWhen` for the video tools: only threads of an edit project see them. */
+export const hiddenWithoutVideo = (): boolean => {
+  const fiber = Fiber.getCurrent();
+  const scope = fiber && Context.getOrUndefined(fiber.context, McpInvocationContext);
+  return scope?.capabilities.has("video") === true;
+};
+
 export type McpCapabilityError<C extends McpCapability> = C extends "preview"
   ? PreviewAutomationUnavailableError
   : McpCapabilityUnavailableError;
@@ -204,7 +212,7 @@ export const requireMcpCapability = <const C extends McpCapability>(
     Effect.withSpan("mcp.requireCapability"),
   );
 
-export const requireThreadMcpCapability = <const C extends "preview" | "device">(
+export const requireThreadMcpCapability = <const C extends "preview" | "device" | "video">(
   capability: C,
 ): Effect.Effect<McpThreadInvocationScope, McpCapabilityError<C>, McpInvocationContext> =>
   McpInvocationContext.pipe(

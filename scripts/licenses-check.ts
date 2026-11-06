@@ -9,6 +9,7 @@ import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 
+import { checkNoMedia } from "./check-no-media.ts";
 import {
   checkLicences,
   packagesFromPnpm,
@@ -16,6 +17,7 @@ import {
   type LicenceException,
   type LicenceOverride,
 } from "./lib/licenses-check.ts";
+import { packagesFromPythonReport, type PythonLicenceReport } from "./lib/python-licences.ts";
 
 const ROOT = NodePath.resolve(NodePath.dirname(NodeURL.fileURLToPath(import.meta.url)), "..");
 
@@ -132,10 +134,51 @@ for (const problem of result.problems) {
   );
 }
 
-if (result.problems.length > 0 || result.configErrors.length > 0) {
+// S7V-031: no audio, video or model weights may be tracked.
+const mediaExit = checkNoMedia(ROOT);
+
+// The video engine's Python dependencies (S7V-022), from packages/engine/uv.lock.
+const ENGINE_LOCK = "packages/engine/uv.lock";
+const pythonReport = JSON.parse(
+  NodeChildProcess.execFileSync(
+    "uv",
+    "run --frozen --offline --quiet --project packages/engine python -I -m s7engine.licences".split(
+      " ",
+    ),
+    { cwd: ROOT, encoding: "utf8", maxBuffer: 16 * 1024 * 1024 },
+  ),
+) as PythonLicenceReport;
+const pythonScan = packagesFromPythonReport(pythonReport, ENGINE_LOCK);
+const pythonResult = checkLicences({
+  packages: pythonScan.packages,
+  allowlist,
+  exceptions: [],
+  overrides: [],
+});
+console.log(`licenses:check: ${String(pythonResult.checked)} Python packages from ${ENGINE_LOCK}.`);
+for (const election of pythonResult.elections) {
+  console.log(
+    `  elected ${election.elected} for ${election.name}@${election.version} (${election.declared})`,
+  );
+}
+for (const skipped of pythonScan.notInstalled) {
+  console.log(
+    `  skipped, not installed on this platform (development only, or another platform only): ${skipped.name}@${skipped.version}`,
+  );
+}
+for (const error of pythonScan.errors) console.error(`error: ${error}`);
+for (const problem of pythonResult.problems) {
   console.error(
-    `licenses:check failed: ${String(result.problems.length)} package(s) outside the allowlist, ${String(result.configErrors.length)} exception error(s). Replace the package, or record an ADR and add it to licenses.exceptions.json.`,
+    `error: ${problem.name}@${problem.version} [${problem.scope}] ${problem.license}: ${problem.message}\n       at ${problem.path}`,
+  );
+}
+const pythonFailed = pythonResult.problems.length > 0 || pythonScan.errors.length > 0;
+
+if (result.problems.length > 0 || result.configErrors.length > 0 || pythonFailed) {
+  console.error(
+    `licenses:check failed: ${String(result.problems.length + pythonResult.problems.length)} package(s) outside the allowlist, ${String(result.configErrors.length)} exception error(s). Replace the package, or record an ADR and add it to licenses.exceptions.json.`,
   );
   process.exit(1);
 }
+if (mediaExit !== 0) process.exit(mediaExit);
 console.log("licenses:check passed.");

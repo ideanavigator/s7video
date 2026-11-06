@@ -621,11 +621,11 @@ const layerPausingMcpRegistry = (pause: {
     }),
   ).pipe(Layer.provide(layerTestMcpRegistry));
 
-function makeBrowserAccessProject(projectId: ProjectId): Project {
+function makeBrowserAccessProject(projectId: ProjectId, workspaceRoot = process.cwd()): Project {
   return {
     id: projectId,
     title: "Browser access project",
-    workspaceRoot: process.cwd(),
+    workspaceRoot,
     repositoryIdentity: null,
     faviconPath: null,
     projectIcon: null,
@@ -646,6 +646,7 @@ function runBrowserAccessScenario(input: {
   readonly createThread?: boolean;
   readonly projectExists?: boolean;
   readonly delegatedBy?: ThreadId;
+  readonly workspaceRoot?: string;
 }) {
   return Effect.gen(function* () {
     const state = yield* Ref.make(emptyState);
@@ -659,7 +660,7 @@ function runBrowserAccessScenario(input: {
         Effect.succeed(
           input.projectExists === false
             ? Option.none()
-            : Option.some(makeBrowserAccessProject(requestedProjectId)),
+            : Option.some(makeBrowserAccessProject(requestedProjectId, input.workspaceRoot)),
         ),
     });
 
@@ -3805,6 +3806,22 @@ it.effect(
       });
       assert.isFalse(denied?.capabilities?.has("device"));
     }),
+);
+
+it.effect("ProviderSessionManagerV2 grants video tools only to threads of an edit project", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: "s7v-video-grant-" });
+    yield* fileSystem.writeFileString(`${root}/edit.json`, "{}");
+    yield* fileSystem.writeFileString(`${root}/project.json`, "{}");
+    const scenario = { enableAgentBrowserAccess: true, projectOverride: true } as const;
+    const edit = yield* runBrowserAccessScenario({ ...scenario, workspaceRoot: root });
+    assert.isTrue(edit?.capabilities?.has("video"));
+    const plain = yield* runBrowserAccessScenario(scenario);
+    assert.isFalse(plain?.capabilities?.has("video"));
+    const gone = yield* runBrowserAccessScenario({ ...scenario, projectExists: false });
+    assert.isFalse(gone?.capabilities?.has("video"));
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
 // Device instructions reach delegated children only because their own sessions hold `device`.

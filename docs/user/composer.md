@@ -40,6 +40,10 @@ apply, including images already in the conversation. A video attachment gives
 the agent a file path; only [Antigravity](./providers-antigravity.md#skills-and-attachments)
 sends supported videos to Gemini models as video.
 
+In a video project in the desktop app, video and audio you drop into the chat
+go to the project's Assets instead, with no upload and no size limit. Video is
+not attached to the message; audio is attached as well, so the agent hears it.
+
 Uploads begin when you add an attachment. All uploads must finish before the
 message can send. Retry or remove a failed upload. On web and desktop, reloading
 before an upload finishes requires you to attach that file again.

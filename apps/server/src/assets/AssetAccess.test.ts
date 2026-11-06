@@ -5,6 +5,7 @@ import * as NodeFSP from "node:fs/promises";
 import {
   AssetAccessError,
   AssetPreviewTypeValidationError,
+  ProjectId,
   SOURCE_CONTROL_MEDIA_ASSET,
   ThreadId,
   TurnItemId,
@@ -16,6 +17,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
@@ -32,6 +34,7 @@ import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import { assetFileResponse } from "../http.ts";
 import { ASSET_ROUTE_PREFIX, issueAssetUrl, readMcpAppHtml, resolveAsset } from "./AssetAccess.ts";
 import * as NativeAppIconResolver from "./NativeAppIconResolver.ts";
+import * as MediaLibraryService from "../media/MediaLibraryService.ts";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
@@ -94,8 +97,20 @@ const oversizedScreenshotItem = {
   },
 };
 
+/** What each project's edit.json records, as `${projectId}/${mediaId}/${variant}` → file. */
+const recordedProjectMedia = new Map<string, string>();
+
 const layerTest = Layer.mergeAll(
   NodeHttpPlatform.layer,
+  Layer.mock(MediaLibraryService.MediaLibraryService)({
+    resolveVariant: (projectId, mediaId, variant) =>
+      Effect.sync(() => {
+        const file = recordedProjectMedia.get(`${projectId}/${mediaId}/${variant}`);
+        return file === undefined
+          ? Option.none()
+          : Option.some({ path: file, mimeType: "video/mp4" });
+      }),
+  }),
   Layer.mock(Orchestrator.OrchestratorV2)({
     getTurnItem: ({ itemId }) =>
       Effect.succeed(
@@ -201,6 +216,55 @@ describe("AssetAccess", () => {
         resource: { ...resource, itemId: oversizedScreenshotItem.id },
       }).pipe(Effect.flip);
       expect(oversized._tag).toBe("AssetWorkspaceAssetNotFoundError");
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect("project-media token resolves only recorded media", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const folder = yield* fs.realPath(
+        yield* fs.makeTempDirectoryScoped({ prefix: "t3-project-media-" }),
+      );
+      const clip = path.join(folder, "cam.mp4");
+      yield* fs.writeFileString(clip, "not really a video");
+      recordedProjectMedia.clear();
+      recordedProjectMedia.set("project-a/cam/original", clip);
+      const resource = {
+        _tag: "project-media" as const,
+        projectId: ProjectId.make("project-a"),
+        mediaId: "cam",
+        variant: "original" as const,
+      };
+      const issued = yield* issueAssetUrl({ resource });
+      expect(issued.fileRevision).toBeDefined();
+      const suffix = issued.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+      const token = suffix.slice(0, suffix.indexOf("/"));
+      const resolved = yield* resolveAsset(token, "cam.mp4");
+      expect(resolved).toMatchObject({ kind: "file", path: clip, mimeType: "video/mp4" });
+      expect(yield* resolveAsset(token, "other.mp4")).toBeNull();
+      expect(yield* resolveAsset(`${token}x`, "cam.mp4")).toBeNull();
+
+      // Another project, or a variant nothing records, gets no URL at all.
+      for (const other of [
+        { ...resource, projectId: ProjectId.make("project-b") },
+        { ...resource, variant: "proxy" as const },
+      ]) {
+        const refused = yield* issueAssetUrl({ resource: other }).pipe(Effect.flip);
+        expect(refused._tag).toBe("AssetWorkspaceAssetNotFoundError");
+      }
+
+      // A file swapped in at the same path is a different file: the pinned inode refuses it.
+      yield* fs.remove(clip);
+      yield* fs.writeFileString(clip, "a replacement");
+      expect(yield* resolveAsset(token, "cam.mp4")).toBeNull();
+
+      // Removed from edit.json: the old token stops working.
+      const reissued = yield* issueAssetUrl({ resource });
+      const fresh = reissued.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length).split("/")[0]!;
+      expect(yield* resolveAsset(fresh, "cam.mp4")).toMatchObject({ path: clip });
+      recordedProjectMedia.delete("project-a/cam/original");
+      expect(yield* resolveAsset(fresh, "cam.mp4")).toBeNull();
     }).pipe(Effect.provide(layerTest)),
   );
 

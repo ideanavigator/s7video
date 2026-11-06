@@ -1,14 +1,21 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { expect, it } from "@effect/vitest";
+import { assert, expect, it } from "@effect/vitest";
 import { ProviderInstanceId } from "@t3tools/contracts";
 import { McpProviderSessions } from "@t3tools/provider-core/server/McpProviderSessions";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import { McpServer } from "effect/ai";
 
 import { ServerSecretStore } from "../auth/ServerSecretStore.ts";
 import { ServerConfig } from "../config.ts";
 import { DeviceService } from "../device/DeviceService.ts";
+import { EditDocumentService } from "../edit/EditDocumentService.ts";
+import { EngineService } from "../engine/EngineService.ts";
+import { ExportService } from "../export/ExportService.ts";
+import { TranscriptService } from "../transcript/TranscriptService.ts";
+import { SilenceCutService } from "../edit/SilenceCutService.ts";
+import { MediaLibraryService } from "../media/MediaLibraryService.ts";
 import { ServerEnvironment } from "../environment/ServerEnvironment.ts";
 import { GitWorkflowService } from "../git/GitWorkflowService.ts";
 import * as McpHttpServer from "../mcp/McpHttpServer.ts";
@@ -43,11 +50,19 @@ import { buildCodexAdditionalContext } from "./CodexDeveloperInstructions.ts";
 import { DocumentText } from "./DocumentText.ts";
 import { ProviderRegistry } from "./ProviderRegistry.ts";
 import budget from "./agentContextBudget.json" with { type: "json" };
+import { discoverClaudeSkills } from "./Drivers/ClaudeSkills.ts";
+import { resolveBuiltInSkillsPluginDir } from "../skills/BuiltInSkills.ts";
 
 // Registration only stores tool definitions, so the handlers' services are never called.
 const toolHandlerServices = Layer.mergeAll(
   Layer.mock(DeviceService)({}),
   Layer.mock(DocumentText)({}),
+  Layer.mock(EditDocumentService)({}),
+  Layer.mock(EngineService)({}),
+  Layer.mock(ExportService)({}),
+  Layer.mock(TranscriptService)({}),
+  Layer.mock(SilenceCutService)({}),
+  Layer.mock(MediaLibraryService)({}),
   Layer.mock(GitVcsDriver)({}),
   Layer.mock(GitWorkflowService)({}),
   Layer.mock(ManagedProjectFolders)({ namedProjectsRoot: "" }),
@@ -81,7 +96,7 @@ const toolHandlerServices = Layer.mergeAll(
 
 const utf8Bytes = (text: string) => Buffer.byteLength(text, "utf8");
 
-const claudeSystemAppend = () => {
+const claudeSystemAppend = (videoToolsAvailable = false) => {
   const { systemPrompt } = makeClaudeQueryOptions({
     modelSelection: {
       instanceId: ProviderInstanceId.make(CLAUDE_PROVIDER),
@@ -91,15 +106,16 @@ const claudeSystemAppend = () => {
     resume: false,
     cwd: null,
     mcpServers: { "t3-code": { type: "http", url: "http://127.0.0.1/mcp" } },
+    videoToolsAvailable,
   });
   return typeof systemPrompt === "object" && "append" in systemPrompt ? systemPrompt.append : "";
 };
 
-const codexAdditionalContext = () =>
+const codexAdditionalContext = (video = false) =>
   Object.values(
     buildCodexAdditionalContext(
       { model: "gpt-6.1-sol", modelName: "GPT-6.1 Sol", reasoningEffort: "high" },
-      { browser: true, device: true },
+      { browser: true, device: true, video },
     ),
   )
     .map((entry) => entry.value)
@@ -107,12 +123,41 @@ const codexAdditionalContext = () =>
 
 // CI rejects a PR that raises any value above main's agentContextBudget.json, so growth
 // needs the agent-context-increase label. Lower the values when the text shrinks.
+// Video threads list each built-in skill as one `- name: description` line (S7V-048); the body
+// loads only when the skill is used. Codex adds `(file: r1/<skill>/SKILL.md)` and one root line.
+const builtInSkills = Effect.gen(function* () {
+  const pluginDir = yield* resolveBuiltInSkillsPluginDir({});
+  assert(pluginDir !== undefined, "the built-in skills folder is missing");
+  const home = yield* (yield* FileSystem.FileSystem).makeTempDirectoryScoped();
+  const skills = yield* discoverClaudeSkills({ homePath: home }, undefined, {}, [pluginDir]);
+  const fileSystem = yield* FileSystem.FileSystem;
+  return yield* Effect.forEach(skills, (skill) =>
+    fileSystem.readFileString(skill.path).pipe(
+      Effect.map((text) => ({
+        listing: `- ${skill.name}: ${skill.description ?? ""}\n`,
+        body: text.split(/^---$/mu)[2]!.trim(),
+      })),
+    ),
+  );
+}).pipe(Effect.scoped, Effect.provide(NodeServices.layer));
+
 it.effect("agent context matches the committed budget", () =>
   Effect.gen(function* () {
     const mcp = yield* McpServer.McpServer;
+    const skills = yield* builtInSkills;
+    const toolList = JSON.stringify(mcp.tools.map(({ tool }) => tool));
+    for (const { body } of skills) {
+      for (const context of [claudeSystemAppend(), codexAdditionalContext(), toolList]) {
+        expect(context.includes(body.slice(0, 80))).toBe(false);
+      }
+    }
     const measured = {
+      builtInSkillListingBytes: skills.reduce((sum, skill) => sum + utf8Bytes(skill.listing), 0),
       claudeSystemAppendBytes: utf8Bytes(claudeSystemAppend()),
       codexAdditionalContextBytes: utf8Bytes(codexAdditionalContext()),
+      // s7video: a video project's thread also gets the video edit line (S7V-041).
+      claudeSystemAppendVideoBytes: utf8Bytes(claudeSystemAppend(true)),
+      codexAdditionalContextVideoBytes: utf8Bytes(codexAdditionalContext(true)),
       // The model sees these fields. outputSchema and annotations are protocol metadata.
       mcpToolListJsonBytes: utf8Bytes(
         JSON.stringify(

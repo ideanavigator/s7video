@@ -9,6 +9,8 @@ import {
   ProviderInstanceId,
   SecretProviderId,
   ThreadId,
+  ProjectId,
+  clientRpcRequiredScopes,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   AuthSourceControlWriteScope,
@@ -65,6 +67,33 @@ describe("RPC authorization scopes", () => {
       WS_METHODS.previewStopLocalServer,
     ]) {
       expect(requiredScopeForRpcMethod(method)).toBe(AuthTerminalOperateScope);
+    }
+  });
+
+  it("lets readers watch engine jobs but only operators cancel them", () => {
+    expect(requiredScopeForRpcMethod(WS_METHODS.engineJobsSubscribe)).toBe(
+      AuthOrchestrationReadScope,
+    );
+    expect(requiredScopeForRpcMethod(WS_METHODS.engineJobsCancel)).toBe(
+      AuthOrchestrationOperateScope,
+    );
+  });
+
+  it("lets readers see an export's status but only operators start one", () => {
+    expect(requiredScopeForRpcMethod(WS_METHODS.exportStatus)).toBe(AuthOrchestrationReadScope);
+    expect(requiredScopeForRpcMethod(WS_METHODS.exportStart)).toBe(AuthOrchestrationOperateScope);
+  });
+
+  it("lets readers see transcripts but only operators transcribe or download models", () => {
+    for (const method of [WS_METHODS.transcriptGet, WS_METHODS.transcribeModelsStatus]) {
+      expect(requiredScopeForRpcMethod(method)).toBe(AuthOrchestrationReadScope);
+    }
+    for (const method of [
+      WS_METHODS.transcribeRun,
+      WS_METHODS.transcribeModelsDownload,
+      WS_METHODS.transcribeModelsDismiss,
+    ]) {
+      expect(requiredScopeForRpcMethod(method)).toBe(AuthOrchestrationOperateScope);
     }
   });
 
@@ -377,6 +406,96 @@ it.effect("denies manual cleanup before the handler without settings permission"
     expect(yield* client[WS_METHODS.serverRunStorageCleanup]({}).pipe(Effect.flip)).toMatchObject({
       requiredPermission: AuthSettingsWriteScope,
     });
+    expect(handled).toBe(false);
+  }).pipe(Effect.scoped),
+);
+
+it("lets readers follow the media library but only operators import or relink", () => {
+  for (const method of [WS_METHODS.mediaList, WS_METHODS.mediaSubscribe]) {
+    expect(requiredScopeForRpcMethod(method)).toBe(AuthOrchestrationReadScope);
+  }
+  for (const method of [
+    WS_METHODS.mediaImportPlan,
+    WS_METHODS.mediaImport,
+    WS_METHODS.mediaRelink,
+  ]) {
+    expect(requiredScopeForRpcMethod(method)).toBe(AuthOrchestrationOperateScope);
+    // They read files at host paths, so filesystem read is required as well.
+    expect(clientRpcRequiredScopes(method, undefined)).toEqual([
+      AuthOrchestrationOperateScope,
+      AuthFilesystemReadScope,
+    ]);
+  }
+});
+
+it("lets readers load and follow an edit but only operators change or undo it", () => {
+  for (const method of [WS_METHODS.editGet, WS_METHODS.editSubscribe]) {
+    expect(requiredScopeForRpcMethod(method)).toBe(AuthOrchestrationReadScope);
+  }
+  for (const method of [WS_METHODS.editApply, WS_METHODS.editUndo, WS_METHODS.editRedo]) {
+    expect(requiredScopeForRpcMethod(method)).toBe(AuthOrchestrationOperateScope);
+    expect(clientRpcRequiredScopes(method, undefined)).toEqual([AuthOrchestrationOperateScope]);
+  }
+});
+
+it.effect("denies edit undo before the handler without operate permission", () =>
+  Effect.gen(function* () {
+    const group = WsRpcGroup.omit(
+      ...[...WsRpcGroup.requests.keys()].filter(
+        (tag): tag is Exclude<keyof typeof RPC_REQUIRED_SCOPES, typeof WS_METHODS.editUndo> =>
+          tag !== WS_METHODS.editUndo,
+      ),
+    );
+    let handled = false;
+    const client = yield* RpcTest.makeClient(group).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          group.toLayerHandler(WS_METHODS.editUndo, () =>
+            Effect.sync(() => {
+              handled = true;
+            }).pipe(Effect.andThen(Effect.never)),
+          ),
+          RpcAuthorization.layer([AuthOrchestrationReadScope]),
+        ),
+      ),
+    );
+    expect(
+      yield* client[WS_METHODS.editUndo]({ projectId: ProjectId.make("project") }).pipe(
+        Effect.flip,
+      ),
+    ).toMatchObject({ requiredPermission: AuthOrchestrationOperateScope });
+    expect(handled).toBe(false);
+  }).pipe(Effect.scoped),
+);
+
+it.effect("denies a media import without filesystem read, even to an operator", () =>
+  Effect.gen(function* () {
+    const group = WsRpcGroup.omit(
+      ...[...WsRpcGroup.requests.keys()].filter(
+        (tag): tag is Exclude<keyof typeof RPC_REQUIRED_SCOPES, typeof WS_METHODS.mediaImport> =>
+          tag !== WS_METHODS.mediaImport,
+      ),
+    );
+    let handled = false;
+    const client = yield* RpcTest.makeClient(group).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          group.toLayerHandler(WS_METHODS.mediaImport, () =>
+            Effect.sync(() => {
+              handled = true;
+            }).pipe(Effect.andThen(Effect.never)),
+          ),
+          RpcAuthorization.layer([AuthOrchestrationReadScope, AuthOrchestrationOperateScope]),
+        ),
+      ),
+    );
+    expect(
+      yield* client[WS_METHODS.mediaImport]({
+        projectId: ProjectId.make("project"),
+        sourcePath: "/Users/me/clip.mp4",
+        mode: "copy",
+      }).pipe(Effect.flip),
+    ).toMatchObject({ requiredPermission: AuthFilesystemReadScope });
     expect(handled).toBe(false);
   }).pipe(Effect.scoped),
 );

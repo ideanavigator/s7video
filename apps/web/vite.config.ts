@@ -20,6 +20,7 @@ import {
 
 import { brandConfigPlugin, loadBrandConfig } from "../../scripts/lib/brand-config.ts";
 import { loadRepoEnv } from "../../scripts/lib/public-config";
+import { testMediaDir } from "../../scripts/lib/test-media.ts";
 import { thirdPartyLicensesPlugin } from "../../scripts/lib/third-party-licenses";
 import { tailwindPlugins } from "./vite/tailwind";
 import { warmBundledDevPlugin } from "./vite/warmBundledDev";
@@ -78,7 +79,7 @@ const unitTestProject = {
   test: {
     name: "unit",
     include: ["src/**/*.test.{ts,tsx}"],
-    exclude: ["src/**/*.browser.test.{ts,tsx}"],
+    exclude: ["src/**/*.browser.test.{ts,tsx}", "src/**/*.golden.test.ts"],
     hookTimeout: 15_000,
     testTimeout: 15_000,
     setupFiles: [
@@ -134,6 +135,34 @@ const browserTestProject = {
         // position starts hovered. test/browserSetup.ts parks it off the page before each test.
         resetPointer: async ({ page }) => {
           await page.mouse.move(-1, -1);
+        },
+      },
+    },
+  },
+} satisfies TestProjectInlineConfiguration;
+
+// Golden media tests in the browser (S7V-030): the real player on clips from `pnpm media:fetch`,
+// served from the test-media cache. They play media in real time, so their timeouts are longer.
+const goldenMediaDir = testMediaDir();
+
+const goldenBrowserProject = {
+  ...browserTestProject,
+  server: { fs: { allow: [`${import.meta.dirname}/../..`, goldenMediaDir] } },
+  test: {
+    ...browserTestProject.test,
+    name: "golden",
+    include: ["src/**/*.golden.test.ts"],
+    hookTimeout: 120_000,
+    testTimeout: 120_000,
+    browser: {
+      ...browserTestProject.test.browser,
+      instances: [{ browser: "chromium" }],
+      commands: {
+        ...browserTestProject.test.browser.commands,
+        // The cached clip's path for `/@fs/`, or null when `pnpm media:fetch` has not run.
+        testMediaPath: async (_context, file: string) => {
+          const path = `${goldenMediaDir}/${file.replaceAll("/", "")}`;
+          return (await NodeFSP.stat(path).catch(() => null))?.isFile() ? path : null;
         },
       },
     },
@@ -380,6 +409,7 @@ export default defineConfig(() => {
         defineProject(unitTestProject),
         defineProject(browserTestProject),
         defineProject(renderScenariosProject),
+        defineProject(goldenBrowserProject),
       ],
     },
   };

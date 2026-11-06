@@ -230,7 +230,7 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
       ) : null}
       <span className="flex min-w-0 flex-1 items-center gap-2">
         <span className="min-w-0 max-w-[45%] shrink-0 truncate font-sans text-xs font-medium">
-          {isSlashSkill ? (
+          {isSlashSkill && !isSlashSkill.displayName?.trim() ? (
             <>
               <span className="text-secondary-label">/skill:</span>
               {formatProviderSkillDisplayName(isSlashSkill)}

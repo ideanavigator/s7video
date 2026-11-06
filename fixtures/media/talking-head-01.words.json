@@ -1,0 +1,374 @@
+{
+  "clip": "talking-head-01",
+  "sha256": "54ad0a3805394516438f2ba8e7f6ea75a7f77d18d391b8ed1a18e3bc6e1a0722",
+  "fps": "24000/1001",
+  "frameRule": "start and end are frame numbers at fps: round(seconds * 24000/1001). startSeconds/endSeconds keep the 5 ms mark.",
+  "method": [
+    "Spoken words: the human-made English captions on the clip's Commons page (TimedText .en.srt), cross-checked with a one-off local Qwen3-ASR run outside the repo; a word is kept only when both agree.",
+    "Machine-made reference marks, not human ground truth. Edges: from the audio energy envelope (mono 16 kHz, 100 Hz high-pass, 5 ms RMS, 20 ms smoothing; noise floor = 5th percentile, speech = floor + 10 dB).",
+    "startEdge/endEdge says how sure an edge is. pause: the word borders a pause of at least 250 ms (sharp). gap: it borders a quiet stretch shorter than 250 ms inside a phrase (sharp). dip: an energy minimum at least 6 dB deep between two words, searched within 80 ms of the Qwen3-ForcedAligner boundary, so not independent of a speech model; harness.word_timing_diff scores only pause/gap starts by default.",
+    "Words are phrase-initial or phrase-final, spread over the whole clip; each envelope was inspected as ASCII. Not yet checked by ear: the PO should spot-check a few (for example 'Greetings', 'accuse', 'vote', 'encyclopedia', 'roof')."
+  ],
+  "words": [
+    {
+      "text": "Greetings",
+      "start": 20,
+      "end": 34,
+      "startSeconds": 0.82,
+      "endSeconds": 1.415,
+      "startEdge": "pause",
+      "endEdge": "gap"
+    },
+    {
+      "text": "In",
+      "start": 303,
+      "end": 305,
+      "startSeconds": 12.65,
+      "endSeconds": 12.725,
+      "startEdge": "pause",
+      "endEdge": "dip"
+    },
+    {
+      "text": "projects",
+      "start": 381,
+      "end": 396,
+      "startSeconds": 15.875,
+      "endSeconds": 16.53,
+      "startEdge": "gap",
+      "endEdge": "pause"
+    },
+    {
+      "text": "And",
+      "start": 419,
+      "end": 430,
+      "startSeconds": 17.465,
+      "endSeconds": 17.915,
+      "startEdge": "pause",
+      "endEdge": "gap"
+    },
+    {
+      "text": "do",
+      "start": 458,
+      "end": 465,
+      "startSeconds": 19.11,
+      "endSeconds": 19.41,
+      "startEdge": "dip",
+      "endEdge": "pause"
+    },
+    {
+      "text": "It",
+      "start": 481,
+      "end": 486,
+      "startSeconds": 20.05,
+      "endSeconds": 20.255,
+      "startEdge": "pause",
+      "endEdge": "dip"
+    },
+    {
+      "text": "that",
+      "start": 649,
+      "end": 655,
+      "startSeconds": 27.08,
+      "endSeconds": 27.31,
+      "startEdge": "gap",
+      "endEdge": "pause"
+    },
+    {
+      "text": "user",
+      "start": 665,
+      "end": 671,
+      "startSeconds": 27.735,
+      "endSeconds": 27.995,
+      "startEdge": "pause",
+      "endEdge": "gap"
+    },
+    {
+      "text": "accuse",
+      "start": 874,
+      "end": 885,
+      "startSeconds": 36.47,
+      "endSeconds": 36.9,
+      "startEdge": "pause",
+      "endEdge": "gap"
+    },
+    {
+      "text": "User",
+      "start": 947,
+      "end": 952,
+      "startSeconds": 39.485,
+      "endSeconds": 39.705,
+      "startEdge": "pause",
+      "endEdge": "dip"
+    },
+    {
+      "text": "action",
+      "start": 1218,
+      "end": 1228,
+      "startSeconds": 50.805,
+      "endSeconds": 51.22,
+      "startEdge": "gap",
+      "endEdge": "pause"
+    },
+    {
+      "text": "like",
+      "start": 1243,
+      "end": 1247,
+      "startSeconds": 51.86,
+      "endSeconds": 52.025,
+      "startEdge": "pause",
+      "endEdge": "gap"
+    },
+    {
+      "text": "vandals",
+      "start": 1304,
+      "end": 1316,
+      "startSeconds": 54.395,
+      "endSeconds": 54.9,
+      "startEdge": "gap",
+      "endEdge": "pause"
+    },
+    {
+      "text": "But",
+      "start": 1326,
+      "end": 1329,
+      "startSeconds": 55.295,
+      "endSeconds": 55.44,
+      "startEdge": "pause",
+      "endEdge": "gap"
+    },
+    {
+      "text": "this",
+      "start": 1385,
+      "end": 1392,
+      "startSeconds": 57.76,
+      "endSeconds": 58.06,
+      "startEdge": "dip",
+      "endEdge": "pause"
+    },
+    {
+      "text": "action",
+      "start": 1411,
+      "end": 1420,
+      "startSeconds": 58.865,
+      "endSeconds": 59.215,
+      "startEdge": "pause",
+      "endEdge": "pause"
+    },
+    {
+      "text": "Let's",
+      "start": 1440,
+      "end": 1444,
+      "startSeconds": 60.065,
+      "endSeconds": 60.225,
+      "startEdge": "pause",
+      "endEdge": "dip"
+    },
+    {
+      "text": "article",
+      "start": 1583,
+      "end": 1593,
+      "startSeconds": 66.01,
+      "endSeconds": 66.45,
+      "startEdge": "gap",
+      "endEdge": "pause"
+    },
+    {
+      "text": "revert",
+      "start": 1655,
+      "end": 1664,
+      "startSeconds": 69.015,
+      "endSeconds": 69.42,
+      "startEdge": "gap",
+      "endEdge": "pause"
+    },
+    {
+      "text": "mention",
+      "start": 1685,
+      "end": 1694,
+      "startSeconds": 70.275,
+      "endSeconds": 70.665,
+      "startEdge": "pause",
+      "endEdge": "dip"
+    },
+    {
+      "text": "arguing",
+      "start": 1792,
+      "end": 1803,
+      "startSeconds": 74.745,
+      "endSeconds": 75.195,
+      "startEdge": "pause",
+      "endEdge": "gap"
+    },
+    {
+      "text": "arguing",
+      "start": 1812,
+      "end": 1822,
+      "startSeconds": 75.595,
+      "endSeconds": 75.98,
+      "startEdge": "gap",
+      "endEdge": "pause"
+    },
+    {
+      "text": "and",
+      "start": 1831,
+      "end": 1835,
+      "startSeconds": 76.385,
+      "endSeconds": 76.535,
+      "startEdge": "pause",
+      "endEdge": "dip"
+    },
+    {
+      "text": "And",
+      "start": 1928,
+      "end": 1932,
+      "startSeconds": 80.395,
+      "endSeconds": 80.595,
+      "startEdge": "pause",
+      "endEdge": "dip"
+    },
+    {
+      "text": "vote",
+      "start": 1989,
+      "end": 1997,
+      "startSeconds": 82.95,
+      "endSeconds": 83.31,
+      "startEdge": "gap",
+      "endEdge": "pause"
+    },
+    {
+      "text": "committee",
+      "start": 2102,
+      "end": 2115,
+      "startSeconds": 87.66,
+      "endSeconds": 88.22,
+      "startEdge": "gap",
+      "endEdge": "pause"
+    },
+    {
+      "text": "your",
+      "start": 2123,
+      "end": 2126,
+      "startSeconds": 88.56,
+      "endSeconds": 88.69,
+      "startEdge": "pause",
+      "endEdge": "dip"
+    },
+    {
+      "text": "request",
+      "start": 2264,
+      "end": 2272,
+      "startSeconds": 94.445,
+      "endSeconds": 94.765,
+      "startEdge": "pause",
+      "endEdge": "dip"
+    },
+    {
+      "text": "then",
+      "start": 2451,
+      "end": 2456,
+      "startSeconds": 102.225,
+      "endSeconds": 102.415,
+      "startEdge": "pause",
+      "endEdge": "dip"
+    },
+    {
+      "text": "be",
+      "start": 2696,
+      "end": 2703,
+      "startSeconds": 112.465,
+      "endSeconds": 112.75,
+      "startEdge": "gap",
+      "endEdge": "pause"
+    },
+    {
+      "text": "the",
+      "start": 2717,
+      "end": 2720,
+      "startSeconds": 113.32,
+      "endSeconds": 113.46,
+      "startEdge": "pause",
+      "endEdge": "dip"
+    },
+    {
+      "text": "encyclopedia",
+      "start": 2736,
+      "end": 2755,
+      "startSeconds": 114.105,
+      "endSeconds": 114.905,
+      "startEdge": "dip",
+      "endEdge": "pause"
+    },
+    {
+      "text": "article",
+      "start": 2935,
+      "end": 2944,
+      "startSeconds": 122.4,
+      "endSeconds": 122.785,
+      "startEdge": "gap",
+      "endEdge": "pause"
+    },
+    {
+      "text": "and",
+      "start": 2954,
+      "end": 2958,
+      "startSeconds": 123.21,
+      "endSeconds": 123.365,
+      "startEdge": "pause",
+      "endEdge": "dip"
+    },
+    {
+      "text": "be",
+      "start": 2979,
+      "end": 2986,
+      "startSeconds": 124.255,
+      "endSeconds": 124.54,
+      "startEdge": "gap",
+      "endEdge": "pause"
+    },
+    {
+      "text": "opposite",
+      "start": 3156,
+      "end": 3172,
+      "startSeconds": 131.635,
+      "endSeconds": 132.28,
+      "startEdge": "pause",
+      "endEdge": "gap"
+    },
+    {
+      "text": "same",
+      "start": 3217,
+      "end": 3227,
+      "startSeconds": 134.195,
+      "endSeconds": 134.575,
+      "startEdge": "dip",
+      "endEdge": "pause"
+    },
+    {
+      "text": "roof",
+      "start": 3242,
+      "end": 3249,
+      "startSeconds": 135.215,
+      "endSeconds": 135.53,
+      "startEdge": "pause",
+      "endEdge": "gap"
+    },
+    {
+      "text": "knowledge",
+      "start": 3282,
+      "end": 3293,
+      "startSeconds": 136.88,
+      "endSeconds": 137.35,
+      "startEdge": "gap",
+      "endEdge": "pause"
+    },
+    {
+      "text": "all",
+      "start": 3327,
+      "end": 3331,
+      "startSeconds": 138.75,
+      "endSeconds": 138.935,
+      "startEdge": "pause",
+      "endEdge": "gap"
+    }
+  ]
+}

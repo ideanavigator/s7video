@@ -1229,6 +1229,9 @@ importers:
       '@electron/osx-sign':
         specifier: 2.7.0
         version: 2.7.0(supports-color@8.1.1)
+      '@t3tools/contracts':
+        specifier: workspace:*
+        version: link:../packages/contracts
       '@t3tools/shared':
         specifier: workspace:*
         version: link:../packages/shared

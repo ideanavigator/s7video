@@ -41,6 +41,7 @@ import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Predicate from "effect/Predicate";
 import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import { MCP_APP_OUTPUT_KEY, readMcpAppReference } from "@t3tools/shared/mcpApp";
 import { toolOutputImages } from "@t3tools/shared/toolOutput";
 import { resolveAttachmentPathById } from "../../attachmentStore.ts";
@@ -1069,6 +1070,153 @@ describe("CodexAdapterV2 session initialize", () => {
         failure.cause.message,
         "Codex 0.144.3 does not work with this s7video release. Update Codex to >=0.159.0, then retry.",
       );
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
+  );
+
+  it.effect("should give video threads the built-in skills folder for their process only", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const opened = (scenario: string, capabilities: ReadonlyArray<string>) =>
+        Effect.gen(function* () {
+          yield* (yield* McpProviderSessions.McpProviderSessions).set({
+            environmentId: EnvironmentId.make("environment-codex-skills"),
+            threadId: ThreadId.make(`thread-${scenario}`),
+            providerSessionId: `provider-session-${scenario}`,
+            providerInstanceId: ProviderInstanceId.make("codex"),
+            endpoint: "http://127.0.0.1:43123/mcp",
+            authorizationHeader: "Bearer secret-codex-token",
+            browserToolsAvailable: false,
+            capabilities: new Set(capabilities),
+          });
+          const video = capabilities.includes("video");
+          const [initialize, initializeResult, initialized, ...thread] = replayPreamble(scenario);
+          // The replay fails on any outbound frame it does not expect, so the plain thread
+          // proves Codex is never asked to load the built-in skills.
+          const session = yield* openReplaySession(
+            makeCodexReplayTranscript({
+              scenario,
+              entries: [
+                initialize!,
+                {
+                  ...initializeResult!,
+                  frame: {
+                    id: 1,
+                    result: {
+                      userAgent: "s7video/0.166.0",
+                      codexHome: "/tmp/codex-home",
+                      platformFamily: "unix",
+                      platformOs: "macos",
+                    },
+                  },
+                } as CodexReplay.CodexAppServerReplayEntry,
+                initialized!,
+                ...(video
+                  ? ([
+                      {
+                        type: "expect_outbound",
+                        label: "skills/extraRoots/set",
+                        frame: {
+                          id: 2,
+                          method: "skills/extraRoots/set",
+                          params: {
+                            extraRoots: [
+                              path.resolve(import.meta.dirname, "../../../skills/skills"),
+                            ],
+                          },
+                        },
+                      },
+                      {
+                        type: "emit_inbound",
+                        label: "skills/extraRoots/set",
+                        frame: { id: 2, result: {} },
+                      },
+                    ] satisfies Array<CodexReplay.CodexAppServerReplayEntry>)
+                  : []),
+                ...thread.slice(0, 2).map((entry) => withReplayRequestId(entry, video ? 3 : 2)),
+              ],
+            }),
+          );
+          return yield* session.ensureThread(`thread-${scenario}`);
+        });
+
+      const video = yield* opened("codex-built-in-skills", ["orchestration", "video"]);
+      assert.equal(video.nativeThreadRef?.nativeId, "codex-built-in-skills");
+      const plain = yield* opened("codex-no-built-in-skills", ["orchestration"]);
+      assert.equal(plain.nativeThreadRef?.nativeId, "codex-no-built-in-skills");
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
+  );
+
+  it.effect("should give the Codex update message below 0.159 in a video project", () =>
+    Effect.gen(function* () {
+      const opened = (scenario: string, version: string, capabilities: ReadonlyArray<string>) =>
+        Effect.gen(function* () {
+          yield* (yield* McpProviderSessions.McpProviderSessions).set({
+            environmentId: EnvironmentId.make("environment-codex-video"),
+            threadId: ThreadId.make(`thread-${scenario}`),
+            providerSessionId: `provider-session-${scenario}`,
+            providerInstanceId: ProviderInstanceId.make("codex"),
+            endpoint: "http://127.0.0.1:43123/mcp",
+            authorizationHeader: "Bearer secret-codex-token",
+            browserToolsAvailable: false,
+            capabilities: new Set(capabilities),
+          });
+          const [initialize] = replayPreamble(scenario);
+          return yield* openReplaySession(
+            makeCodexReplayTranscript({
+              scenario,
+              entries: [
+                initialize!,
+                {
+                  type: "emit_inbound",
+                  label: "initialize",
+                  frame: {
+                    id: 1,
+                    result: {
+                      userAgent: `s7video/${version} (Mac OS 15.5.0; arm64) unknown (s7video; 0.1.5)`,
+                      codexHome: "/tmp/codex-home",
+                      platformFamily: "unix",
+                      platformOs: "macos",
+                    },
+                  },
+                },
+              ],
+            }),
+            undefined,
+            (codexVersion) =>
+              Effect.succeed(
+                resolveProviderCompatibility(
+                  ModelManifest.BUNDLED_MODEL_MANIFEST.compatibility,
+                  CodexAdapterV2.CODEX_DRIVER_KIND,
+                  codexVersion,
+                ),
+              ),
+          ).pipe(Effect.flip);
+        });
+
+      // The PO's Mac had 0.137, which is also below every supported range.
+      for (const version of ["0.137.0", "0.157.2"]) {
+        const failure = yield* opened(`video-old-${version}`, version, ["orchestration", "video"]);
+        assert.instanceOf(failure, ProviderAdapter.ProviderAdapterOpenSessionError);
+        assert.instanceOf(failure.cause, ProviderSetupError);
+        assert.equal(
+          failure.cause.message,
+          `Your Codex app is version ${version}. s7video's video tools need 0.159 or later. Update Codex, then start a new thread.`,
+        );
+      }
+      // Outside a video project the usual compatibility rules apply.
+      const plain = yield* opened("video-plain", "0.137.0", ["orchestration"]);
+      assert.instanceOf(plain.cause, ProviderSetupError);
+      assert.include(plain.cause.message, "does not work with this s7video release");
     }).pipe(
       Effect.scoped,
       Effect.provide(

@@ -323,6 +323,8 @@ export const makeManagedCodexProvider = Effect.fn("makeManagedCodexProvider")(fu
             }),
             Effect.scoped,
             Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+            Effect.provideService(FileSystem.FileSystem, fileSystem),
+            Effect.provideService(Path.Path, path),
             // Fail instead of returning machine inventory, which the registry would publish as workspace inventory.
             Effect.mapError(
               (cause) =>

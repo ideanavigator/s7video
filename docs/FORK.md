@@ -169,18 +169,18 @@ the code it guarded.
 
 ### Kept, with reasons
 
-| Item                                                                                                                                                    | Why                                                                                                                                                                                                                      |
-| ------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| The pull request domain: inbox route, PR panel, review guides, PR RPCs, thread PR links and watches, PR MCP tools, PR routing grants, branch PR lookups | Deep in orchestration events, projections and the thread UI. Inert without a code host. Its removal is a separate ticket. Kept under the PO rule of 2026-11-05 (planning `tickets/README.md`, "Removing upstream code"). |
-| Pull request entry points (sidebar button, "Open pull requests" palette action, branch toolbar PR badge)                                                | Hidden while no code host is registered (`apps/web/src/lib/codeHosts.ts`); they come back when one is.                                                                                                                   |
-| PR MCP toolkit (about 12 tools, including `watch_pull_request`)                                                                                         | Still advertised to agents but inert: with no code host no PR URL resolves, and the watch reactor is gone.                                                                                                               |
-| `pullRequest.copyNumber` default binding (`mod+shift+k`)                                                                                                | Inert outside the hidden PR panel; hidden from the keybindings editor.                                                                                                                                                   |
-| "Delete merged worktrees" (`worktreeOnMerge`)                                                                                                           | Still shown so users can turn it off; it never matches a merged PR without a code host.                                                                                                                                  |
-| WSL connecting splash, `devRemoteT3ServerEntryPath`, `isWslEnvironment` sidebar grouping parameter                                                      | Unused service members and fields; kept under the 2026-11-05 removal rule.                                                                                                                                               |
-| Settings schema fields for removed PR options                                                                                                           | Kept so stored settings round-trip; the UI no longer shows them.                                                                                                                                                         |
-| Generic "tailnet" route and interface classification, remote open over the host's own sshd (`mdns`)                                                     | Host classification and editor links, not the Tailscale package.                                                                                                                                                         |
-| Desktop backend pool, `preflightFailure`, stdin bootstrap delivery                                                                                      | Generic backend machinery that WSL used; small upstream diff to keep.                                                                                                                                                    |
-| Windows WSL runtime packaging in `build-desktop-artifact.ts`, `RemoteOpenTargetKind` `"tailscale"`                                                      | Windows packaging and a wire literal; out of scope for an Apple Silicon build.                                                                                                                                           |
+| Item                                                                                                                                                                                                                   | Why                                                                                                                                                                                                                      |
+| ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| The pull request domain: inbox route, PR panel, review guides, PR RPCs, thread PR links and watches, PR MCP tools, PR routing grants, branch PR lookups                                                                | Deep in orchestration events, projections and the thread UI. Inert without a code host. Its removal is a separate ticket. Kept under the PO rule of 2026-11-05 (planning `tickets/README.md`, "Removing upstream code"). |
+| Pull request entry points (sidebar button, "Open pull requests" palette action, branch toolbar PR badge) and the publish flow (Publish repository dialog, "Publish repository..." menu item and quick action; S7V-057) | Hidden while no code host is registered (`apps/web/src/lib/codeHosts.ts`); they come back when one is. Without one, a repo with no remote shows a disabled Push instead of Publish.                                      |
+| PR MCP toolkit (about 12 tools, including `watch_pull_request`)                                                                                                                                                        | Still advertised to agents but inert: with no code host no PR URL resolves, and the watch reactor is gone.                                                                                                               |
+| `pullRequest.copyNumber` default binding (`mod+shift+k`)                                                                                                                                                               | Inert outside the hidden PR panel; hidden from the keybindings editor.                                                                                                                                                   |
+| "Delete merged worktrees" (`worktreeOnMerge`)                                                                                                                                                                          | Still shown so users can turn it off; it never matches a merged PR without a code host.                                                                                                                                  |
+| WSL connecting splash, `devRemoteT3ServerEntryPath`, `isWslEnvironment` sidebar grouping parameter                                                                                                                     | Unused service members and fields; kept under the 2026-11-05 removal rule.                                                                                                                                               |
+| Settings schema fields for removed PR options                                                                                                                                                                          | Kept so stored settings round-trip; the UI no longer shows them.                                                                                                                                                         |
+| Generic "tailnet" route and interface classification, remote open over the host's own sshd (`mdns`)                                                                                                                    | Host classification and editor links, not the Tailscale package.                                                                                                                                                         |
+| Desktop backend pool, `preflightFailure`, stdin bootstrap delivery                                                                                                                                                     | Generic backend machinery that WSL used; small upstream diff to keep.                                                                                                                                                    |
+| Windows WSL runtime packaging in `build-desktop-artifact.ts`, `RemoteOpenTargetKind` `"tailscale"`                                                                                                                     | Windows packaging and a wire literal; out of scope for an Apple Silicon build.                                                                                                                                           |
 
 ## Usage data and diagnostics (S7V-013)
 
@@ -239,6 +239,12 @@ New: `docs/engineering/` (standards), `docs/changelog/` (per-ticket entries), `d
 `scripts/planning.ts` (`pnpm tickets`, `ticket:*`, `doc:new`) and `scripts/check-doc-links.ts`
 (`pnpm docs:linkcheck`).
 
+## Edit projects (S7V-024)
+
+- **Every new named project is an edit project.** `ManagedProjectFolders.createNamedProject` adds `edit.json`, `project.json`, `styles/`, `assets/`, `.s7cache/` and `exports/`. It also adds a whitelist `.gitignore`, and commits those files with T3's starter `README.md` and `assets/icon.svg`. It only adds files: nothing of T3's scaffold is removed. Scratch projects and existing projects are not converted.
+- **What is tracked.** The whitelist ignores everything except `edit.json`, `project.json`, `.gitignore`, `styles/`, `README.md` and `assets/icon.svg`. As a result, T3's per-turn checkpoints, turn diffs and turn reverts in an edit project only see those files. Media, cache, exports and anything else an agent writes outside them never show in a diff and are never reverted.
+- **Edit undo is separate from turn reverts.** Edit undo (`edit.undo`) restores only `edit.json` (and bumps `project.json`) from refs under `refs/t3/edit/checkpoints/`. It restores the edit, not the library: a clip in the media list now stays there even when the restored edit is from before its import (S7V-059); with no such clip, the checkpoint's bytes are written unchanged. Media, track, item and marker ids share one namespace, so a kept clip whose id the restored edit uses for something else refuses that step (`library-conflict`) and history stays where it was; new clip ids are picked against every id in the edit. If a turn revert changes `edit.json`, the edit service records it as a new revision the next time the edit is read or changed.
+
 ## HEIC decoding (S7V-014)
 
 T3 Code decodes iPhone HEIC photos with `heic-to`, which bundles libheif and libde265 under
@@ -248,6 +254,129 @@ desktop bridge for attachments (`apps/web/src/lib/imageCompression.ts`) and prev
 (`apps/web/src/components/files/decodeImagePreview.ts`). Electron's `nativeImage` cannot read HEIC.
 In a plain browser, HEIC photos ask to be converted to JPEG first. When an upstream merge touches
 HEIC code, keep `heic-to` out of every `package.json`.
+
+## Local video helper (S7V-022)
+
+s7video adds a Python helper that T3 Code does not have: `packages/engine`, a `uv` project, run by
+`apps/server/src/engine/EngineService.ts` as one long-lived child process that speaks JSON-RPC over
+stdio (ADR-004). It is new code, so upstream merges do not touch it; the upstream files it edits are
+small additions to `config.ts` (`engineLogsDir`, `engineModelsDir`), `server.ts` (the layer),
+`ws.ts`, the RPC contracts and their scope and metric maps (`engine.jobs.subscribe`,
+`engine.jobs.cancel`). Development uses the developer's `uv` and FFmpeg (Homebrew's FFmpeg is GPL
+and is never bundled); shipping a Python runtime and an LGPL FFmpeg is release work (S7V-016).
+`pnpm licenses:check` also scans `packages/engine/uv.lock`.
+
+## Video agent tools (S7V-023)
+
+The `video` toolkit is new code in `apps/server/src/mcp/toolkits/video/` and
+`apps/server/src/mcp/VideoProjectScope.ts`. These upstream files have small edits:
+
+- `mcp/McpHttpServer.ts` adds `registerVideoFrame`, adds `layerVideoToolkit`, and adds it to `layerTools`.
+- `mcp/McpInvocationContext.ts` adds the `video` capability and its `hiddenWithoutVideo` visibility check.
+- `orchestration-v2/ProviderSessionManager.ts` grants `video` when the thread's project folder has `edit.json` and `project.json`.
+- `orchestration-v2/Adapters/CodexAdapterV2.ts` and `provider/CodexProvider.ts` show a plain update message when Codex is below 0.159 in a video project.
+- `provider/agentContextBudget.json` and `provider/AgentContextBudget.test.ts` have the new tool-list size and mocks.
+- `orchestration-v2/runtimeLayer.ts` provides `ProjectService` around the whole production runtime.
+
+**Behaviour change from `runtimeLayer.ts`.** The session manager reads `ProjectService` as an
+optional service. Memoized layers keep the context of their first build, and resource cleanup built
+the session manager first, without `ProjectService`. So upstream never found the thread's project
+there. If any per-project browser or device access override existed, access fell back to
+"withheld". Those overrides are now honoured.
+
+`runtimeLayer.production.test.ts` guards the wiring. If upstream fixes the wiring itself, drop our line and
+keep the test.
+
+## Video edit instructions (S7V-041)
+
+Threads with the `video` capability get one more instruction line: change, undo and redo the edit
+only with the `video_` tools, never with git or a shell. A git restore of `edit.json` skips the
+undo history. These upstream files have small, additive edits:
+
+- `packages/provider-core/src/server/orchestrationInstructions.ts` adds
+  `T3_CODE_VIDEO_EDIT_INSTRUCTIONS` and its `_WITH_TOOL_SEARCH` variant for Claude.
+- `orchestration-v2/Adapters/ClaudeAdapterV2.ts` takes `videoToolsAvailable`, appends the line to
+  the system prompt, and adds it to the `SubagentStart` hook for native subagents. The hook now
+  carries the device text, the video line, or both, and is registered when either applies.
+- `orchestration-v2/Adapters/CodexAdapterV2.ts` and `provider/CodexDeveloperInstructions.ts` add it
+  to `t3_code_tools` through an optional `video` flag.
+- `provider/AgentContextBudget.test.ts` and `agentContextBudget.json` measure the video-on context
+  as `claudeSystemAppendVideoBytes` and `codexAdditionalContextVideoBytes`.
+
+ACP agents do not get the line yet.
+
+## Built-in skills (S7V-048)
+
+`apps/server/skills/` is a Claude plugin folder (`.claude-plugin/plugin.json`, plugin name `video`)
+whose `skills/` subfolder holds one folder per skill, so both agents read the same files.
+`apps/server/src/skills/BuiltInSkills.ts` finds it by absolute path: `S7VIDEO_SKILLS_DIR` (set by the
+desktop app to `Resources/skills`), then the source tree, then a bundled server; never a folder in an
+asar archive. The skills only reach threads with the `video` capability, the same gate as the video
+tools. These upstream files have small edits:
+
+- `provider/Drivers/ClaudeSkills.ts`: `discoverClaudeSkills` takes app plugin folders and lists their skills with scope `system`.
+- `orchestration-v2/Adapters/ClaudeAdapterV2.ts`: `makeClaudeQueryOptions` takes `pluginDirs` (SDK `plugins`, `skipMcpDiscovery`); video threads pass the folder, and skill dispatch sees its skills.
+- `provider/ClaudeProvider.ts`: the per-folder snapshot lists the skills in edit projects (the `/` menu).
+- `orchestration-v2/Adapters/CodexAdapterV2.ts`: video threads call `skills/extraRoots/set` after `initialize`. The roots live in that app-server process only; Codex's own home and config are untouched.
+- `provider/CodexProvider.ts` (`probeCodexSkillsForCwd`), `Drivers/CodexDriver.ts`, `Drivers/CodexManagedProvider.ts`: the same call before `skills/list` in edit projects.
+- `scripts/build-desktop-artifact.ts` stages the folder and ships it as the `skills` extra resource, outside `app.asar`; `apps/desktop/src/backend/DesktopBackendConfiguration.ts` sets `S7VIDEO_SKILLS_DIR` when packaged.
+- `provider/agentContextBudget.json` gains `builtInSkillListingBytes`, the per-session cost of listing the skills.
+- `apps/web/src/components/chat/useComposerMenuItems.ts` and `ComposerCommandMenu.tsx`: a `/` menu skill row with a `displayName` (built-in skills read it from `agents/openai.yaml`) shows that name instead of `/skill:<name>`. Skills without one keep the upstream label; search is unchanged.
+
+## Media import (S7V-025)
+
+Clips enter a project only through `apps/server/src/media/MediaLibraryService.ts` (new code). These
+upstream files have small, additive edits:
+
+- `assets/AssetAccess.ts` and `contracts/assets.ts` add a `project-media` resource and its
+  `project-media-exact` claim. A token is issued only for media recorded in the project's
+  `edit.json`, and every request re-checks that the record still points at the same file.
+- `contracts/clientRpcPermissions.ts` and `auth/RpcAuthorization.ts` add the `media.*` methods:
+  readers list and follow the library; import, import plan and relink need operate **and**
+  filesystem read, because they read any file on the machine. `edit.apply` refuses `putMedia`, so
+  an operate-only client cannot record a path that the asset route would then serve (S7V-066).
+- Desktop IPC adds `pickMediaFiles` (`ipc/channels.ts`, `ipc/methods/window.ts`,
+  `ipc/DesktopIpcHandlers.ts`, `preload.ts`, `contracts/ipc.ts`): a native picker for video and
+  audio that returns paths for the server to import, since a browser file has no path.
+- `components/chat/ChatComposer.tsx` sends dropped video and audio to the import
+  (`useChatMediaImport.ts`) and opens the Editor; other files stay chat attachments as upstream.
+- `client-runtime/package.json` exports `./state/media`.
+
+## Editor panel (S7V-029, S7V-030)
+
+The Editor is one more right-panel kind, `editor`, keyed by project. The panel itself is new code
+in `apps/web/src/components/editor/` and `apps/web/src/editor/`. These upstream files have small edits:
+
+- `rightPanelStore.ts` adds the kind and `openEditor`, keeps a stored editor surface only when it
+  names a project, and bumps the storage version from 14 to 15.
+- `RightPanelTabs.tsx`, `chat/RightPanelSurfaceContent.tsx`, `chat/useRightPanelActions.ts`,
+  `ChatView.tsx`, `closedViewStore.ts` and `reopenClosedView.ts` add its menu entry (shortcut E,
+  only when the thread has a project), its lazy-loaded content, and reopen support.
+- `chat/TimelineWorkEntryRow.tsx` shows an "Open in Editor" button on `video_` tool rows.
+- `ChatView.tsx` calls `useOpenEditorOnModelsMissing`, which opens the Editor when a `video_` tool
+  answers that the speech model is missing, so its download prompt is in view (S7V-067).
+- `onboarding/WelcomeWizard.tsx` (the agents step) and `settings/ProviderSettingsPanel.tsx` (through `SpeechModelSettings`) render
+  `SpeechModelSetup`, the speech model download beside the agents (S7V-067).
+- `client-runtime/src/rpc/client.ts` adds `media.subscribe`, `edit.subscribe` and
+  `engine.jobs.subscribe` to the subscriptions that resubscribe after a reconnect.
+- `apps/web/vite.config.ts` and `apps/web/tsconfig.json` add the `golden` browser project, which
+  plays cached test clips in the real player (`pnpm test:golden`).
+
+## Edit, export and transcription wiring (S7V-024 to S7V-028, S7V-046)
+
+The services are new code (`edit/`, `export/`, `transcript/`, `engine/`). The upstream files only
+wire them in:
+
+- `server.ts` builds the edit, media, silence-cut, export, transcript and engine layers above the
+  core runtime, so WebSocket handlers, agent tools and the asset route share one instance of each.
+- `ws.ts` adds thin handlers for `edit.*`, `media.*`, `export.*`, `transcript.get` and
+  `transcribe.*`.
+- `observability/RpcInstrumentation.ts` gives these methods the `engine`, `edit` and `media`
+  metric groups; `auth/RpcAuthorization.ts` and `contracts/clientRpcPermissions.ts` give reads
+  read scope and changes operate scope.
+- `packages/contracts/src/rpc.ts` (the sprint's RPC definitions and `WS_METHODS` entries) and
+  `packages/contracts/src/index.ts` (re-exports of the new contract modules) are the biggest
+  upstream-file changes, and the likeliest merge-conflict spots in an upstream merge.
 
 ## Licensing (S7V-004)
 

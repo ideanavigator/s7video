@@ -131,6 +131,8 @@ describe("DesktopBackendConfiguration", () => {
         assert.equal(first.captureOutput, true);
         assert.equal(first.env.ELECTRON_RUN_AS_NODE, "1");
         assert.equal(first.env.T3CODE_DESKTOP_SHELL_DISCOVERY_PENDING, "1");
+        // Packaged built-in skills sit outside app.asar, where agent CLIs can read them (S7V-048).
+        assert.equal(first.env.S7VIDEO_SKILLS_DIR, "/missing/resources/skills");
         assert.isUndefined(first.env.T3CODE_PORT);
         assert.isUndefined(first.env.T3CODE_MODE);
         assert.isUndefined(first.env.T3CODE_DESKTOP_LAN_HOST);

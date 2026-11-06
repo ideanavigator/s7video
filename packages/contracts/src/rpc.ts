@@ -7,6 +7,30 @@ import {
 } from "./orchestrationV2.ts";
 import { OrchestrationDispatchCommandError } from "./orchestrationDispatch.ts";
 import {
+  EngineError,
+  EngineJobsCancelInput,
+  EngineJobsCancelResult,
+  EngineJobsEvent,
+  EngineJobsSubscribeInput,
+  ExportStartError,
+  ExportStartInput,
+  ExportStartResult,
+  ExportStatus,
+  ExportStatusInput,
+} from "./engine.ts";
+import {
+  TranscribeModelsDismissInput,
+  TranscribeModelsDownloadInput,
+  TranscribeModelsDownloadResult,
+  TranscribeModelsStatus,
+  TranscribeModelsStatusInput,
+  TranscribeRunInput,
+  TranscribeRunResult,
+  TranscriptError,
+  TranscriptGetResult,
+  TranscriptMediaInput,
+} from "./transcript.ts";
+import {
   McpAppCallToolInput,
   McpAppCallToolResult,
   McpAppReadResourceInput,
@@ -340,6 +364,24 @@ import {
   ProviderConsumeResetCreditResult,
 } from "./providerUsageLimits.ts";
 import { UsagePricing, UsageReadError, UsageSummary, UsageSummaryInput } from "./usage.ts";
+import { EditConflict, EditValidationError } from "./edit.ts";
+import {
+  MediaImportInput,
+  MediaImportPlan,
+  MediaImportPlanInput,
+  MediaImportResult,
+  MediaLibraryError,
+  MediaLibraryInput,
+  MediaLibrarySnapshot,
+  MediaRelinkInput,
+} from "./media.ts";
+import {
+  EditApplyInput,
+  EditOpError,
+  EditProjectInput,
+  EditSnapshot,
+  EditUnavailableError,
+} from "./editOps.ts";
 import {
   StorageCleanupReport,
   DatabaseStorageStatus,
@@ -594,6 +636,29 @@ export const WS_METHODS = {
   subscribeServerLifecycle: "subscribeServerLifecycle",
   subscribeAuthAccess: "subscribeAuthAccess",
   subscribeResourceTelemetry: "subscribeResourceTelemetry",
+
+  engineJobsSubscribe: "engine.jobs.subscribe",
+  engineJobsCancel: "engine.jobs.cancel",
+  exportStart: "export.start",
+  exportStatus: "export.status",
+
+  // Edit document (S7V-024)
+  editGet: "edit.get",
+  editApply: "edit.apply",
+  editSubscribe: "edit.subscribe",
+  editUndo: "edit.undo",
+  editRedo: "edit.redo",
+  transcriptGet: "transcript.get",
+  transcribeRun: "transcribe.run",
+  transcribeModelsStatus: "transcribe.models.status",
+  transcribeModelsDownload: "transcribe.models.download",
+  transcribeModelsDismiss: "transcribe.models.dismiss",
+  // Media library (S7V-025)
+  mediaImportPlan: "media.importPlan",
+  mediaImport: "media.import",
+  mediaList: "media.list",
+  mediaSubscribe: "media.subscribe",
+  mediaRelink: "media.relink",
 } as const;
 
 const WsServerUpsertKeybindingRpc = Rpc.make(WS_METHODS.serverUpsertKeybinding, {
@@ -1937,6 +2002,138 @@ export class RpcScopeAuthorization extends RpcMiddleware.Service<RpcScopeAuthori
   { error: EnvironmentAuthorizationError },
 ) {}
 
+// Engine jobs stream outside orchestration snapshots: progress is transient, not thread state.
+const WsEngineJobsSubscribeRpc = Rpc.make(WS_METHODS.engineJobsSubscribe, {
+  payload: EngineJobsSubscribeInput,
+  success: EngineJobsEvent,
+  error: EnvironmentAuthorizationError,
+  stream: true,
+});
+
+const WsEngineJobsCancelRpc = Rpc.make(WS_METHODS.engineJobsCancel, {
+  payload: EngineJobsCancelInput,
+  success: EngineJobsCancelResult,
+  error: EnvironmentAuthorizationError,
+});
+
+// Export returns its job at once; progress and cancel are the engine job's (S7V-028).
+const WsExportStartRpc = Rpc.make(WS_METHODS.exportStart, {
+  payload: ExportStartInput,
+  success: ExportStartResult,
+  error: Schema.Union([
+    EditUnavailableError,
+    ExportStartError,
+    EngineError,
+    EnvironmentAuthorizationError,
+  ]),
+});
+
+const WsExportStatusRpc = Rpc.make(WS_METHODS.exportStatus, {
+  payload: ExportStatusInput,
+  success: Schema.NullOr(ExportStatus),
+  error: EnvironmentAuthorizationError,
+});
+
+const EditRpcError = Schema.Union([EditUnavailableError, EnvironmentAuthorizationError]);
+const WsEditGetRpc = Rpc.make(WS_METHODS.editGet, {
+  payload: EditProjectInput,
+  success: EditSnapshot,
+  error: EditRpcError,
+});
+const WsEditApplyRpc = Rpc.make(WS_METHODS.editApply, {
+  payload: EditApplyInput,
+  success: EditSnapshot,
+  error: Schema.Union([
+    EditUnavailableError,
+    EditConflict,
+    EditValidationError,
+    EditOpError,
+    EnvironmentAuthorizationError,
+  ]),
+});
+const WsEditSubscribeRpc = Rpc.make(WS_METHODS.editSubscribe, {
+  payload: EditProjectInput,
+  success: EditSnapshot,
+  error: EditRpcError,
+  stream: true,
+});
+const WsEditUndoRpc = Rpc.make(WS_METHODS.editUndo, {
+  payload: EditProjectInput,
+  success: EditSnapshot,
+  error: EditRpcError,
+});
+const WsEditRedoRpc = Rpc.make(WS_METHODS.editRedo, {
+  payload: EditProjectInput,
+  success: EditSnapshot,
+  error: EditRpcError,
+});
+
+const TranscriptRpcError = Schema.Union([
+  EnvironmentAuthorizationError,
+  EngineError,
+  TranscriptError,
+]);
+
+const WsTranscriptGetRpc = Rpc.make(WS_METHODS.transcriptGet, {
+  payload: TranscriptMediaInput,
+  success: TranscriptGetResult,
+  error: TranscriptRpcError,
+});
+
+// Transcription is an engine job: progress and cancel go through engine.jobs.*.
+const WsTranscribeRunRpc = Rpc.make(WS_METHODS.transcribeRun, {
+  payload: TranscribeRunInput,
+  success: TranscribeRunResult,
+  error: TranscriptRpcError,
+});
+
+const WsTranscribeModelsStatusRpc = Rpc.make(WS_METHODS.transcribeModelsStatus, {
+  payload: TranscribeModelsStatusInput,
+  success: TranscribeModelsStatus,
+  error: TranscriptRpcError,
+});
+
+const WsTranscribeModelsDownloadRpc = Rpc.make(WS_METHODS.transcribeModelsDownload, {
+  payload: TranscribeModelsDownloadInput,
+  success: TranscribeModelsDownloadResult,
+  error: TranscriptRpcError,
+});
+
+const WsTranscribeModelsDismissRpc = Rpc.make(WS_METHODS.transcribeModelsDismiss, {
+  payload: TranscribeModelsDismissInput,
+  success: TranscribeModelsStatus,
+  error: TranscriptRpcError,
+});
+
+const MediaRpcError = Schema.Union([MediaLibraryError, EnvironmentAuthorizationError]);
+const WsMediaImportPlanRpc = Rpc.make(WS_METHODS.mediaImportPlan, {
+  payload: MediaImportPlanInput,
+  success: MediaImportPlan,
+  error: MediaRpcError,
+});
+// Returns once the media is in edit.json; a copy's progress streams on media.subscribe.
+const WsMediaImportRpc = Rpc.make(WS_METHODS.mediaImport, {
+  payload: MediaImportInput,
+  success: MediaImportResult,
+  error: MediaRpcError,
+});
+const WsMediaListRpc = Rpc.make(WS_METHODS.mediaList, {
+  payload: MediaLibraryInput,
+  success: MediaLibrarySnapshot,
+  error: MediaRpcError,
+});
+const WsMediaSubscribeRpc = Rpc.make(WS_METHODS.mediaSubscribe, {
+  payload: MediaLibraryInput,
+  success: MediaLibrarySnapshot,
+  error: MediaRpcError,
+  stream: true,
+});
+const WsMediaRelinkRpc = Rpc.make(WS_METHODS.mediaRelink, {
+  payload: MediaRelinkInput,
+  success: MediaImportResult,
+  error: MediaRpcError,
+});
+
 export const WsRpcGroup = RpcGroup.make(
   WsServerProbeRpc,
   WsServerGetConfigRpc,
@@ -2143,4 +2340,23 @@ export const WsRpcGroup = RpcGroup.make(
   WsOrchestrationV2SubscribeShellRpc,
   WsOrchestrationV2SubscribeThreadRpc,
   WsOrchestrationV2SubscribeCommandOutputRpc,
+  WsEngineJobsSubscribeRpc,
+  WsEngineJobsCancelRpc,
+  WsExportStartRpc,
+  WsExportStatusRpc,
+  WsEditGetRpc,
+  WsEditApplyRpc,
+  WsEditSubscribeRpc,
+  WsEditUndoRpc,
+  WsEditRedoRpc,
+  WsTranscriptGetRpc,
+  WsTranscribeRunRpc,
+  WsTranscribeModelsStatusRpc,
+  WsTranscribeModelsDownloadRpc,
+  WsTranscribeModelsDismissRpc,
+  WsMediaImportPlanRpc,
+  WsMediaImportRpc,
+  WsMediaListRpc,
+  WsMediaSubscribeRpc,
+  WsMediaRelinkRpc,
 ).middleware(RpcScopeAuthorization);

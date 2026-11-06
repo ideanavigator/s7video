@@ -35,6 +35,7 @@
     "scripts/warm-dep-cache.ts",
     "../../scripts/lib/public-config.ts",
     "../../scripts/lib/third-party-licenses.ts",
-    "../../scripts/lib/brand-config.ts"
+    "../../scripts/lib/brand-config.ts",
+    "../../scripts/lib/test-media.ts"
   ]
 }

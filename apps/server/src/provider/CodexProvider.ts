@@ -1,4 +1,5 @@
 import { BRAND } from "@t3tools/shared/brand";
+import { satisfiesSemverRange } from "@t3tools/shared/semver";
 import { pipe } from "effect/Function";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -55,6 +56,7 @@ import {
 } from "./codexUsageLimits.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import packageJson from "../../package.json" with { type: "json" };
+import { builtInSkillPluginDirsForCwd, builtInSkillsRoot } from "../skills/BuiltInSkills.ts";
 const isCodexAppServerSpawnError = Schema.is(CodexErrors.CodexAppServerSpawnError);
 const RATE_LIMITS_PROBE_TIMEOUT_MS = 3_000;
 
@@ -81,6 +83,18 @@ const CODEX_DISCOVERY_MARGIN_MS = 250;
 // `codex-cli 0.159.0`, `codex-cli 0.160.0-alpha.1` or the npm CLI's bare `0.1.4161006`.
 // Keep a prerelease suffix so compatibility stays unknown for it, as it does for `initialize`.
 const CODEX_CLI_VERSION_PATTERN = /(?:^|\s)v?(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)(?=\s|$)/u;
+
+/** The video tools' image results need this Codex (spike S7V-020 A3). */
+const CODEX_VIDEO_TOOLS_RANGE = ">=0.159.0";
+
+/** The plain update notice for a thread whose Codex is too old for the video tools, if it is. */
+export function codexVideoToolsVersionMessage(version: string): string | undefined {
+  const stable = CODEX_CLI_VERSION_PATTERN.exec(version)?.[1];
+  // A prerelease or unreadable version is unknown, as for compatibility; let it run.
+  if (stable === undefined || !/^\d+\.\d+\.\d+$/u.test(stable)) return undefined;
+  if (satisfiesSemverRange(stable, CODEX_VIDEO_TOOLS_RANGE)) return undefined;
+  return `Your Codex app is version ${stable}. ${BRAND.app.productName}'s video tools need 0.159 or later. Update Codex, then start a new thread.`;
+}
 
 const CODEX_PRESENTATION = {
   displayName: "Codex",
@@ -653,6 +667,21 @@ export const probeCodexSkillsForCwd = Effect.fn("probeCodexSkillsForCwd")(functi
   readonly environment?: NodeJS.ProcessEnv;
 }) {
   const { client } = yield* withCodexAppServerClient(input);
+  const path = yield* Path.Path;
+  // Built-in skills (S7V-048) show only in edit projects; extra roots live in this process only.
+  const extraRoots = (yield* builtInSkillPluginDirsForCwd(
+    input.cwd,
+    input.environment ?? process.env,
+  )).map((pluginDir) => builtInSkillsRoot(path, pluginDir));
+  if (extraRoots.length > 0) {
+    yield* client
+      .request("skills/extraRoots/set", { extraRoots })
+      .pipe(
+        Effect.catch((cause) =>
+          Effect.logDebug("Codex did not take the built-in skills folder.", { cause }),
+        ),
+      );
+  }
   const skillsResponse = yield* client.request("skills/list", { cwds: [input.cwd] });
   return parseCodexSkillsListResponse(skillsResponse, input.cwd);
 });

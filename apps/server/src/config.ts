@@ -50,6 +50,10 @@ export interface ServerDerivedPaths {
   readonly providerLogsDir: string;
   readonly providerEventLogPath: string;
   readonly terminalLogsDir: string;
+  /** The video engine's stderr logs (S7V-022). */
+  readonly engineLogsDir: string;
+  /** Downloaded engine models; the engine's `HF_HOME`. */
+  readonly engineModelsDir: string;
   readonly anonymousIdPath: string;
   readonly environmentIdPath: string;
   readonly serverRuntimeStatePath: string;
@@ -164,6 +168,8 @@ export const deriveServerPaths = Effect.fn(function* (
     providerLogsDir,
     providerEventLogPath: join(providerLogsDir, "events.log"),
     terminalLogsDir: join(logsDir, "terminals"),
+    engineLogsDir: join(logsDir, "engine"),
+    engineModelsDir: join(stateDir, "models"),
     anonymousIdPath: join(stateDir, "anonymous-id"),
     environmentIdPath: join(stateDir, "environment-id"),
     serverRuntimeStatePath: join(stateDir, "server-runtime.json"),

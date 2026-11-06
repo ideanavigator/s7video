@@ -1,6 +1,15 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 
-import { applyPreferredCodexDefaultModel, mapCodexModelCapabilities } from "./CodexProvider.ts";
+import {
+  applyPreferredCodexDefaultModel,
+  codexVideoToolsVersionMessage,
+  mapCodexModelCapabilities,
+  probeCodexSkillsForCwd,
+} from "./CodexProvider.ts";
 
 it("maps current Codex model capability fields", () => {
   const capabilities = mapCodexModelCapabilities({
@@ -153,3 +162,76 @@ it("ignores custom models that shadow a preferred slug", () => {
 
   assert.deepStrictEqual(models.find((model) => model.isDefault)?.slug, "gpt-5.4");
 });
+
+it("asks for a Codex update only below the video tools' 0.159", () => {
+  assert.equal(
+    codexVideoToolsVersionMessage("codex-cli 0.137.0"),
+    "Your Codex app is version 0.137.0. s7video's video tools need 0.159 or later. Update Codex, then start a new thread.",
+  );
+  assert.include(codexVideoToolsVersionMessage("0.158.9") ?? "", "version 0.158.9");
+  for (const version of ["0.159.0", "codex-cli 0.166.0", "1.0.0", "0.160.0-alpha.1", "dev"]) {
+    assert.isUndefined(codexVideoToolsVersionMessage(version), version);
+  }
+});
+
+// A fake `codex app-server` that logs each request method and lists the extra roots it was given.
+const FAKE_CODEX_APP_SERVER = (logPath: string) => `
+const fs = require("node:fs");
+let roots = [];
+let buffer = "";
+process.stdin.on("data", (chunk) => {
+  buffer += chunk;
+  for (let end = buffer.indexOf("\\n"); end >= 0; end = buffer.indexOf("\\n")) {
+    const message = JSON.parse(buffer.slice(0, end));
+    buffer = buffer.slice(end + 1);
+    if (message.id === undefined) continue;
+    fs.appendFileSync(${JSON.stringify(logPath)}, message.method + "\\n");
+    let result = {};
+    if (message.method === "initialize") {
+      result = { userAgent: "probe/0.166.0", codexHome: "/tmp/fake-codex-home", platformFamily: "unix", platformOs: "macos" };
+    } else if (message.method === "skills/extraRoots/set") {
+      roots = message.params.extraRoots;
+    } else if (message.method === "skills/list") {
+      const cwd = message.params.cwds[0];
+      const skills = roots.map((root) => ({ name: "remove-silences", description: "Remove silences", path: root + "/remove-silences/SKILL.md", scope: "user", enabled: true }));
+      result = { data: [{ cwd, skills, errors: [] }] };
+    }
+    process.stdout.write(JSON.stringify({ id: message.id, result }) + "\\n");
+  }
+});
+`;
+
+it.effect("probeCodexSkillsForCwd adds the built-in skills in edit projects only (S7V-048)", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const directory = yield* fs.makeTempDirectoryScoped({ prefix: "s7-fake-codex-" });
+    const logPath = path.join(directory, "requests.log");
+    yield* fs.writeFileString(path.join(directory, "server.cjs"), FAKE_CODEX_APP_SERVER(logPath));
+    const binaryPath = path.join(directory, "codex");
+    yield* fs.writeFileString(
+      binaryPath,
+      `#!/bin/sh\nexec "${process.execPath}" "${path.join(directory, "server.cjs")}"\n`,
+    );
+    yield* fs.chmod(binaryPath, 0o755);
+    const probe = (cwd: string) =>
+      probeCodexSkillsForCwd({ binaryPath, cwd, environment: { HOME: directory } }).pipe(
+        Effect.scoped,
+      );
+    const requests = Effect.map(fs.readFileString(logPath), (text) => text.trim().split("\n"));
+
+    const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "s7-codex-cwd-" });
+    assert.deepEqual(yield* probe(cwd), []);
+    assert.deepEqual(yield* requests, ["initialize", "skills/list"]);
+
+    yield* fs.writeFileString(path.join(cwd, "edit.json"), "{}\n");
+    yield* fs.writeFileString(path.join(cwd, "project.json"), "{}\n");
+    yield* fs.remove(logPath);
+    const skills = yield* probe(cwd);
+    assert.deepEqual(yield* requests, ["initialize", "skills/extraRoots/set", "skills/list"]);
+    assert.deepEqual(
+      skills.map((skill) => skill.path),
+      [path.resolve(import.meta.dirname, "../../skills/skills/remove-silences/SKILL.md")],
+    );
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);

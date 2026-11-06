@@ -52,6 +52,9 @@ import * as AcpRegistrySupport from "@t3tools/provider-acp-registry/server/AcpRe
 import * as CheckpointDiffQuery from "./checkpointing/CheckpointDiffQuery.ts";
 import * as NativeChildWorkQuery from "./orchestration-v2/NativeChildWorkQuery.ts";
 import * as CheckpointStore from "./checkpointing/CheckpointStore.ts";
+import * as EditDocumentService from "./edit/EditDocumentService.ts";
+import * as EditHistoryService from "./edit/EditHistoryService.ts";
+import * as EditProjectLayout from "./edit/EditProjectLayout.ts";
 import * as SourceControlBuiltInDrivers from "./sourceControl/builtInDrivers.ts";
 import * as SourceControlSignIn from "./sourceControl/SourceControlSignIn.ts";
 import { BUILT_IN_SOURCE_CONTROL_DRIVER_LIST } from "./sourceControl/sourceControlDefinitions.ts";
@@ -88,6 +91,7 @@ import * as ManagedLimits from "./policy/managedLimits.ts";
 import * as ManagedPolicy from "./policy/ManagedPolicy.ts";
 import * as ProjectEnrichmentService from "./project/ProjectEnrichmentService.ts";
 import * as NativeAppIconResolver from "./assets/NativeAppIconResolver.ts";
+import * as MediaLibraryService from "./media/MediaLibraryService.ts";
 import * as AntigravityInstallation from "./provider/AntigravityInstallation.ts";
 import * as CodexInstallation from "./provider/CodexInstallation.ts";
 import * as ProviderInstanceRegistry from "./provider/ProviderInstanceRegistry.ts";
@@ -109,6 +113,10 @@ import * as VcsProcess from "./vcs/VcsProcess.ts";
 import * as VcsProvisioningService from "./vcs/VcsProvisioningService.ts";
 import * as VcsStatusBroadcaster from "./vcs/VcsStatusBroadcaster.ts";
 import * as ProjectCloneTracker from "./project/ProjectCloneTracker.ts";
+import * as EngineService from "./engine/EngineService.ts";
+import * as ExportService from "./export/ExportService.ts";
+import * as TranscriptService from "./transcript/TranscriptService.ts";
+import * as SilenceCutService from "./edit/SilenceCutService.ts";
 import * as GitWorkflowService from "./git/GitWorkflowService.ts";
 import * as ReviewService from "./review/ReviewService.ts";
 import * as SourceControlProviderRegistry from "./sourceControl/SourceControlProviderRegistry.ts";
@@ -396,6 +404,12 @@ const layerVcs = Layer.empty.pipe(
 
 const layerCheckpointStore = CheckpointStore.layer.pipe(Layer.provide(layerVcsDriverRegistry));
 
+// The one writer of edit.json; WebSocket handlers and agent tools share it (S7V-024).
+const layerEditDocument = EditDocumentService.layer.pipe(
+  Layer.provide(EditHistoryService.layer.pipe(Layer.provide(layerCheckpointStore))),
+  Layer.provide(EditProjectLayout.layer),
+);
+
 const layerPortScanner = PortScanner.layer.pipe(Layer.provide(ProcessRunner.layer));
 
 const layerTerminal = TerminalManager.layer.pipe(
@@ -574,7 +588,14 @@ const layerRuntimeCoreDependencies = layerRuntimeCoreDependenciesBase.pipe(
   Layer.provideMerge(ServerSecretStore.layer),
 );
 
-const layerRuntimeDependencies = layerRuntimeCoreDependencies.pipe(
+// Export and transcription resolve projects and their edit documents, so they sit above both;
+// imports and the project-media asset route share one library (S7V-025).
+const layerRuntimeDependencies = MediaLibraryService.layer.pipe(
+  Layer.provideMerge(SilenceCutService.layer),
+  Layer.provideMerge(ExportService.layer.pipe(Layer.provideMerge(TranscriptService.layer))),
+  Layer.provideMerge(layerEditDocument),
+  Layer.provideMerge(layerRuntimeCoreDependencies),
+
   Layer.provideMerge(layerUsage),
   Layer.provideMerge(layerBackground),
   Layer.provideMerge(layerResourceDiagnostics),
@@ -586,6 +607,7 @@ const layerRuntimeDependencies = layerRuntimeCoreDependencies.pipe(
   Layer.provideMerge(RemoteOpenTargets.layer),
   Layer.provideMerge(DirectEndpoints.layer),
   Layer.provideMerge(ServerLifecycleEvents.layer),
+  Layer.provideMerge(EngineService.layer),
   Layer.provide(NetService.layer),
 );
 

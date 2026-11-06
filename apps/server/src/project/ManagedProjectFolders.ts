@@ -23,6 +23,7 @@ import * as Schema from "effect/Schema";
 
 import * as ServerConfig from "../config.ts";
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
+import * as EditProjectLayout from "../edit/EditProjectLayout.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as ProjectService from "./ProjectService.ts";
 
@@ -210,6 +211,7 @@ const make = Effect.gen(function* () {
   const git = yield* GitVcsDriver.GitVcsDriver;
   const projects = yield* ProjectService.ProjectService;
   const crypto = yield* Crypto.Crypto;
+  const editLayout = yield* EditProjectLayout.EditProjectLayout;
 
   // Non-recursive mkdir atomically claims a name; racers move on after AlreadyExists.
   const claimFreeFolder = Effect.fnUntraced(function* <E>(
@@ -396,11 +398,13 @@ const make = Effect.gen(function* () {
       path.join(cwd, "assets", "icon.svg"),
       namedProjectIconSvg(name),
     );
+    // Every named project is an edit project: edit.json, project.json and the whitelist ignore.
+    const layoutFiles = yield* editLayout.ensure(cwd);
     // Force explicit filenames so global ignore rules cannot drop them.
     yield* git.execute({
       operation: "ManagedProjectFolders.add",
       cwd,
-      args: ["add", "--force", "--", "README.md", "assets/icon.svg"],
+      args: ["add", "--force", "--", "README.md", "assets/icon.svg", ...layoutFiles],
       timeoutMs: 10_000,
     });
     return yield* git
@@ -469,4 +473,6 @@ const make = Effect.gen(function* () {
   });
 });
 
-export const layer = Layer.effect(ManagedProjectFolders, make);
+export const layer = Layer.effect(ManagedProjectFolders, make).pipe(
+  Layer.provide(EditProjectLayout.layer),
+);

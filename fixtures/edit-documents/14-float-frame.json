@@ -1,0 +1,52 @@
+{
+  "version": 1,
+  "fps": {
+    "num": 30,
+    "den": 1
+  },
+  "canvas": {
+    "width": 1080,
+    "height": 1920
+  },
+  "media": [
+    {
+      "id": "cam",
+      "kind": "video",
+      "path": "assets/cam.mp4",
+      "fingerprint": {
+        "sha256": "abababababababababababababababababababababababababababababababab",
+        "size": 3145728
+      },
+      "probe": {
+        "hasVideo": true,
+        "hasAudio": true,
+        "durationFrames": 900,
+        "width": 1920,
+        "height": 1080,
+        "fps": {
+          "num": 30,
+          "den": 1
+        },
+        "codec": "h264"
+      }
+    }
+  ],
+  "tracks": [
+    {
+      "kind": "video",
+      "id": "V1",
+      "role": "main",
+      "items": [
+        {
+          "id": "v1",
+          "media": "cam",
+          "start": 12.5,
+          "duration": 300,
+          "in": 0
+        }
+      ]
+    }
+  ],
+  "markers": [],
+  "metadata": {}
+}

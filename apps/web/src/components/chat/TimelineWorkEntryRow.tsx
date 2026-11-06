@@ -47,6 +47,8 @@ import { cn } from "~/lib/utils";
 import { formatUpcomingTimestamp } from "../../timestampFormat";
 import { FetchedToolOutput, V2ItemInspector } from "./V2ItemInspector";
 import { SubagentNotificationLink } from "./V2LifecycleRow";
+import { OpenInEditorButton } from "../editor/OpenInEditorButton";
+import { isVideoToolName } from "../../editor/videoTools";
 import {
   TimelineRowCtx,
   TimelineRowActivityCtx,
@@ -470,6 +472,9 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
             >
               Open chat
             </button>
+          ) : null}
+          {threadRef && payload?.type === "dynamic_tool" && isVideoToolName(payload.toolName) ? (
+            <OpenInEditorButton threadRef={threadRef} />
           ) : null}
           {notifiedSubagentThreadId ? (
             <InlineButton

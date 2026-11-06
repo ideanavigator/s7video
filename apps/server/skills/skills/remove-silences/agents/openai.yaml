@@ -1,0 +1,3 @@
+interface:
+  display_name: "Remove silences"
+  short_description: "Cut the pauses from your clip"

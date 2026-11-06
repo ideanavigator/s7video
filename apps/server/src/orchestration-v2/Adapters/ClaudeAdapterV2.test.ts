@@ -80,7 +80,10 @@ import { attachmentRelativePath } from "../../attachmentStore.ts";
 import { WorkflowAgentTranscriptReadObserver } from "../workflowAgentTranscript.ts";
 import * as ServerConfig from "../../config.ts";
 import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
-import { T3_CODE_DEVICE_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH } from "@t3tools/provider-core/server/orchestrationInstructions";
+import {
+  T3_CODE_DEVICE_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH,
+  T3_CODE_VIDEO_EDIT_INSTRUCTIONS_WITH_TOOL_SEARCH,
+} from "@t3tools/provider-core/server/orchestrationInstructions";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import { PreviewControlsToolkit } from "../../mcp/toolkits/previewControls/tools.ts";
 import { HtmlToolkit } from "../../mcp/toolkits/html/tools.ts";
@@ -662,8 +665,47 @@ describe("ClaudeAdapterV2 native protocol logging", () => {
   });
 });
 
+describe("ClaudeAdapterV2 video edit instructions", () => {
+  const append = (input: { readonly mcp: boolean; readonly videoToolsAvailable: boolean }) =>
+    (
+      ClaudeAdapterV2.makeClaudeQueryOptions({
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("claudeAgent"),
+          model: "claude-haiku-5-5",
+        },
+        nativeThreadId: "native-thread-claude-video",
+        resume: false,
+        cwd: "/workspace",
+        ...(input.mcp
+          ? { mcpServers: { "t3-code": { type: "http" as const, url: "http://127.0.0.1/mcp" } } }
+          : {}),
+        videoToolsAvailable: input.videoToolsAvailable,
+        environment: {},
+      }).systemPrompt as { readonly append?: string }
+    ).append ?? "";
+
+  it("tells a video session to undo with the video tools and how to load them", () => {
+    const text = append({ mcp: true, videoToolsAvailable: true });
+    assert.include(text, T3_CODE_VIDEO_EDIT_INSTRUCTIONS_WITH_TOOL_SEARCH);
+    assert.include(text, "select:mcp__t3-code__video_undo,mcp__t3-code__video_redo");
+    assert.isAtMost(
+      Buffer.byteLength(T3_CODE_VIDEO_EDIT_INSTRUCTIONS_WITH_TOOL_SEARCH, "utf8"),
+      250,
+    );
+  });
+
+  it("leaves the video line out without the video capability or without T3 tools", () => {
+    assert.notInclude(append({ mcp: true, videoToolsAvailable: false }), "video_ tools");
+    assert.notInclude(append({ mcp: false, videoToolsAvailable: true }), "video_ tools");
+  });
+});
+
 describe("ClaudeAdapterV2 device instructions", () => {
-  const options = (input: { readonly mcp: boolean; readonly deviceToolsAvailable: boolean }) =>
+  const options = (input: {
+    readonly mcp: boolean;
+    readonly deviceToolsAvailable: boolean;
+    readonly videoToolsAvailable?: boolean;
+  }) =>
     ClaudeAdapterV2.makeClaudeQueryOptions({
       modelSelection: {
         instanceId: ProviderInstanceId.make("claudeAgent"),
@@ -676,6 +718,9 @@ describe("ClaudeAdapterV2 device instructions", () => {
         ? { mcpServers: { "t3-code": { type: "http" as const, url: "http://127.0.0.1/mcp" } } }
         : {}),
       deviceToolsAvailable: input.deviceToolsAvailable,
+      ...(input.videoToolsAvailable === undefined
+        ? {}
+        : { videoToolsAvailable: input.videoToolsAvailable }),
       environment: {},
     });
   const append = (input: { readonly mcp: boolean; readonly deviceToolsAvailable: boolean }) =>
@@ -692,11 +737,12 @@ describe("ClaudeAdapterV2 device instructions", () => {
     assert.notInclude(append({ mcp: false, deviceToolsAvailable: true }), "## T3 Code devices");
   });
 
-  it("gives native subagents the device block only in a session with device access", async () => {
+  it("gives native subagents the device and video blocks only in sessions with that access", async () => {
     // Subagents start from their task prompt, not the parent's system prompt.
     const subagentContext = (input: {
       readonly mcp: boolean;
       readonly deviceToolsAvailable: boolean;
+      readonly videoToolsAvailable?: boolean;
     }) =>
       Promise.all(
         (options(input).hooks?.SubagentStart ?? []).flatMap((matcher) =>
@@ -724,8 +770,28 @@ describe("ClaudeAdapterV2 device instructions", () => {
         },
       },
     ]);
+    const context = (additionalContext: string) => [
+      { hookSpecificOutput: { hookEventName: "SubagentStart" as const, additionalContext } },
+    ];
+    assert.deepEqual(
+      await subagentContext({ mcp: true, deviceToolsAvailable: false, videoToolsAvailable: true }),
+      context(T3_CODE_VIDEO_EDIT_INSTRUCTIONS_WITH_TOOL_SEARCH),
+    );
+    assert.deepEqual(
+      await subagentContext({ mcp: true, deviceToolsAvailable: true, videoToolsAvailable: true }),
+      context(
+        `${T3_CODE_DEVICE_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH}\n\n${T3_CODE_VIDEO_EDIT_INSTRUCTIONS_WITH_TOOL_SEARCH}`,
+      ),
+    );
+    assert.deepEqual(
+      await subagentContext({ mcp: true, deviceToolsAvailable: false, videoToolsAvailable: false }),
+      [],
+    );
     assert.deepEqual(await subagentContext({ mcp: true, deviceToolsAvailable: false }), []);
-    assert.deepEqual(await subagentContext({ mcp: false, deviceToolsAvailable: true }), []);
+    assert.deepEqual(
+      await subagentContext({ mcp: false, deviceToolsAvailable: true, videoToolsAvailable: true }),
+      [],
+    );
   });
 });
 
@@ -996,6 +1062,115 @@ describe("ClaudeAdapterV2 Auto-accept edits", () => {
           decision: "accept",
         });
         assert.equal((yield* Fiber.join(decision))?.behavior, "allow");
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+});
+
+describe("ClaudeAdapterV2 built-in skills (S7V-048)", () => {
+  const startSkillTurn = Effect.fnUntraced(function* (video: boolean) {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+    const attachmentsDir = yield* fileSystem.makeTempDirectoryScoped({
+      prefix: "t3-claude-built-in-skills-",
+    });
+    const threadId = ThreadId.make(`thread-claude-built-in-skills-${video}`);
+    yield* mcpSessions.set({
+      environmentId: EnvironmentId.make("environment-built-in-skills"),
+      threadId,
+      providerSessionId: `mcp-session-${threadId}`,
+      providerInstanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
+      endpoint: "http://127.0.0.1:43123/mcp",
+      authorizationHeader: "Bearer dummy-mcp-credential",
+      browserToolsAvailable: false,
+      capabilities: new Set(video ? ["orchestration", "video"] : ["orchestration"]),
+    });
+    let openedOptions: ClaudeAdapterV2.ClaudeAgentSdkQueryOptions | undefined;
+    const offered: Array<unknown> = [];
+    const adapter = yield* ClaudeAdapterV2.makeClaudeAdapterV2({
+      instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
+      settings: { ...DEFAULT_CLAUDE_SETTINGS, homePath: attachmentsDir },
+      environment: {},
+      attachmentsDir,
+      fileSystem,
+      path,
+      crypto: yield* Crypto.Crypto,
+      idAllocator: yield* IdAllocator.IdAllocatorV2,
+      queryRunner: {
+        allocateSessionId: Effect.succeed(`native-${threadId}`),
+        open: (input) =>
+          Effect.sync(() => {
+            openedOptions = input.options;
+            return {
+              messages: Stream.never,
+              offer: (message: unknown) => Effect.sync(() => void offered.push(message)),
+              setModel: () => Effect.void,
+              applyFlagSettings: () => Effect.void,
+              setPermissionMode: () => Effect.void,
+              backgroundTasks: () => Effect.succeed(false),
+              stopTask: () => Effect.void,
+              interrupt: Effect.void,
+              close: Effect.void,
+            };
+          }),
+        forkSession: () => Effect.die("unused"),
+        subagentLaunchToolUseId: () => Effect.succeed(null),
+        assertComplete: Effect.void,
+      },
+    });
+    const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      cwd: attachmentsDir,
+    });
+    const runtime = yield* adapter.openSession({
+      threadId,
+      providerSessionId: ProviderSessionId.make(`provider-session-${threadId}`),
+      modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+      runtimePolicy,
+    });
+    const providerThread = yield* runtime.ensureThread({
+      threadId,
+      modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+      runtimePolicy,
+    });
+    yield* runtime.startTurn(
+      makeClaudeTestTurnInput({
+        threadId,
+        providerThread,
+        now: yield* DateTime.now,
+        attemptId: RunAttemptId.make(`attempt-${threadId}`),
+        text: "$video:remove-silences",
+        attachments: [],
+        runtimePolicy,
+      }),
+    );
+    return { options: openedOptions, offered: JSON.stringify(offered) };
+  });
+
+  it.effect("claude adapter passes the built-in plugin to video threads only", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const video = yield* startSkillTurn(true);
+        assert.deepEqual(video.options?.plugins, [
+          {
+            type: "local",
+            path: path.resolve(import.meta.dirname, "../../../skills"),
+            skipMcpDiscovery: true,
+          },
+        ]);
+        assert.include(video.offered, '"/video:remove-silences"');
+
+        const plain = yield* startSkillTurn(false);
+        assert.isUndefined(plain.options?.plugins);
+        assert.include(plain.offered, "$video:remove-silences");
+        assert.notInclude(plain.offered, '"/video:remove-silences"');
       }).pipe(
         Effect.provide(
           Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),

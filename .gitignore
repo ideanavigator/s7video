@@ -48,3 +48,15 @@ node_modules/
 
 # pnpm content-addressable store; never belongs in the repo.
 .pnpm-store/
+
+# Test media is fetched into a cache outside the repo (pnpm media:fetch); never commit clips here.
+fixtures/media/**/*.mp4
+fixtures/media/**/*.mov
+fixtures/media/**/*.m4a
+fixtures/media/**/*.wav
+fixtures/media/**/*.mkv
+fixtures/media/**/*.webm
+# Python environments (packages/engine).
+.venv/
+__pycache__/
+.pytest_cache/

@@ -147,6 +147,11 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
     useRightPanelStore.getState().open(activeThreadRef, "files");
   };
   const addFilesSurfaceStable = useStableCallback(addFilesSurface);
+  const addEditorSurface = () => {
+    if (!activeThreadRef || !activeProject) return;
+    useRightPanelStore.getState().openEditor(activeThreadRef, activeProject.id);
+  };
+  const addEditorSurfaceStable = useStableCallback(addEditorSurface);
   const addPullRequestsSurface = () => {
     if (!activeThreadRef || !pullRequestsSurfaceAvailable) return;
     useRightPanelStore.getState().open(activeThreadRef, "pull-requests");
@@ -345,6 +350,7 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
     activateRightPanelSurfaceStable,
     addDeviceSurfaceStable,
     addDiffSurfaceStable,
+    addEditorSurfaceStable,
     addFilesSurfaceStable,
     addPullRequestSurfaceStable,
     addPullRequestsSurfaceStable,
