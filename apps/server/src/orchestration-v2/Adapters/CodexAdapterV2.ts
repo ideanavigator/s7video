@@ -2,6 +2,7 @@ import { BRAND } from "@t3tools/shared/brand";
 import { pipe } from "effect/Function";
 import * as DocumentText from "../../provider/DocumentText.ts";
 import { revertCodexThread } from "../../provider/CodexThreadRevert.ts";
+import { builtInSkillsRoot, resolveBuiltInSkillsPluginDir } from "../../skills/BuiltInSkills.ts";
 import { historyResponseItems } from "@t3tools/provider-core/server/handoffBudget";
 import { makeProviderTextDeltaCoalescer } from "./ProviderTextDeltaCoalescer.ts";
 import {
@@ -1004,6 +1005,23 @@ const CodexThreadHistoryMetadata = Schema.Struct({
 });
 const decodeCodexThreadHistoryMetadata = Schema.decodeUnknownEffect(CodexThreadHistoryMetadata);
 
+/** Adds the built-in skills folder (S7V-048) as an extra root for this app-server process. */
+const setCodexBuiltInSkillsRoot = Effect.fn("CodexAdapterV2.setBuiltInSkillsRoot")(function* (
+  client: Pick<CodexClient.CodexAppServerClient["Service"], "request">,
+  environment: NodeJS.ProcessEnv,
+) {
+  const path = yield* Path.Path;
+  const pluginDir = yield* resolveBuiltInSkillsPluginDir(environment);
+  if (pluginDir === undefined) return;
+  yield* client
+    .request("skills/extraRoots/set", { extraRoots: [builtInSkillsRoot(path, pluginDir)] })
+    .pipe(
+      Effect.catch((cause) =>
+        Effect.logWarning("Codex did not take the built-in skills folder.", { cause }),
+      ),
+    );
+});
+
 const readCodexThreadHistoryMetadata = Effect.fn("CodexAdapterV2.readThreadHistoryMetadata")(
   function* (
     raw: Pick<CodexClient.CodexAppServerClient["Service"]["raw"], "request">,
@@ -1657,6 +1675,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
   adapterOptions: CodexAdapterV2Options,
 ) {
   const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+  const adapterPath = yield* Path.Path;
   const readMcpSession = (threadId: ThreadId | null) =>
     // @effect-diagnostics-next-line effectSucceedWithVoid:off - This optional result requires undefined, not the wider void type.
     threadId === null ? Effect.succeed(undefined) : mcpSessions.read(threadId);
@@ -1763,11 +1782,11 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 }),
               );
             const version = userAgent && /\/(\S+)/u.exec(userAgent)?.[1];
+            const videoThread =
+              (yield* readMcpSession(input.threadId))?.capabilities?.has("video") === true;
             // In a video project the agent needs the video tools; say so instead of failing them.
             const videoProblem =
-              version && (yield* readMcpSession(input.threadId))?.capabilities?.has("video")
-                ? codexVideoToolsVersionMessage(version)
-                : undefined;
+              version && videoThread ? codexVideoToolsVersionMessage(version) : undefined;
             if (videoProblem !== undefined) {
               return yield* new ProviderSetupError({
                 instanceId: adapterOptions.instanceId,
@@ -1789,6 +1808,13 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               });
             }
             yield* client.notify("initialized", undefined);
+            // Built-in skills (S7V-048) for this app-server process only; Codex's own home is untouched.
+            if (videoThread) {
+              yield* setCodexBuiltInSkillsRoot(client, adapterOptions.environment).pipe(
+                Effect.provideService(FileSystem.FileSystem, fileSystem),
+                Effect.provideService(Path.Path, adapterPath),
+              );
+            }
             yield* Ref.set(initialized, true);
           }),
         );

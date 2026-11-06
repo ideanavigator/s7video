@@ -924,6 +924,9 @@ export const DESKTOP_FILE_EXCLUSIONS = [
   "!apps/desktop/prod-resources/wsl-runtime.tar.gz.sha256",
   "!apps/desktop/gnome-extension",
   "!apps/desktop/gnome-extension/**/*",
+  // Shipped once, as the `skills` extra resource (S7V-048).
+  "!apps/server/skills",
+  "!apps/server/skills/**/*",
 ] as const;
 // Windows terminal helpers cannot run on macOS and slow signing and notarization.
 export const MAC_FILE_EXCLUSIONS = [
@@ -1013,6 +1016,11 @@ export const DESKTOP_EXTRA_RESOURCES = [
   {
     from: "apps/desktop/prod-resources/resource-monitor",
     to: "resource-monitor",
+  },
+  // Built-in agent skills (S7V-048): agents read them, so they stay outside app.asar.
+  {
+    from: "apps/server/skills",
+    to: "skills",
   },
 ] as const;
 export const LINUX_CAPTURE_EXTRA_RESOURCES = [
@@ -3378,6 +3386,10 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
   if (options.platform !== "win") {
     yield* fs.copy(distDirs.serverDist, path.join(stageAppDir, "apps/server/dist"));
   }
+  yield* fs.copy(
+    path.join(repoRoot, "apps/server/skills"),
+    path.join(stageAppDir, "apps/server/skills"),
+  );
   yield* stageResourceMonitor({
     repoRoot,
     stageResourcesDir,

@@ -12,7 +12,7 @@ import { parse as parseYamlDocument } from "yaml";
 
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 
-type ClaudeSkillScope = "user" | "project";
+type ClaudeSkillScope = "user" | "project" | "system";
 
 type ClaudeSkillRoot = {
   readonly directory: string;
@@ -484,11 +484,60 @@ export function claudeLaunchArgDirectories(launchArgs?: string): ReadonlyArray<s
   return directories;
 }
 
+function parseSkillDisplayName(contents: string): string | undefined {
+  let parsed: unknown;
+  try {
+    parsed = parseYamlDocument(contents);
+  } catch {
+    return undefined;
+  }
+  const interfaceRecord =
+    typeof parsed === "object" && parsed !== null
+      ? (parsed as Record<string, unknown>).interface
+      : undefined;
+  const value =
+    typeof interfaceRecord === "object" && interfaceRecord !== null
+      ? (interfaceRecord as Record<string, unknown>).display_name
+      : undefined;
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+/** The friendly name Codex also reads, from `agents/openai.yaml` (`interface.display_name`). */
+const readSkillDisplayName = Effect.fn("readSkillDisplayName")(function* (skillDir: string) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const contents = yield* fileSystem
+    .readFileString(path.join(skillDir, "agents", "openai.yaml"))
+    .pipe(Effect.orElseSucceed(() => undefined));
+  return contents === undefined ? undefined : parseSkillDisplayName(contents);
+});
+
+/** Skill roots of plugin folders the app passes with `--plugin-dir` (s7video built-in skills). */
+const localPluginSkillRoots = Effect.fn("localPluginSkillRoots")(function* (
+  pluginDirs: ReadonlyArray<string>,
+) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const roots: Array<ClaudeSkillRoot> = [];
+  for (const pluginDir of pluginDirs) {
+    const manifest = yield* fileSystem
+      .readFileString(path.join(pluginDir, ".claude-plugin", "plugin.json"))
+      .pipe(
+        Effect.flatMap(Schema.decodeUnknownEffect(PluginManifest)),
+        Effect.orElseSucceed(() => undefined),
+      );
+    const prefix = manifest?.name ?? path.basename(pluginDir);
+    roots.push({ directory: path.join(pluginDir, "skills"), scope: "system", prefix });
+  }
+  return roots;
+});
+
 /** First name wins, matching Claude Code's precedence of user skills over project skills. */
 export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* (
   config: Pick<ClaudeSettings, "homePath"> & Partial<Pick<ClaudeSettings, "launchArgs">>,
   cwd?: string,
   environment?: NodeJS.ProcessEnv,
+  pluginDirs: ReadonlyArray<string> = [],
 ): Effect.fn.Return<ReadonlyArray<ServerProviderSkill>, never, FileSystem.FileSystem | Path.Path> {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -514,6 +563,7 @@ export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* 
       enabledPlugins,
       environment ?? process.env,
     )),
+    ...(yield* localPluginSkillRoots(pluginDirs)),
   ];
 
   const skillsByName = new Map<string, ServerProviderSkill>();
@@ -564,6 +614,8 @@ export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* 
         continue;
       }
 
+      const displayName =
+        root.scope === "system" ? yield* readSkillDisplayName(path.dirname(skillPath)) : undefined;
       const override = root.prefix ? undefined : skillOverrides.get(name);
       const userInvocationOnly =
         (frontmatter.kind === "parsed" && frontmatter.userInvocationOnly === true) ||
@@ -576,6 +628,7 @@ export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* 
         ...(frontmatter.kind === "parsed" && frontmatter.description
           ? { description: frontmatter.description }
           : {}),
+        ...(displayName ? { displayName } : {}),
         ...(userInvocationOnly ? { userInvocationOnly: true } : {}),
         ...(frontmatter.kind === "parsed" && frontmatter.userInvocable === false
           ? { userInvocable: false }

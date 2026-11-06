@@ -1,8 +1,9 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { expect, it } from "@effect/vitest";
+import { assert, expect, it } from "@effect/vitest";
 import { ProviderInstanceId } from "@t3tools/contracts";
 import { McpProviderSessions } from "@t3tools/provider-core/server/McpProviderSessions";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import { McpServer } from "effect/ai";
 
@@ -48,6 +49,8 @@ import { buildCodexAdditionalContext } from "./CodexDeveloperInstructions.ts";
 import { DocumentText } from "./DocumentText.ts";
 import { ProviderRegistry } from "./ProviderRegistry.ts";
 import budget from "./agentContextBudget.json" with { type: "json" };
+import { discoverClaudeSkills } from "./Drivers/ClaudeSkills.ts";
+import { resolveBuiltInSkillsPluginDir } from "../skills/BuiltInSkills.ts";
 
 // Registration only stores tool definitions, so the handlers' services are never called.
 const toolHandlerServices = Layer.mergeAll(
@@ -118,10 +121,36 @@ const codexAdditionalContext = (video = false) =>
 
 // CI rejects a PR that raises any value above main's agentContextBudget.json, so growth
 // needs the agent-context-increase label. Lower the values when the text shrinks.
+// Video threads list each built-in skill as one `- name: description` line (S7V-048); the body
+// loads only when the skill is used. Codex adds `(file: r1/<skill>/SKILL.md)` and one root line.
+const builtInSkills = Effect.gen(function* () {
+  const pluginDir = yield* resolveBuiltInSkillsPluginDir({});
+  assert(pluginDir !== undefined, "the built-in skills folder is missing");
+  const home = yield* (yield* FileSystem.FileSystem).makeTempDirectoryScoped();
+  const skills = yield* discoverClaudeSkills({ homePath: home }, undefined, {}, [pluginDir]);
+  const fileSystem = yield* FileSystem.FileSystem;
+  return yield* Effect.forEach(skills, (skill) =>
+    fileSystem.readFileString(skill.path).pipe(
+      Effect.map((text) => ({
+        listing: `- ${skill.name}: ${skill.description ?? ""}\n`,
+        body: text.split(/^---$/mu)[2]!.trim(),
+      })),
+    ),
+  );
+}).pipe(Effect.scoped, Effect.provide(NodeServices.layer));
+
 it.effect("agent context matches the committed budget", () =>
   Effect.gen(function* () {
     const mcp = yield* McpServer.McpServer;
+    const skills = yield* builtInSkills;
+    const toolList = JSON.stringify(mcp.tools.map(({ tool }) => tool));
+    for (const { body } of skills) {
+      for (const context of [claudeSystemAppend(), codexAdditionalContext(), toolList]) {
+        expect(context.includes(body.slice(0, 80))).toBe(false);
+      }
+    }
     const measured = {
+      builtInSkillListingBytes: skills.reduce((sum, skill) => sum + utf8Bytes(skill.listing), 0),
       claudeSystemAppendBytes: utf8Bytes(claudeSystemAppend()),
       codexAdditionalContextBytes: utf8Bytes(codexAdditionalContext()),
       // s7video: a video project's thread also gets the video edit line (S7V-041).
