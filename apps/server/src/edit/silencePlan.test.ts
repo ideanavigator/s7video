@@ -197,6 +197,79 @@ describe("silencePlan", () => {
     expect(plan.removedFrames).toBeGreaterThan(0);
   });
 
+  it("keeps a requested pause shorter than the minimum segment", () => {
+    // Review finding 1: keep 140-145 (0.17 s) inside a long pause must still play.
+    const words: Array<readonly [number, number]> = [
+      [30, 60],
+      [240, 270],
+    ];
+    const plan = planned(clip(words, 300, { keep: [{ fromFrame: 140, toFrame: 145 }] }));
+    expect(plan.ranges.some((range) => range.in <= 140 && range.in + range.duration >= 145)).toBe(
+      true,
+    );
+    expect(plan.keptRequests).toBe(1);
+    expect(plan.shortestFrames).toBeGreaterThanOrEqual(Math.ceil(MIN_SEGMENT_SECONDS * 30));
+    expect(plan.ranges).not.toEqual(planned(clip(words, 300)).ranges);
+  });
+
+  it("never brings back what the current edit removed", () => {
+    const words: Array<readonly [number, number]> = [
+      [30, 60],
+      [90, 120],
+      [150, 180],
+    ];
+    // A retake (90-120) and its pauses were removed earlier by hand.
+    const current = [
+      { in: 0, duration: 70 },
+      { in: 140, duration: 70 },
+    ];
+    const input = clip(words, 210, { current, keep: [{ fromFrame: 95, toFrame: 110 }] });
+    const plan = planned(input);
+    for (const range of plan.ranges) {
+      const inside = current.some(
+        (span) => span.in <= range.in && range.in + range.duration <= span.in + span.duration,
+      );
+      expect(inside, `${range.in}+${range.duration}`).toBe(true);
+    }
+    // A keep inside the earlier removal is not a restore request, so it is not counted.
+    expect(plan.keptRequests).toBe(0);
+    expect(plan.removedFrames).toBe(140 - plan.ranges.reduce((sum, r) => sum + r.duration, 0));
+  });
+
+  it("changes nothing when run again on its own result", () => {
+    const words: Array<readonly [number, number]> = [
+      [30, 60],
+      [90, 92],
+      [110, 140],
+      [190, 230],
+    ];
+    for (const documentRate of [fps30, { num: 25, den: 1 }, { num: 30000, den: 1001 }]) {
+      const mediaFrames = Math.floor((260 * documentRate.num) / (documentRate.den * 30));
+      const first = planned(clip(words, 260, { documentRate, mediaFrames }));
+      const second = planned(
+        clip(words, 260, { documentRate, mediaFrames, current: first.ranges }),
+      );
+      expect(second.ranges).toEqual(first.ranges);
+      expect(second).toMatchObject({ cuts: 0, removedFrames: 0 });
+    }
+  });
+
+  it("should handle very long clip", () => {
+    // 30 minutes at 30 fps: a phrase every 2 s, with pauses of 0.2 s to 1.2 s between them.
+    const frames = 30 * 60 * 30;
+    const words: Array<readonly [number, number]> = [];
+    for (let at = 15, index = 0; at + 60 < frames; index++) {
+      words.push([at, at + 30 + (index % 7)]);
+      at += 30 + (index % 7) + 6 + ((index * 5) % 31);
+    }
+    const input = clip(words, frames);
+    const plan = planned(input);
+    expectWordsKept(input, plan);
+    expect(plan.cuts).toBeGreaterThan(300);
+    expect(plan.shortestFrames).toBeGreaterThanOrEqual(Math.ceil(MIN_SEGMENT_SECONDS * 30));
+    expect(planned({ ...input, current: plan.ranges })).toMatchObject({ cuts: 0 });
+  });
+
   it("removes fewer pauses with a larger gap threshold", () => {
     const words: Array<readonly [number, number]> = [
       [30, 60],

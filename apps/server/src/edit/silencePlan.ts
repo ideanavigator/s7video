@@ -33,6 +33,11 @@ export interface SilencePlanInput {
   readonly minGapSeconds: number;
   /** Source-frame ranges that must play, applied after every other rule. */
   readonly keep: ReadonlyArray<FrameRange>;
+  /**
+   * What the edit plays of this media now, in document frames; missing when it is not placed.
+   * The plan only cuts inside these ranges: it never brings back what an earlier edit removed.
+   */
+  readonly current?: ReadonlyArray<EditSourceRange>;
 }
 
 export type SilencePlan =
@@ -40,10 +45,11 @@ export type SilencePlan =
       readonly _tag: "planned";
       /** Keep ranges in document frames, in order, none touching. */
       readonly ranges: ReadonlyArray<EditSourceRange>;
+      /** Places this plan cuts, and the document frames it removes, beyond the current edit. */
       readonly cuts: number;
       readonly removedFrames: number;
       readonly shortestFrames: number;
-      /** Requested keep ranges that stopped a cut. */
+      /** Requested keep ranges that would have been cut and play in the result. */
       readonly keptRequests: number;
     }
   | { readonly _tag: "no-speech" };
@@ -95,37 +101,80 @@ function complement(cuts: ReadonlyArray<Span>, length: number): Span[] {
   return keeps;
 }
 
+/** Sorted, with overlapping or touching spans joined. */
+function union(spans: ReadonlyArray<Span>): Span[] {
+  const joined: Span[] = [];
+  for (const [from, to] of [...spans].filter(([a, b]) => b > a).sort((x, y) => x[0] - y[0])) {
+    const last = joined.at(-1);
+    if (last !== undefined && from <= last[1]) last[1] = Math.max(last[1], to);
+    else joined.push([from, to]);
+  }
+  return joined;
+}
+
+const overlaps = (spans: ReadonlyArray<Span>, [from, to]: Span) =>
+  spans.some(([start, end]) => start < to && end > from);
+
+function subtractAll(spans: ReadonlyArray<Span>, removed: ReadonlyArray<Span>): Span[] {
+  let rest = [...spans];
+  for (const span of removed) rest = rest.flatMap((piece) => subtract(piece, span));
+  return rest;
+}
+
+const total = (spans: ReadonlyArray<Span>) => spans.reduce((sum, [from, to]) => sum + to - from, 0);
+
 /**
- * Keeps shorter than `minimum` are merged into the neighbour across the shorter cut, or dropped
- * when they hold no word. Returns the cuts that remain.
+ * Keeps shorter than `minimum` are joined into the cuts around them when they hold nothing
+ * protected (words, requested keeps). Otherwise they widen into the newly planned part of the
+ * shorter neighbouring cut; an earlier removal (`fixed`) is never given back. Returns the cuts.
  */
 function enforceMinimum(
   cuts: ReadonlyArray<Span>,
   length: number,
   minimum: number,
-  words: ReadonlyArray<Span>,
+  protect: ReadonlyArray<Span>,
+  fixed: ReadonlyArray<Span>,
 ): Span[] {
-  let current = [...cuts].sort((x, y) => x[0] - y[0]);
+  let current = union(cuts);
+  const settled = new Set<number>();
   for (;;) {
     const keeps = complement(current, length);
-    const index = keeps.findIndex(([from, to]) => to - from < minimum);
-    if (index === -1 || keeps.length === 1) return current;
-    const [from, to] = keeps[index]!;
-    const before = current.findIndex(([, end]) => end === from);
-    const after = current.findIndex(([start]) => start === to);
-    if (!words.some(([start, end]) => start < to && end > from)) {
-      // A keep without words: join the cuts on both sides through it.
-      const start = before === -1 ? from : current[before]![0];
-      const end = after === -1 ? to : current[after]![1];
-      current = [
-        ...current.filter((_, i) => i !== before && i !== after),
-        [start, end] as Span,
-      ].sort((x, y) => x[0] - y[0]);
+    if (keeps.length <= 1) return current;
+    const short = keeps.find(([from, to]) => to - from < minimum && !settled.has(from));
+    if (short === undefined) return current;
+    const [from, to] = short;
+    if (!overlaps(protect, short)) {
+      current = union([...current, short]);
       continue;
     }
-    const size = (i: number) => (i === -1 ? Infinity : current[i]![1] - current[i]![0]);
-    const drop = size(before) <= size(after) ? before : after;
-    current = current.filter((_, i) => i !== drop);
+    const before = current.findIndex(([, end]) => end === from);
+    const after = current.findIndex(([start]) => start === to);
+    // How far the keep may grow into each neighbour before it would reach an earlier removal.
+    let leftEdge = from;
+    if (before !== -1) {
+      const [a] = current[before]!;
+      leftEdge = Math.max(
+        a,
+        ...fixed.filter(([f0, f1]) => f0 < from && f1 > a).map(([, f1]) => Math.min(f1, from)),
+      );
+    }
+    let rightEdge = to;
+    if (after !== -1) {
+      const [, b] = current[after]!;
+      rightEdge = Math.min(
+        b,
+        ...fixed.filter(([f0, f1]) => f0 < b && f1 > to).map(([f0]) => Math.max(f0, to)),
+      );
+    }
+    const left = from - leftEdge;
+    const right = rightEdge - to;
+    if (left === 0 && right === 0) {
+      settled.add(from);
+      continue;
+    }
+    const widen: Span =
+      left > 0 && (right === 0 || left <= right) ? [leftEdge, from] : [to, rightEdge];
+    current = subtractAll(current, [widen]);
   }
 }
 
@@ -143,6 +192,25 @@ export function planSilenceCuts(input: SilencePlanInput): SilencePlan {
   const minSegment = Math.ceil((MIN_SEGMENT_SECONDS * input.sourceRate.num) / input.sourceRate.den);
   const quietBelow = meanLevel(input.levels, words) - QUIET_MARGIN_DB;
 
+  // What already plays, as document spans, and the rest of the source as fixed cuts. Converted
+  // inward, so the plan stays inside what plays now.
+  const playing: Span[] = union(
+    (input.current ?? [{ in: 0, duration: input.mediaFrames }]).map((range): Span => [
+      range.in,
+      Math.min(input.mediaFrames, range.in + range.duration),
+    ]),
+  );
+  const fixed =
+    input.current === undefined
+      ? []
+      : complement(
+          playing.map(([from, to]): Span => [
+            convertFrame(from, input.documentRate, input.sourceRate, true),
+            convertFrame(to, input.documentRate, input.sourceRate, false),
+          ]),
+          length,
+        );
+
   // The gaps between words, plus the lead-in and the tail.
   const gaps: Span[] = [];
   let spoken = 0;
@@ -152,60 +220,58 @@ export function planSilenceCuts(input: SilencePlanInput): SilencePlan {
   }
   if (spoken < length) gaps.push([spoken, length]);
 
-  let cuts: Span[] = [];
+  const planned: Span[] = [];
   for (const [from, to] of gaps) {
     if (to - from < minGap) continue;
     const cut: Span = [from === 0 ? 0 : from + air, to === length ? length : to - air];
     if (cut[1] <= cut[0]) continue;
-    if (meanLevel(input.levels, [cut]) <= quietBelow) cuts.push(cut);
+    if (meanLevel(input.levels, [cut]) <= quietBelow) planned.push(cut);
   }
-  cuts = enforceMinimum(cuts, length, minSegment, words);
+  let cuts = enforceMinimum([...planned, ...fixed], length, minSegment, words, fixed);
+  const before = subtractAll(cuts, fixed);
 
-  let keptRequests = 0;
-  for (const { fromFrame, toFrame } of input.keep) {
-    const range: Span = [Math.max(0, fromFrame), Math.min(length, toFrame)];
-    if (range[1] <= range[0]) continue;
-    if (cuts.some(([from, to]) => from < range[1] && to > range[0])) keptRequests++;
-    // What is left of a cut beside a kept pause is cut only if it is still a pause by itself.
-    cuts = cuts.flatMap((cut) => {
-      const pieces = subtract(cut, range);
-      return pieces.length === 1 && pieces[0] === cut
-        ? [cut]
-        : pieces.filter(([from, to]) => to - from >= minGap);
-    });
-  }
-  if (input.keep.length > 0) cuts = enforceMinimum(cuts, length, minSegment, words);
-
-  // To document frames: keeps round outward, so no word or air is lost to rounding.
-  const ranges: EditSourceRange[] = [];
-  for (const [from, to] of complement(cuts, length)) {
-    const start = convertFrame(from, input.sourceRate, input.documentRate, false);
-    const end = Math.min(
-      input.mediaFrames,
-      convertFrame(to, input.sourceRate, input.documentRate, true),
-    );
-    if (end <= start) continue;
-    const last = ranges.at(-1);
-    if (last !== undefined && start <= last.in + last.duration) {
-      ranges[ranges.length - 1] = { in: last.in, duration: end - last.in };
-    } else {
-      ranges.push({ in: start, duration: end - start });
+  const requests = input.keep
+    .map(({ fromFrame, toFrame }): Span => [Math.max(0, fromFrame), Math.min(length, toFrame)])
+    .filter(([from, to]) => to > from);
+  if (requests.length > 0) {
+    let mine = before;
+    for (const range of requests) {
+      // What is left of a cut beside a kept pause is cut only if it is still a pause by itself.
+      mine = mine.flatMap((cut) => {
+        const pieces = subtract(cut, range);
+        return pieces.length === 1 && pieces[0] === cut
+          ? [cut]
+          : pieces.filter(([from, to]) => to - from >= minGap);
+      });
     }
+    cuts = enforceMinimum([...mine, ...fixed], length, minSegment, [...words, ...requests], fixed);
   }
+  const after = subtractAll(cuts, fixed);
+  const keptRequests = requests.filter(
+    (range) => overlaps(before, range) && !overlaps(after, range),
+  ).length;
+
+  // To document frames: keeps round outward, so no word or air is lost to rounding; then they
+  // are held to what plays now.
+  const outward = complement(cuts, length).map(([from, to]): Span => [
+    convertFrame(from, input.sourceRate, input.documentRate, false),
+    convertFrame(to, input.sourceRate, input.documentRate, true),
+  ]);
+  const kept = union(outward).flatMap(([from, to]) =>
+    playing.flatMap(([start, end]): Span[] => {
+      const span: Span = [Math.max(from, start), Math.min(to, end)];
+      return span[1] > span[0] ? [span] : [];
+    }),
+  );
+  const ranges = union(kept).map(([from, to]) => ({ in: from, duration: to - from }));
   if (ranges.length === 0) return { _tag: "no-speech" };
 
-  const kept = ranges.reduce((sum, range) => sum + range.duration, 0);
-  const first = ranges[0]!;
-  const final = ranges.at(-1)!;
+  const removed = subtractAll(playing, union(kept));
   return {
     _tag: "planned",
     ranges,
-    cuts:
-      ranges.length -
-      1 +
-      (first.in > 0 ? 1 : 0) +
-      (final.in + final.duration < input.mediaFrames ? 1 : 0),
-    removedFrames: input.mediaFrames - kept,
+    cuts: union(removed).length,
+    removedFrames: total(removed),
     shortestFrames: Math.min(...ranges.map((range) => range.duration)),
     keptRequests,
   };
