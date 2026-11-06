@@ -7,10 +7,12 @@ import {
   type EditSnapshot,
   type EngineError,
   type TranscriptError,
+  type EngineJob,
   type EngineJobId,
   type MediaLibraryError,
   OrchestratorMcpFailure,
 } from "@t3tools/contracts";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
@@ -35,6 +37,7 @@ import { VideoFrameToolkit, VideoStandardToolkit, type VideoToolkit } from "./to
 const DEFAULT_FRAME_WIDTH = 640;
 const MAX_FRAME_WIDTH = 1920;
 const CANCEL_WAIT = "5 seconds";
+const MAX_JOB_WAIT_SECONDS = 30;
 
 export const NO_ROOM_TO_COPY =
   "There is not enough free space to copy this file into the project. Ask the user to add it in Assets and choose to use the file where it is.";
@@ -99,6 +102,15 @@ const projectJobs = Effect.fn("VideoHandlers.projectJobs")(function* (project: V
   const jobs =
     Option.isSome(snapshot) && snapshot.value.type === "snapshot" ? snapshot.value.jobs : [];
   return jobs.filter((job) => job.projectId === project.projectId);
+});
+
+/** The project's jobs that ended in the last few minutes, newest first (S7V-058). */
+const finishedProjectJobs = Effect.fn("VideoHandlers.finishedProjectJobs")(function* (
+  project: VideoProject,
+) {
+  const engine = yield* EngineService.EngineService;
+  const recent = yield* engine.recentJobs;
+  return recent.filter((job) => job.projectId === project.projectId).toReversed();
 });
 
 const count = (n: number, noun: string) => `${n} ${noun}${n === 1 ? "" : "s"}`;
@@ -275,10 +287,39 @@ const handlers = {
       };
     }),
   ),
-  video_job_status: McpToolAccess.readsAsCaller(({ jobId }) =>
+  video_job_status: McpToolAccess.readsAsCaller(({ jobId, waitSeconds }) =>
     Effect.gen(function* () {
-      const jobs = yield* projectJobs(yield* callerProject());
-      return { jobs: jobId === undefined ? jobs : jobs.filter((job) => job.id === jobId) };
+      const project = yield* callerProject();
+      const seconds = Math.min(waitSeconds ?? 0, MAX_JOB_WAIT_SECONDS);
+      if (jobId === undefined || seconds <= 0) {
+        const running = yield* projectJobs(project);
+        const ended = yield* finishedProjectJobs(project);
+        const jobs = [...running.filter((job) => !ended.some((e) => e.id === job.id)), ...ended];
+        return { jobs: jobId === undefined ? jobs : jobs.filter((job) => job.id === jobId) };
+      }
+      // S7V-058: one call that waits saves the agent from polling a long transcription.
+      const engine = yield* EngineService.EngineService;
+      let latest: EngineJob | undefined;
+      yield* engine.subscribeJobs.pipe(
+        Stream.map((event) => {
+          if (event.type === "snapshot") {
+            latest = event.jobs.find(
+              (job) => job.id === jobId && job.projectId === project.projectId,
+            );
+            return latest === undefined;
+          }
+          if (latest === undefined || event.job.id !== jobId) return false;
+          latest = event.job;
+          return event.job.state !== "running";
+        }),
+        Stream.filter((done) => done),
+        Stream.runHead,
+        Effect.timeoutOption(Duration.seconds(seconds)),
+      );
+      if (latest !== undefined) return { jobs: [latest] };
+      // Not running: it may have ended before this call.
+      const ended = (yield* finishedProjectJobs(project)).find((job) => job.id === jobId);
+      return { jobs: ended === undefined ? [] : [ended] };
     }),
   ),
   // Reads-level access on purpose: it stops only the caller's own project's job, which a

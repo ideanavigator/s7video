@@ -118,8 +118,12 @@ const VideoEditReadTool = Tool.make("video_edit_read", {
   .annotateMerge(READS);
 
 const VideoJobStatusTool = Tool.make("video_job_status", {
-  description: "List video jobs.",
-  parameters: Schema.Struct({ jobId: Schema.optional(EngineJobId) }),
+  description:
+    "List video jobs, running or recently ended. waitSeconds (max 30) waits for jobId to end.",
+  parameters: Schema.Struct({
+    jobId: Schema.optional(EngineJobId),
+    waitSeconds: Schema.optional(Schema.Int),
+  }),
   success: Schema.Struct({ jobs: Schema.Array(EngineJob) }),
   failure: OrchestratorMcpFailure,
   dependencies,

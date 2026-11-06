@@ -20,6 +20,7 @@ import os
 import re
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from fractions import Fraction
 from typing import TYPE_CHECKING, Any
@@ -46,6 +47,10 @@ SILENT_WORD_DBFS = -50.0
 #: The aligner's time step when its config does not say (Qwen3-ForcedAligner: 80 ms).
 DEFAULT_ALIGNER_STEP_S = 0.08
 NO_AUDIO = 1010
+#: Job progress before each model loads, and where transcription starts. A cold load is about
+#: half of a 2 min clip's first run (S7V-021: 46 s in all), so it gets a share of the bar.
+LOAD_PROGRESS = (0.05, 0.25)
+TRANSCRIBE_FROM = 0.4
 #: FFmpeg gets this long to decode a clip's audio (about 2 s for 2 min of AV1 here).
 AUDIO_DECODE_TIMEOUT = 600.0
 
@@ -305,10 +310,12 @@ def shift_to_step_middle(start: float, end: float, step: float) -> tuple[float, 
     return min(start + step / 2, max(start, end)), end
 
 
-def _transcribe_chunk(asr: Any, aligner: Any, piece: np.ndarray) -> list[Word]:
+def _transcribe_chunk(asr: Any, aligner: Any, piece: np.ndarray, aligning: Callable[[], None] | None = None) -> list[Word]:
     language, text, pieces = _recognise(asr, piece)
     if not text:
         return []
+    if aligning is not None:
+        aligning()
     aligned = aligner.generate(piece, text=text, language=language)
     items = list(aligned.items)
     confidences = word_confidences(pieces, [item.text for item in items])
@@ -460,12 +467,16 @@ def _run(params: dict[str, Any], job: JobContext) -> dict[str, Any]:
     chunks = plan_chunks(pcm)
     words_per_chunk: list[list[Word]] = []
     started = time.perf_counter()
-    with holder().use(profile, job) as (asr, aligner):
+    with holder().use(profile, job, LOAD_PROGRESS) as (asr, aligner):
         load_ms = round((time.perf_counter() - started) * 1000)
+        step = (1 - TRANSCRIBE_FROM) / max(len(chunks), 1)
         for index, chunk in enumerate(chunks):
-            job.progress(index / max(len(chunks), 1), "transcribing")
+            at = TRANSCRIBE_FROM + index * step
+            job.progress(at, "transcribing")
             piece = pcm[int(chunk.lo * SAMPLE_RATE) : int(chunk.hi * SAMPLE_RATE)]
-            words = _transcribe_chunk(asr, aligner, piece)
+            words = _transcribe_chunk(
+                asr, aligner, piece, lambda at=at: job.progress(at + step / 2, "timing the words")
+            )
             for word in words:
                 word.start += chunk.lo
                 word.end += chunk.lo
