@@ -806,6 +806,52 @@ def test_a_partial_copy_or_another_revision_is_not_offered(cache: Path, tmp_path
     assert caught.value.code == models.CACHE_MISMATCH
 
 
+def _relink(cache: Path, repo: str, name: str, target: Path) -> None:
+    """Point one snapshot entry at `target`, a file with the right bytes (so size and sha256 match)."""
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(FILES[name])
+    entry = cache / f"models--{repo.replace('/', '--')}" / "snapshots" / ("0" * 40) / name
+    entry.unlink()
+    entry.symlink_to(target)
+
+
+def test_a_link_outside_blobs_is_not_offered(cache: Path, tmp_path: Path) -> None:
+    """S7V-068: only the model's own `blobs/` folder counts, even for a file of the right size and hash."""
+    _fake_cache(cache)
+    _relink(cache, "test/aligner", "aligner.bin", tmp_path / "elsewhere" / "aligner.bin")
+    profiles = models.status()["profiles"]
+    assert profiles["default"]["found"] is None and profiles["light"]["found"] is None
+
+
+def test_reuse_refuses_a_link_outside_blobs_and_leaves_nothing(
+    cache: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _fake_cache(cache)
+    _relink(cache, "test/aligner", "aligner.bin", tmp_path / "elsewhere" / "aligner.bin")
+    read: list[Path] = []
+    monkeypatch.setattr(models, "_clonefile", lambda source, _target: read.append(source) or False)
+    for mode in ("clone", "copy"):
+        with pytest.raises(rpc.RpcError) as caught:
+            models.download("light", JobContext("r", None), mode)
+        assert caught.value.code == models.CACHE_MISMATCH
+    assert read == []  # refused before any file is read
+    lock = models.load_lock()
+    for key in ("asr-0.6b", "aligner-0.6b"):
+        folder = models.snapshot_dir(lock[key])
+        assert not folder.exists() or list(folder.rglob("*")) == []
+    assert models.status()["profiles"]["light"]["ready"] is False
+
+
+def test_a_link_into_another_models_blobs_is_not_offered(cache: Path) -> None:
+    _fake_cache(cache)
+    other = cache / "models--test--asr-small" / "blobs" / hashlib.sha256(FILES["aligner.bin"]).hexdigest()
+    _relink(cache, "test/aligner", "aligner.bin", other)
+    assert models.status()["profiles"]["light"]["found"] is None
+    with pytest.raises(rpc.RpcError) as caught:
+        models.download("light", JobContext("r", None), "clone")
+    assert caught.value.code == models.CACHE_MISMATCH
+
+
 def _blobs_on_another_disk(monkeypatch: pytest.MonkeyPatch, cache: Path) -> None:
     """The blobs the cache's symlinks point to look like another volume (an external disk)."""
     real = models._file_device

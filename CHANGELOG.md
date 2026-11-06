@@ -102,4 +102,9 @@ from; the per-ticket entries and how this file is compiled are in
   first transcription to finish instead of stopping halfway, and says so if it failed or was
   stopped. (S7V-058)
 
+### Security
+
+- No visible change: reusing a speech model from another app's download folder now accepts only
+  files inside that model's own folder, never a file a stray link points to. (S7V-068)
+
 [Unreleased]: https://github.com/ideanavigator/s7video/commits/main

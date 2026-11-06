@@ -11,7 +11,8 @@ resumes it. Errors carry fixed messages only.
 
 A copy already in another Hugging Face cache on this Mac (S7V-067) can be reused: the server names
 the folders in `S7_HF_CACHE_DIRS`, status reports a pinned revision found there with every file at
-its locked size, and `download(..., reuse=...)` clones each file in with `clonefile(2)` (a plain copy
+its locked size, each one a link into that model's own `blobs/` folder (S7V-068: an entry that
+resolves anywhere else is not a copy), and `download(..., reuse=...)` clones each file in with `clonefile(2)` (a plain copy
 only when the user agreed to the space, which status reports per file from where its blob really
 lives), checks the sha256 of the copy, and marks it verified like a download.
 Those folders are only read, never written.
@@ -190,18 +191,36 @@ def _cache_roots() -> list[Path]:
     return roots
 
 
-def cached_snapshot(model: Model) -> Path | None:
-    """The pinned revision in another cache, with every file there at its locked size."""
+def _blob_source(root: Path, model: Model, file: ModelFile) -> Path | None:
+    """The file a snapshot entry in `root` really is, only when it lies in that model's own
+    `blobs/` folder and is a regular file of the locked size. A link that points anywhere else
+    (another model's blobs, a file outside the cache) is not a source."""
+    base = root / f"models--{model.repo.replace('/', '--')}"
+    try:
+        blobs = Path(os.path.realpath(base / "blobs"))
+        source = Path(os.path.realpath(base / "snapshots" / model.revision / file.path))
+        if source == blobs or not _inside(source, blobs):
+            return None
+        info = os.stat(source)
+    except (OSError, ValueError):
+        return None
+    if not stat.S_ISREG(info.st_mode) or info.st_size != file.size:
+        return None
+    return source
+
+
+def cached_snapshot(model: Model) -> dict[str, Path] | None:
+    """The pinned revision in another cache: each locked file's resolved blob, every one inside
+    the model's own `blobs/` folder at its locked size. Callers read these paths, never the links."""
     for root in _cache_roots():
-        folder = root / f"models--{model.repo.replace('/', '--')}" / "snapshots" / model.revision
-        try:
-            if all(
-                stat.S_ISREG((info := (folder / file.path).stat()).st_mode) and info.st_size == file.size
-                for file in model.files
-            ):
-                return folder
-        except OSError:
-            continue
+        sources: dict[str, Path] = {}
+        for file in model.files:
+            source = _blob_source(root, model, file)
+            if source is None:
+                break
+            sources[file.path] = source
+        else:
+            return sources
     return None
 
 
@@ -215,13 +234,13 @@ def _device(path: Path) -> int | None:
 
 
 def _file_device(path: Path) -> int:
-    """The device of the file a cache entry really is (HF snapshot entries are symlinks to blobs)."""
-    return os.stat(os.path.realpath(path)).st_dev
+    """The device of a checked blob (`path` is already resolved by `_blob_source`)."""
+    return os.stat(path).st_dev
 
 
-def _copy_bytes(model: Model, source: Path, own: int | None) -> int:
-    """What reusing `model` from `source` takes as a plain copy: files on another volume."""
-    return sum(file.size for file in model.files if own is None or _file_device(source / file.path) != own)
+def _copy_bytes(model: Model, sources: dict[str, Path], own: int | None) -> int:
+    """What reusing `model` from `sources` takes as a plain copy: files on another volume."""
+    return sum(file.size for file in model.files if own is None or _file_device(sources[file.path]) != own)
 
 
 def _found(models: list[Model]) -> dict[str, int] | None:
@@ -233,11 +252,11 @@ def _found(models: list[Model]) -> dict[str, int] | None:
     own = _device(models_root())
     copy_bytes = 0
     for model in missing:
-        folder = cached_snapshot(model)
-        if folder is None:
+        sources = cached_snapshot(model)
+        if sources is None:
             return None
         try:
-            copy_bytes += _copy_bytes(model, folder, own)
+            copy_bytes += _copy_bytes(model, sources, own)
         except OSError:
             return None
     return {"copyBytes": copy_bytes}
@@ -449,20 +468,21 @@ _LIBSYSTEM: Any = None
 
 def _clonefile(source: Path, target: Path) -> bool:
     """`clonefile(2)`: an APFS clone or nothing. Unlike `cp -c`, it never falls back to copying;
-    it fails (EXDEV, ENOTSUP) across volumes or on a file system that can't clone."""
+    it fails (EXDEV, ENOTSUP) across volumes or on a file system that can't clone. `source` is the
+    checked blob from `_blob_source` (with no flags, `clonefile` would follow a link anyway)."""
     global _LIBSYSTEM
     try:
         if _LIBSYSTEM is None:
-            _LIBSYSTEM = ctypes.CDLL("/usr/lib/libSystem.B.dylib", use_errno=True)
-        result = _LIBSYSTEM.clonefile(os.fsencode(os.path.realpath(source)), os.fsencode(target), 0)
+            _LIBSYSTEM = ctypes.CDLL("/usr/lib/libSystem.B.dylib")
+        result = _LIBSYSTEM.clonefile(os.fsencode(source), os.fsencode(target), 0)
     except (OSError, AttributeError):
         return False
     return result == 0
 
 
 def _copy_file(source: Path, target: Path, job: JobContext) -> None:
-    """A plain copy in chunks, so Cancel stops it between chunks."""
-    with Path(os.path.realpath(source)).open("rb") as reader, target.open("wb") as writer:
+    """A plain copy in chunks, so Cancel stops it between chunks. `source` is the checked blob."""
+    with source.open("rb") as reader, target.open("wb") as writer:
         while True:
             job.raise_if_cancelled()
             chunk = reader.read(_CHUNK * 8)
@@ -509,12 +529,12 @@ def _reuse(profile: str, job: JobContext, allow_copy: bool) -> dict[str, Any]:
                 staged.unlink(missing_ok=True)
                 # Registered first, so a failed, refused or cancelled copy is cleaned up too.
                 placed.append((staged, target))
-                if not _clonefile(source / file.path, staged):
+                if not _clonefile(source[file.path], staged):
                     staged.unlink(missing_ok=True)
                     if not allow_copy:
                         raise RpcError(CACHE_NEEDS_COPY, _NEEDS_COPY)
                     _check_disk(folder, file.size)
-                    _copy_file(source / file.path, staged, job)
+                    _copy_file(source[file.path], staged, job)
                 # The check runs on our own copy, so a file changed after the size check is caught.
                 digest = hashlib.sha256()
                 with staged.open("rb") as handle:
