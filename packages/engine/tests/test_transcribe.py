@@ -11,6 +11,7 @@ import hashlib
 import http.server
 import json
 import math
+import os
 import threading
 import wave
 from collections.abc import Iterator
@@ -494,7 +495,7 @@ def test_missing_model_returns_models_missing(
 ) -> None:
     reply = _run(wire, talk, tmp_path / "cache")
     assert reply["error"]["code"] == models.MODELS_MISSING
-    assert "accept the download in the Editor panel" in reply["error"]["message"]
+    assert "press Download speech model in the Editor panel" in reply["error"]["message"]
     assert reply["error"]["data"] == {"profile": "default"}
     assert fake_models.count == 0
 
@@ -563,6 +564,7 @@ def test_download_verifies_and_reports_status(hub: FakeHub) -> None:
         "models": ["asr-1.7b", "aligner-0.6b"],
         "sizeBytes": len(FILES["big.bin"]) + len(FILES["config.json"]) + len(FILES["aligner.bin"]),
         "ready": False,
+        "found": None,
     }
     progress: list[float] = []
     result = models.download("default", JobContext("d", lambda value, _stage: progress.append(value)))
@@ -722,3 +724,171 @@ def test_shipped_lock_pins_every_model(monkeypatch: pytest.MonkeyPatch) -> None:
     default = sum(lock[key].size for key in models.PROFILES["default"])
     light = sum(lock[key].size for key in models.PROFILES["light"])
     assert 3.7e9 < default < 3.8e9 and 2.2e9 < light < 2.35e9
+
+
+# --- Reusing a copy from another Hugging Face cache (S7V-067) ---------------------------------
+
+
+def _fake_cache(root: Path, *, revision: str = "0" * 40, skip: str | None = None, corrupt: str | None = None) -> Path:
+    """The Hub cache layout: snapshot entries are symlinks into `blobs/`, as `huggingface_hub` writes."""
+    repos = {"test/asr-big": ["big.bin", "config.json"], "test/asr-small": ["small.bin"], "test/aligner": ["aligner.bin"]}
+    for repo, names in repos.items():
+        base = root / f"models--{repo.replace('/', '--')}"
+        (base / "blobs").mkdir(parents=True, exist_ok=True)
+        snapshot = base / "snapshots" / revision
+        snapshot.mkdir(parents=True, exist_ok=True)
+        for name in names:
+            if name == skip:
+                continue
+            content = FILES[name] if name != corrupt else b"X" * len(FILES[name])
+            blob = base / "blobs" / hashlib.sha256(content).hexdigest()
+            blob.write_bytes(content)
+            (snapshot / name).symlink_to(blob)
+    return root
+
+
+@pytest.fixture
+def cache(hub: FakeHub, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    root = tmp_path / "user-cache" / "hub"
+    monkeypatch.setenv("S7_HF_CACHE_DIRS", json.dumps([str(root)]))
+    return root
+
+
+def _snapshot_bytes(root: Path) -> dict[str, bytes]:
+    return {str(path.relative_to(root)): path.read_bytes() for path in sorted(root.rglob("*")) if path.is_file()}
+
+
+def test_status_finds_a_matching_copy_and_reuse_clones_it(cache: Path, hub: FakeHub) -> None:
+    _fake_cache(cache)
+    before = _snapshot_bytes(cache)
+    found = models.status()["profiles"]["default"]["found"]
+    assert found == {"copyBytes": 0}  # same volume: a clone, no extra space
+    progress: list[float] = []
+    stages: set[str | None] = set()
+
+    def seen(value: float, stage: str | None) -> None:
+        progress.append(value)
+        stages.add(stage)
+
+    result = models.download("default", JobContext("r", seen), "clone")
+    assert result["ready"] is True and progress[-1] == 1.0
+    assert stages == {"checking the copy on this Mac", "verified"}
+    after = models.status()
+    assert after["profiles"]["default"]["ready"] is True and after["profiles"]["default"]["found"] is None
+    folder = models.snapshot_dir(models.load_lock()["asr-1.7b"])
+    assert (folder / "big.bin").read_bytes() == FILES["big.bin"] and not (folder / "big.bin").is_symlink()
+    assert hub.requests == []  # nothing from the network
+    assert _snapshot_bytes(cache) == before  # the other cache is only read
+
+
+def test_a_copy_with_a_wrong_hash_is_refused_and_leaves_nothing(cache: Path) -> None:
+    _fake_cache(cache, corrupt="aligner.bin")
+    # Sizes match, so it is offered; the sha256 check on Use refuses it.
+    assert models.status()["profiles"]["default"]["found"] == {"copyBytes": 0}
+    with pytest.raises(rpc.RpcError) as caught:
+        models.download("default", JobContext("r", None), "clone")
+    assert caught.value.code == models.CACHE_MISMATCH
+    folder = models.snapshot_dir(models.load_lock()["aligner-0.6b"])
+    assert list(folder.glob("*")) == []
+    assert models.status()["profiles"]["default"]["ready"] is False
+
+
+def test_a_partial_copy_or_another_revision_is_not_offered(cache: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _fake_cache(cache, skip="config.json")
+    assert models.status()["profiles"]["default"]["found"] is None
+    assert models.status()["profiles"]["light"]["found"] == {"copyBytes": 0}
+    other = tmp_path / "other" / "hub"
+    _fake_cache(other, revision="1" * 40)
+    monkeypatch.setenv("S7_HF_CACHE_DIRS", json.dumps([str(other)]))
+    assert models.status()["profiles"]["light"]["found"] is None
+    with pytest.raises(rpc.RpcError) as caught:
+        models.download("light", JobContext("r", None), "clone")
+    assert caught.value.code == models.CACHE_MISMATCH
+
+
+def _blobs_on_another_disk(monkeypatch: pytest.MonkeyPatch, cache: Path) -> None:
+    """The blobs the cache's symlinks point to look like another volume (an external disk)."""
+    real = models._file_device
+
+    def device(path: Path) -> int:
+        return -1 if Path(os.path.realpath(path)).is_relative_to(cache.resolve()) else real(path)
+
+    monkeypatch.setattr(models, "_file_device", device)
+
+
+def test_a_copy_on_another_disk_says_its_size_and_copies_only_when_allowed(
+    cache: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _fake_cache(cache)
+    _blobs_on_another_disk(monkeypatch, cache)
+    light = len(FILES["small.bin"]) + len(FILES["aligner.bin"])
+    assert models.status()["profiles"]["light"]["found"] == {"copyBytes": light}
+    clones: list[Path] = []
+    monkeypatch.setattr(models, "_clonefile", lambda source, _target: clones.append(source) or False)
+    # Without the user's yes to the space, nothing is cloned or copied.
+    with pytest.raises(rpc.RpcError) as caught:
+        models.download("light", JobContext("r", None), "clone")
+    assert caught.value.code == models.CACHE_NEEDS_COPY and clones == []
+    assert list(models.snapshot_dir(models.load_lock()["asr-0.6b"]).parent.rglob("*.reuse")) == []
+    # Not enough free space: refused before any copy.
+    real_usage = models.shutil.disk_usage
+    monkeypatch.setattr(models.shutil, "disk_usage", lambda _path: type("U", (), {"free": 1024})())
+    with pytest.raises(rpc.RpcError) as full:
+        models.download("light", JobContext("r", None), "copy")
+    assert full.value.code == models.DISK_FULL and clones == []
+    monkeypatch.setattr(models.shutil, "disk_usage", real_usage)
+    models.download("light", JobContext("r", None), "copy")
+    assert models.status()["profiles"]["light"]["ready"] is True
+
+
+def test_a_refused_clone_never_turns_into_a_silent_copy(cache: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """`clonefile(2)` fails instead of copying (EXDEV, ENOTSUP); a refusal is not papered over."""
+    _fake_cache(cache)
+
+    class Refusing:
+        @staticmethod
+        def clonefile(_source: bytes, _target: bytes, _flags: int) -> int:
+            return -1
+
+    monkeypatch.setattr(models, "_LIBSYSTEM", Refusing())
+    with pytest.raises(rpc.RpcError) as caught:
+        models.download("light", JobContext("r", None), "clone")
+    assert caught.value.code == models.CACHE_NEEDS_COPY
+    folder = models.snapshot_dir(models.load_lock()["asr-0.6b"])
+    assert not (folder / "small.bin").exists() and list(folder.glob("*.reuse")) == []
+
+
+def test_the_real_clonefile_clones_a_blob_through_its_symlink(cache: Path) -> None:
+    _fake_cache(cache)
+    entry = cache / "models--test--asr-small" / "snapshots" / ("0" * 40) / "small.bin"
+    target = cache.parent / "clone.bin"
+    assert models._clonefile(entry, target) is True
+    assert target.read_bytes() == FILES["small.bin"] and not target.is_symlink()
+
+
+def test_cancel_during_a_copy_leaves_nothing_behind(cache: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _fake_cache(cache)
+    _blobs_on_another_disk(monkeypatch, cache)
+    monkeypatch.setattr(models, "_clonefile", lambda _source, _target: False)
+    job = JobContext("r", None)
+    written: list[int] = []
+
+    def write_then_cancel(handle: Any, chunk: bytes) -> None:
+        handle.write(chunk)
+        written.append(len(chunk))
+        job.cancel()
+
+    monkeypatch.setattr(models, "_write", write_then_cancel)
+    with pytest.raises(Cancelled):
+        models.download("light", job, "copy")
+    assert written == [len(FILES["small.bin"])]
+    folder = models.snapshot_dir(models.load_lock()["asr-0.6b"])
+    assert list(folder.glob("*")) == []
+    assert models.status()["profiles"]["light"]["ready"] is False
+
+
+def test_our_own_folder_and_relative_paths_are_never_searched(hub: FakeHub, monkeypatch: pytest.MonkeyPatch) -> None:
+    own = Path(os.environ["HF_HOME"]) / "hub"
+    _fake_cache(own)
+    monkeypatch.setenv("S7_HF_CACHE_DIRS", json.dumps([str(own), "relative/hub"]))
+    assert models.status()["profiles"]["default"]["found"] is None

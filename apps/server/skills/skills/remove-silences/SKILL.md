@@ -17,8 +17,9 @@ The user asked you to cut the pauses from their clip. Do it with the video tools
    - `cancelled`: the transcription was stopped. Tell the user and stop. Never start a
      transcription the user cancelled again.
    - the job is not listed: tell the user the transcription did not finish and stop.
-2. Call `video_remove_silences`. It only cuts more; it never restores earlier cuts. Use its
-   defaults. Pass a setting only when the user asked for one:
+2. Call `video_remove_silences`. It places the clip on a track itself, so an empty timeline
+   is fine; never tell the user the clip must be on a track first. It only cuts more; it never
+   restores earlier cuts. Use its defaults. Pass a setting only when the user asked for one:
    - "only the long pauses" or "looser": a larger `minGapSeconds` (the default is 0.4);
    - "tighter": a smaller `minGapSeconds`;
    - "keep the pause after ...": `keep` as clip-frame ranges `from-to`, comma-separated, end

@@ -68,6 +68,9 @@ These carry no project content:
   nothing until you agree. This is the transcription feature's only network use. The request names
   only the model files ([MODELS.md](MODELS.md)), never anything about your projects. The files stay
   in the data folder (`models/`) and are reused offline from then on.
+  If the same pinned files are already in a Hugging Face cache on your Mac (`$HF_HUB_CACHE`,
+  `$HF_HOME/hub` or `~/.cache/huggingface/hub`), the app offers to use them instead. It only reads
+  that folder, and copies or clones the files into its own only when you press Use.
 
 ## Usage data
 

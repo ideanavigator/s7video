@@ -11,6 +11,7 @@ import {
   ENGINE_SYSTEM_PATH,
   engineCommandArgs,
   engineEnvironment,
+  huggingFaceCacheDirs,
   resolveEngineTools,
 } from "./enginePaths.ts";
 
@@ -97,6 +98,43 @@ describe("enginePaths", () => {
       expect(noUv.message).toContain("brew install uv");
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
+
+  it("names the Hugging Face caches to look in, never ~/.t3 or our own models folder", () => {
+    const home = "/Users/someone";
+    const models = "/Users/someone/.s7video/engine/models";
+    expect(huggingFaceCacheDirs({}, home, models)).toEqual([
+      "/Users/someone/.cache/huggingface/hub",
+    ]);
+    expect(
+      huggingFaceCacheDirs(
+        { HF_HUB_CACHE: "/Volumes/ssd/hf/hub/", HF_HOME: "/Users/someone/hf" },
+        home,
+        models,
+      ),
+    ).toEqual([
+      "/Volumes/ssd/hf/hub",
+      "/Users/someone/hf/hub",
+      "/Users/someone/.cache/huggingface/hub",
+    ]);
+    expect(
+      huggingFaceCacheDirs(
+        { HF_HUB_CACHE: "/Users/someone/.t3/hub", HF_HOME: models },
+        home,
+        models,
+      ),
+    ).toEqual(["/Users/someone/.cache/huggingface/hub"]);
+    expect(huggingFaceCacheDirs({ HF_HUB_CACHE: "relative/hub" }, home, models)).toEqual([
+      "/Users/someone/.cache/huggingface/hub",
+    ]);
+    const env = engineEnvironment({
+      tools: { uv: "/opt/uv", ffmpeg: "/opt/ffmpeg", ffprobe: "/opt/ffprobe" },
+      homeDir: home,
+      modelsDir: models,
+      tmpDir: undefined,
+      huggingFaceCacheDirs: huggingFaceCacheDirs({}, home, models),
+    });
+    expect(env.S7_HF_CACHE_DIRS).toBe('["/Users/someone/.cache/huggingface/hub"]');
+  });
 
   it("should not inherit parent PATH or HOME paths under ~/.t3", () => {
     const env = engineEnvironment({

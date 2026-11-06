@@ -97,6 +97,7 @@ import { Spinner } from "../ui/spinner";
 import { WizardPanel, WizardSteps, WizardPopup, WizardHeader } from "../ui/wizard";
 import { Dialog } from "../ui/dialog";
 import { toastManager } from "../ui/toast";
+import { SpeechModelSetup } from "../editor/SpeechModelSetup";
 import { cn } from "../../lib/utils";
 import { formatRelativeTime } from "../../timestampFormat";
 
@@ -757,6 +758,7 @@ function ConnectedAgentsStep({
             />
           ),
         )}
+        <SpeechModelSetup environmentId={environmentId} />
       </div>
       {chatGptAllowed &&
       providers?.some(

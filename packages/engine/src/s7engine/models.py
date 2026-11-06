@@ -8,11 +8,19 @@ come from the pinned `resolve/<revision>` URLs with HTTP Range resume; every fil
 against the sha256 in `models.lock.json` before it is renamed into place, and a wrong one is
 deleted. A partial file (`*.part`) is kept on cancel or a dropped connection so the next download
 resumes it. Errors carry fixed messages only.
+
+A copy already in another Hugging Face cache on this Mac (S7V-067) can be reused: the server names
+the folders in `S7_HF_CACHE_DIRS`, status reports a pinned revision found there with every file at
+its locked size, and `download(..., reuse=...)` clones each file in with `clonefile(2)` (a plain copy
+only when the user agreed to the space, which status reports per file from where its blob really
+lives), checks the sha256 of the copy, and marks it verified like a download.
+Those folders are only read, never written.
 """
 
 from __future__ import annotations
 
 import contextlib
+import ctypes
 import errno
 import gc
 import hashlib
@@ -21,6 +29,7 @@ import json
 import os
 import re
 import shutil
+import stat
 import threading
 import time
 import urllib.error
@@ -38,6 +47,8 @@ MODELS_MISSING = 1006
 DOWNLOAD_FAILED = 1007
 CHECKSUM_MISMATCH = 1008
 DISK_FULL = 1009
+CACHE_MISMATCH = 1010
+CACHE_NEEDS_COPY = 1011
 
 LOCK_PATH = Path(__file__).resolve().parents[2] / "models.lock.json"
 DEFAULT_BASE_URL = "https://huggingface.co"
@@ -150,6 +161,88 @@ def _verified(model: Model) -> bool:
     return True
 
 
+# --- A copy in another Hugging Face cache ------------------------------------------------------
+
+
+def _inside(path: Path, folder: Path) -> bool:
+    return path == folder or folder in path.parents
+
+
+def _cache_roots() -> list[Path]:
+    """The other caches the server named (it already left out the upstream app's data folder),
+    minus our own folder."""
+    try:
+        values = json.loads(os.environ.get("S7_HF_CACHE_DIRS") or "[]")
+    except ValueError:
+        return []
+    if not isinstance(values, list):
+        return []
+    own = models_root().resolve()
+    roots: list[Path] = []
+    for value in values:
+        if not isinstance(value, str) or not os.path.isabs(value):
+            continue
+        root = Path(value).resolve()
+        if _inside(root, own) or _inside(own, root):
+            continue
+        if root not in roots:
+            roots.append(root)
+    return roots
+
+
+def cached_snapshot(model: Model) -> Path | None:
+    """The pinned revision in another cache, with every file there at its locked size."""
+    for root in _cache_roots():
+        folder = root / f"models--{model.repo.replace('/', '--')}" / "snapshots" / model.revision
+        try:
+            if all(
+                stat.S_ISREG((info := (folder / file.path).stat()).st_mode) and info.st_size == file.size
+                for file in model.files
+            ):
+                return folder
+        except OSError:
+            continue
+    return None
+
+
+def _device(path: Path) -> int | None:
+    probe = path
+    while not probe.exists():
+        if probe.parent == probe:
+            return None
+        probe = probe.parent
+    return probe.stat().st_dev
+
+
+def _file_device(path: Path) -> int:
+    """The device of the file a cache entry really is (HF snapshot entries are symlinks to blobs)."""
+    return os.stat(os.path.realpath(path)).st_dev
+
+
+def _copy_bytes(model: Model, source: Path, own: int | None) -> int:
+    """What reusing `model` from `source` takes as a plain copy: files on another volume."""
+    return sum(file.size for file in model.files if own is None or _file_device(source / file.path) != own)
+
+
+def _found(models: list[Model]) -> dict[str, int] | None:
+    """For a profile not ready: found when every missing model is in another cache. `copyBytes`
+    is what a plain copy would take (0 when every file is on our volume, so a clone works)."""
+    missing = [model for model in models if not _verified(model)]
+    if not missing:
+        return None
+    own = _device(models_root())
+    copy_bytes = 0
+    for model in missing:
+        folder = cached_snapshot(model)
+        if folder is None:
+            return None
+        try:
+            copy_bytes += _copy_bytes(model, folder, own)
+        except OSError:
+            return None
+    return {"copyBytes": copy_bytes}
+
+
 def _downloaded_bytes(model: Model) -> int:
     folder = snapshot_dir(model)
     total = 0
@@ -178,6 +271,7 @@ def status() -> dict[str, Any]:
             "models": list(keys),
             "sizeBytes": sum(lock[key].size for key in keys),
             "ready": all(models[key]["ready"] for key in keys),
+            "found": _found([lock[key] for key in keys]),
         }
         for name, keys in PROFILES.items()
     }
@@ -189,7 +283,7 @@ def require_ready(profile: str) -> list[Model]:
     if not all(_verified(model) for model in models):
         raise RpcError(
             MODELS_MISSING,
-            "the speech model is not downloaded; accept the download in the Editor panel",
+            "the speech model is not downloaded; press Download speech model in the Editor panel",
             {"profile": profile},
         )
     return models
@@ -240,8 +334,9 @@ def _check_disk(folder: Path, needed: int) -> None:
 
 
 class _Progress:
-    def __init__(self, total: int, already: int, job: JobContext) -> None:
+    def __init__(self, total: int, already: int, job: JobContext, stage: str = "downloading") -> None:
         self.total = max(total, 1)
+        self.stage = stage
         self.done = already
         self._job = job
         self._last = 0.0
@@ -253,7 +348,7 @@ class _Progress:
         value = self.done / self.total
         if now - self._last >= 0.25 or value - self._last_value >= 0.01:
             self._last, self._last_value = now, value
-            self._job.progress(value, "downloading")
+            self._job.progress(value, self.stage)
 
 
 def _write(handle: Any, chunk: bytes) -> None:
@@ -329,14 +424,118 @@ def _download_file(model: Model, file: ModelFile, folder: Path, progress: _Progr
 _DOWNLOAD_LOCK = threading.Lock()
 
 
-def download(profile: str, job: JobContext) -> dict[str, Any]:
-    """One download at a time: a second request waits, then finds the shared files verified."""
+def download(profile: str, job: JobContext, reuse: str | None = None) -> dict[str, Any]:
+    """One download at a time: a second request waits, then finds the shared files verified.
+
+    `reuse` ("clone" or "copy") takes the files from another cache instead of the network."""
     while not _DOWNLOAD_LOCK.acquire(timeout=0.2):
         job.raise_if_cancelled()
     try:
-        return _download(profile, job)
+        return _download(profile, job) if reuse is None else _reuse(profile, job, reuse == "copy")
     finally:
         _DOWNLOAD_LOCK.release()
+
+
+def _mark_verified(model: Model, folder: Path) -> None:
+    marker = {"revision": model.revision, "files": {file.path: file.sha256 for file in model.files}}
+    refs = folder.parent.parent / "refs"
+    refs.mkdir(exist_ok=True)
+    (refs / "main").write_text(model.revision, encoding="utf-8")
+    (folder / _VERIFIED).write_text(json.dumps(marker, indent=1), encoding="utf-8")
+
+
+_LIBSYSTEM: Any = None
+
+
+def _clonefile(source: Path, target: Path) -> bool:
+    """`clonefile(2)`: an APFS clone or nothing. Unlike `cp -c`, it never falls back to copying;
+    it fails (EXDEV, ENOTSUP) across volumes or on a file system that can't clone."""
+    global _LIBSYSTEM
+    try:
+        if _LIBSYSTEM is None:
+            _LIBSYSTEM = ctypes.CDLL("/usr/lib/libSystem.B.dylib", use_errno=True)
+        result = _LIBSYSTEM.clonefile(os.fsencode(os.path.realpath(source)), os.fsencode(target), 0)
+    except (OSError, AttributeError):
+        return False
+    return result == 0
+
+
+def _copy_file(source: Path, target: Path, job: JobContext) -> None:
+    """A plain copy in chunks, so Cancel stops it between chunks."""
+    with Path(os.path.realpath(source)).open("rb") as reader, target.open("wb") as writer:
+        while True:
+            job.raise_if_cancelled()
+            chunk = reader.read(_CHUNK * 8)
+            if not chunk:
+                break
+            _write(writer, chunk)
+
+
+_REUSE_STAGE = "checking the copy on this Mac"
+_NEEDS_COPY = "the copy on this Mac is on another disk, so using it means copying it"
+
+
+def _reuse(profile: str, job: JobContext, allow_copy: bool) -> dict[str, Any]:
+    models = profile_models(profile)
+    pending = [model for model in models if not _verified(model)]
+    total = sum(model.size for model in models)
+    sources = {model.key: cached_snapshot(model) for model in pending}
+    if any(folder is None for folder in sources.values()):
+        raise RpcError(CACHE_MISMATCH, "the copy on this Mac is not complete; download the speech model instead")
+    own = _device(models_root())
+    try:
+        copy_bytes = sum(_copy_bytes(model, sources[model.key], own) for model in pending)  # type: ignore[arg-type]
+    except OSError:
+        raise RpcError(CACHE_MISMATCH, "the copy on this Mac is not complete; download the speech model instead") from None
+    # Nothing is copied unless the user agreed to the space it takes, and that space is free.
+    if copy_bytes and not allow_copy:
+        raise RpcError(CACHE_NEEDS_COPY, _NEEDS_COPY)
+    if copy_bytes:
+        _check_disk(models_root(), copy_bytes)
+    progress = _Progress(total, total - sum(model.size for model in pending), job, _REUSE_STAGE)
+    job.progress(progress.done / progress.total, _REUSE_STAGE)
+    for model in pending:
+        source = sources[model.key]
+        assert source is not None
+        folder = snapshot_dir(model)
+        folder.mkdir(parents=True, exist_ok=True)
+        placed: list[tuple[Path, Path]] = []
+        try:
+            for file in model.files:
+                job.raise_if_cancelled()
+                target = folder / file.path
+                staged = folder / f"{file.path}.reuse"
+                target.parent.mkdir(parents=True, exist_ok=True)
+                staged.unlink(missing_ok=True)
+                # Registered first, so a failed, refused or cancelled copy is cleaned up too.
+                placed.append((staged, target))
+                if not _clonefile(source / file.path, staged):
+                    staged.unlink(missing_ok=True)
+                    if not allow_copy:
+                        raise RpcError(CACHE_NEEDS_COPY, _NEEDS_COPY)
+                    _check_disk(folder, file.size)
+                    _copy_file(source / file.path, staged, job)
+                # The check runs on our own copy, so a file changed after the size check is caught.
+                digest = hashlib.sha256()
+                with staged.open("rb") as handle:
+                    while chunk := handle.read(_CHUNK * 8):
+                        job.raise_if_cancelled()
+                        digest.update(chunk)
+                        progress.add(len(chunk))
+                if staged.stat().st_size != file.size or digest.hexdigest() != file.sha256:
+                    raise RpcError(
+                        CACHE_MISMATCH,
+                        "the copy on this Mac does not match the pinned speech model; download it instead",
+                    )
+        except BaseException:
+            for staged, _target in placed:
+                staged.unlink(missing_ok=True)
+            raise
+        for staged, target in placed:
+            os.replace(staged, target)
+        _mark_verified(model, folder)
+    job.progress(1.0, "verified")
+    return {"profile": profile, "ready": True, "sizeBytes": total}
 
 
 def _download(profile: str, job: JobContext) -> dict[str, Any]:
@@ -358,11 +557,7 @@ def _download(profile: str, job: JobContext) -> dict[str, Any]:
                     continue
                 target.unlink()
             _download_file(model, file, folder, progress, job)
-        marker = {"revision": model.revision, "files": {file.path: file.sha256 for file in model.files}}
-        refs = folder.parent.parent / "refs"
-        refs.mkdir(exist_ok=True)
-        (refs / "main").write_text(model.revision, encoding="utf-8")
-        (folder / _VERIFIED).write_text(json.dumps(marker, indent=1), encoding="utf-8")
+        _mark_verified(model, folder)
     job.progress(1.0, "verified")
     return {"profile": profile, "ready": True, "sizeBytes": total}
 

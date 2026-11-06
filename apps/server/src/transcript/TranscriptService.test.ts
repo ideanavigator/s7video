@@ -57,7 +57,12 @@ const engineStatus = (ready: {
   },
   profiles: {
     default: { models: ["asr-1.7b", "aligner-0.6b"], sizeBytes: 350, ready: ready.default },
-    light: { models: ["asr-0.6b", "aligner-0.6b"], sizeBytes: 150, ready: ready.light },
+    light: {
+      models: ["asr-0.6b", "aligner-0.6b"],
+      sizeBytes: 150,
+      ready: ready.light,
+      found: ready.light ? null : { copyBytes: 0 },
+    },
   },
   loadedProfile: null,
 });
@@ -235,7 +240,13 @@ describe("TranscriptService", () => {
         downloadedBytes: 170,
         ready: false,
       });
-      expect(onSmall.profiles.light).toEqual({ sizeBytes: 150, downloadedBytes: 50, ready: false });
+      // A copy found in another Hugging Face cache is passed on (S7V-067).
+      expect(onSmall.profiles.light).toEqual({
+        sizeBytes: 150,
+        downloadedBytes: 50,
+        ready: false,
+        found: { copyBytes: 0 },
+      });
       const onLarge = yield* TranscriptService.TranscriptService.pipe(
         Effect.flatMap((service) => service.modelsStatus),
         Effect.provide(large.layer),
@@ -264,9 +275,12 @@ describe("TranscriptService", () => {
           },
         ]);
         expect((yield* service.modelsStatus).consent).toBe("accepted");
+        // Using the copy found on this Mac is the same job, told to reuse it.
+        yield* service.downloadModels("light", undefined, "clone");
+        expect(calls.jobs[1]?.params).toEqual({ model: "light", reuse: "clone" });
         const unknown = yield* service.downloadModels("light", unknownProject).pipe(Effect.flip);
         expect(unknown).toMatchObject({ _tag: "TranscriptError", reason: "media_refused" });
-        expect(calls.jobs).toHaveLength(1);
+        expect(calls.jobs).toHaveLength(2);
       }).pipe(Effect.provide(layer), Effect.ensuring(cleanup(project)));
     },
   );
@@ -340,7 +354,7 @@ describe("TranscriptService", () => {
       const service = yield* TranscriptService.TranscriptService;
       const error = yield* service.transcribe({ projectId, media: "cam" }).pipe(Effect.flip);
       expect(error).toMatchObject({ _tag: "EngineError", reason: "models_missing" });
-      expect(error.message).toContain("accept the download in the Editor panel");
+      expect(error.message).toContain("press Download speech model at the top of the Editor panel");
     }).pipe(Effect.provide(layer), Effect.ensuring(cleanup(project)));
   });
 

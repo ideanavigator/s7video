@@ -18,6 +18,7 @@ import {
   Transcript,
   TranscriptError,
   type TranscribeModel,
+  type TranscribeModelsDownloadInput,
   type TranscribeModelsStatus,
   type TranscribeRunInput,
   type TranscriptMediaInput,
@@ -82,10 +83,14 @@ export class TranscriptService extends Context.Service<
       input: TranscriptTextInput,
     ) => Effect.Effect<string | null, TranscriptError>;
     readonly modelsStatus: Effect.Effect<TranscribeModelsStatus, EngineError>;
-    /** The user's yes in the Editor panel: records it, then downloads as an engine job. */
+    /**
+     * The user's yes: records it, then downloads as an engine job, or with `reuse` takes the copy
+     * found in another Hugging Face cache on this Mac (checked file by file).
+     */
     readonly downloadModels: (
       model: TranscribeModel,
       projectId?: ProjectId,
+      reuse?: TranscribeModelsDownloadInput["reuse"],
     ) => Effect.Effect<TranscribeModelsDownloadResult, EngineError | TranscriptError>;
     /** The user's "not now": the panel does not ask again on its own. */
     readonly dismissDownload: Effect.Effect<TranscribeModelsStatus, EngineError | TranscriptError>;
@@ -195,6 +200,7 @@ const make = Effect.fn("TranscriptService.make")(function* (options: TranscriptS
           0,
         ),
         ready: status.profiles[name].ready,
+        ...(status.profiles[name].found ? { found: status.profiles[name].found } : {}),
       };
     };
     return {
@@ -292,6 +298,7 @@ const make = Effect.fn("TranscriptService.make")(function* (options: TranscriptS
   const downloadModels = Effect.fn("TranscriptService.downloadModels")(function* (
     model: TranscribeModel,
     projectId?: ProjectId,
+    reuse?: TranscribeModelsDownloadInput["reuse"],
   ) {
     // Only a project the server knows tags the job; agents of that project can then follow it.
     const project =
@@ -308,7 +315,7 @@ const make = Effect.fn("TranscriptService.make")(function* (options: TranscriptS
     return yield* engine.runJob({
       kind: "transcribe.models.download",
       method: "transcribe.models.download",
-      params: { model },
+      params: reuse === undefined ? { model } : { model, reuse },
       success: TranscribeModelsDownloadResult,
       ...(project === undefined ? {} : { projectId: project.projectId }),
     });

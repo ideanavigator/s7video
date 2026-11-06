@@ -759,7 +759,7 @@ describe("video toolkit", () => {
           const missing = yield* call(threadA, "video_transcribe", { media: "cam" });
           expect(missing.isError).toBe(true);
           expect(textOf(missing)).toEqual([
-            "The speech model is not downloaded yet. Ask the user to accept the download in the Editor panel; s7video downloads it only after they agree.",
+            "The speech model isn't downloaded yet. Ask the user to press Download speech model at the top of the Editor panel; s7video downloads it only after they agree.",
           ]);
           expect(fixture.started).toHaveLength(1);
         }),

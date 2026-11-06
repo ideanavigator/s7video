@@ -76,3 +76,12 @@ Into the app's data folder, under `models/hub/` (the Hugging Face cache layout:
 `models--<org>--<name>/snapshots/<revision>/`). Deleting that folder removes them; the app asks
 again before downloading them the next time you transcribe. Development and test runs use a folder
 inside the checkout or a temporary folder, never the app's real data folder.
+
+## A copy already on your Mac
+
+If another app already downloaded the same pinned revisions into a Hugging Face cache
+(`$HF_HUB_CACHE`, `$HF_HOME/hub` or `~/.cache/huggingface/hub`), setup and the Editor panel say
+"Found on this Mac, ready to use". Pressing **Use** clones each file into `models/hub/` (an APFS
+clone takes no extra space; a cache on another disk is copied, and the app says how much space that
+takes first), checks its sha256 against the pinned list, and marks it ready like a download. A copy
+with a missing or wrong file is not used. The other cache is only read, never changed.

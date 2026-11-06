@@ -269,6 +269,13 @@ const FEATURE_PURPOSE: Record<EngineToolFeature, string> = {
   zscale: "zscale (zimg) to convert HDR video to standard range",
 };
 
+/**
+ * What an agent reads when a video tool needs the speech model (S7V-067). It names the button the
+ * Editor panel shows, and the web recognises a tool result by it to open that panel.
+ */
+export const MODELS_MISSING_MESSAGE =
+  "The speech model isn't downloaded yet. Ask the user to press Download speech model at the top of the Editor panel; s7video downloads it only after they agree.";
+
 export class EngineError extends Schema.TaggedError<EngineError>()("EngineError", {
   reason: EngineErrorReason,
   /** The engine method, or `start` while the engine was starting. */
@@ -294,7 +301,7 @@ export class EngineError extends Schema.TaggedError<EngineError>()("EngineError"
       case "cancelled":
         return `The video engine stopped ${this.method} because it was cancelled.`;
       case "models_missing":
-        return "The speech model is not downloaded yet. Ask the user to accept the download in the Editor panel; s7video downloads it only after they agree.";
+        return MODELS_MISSING_MESSAGE;
       case "missing_tool": {
         const tool = this.tool ?? "ffmpeg";
         if (this.feature !== undefined) {

@@ -93,7 +93,7 @@ describe("EngineRpcClient", () => {
       expect(noModelError).toMatchObject({ reason: "models_missing" });
       // Agents get this text: a plain request to accept the download, no stack trace.
       expect(noModelError.message).toBe(
-        "The speech model is not downloaded yet. Ask the user to accept the download in the Editor panel; s7video downloads it only after they agree.",
+        "The speech model isn't downloaded yet. Ask the user to press Download speech model at the top of the Editor panel; s7video downloads it only after they agree.",
       );
 
       const cancelled = yield* client

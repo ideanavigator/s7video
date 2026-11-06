@@ -8,6 +8,8 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 
+import { isUpstreamT3Home } from "@t3tools/shared/dataHome";
+
 const TOOL_ENV_VARS: Record<EngineTool, string> = {
   uv: "S7VIDEO_UV",
   ffmpeg: "S7VIDEO_FFMPEG",
@@ -105,6 +107,36 @@ export const resolveEngineProjectDir = Effect.fn("enginePaths.resolveEngineProje
   return yield* new EngineError({ reason: "start_failed", method: "start" });
 });
 
+const trimSlash = (value: string) => (value.length > 1 ? value.replace(/\/+$/u, "") : value);
+const within = (path: string, folder: string) => path === folder || path.startsWith(`${folder}/`);
+
+/**
+ * Where a Hugging Face cache may already hold the speech model (S7V-067), read only by the engine:
+ * `$HF_HUB_CACHE`, `$HF_HOME/hub`, then `~/.cache/huggingface/hub`. Our own models folder and
+ * the upstream app's data folder (`isUpstreamT3Home`, symlinks resolved) are left out.
+ */
+export function huggingFaceCacheDirs(
+  env: Readonly<Record<string, string | undefined>>,
+  homeDir: string,
+  modelsDir: string,
+): ReadonlyArray<string> {
+  const own = trimSlash(modelsDir);
+  const candidates = [
+    env.HF_HUB_CACHE,
+    env.HF_HOME ? `${trimSlash(env.HF_HOME)}/hub` : undefined,
+    `${trimSlash(homeDir)}/.cache/huggingface/hub`,
+  ];
+  const dirs: string[] = [];
+  for (const candidate of candidates) {
+    if (!candidate?.startsWith("/") || candidate.split("/").includes("..")) continue;
+    const dir = trimSlash(candidate);
+    if (within(dir, own) || within(own, dir) || dirs.includes(dir)) continue;
+    if (isUpstreamT3Home(dir, homeDir)) continue;
+    dirs.push(dir);
+  }
+  return dirs;
+}
+
 export interface EngineEnvironmentInput {
   readonly tools: EngineTools;
   readonly homeDir: string;
@@ -113,6 +145,8 @@ export interface EngineEnvironmentInput {
   /** Registers the engine's crash, hang and slow-job hooks; tests only. */
   readonly testMethods?: boolean;
   readonly transcribeIdleUnloadSeconds?: number;
+  /** From `huggingFaceCacheDirs`. */
+  readonly huggingFaceCacheDirs?: ReadonlyArray<string>;
 }
 
 /** The engine's whole environment. Nothing else from the server's environment reaches it. */
@@ -131,6 +165,9 @@ export function engineEnvironment(input: EngineEnvironmentInput): Record<string,
     ...(input.transcribeIdleUnloadSeconds === undefined
       ? {}
       : { S7_TRANSCRIBE_IDLE_UNLOAD_SECONDS: String(input.transcribeIdleUnloadSeconds) }),
+    ...(input.huggingFaceCacheDirs && input.huggingFaceCacheDirs.length > 0
+      ? { S7_HF_CACHE_DIRS: JSON.stringify(input.huggingFaceCacheDirs) }
+      : {}),
     ...(input.testMethods ? { S7_ENGINE_TEST_METHODS: "1" } : {}),
   };
 }

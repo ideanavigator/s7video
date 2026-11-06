@@ -1,13 +1,17 @@
 // SPDX-FileCopyrightText: 2026 s7video contributors
 // SPDX-License-Identifier: MIT
 // The question before the speech model downloads (S7V-026, ADR-006). It only shows state: the
-// Transcript tab (S7V-030) opens it when the user asks to transcribe and no model is downloaded,
-// and wires the answers to transcribe.models.download / .dismiss and the download's engine job
-// (progress and cancel through engine.jobs.*). Nothing opens it unasked.
-import type { TranscribeModel, TranscribeModelsStatus } from "@t3tools/contracts";
+// Transcript tab (S7V-030) and the Editor panel's prompt (S7V-067) open it when the user asks,
+// and wire the answers through useModelDownload. Nothing opens it unasked.
+import type {
+  TranscribeModel,
+  TranscribeModelsDownloadInput,
+  TranscribeModelsStatus,
+} from "@t3tools/contracts";
 import { useId, useState } from "react";
 
 import { APP_BASE_NAME } from "../../branding";
+import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import {
   Dialog,
@@ -23,11 +27,16 @@ import { Radio, RadioGroup } from "../ui/radio-group";
 
 export type ModelDownloadState =
   | { readonly phase: "asking" }
-  | { readonly phase: "downloading"; readonly progress: number }
+  | {
+      readonly phase: "downloading";
+      readonly progress: number;
+      /** Checking a copy found on this Mac rather than downloading (S7V-067). */
+      readonly checking?: boolean;
+    }
   | { readonly phase: "failed"; readonly message: string };
 
 /** Decimal gigabytes, as download sizes are usually given: 3744329895 bytes is "3.7 GB". */
-function formatGigabytes(bytes: number): string {
+export function formatGigabytes(bytes: number): string {
   return `${(bytes / 1e9).toFixed(1)} GB`;
 }
 
@@ -37,21 +46,112 @@ const CHOICES: ReadonlyArray<{
   readonly hint: string;
 }> = [
   { model: "default", label: "Standard", hint: "The most accurate." },
-  { model: "light", label: "Light", hint: "Smaller and faster, a few more mistakes." },
+  {
+    model: "light",
+    label: "Light",
+    hint: "Smaller and faster, a few more mistakes. Suits Macs with 8 GB of memory or less.",
+  },
 ];
+
+export interface FoundModel {
+  readonly model: TranscribeModel;
+  readonly copyBytes: number;
+  readonly reuse: NonNullable<TranscribeModelsDownloadInput["reuse"]>;
+}
+
+/** A copy on this Mac to use instead of downloading (S7V-067): the recommended model's first. */
+export function foundModel(status: TranscribeModelsStatus): FoundModel | null {
+  const order: ReadonlyArray<TranscribeModel> =
+    status.recommended === "light" ? ["light", "default"] : ["default", "light"];
+  for (const model of order) {
+    const found = status.profiles[model].found;
+    if (found !== undefined && !status.profiles[model].ready) {
+      return { model, copyBytes: found.copyBytes, reuse: found.copyBytes > 0 ? "copy" : "clone" };
+    }
+  }
+  return null;
+}
+
+/** "Found on this Mac, ready to use", with Use; using it still needs the press. */
+export function FoundOnThisMac(props: {
+  readonly found: FoundModel;
+  readonly onUse: (found: FoundModel) => void;
+}) {
+  const { found } = props;
+  const label = CHOICES.find((choice) => choice.model === found.model)?.label ?? found.model;
+  return (
+    <div className="flex items-start gap-3 rounded-md border border-border p-3">
+      <div className="min-w-0 flex-1">
+        <p className="text-sm font-medium">Found on this Mac, ready to use</p>
+        <p className="text-muted-foreground text-sm">
+          {found.copyBytes > 0
+            ? `The ${label} model is on another disk, so using it copies ${formatGigabytes(found.copyBytes)}. Every file is checked first.`
+            : `The ${label} model is already on this Mac, so nothing downloads and it takes no extra space. Every file is checked first.`}
+        </p>
+      </div>
+      <Button size="sm" onClick={() => props.onUse(found)}>
+        Use
+      </Button>
+    </div>
+  );
+}
+
+/** Standard or Light with their sizes; the server's recommendation (ADR-006) is marked. */
+export function ModelChoice(props: {
+  readonly status: TranscribeModelsStatus;
+  readonly value: TranscribeModel;
+  readonly onChange: (model: TranscribeModel) => void;
+  readonly disabled?: boolean;
+}) {
+  const id = useId();
+  return (
+    <RadioGroup
+      aria-label="Speech model"
+      value={props.value}
+      disabled={props.disabled ?? false}
+      onValueChange={(value) => {
+        if (value === "default" || value === "light") props.onChange(value);
+      }}
+    >
+      {CHOICES.map((choice) => (
+        <div key={choice.model} className="flex items-start gap-3">
+          <Radio id={`${id}-${choice.model}`} value={choice.model} />
+          <Label htmlFor={`${id}-${choice.model}`}>
+            <span className="flex flex-col gap-0.5">
+              <span className="flex flex-wrap items-center gap-1.5">
+                <span>
+                  {choice.label}, {formatGigabytes(props.status.profiles[choice.model].sizeBytes)}
+                </span>
+                {props.status.recommended === choice.model ? (
+                  <Badge variant="secondary" size="sm">
+                    Recommended
+                  </Badge>
+                ) : null}
+              </span>
+              <span className="text-muted-foreground text-sm">{choice.hint}</span>
+            </span>
+          </Label>
+        </div>
+      ))}
+    </RadioGroup>
+  );
+}
 
 export function ModelDownloadDialog(props: {
   readonly open: boolean;
   readonly status: TranscribeModelsStatus;
   readonly state: ModelDownloadState;
   readonly onDownload: (model: TranscribeModel) => void;
+  /** Use a copy found on this Mac; omitted (or `found` refused) hides the offer. */
+  readonly onUse?: (found: FoundModel) => void;
+  readonly hideFound?: boolean;
   readonly onCancelDownload: () => void;
   readonly onDismiss: () => void;
 }) {
-  const id = useId();
   const [model, setModel] = useState<TranscribeModel>(props.status.recommended);
   const size = formatGigabytes(props.status.profiles[model].sizeBytes);
   const { state } = props;
+  const found = props.onUse && !props.hideFound ? foundModel(props.status) : null;
   return (
     <Dialog
       open={props.open}
@@ -72,11 +172,13 @@ export function ModelDownloadDialog(props: {
             <div className="flex flex-col gap-2">
               <div
                 role="progressbar"
-                aria-label="Speech model download"
+                aria-label={
+                  state.checking ? "Checking the speech model copy" : "Speech model download"
+                }
                 aria-valuemin={0}
                 aria-valuemax={100}
                 aria-valuenow={Math.round(state.progress * 100)}
-                aria-valuetext={`${Math.round(state.progress * 100)}% of ${size}`}
+                aria-valuetext={`${Math.round(state.progress * 100)}% ${state.checking ? "checked" : `of ${size}`}`}
                 className="h-2 w-full overflow-hidden rounded-full bg-muted"
               >
                 <div
@@ -85,33 +187,18 @@ export function ModelDownloadDialog(props: {
                 />
               </div>
               <p className="text-muted-foreground text-sm">
-                {Math.round(state.progress * 100)}% of {size}. You can keep working; the download
-                continues where it stopped if it is interrupted.
+                {state.checking
+                  ? `Checking the copy on this Mac, ${Math.round(state.progress * 100)}%. Every file is compared with the pinned model before it is used; nothing downloads.`
+                  : `${Math.round(state.progress * 100)}% of ${size}. You can keep working; the download continues where it stopped if it is interrupted.`}
               </p>
             </div>
           ) : (
-            <RadioGroup
-              aria-label="Speech model"
-              value={model}
-              onValueChange={(value) => {
-                if (value === "default" || value === "light") setModel(value);
-              }}
-            >
-              {CHOICES.map((choice) => (
-                <div key={choice.model} className="flex items-start gap-3">
-                  <Radio id={`${id}-${choice.model}`} value={choice.model} />
-                  <Label htmlFor={`${id}-${choice.model}`}>
-                    <span className="flex flex-col gap-0.5">
-                      <span>
-                        {choice.label},{" "}
-                        {formatGigabytes(props.status.profiles[choice.model].sizeBytes)}
-                      </span>
-                      <span className="text-muted-foreground text-sm">{choice.hint}</span>
-                    </span>
-                  </Label>
-                </div>
-              ))}
-            </RadioGroup>
+            <div className="flex flex-col gap-4">
+              {found !== null && props.onUse ? (
+                <FoundOnThisMac found={found} onUse={props.onUse} />
+              ) : null}
+              <ModelChoice status={props.status} value={model} onChange={setModel} />
+            </div>
           )}
           {state.phase === "failed" ? (
             <p role="alert" className="mt-3 text-destructive text-sm">

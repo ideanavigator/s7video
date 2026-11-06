@@ -40,7 +40,7 @@ describe("ModelDownloadDialog", () => {
     await expect.element(screen.getByText("Standard, 3.7 GB")).toBeVisible();
     await expect.element(screen.getByText("Light, 2.3 GB")).toBeVisible();
     await expect
-      .element(screen.getByText("Smaller and faster, a few more mistakes."))
+      .element(screen.getByText(/Smaller and faster.*8 GB of memory or less/))
       .toBeVisible();
     await expect.element(screen.getByRole("radio", { name: /Standard/ })).toBeChecked();
     await press("Download 3.7 GB");
@@ -67,6 +67,45 @@ describe("ModelDownloadDialog", () => {
     await expect.element(bar).toHaveAttribute("aria-valuenow", "42");
     await press("Cancel download");
     expect(handlers.onCancelDownload).toHaveBeenCalledOnce();
+  });
+
+  it("offers a copy found on this Mac first, and Use hands it back with how to take it", async () => {
+    const onUse = vi.fn();
+    const found = status("default");
+    const withCopy: TranscribeModelsStatus = {
+      ...found,
+      profiles: {
+        ...found.profiles,
+        default: { ...found.profiles.default, found: { copyBytes: 0 } },
+      },
+    };
+    await using screen = await render(
+      <ModelDownloadDialog
+        open
+        status={withCopy}
+        state={{ phase: "asking" }}
+        onDownload={vi.fn()}
+        onUse={onUse}
+        onCancelDownload={vi.fn()}
+        onDismiss={vi.fn()}
+      />,
+    );
+    await expect.element(screen.getByText("Found on this Mac, ready to use")).toBeVisible();
+    await press("Use");
+    expect(onUse).toHaveBeenCalledWith({ model: "default", copyBytes: 0, reuse: "clone" });
+  });
+
+  it("says it is checking a found copy, not downloading, at that stage", async () => {
+    const { screen } = await renderDialog("default", {
+      phase: "downloading",
+      progress: 0.3,
+      checking: true,
+    });
+    await using _ = screen;
+    const bar = screen.getByRole("progressbar", { name: "Checking the speech model copy" });
+    await expect.element(bar).toHaveAttribute("aria-valuenow", "30");
+    await expect.element(screen.getByText(/Checking the copy on this Mac, 30%/)).toBeVisible();
+    expect(document.body.textContent).not.toContain("the download continues");
   });
 
   it("shows a failed download's reason and offers to try again", async () => {
