@@ -484,13 +484,13 @@ const make = Effect.fn("MediaLibraryService.make")(function* (options: MediaLibr
     probe: MediaProbeResult,
   ) {
     const video = probe.video;
-    if (video === null) return;
+    if (video === null) return false;
     const output = cachePaths(root, sha256).thumbnail;
-    if (Option.isSome(yield* isFile(output))) return;
+    if (Option.isSome(yield* isFile(output))) return false;
     // About one second in, past fade-ins and black first frames.
     const oneSecond = Math.ceil(video.frameRate.num / video.frameRate.den);
     const frame = Math.max(0, Math.min(video.durationFrames - 1, oneSecond));
-    yield* engine
+    return yield* engine
       .thumbnail({
         path: source,
         outputPath: output,
@@ -498,7 +498,10 @@ const make = Effect.fn("MediaLibraryService.make")(function* (options: MediaLibr
         rate: video.frameRate,
         maxWidth: THUMBNAIL_WIDTH,
       })
-      .pipe(Effect.ignore);
+      .pipe(
+        Effect.as(true),
+        Effect.orElseSucceed(() => false),
+      );
   });
 
   /** Starts a background proxy when the policy asks for one; returns its job id. */
@@ -677,7 +680,6 @@ const make = Effect.fn("MediaLibraryService.make")(function* (options: MediaLibr
       : input.mode === "copy"
         ? { path: yield* copyIntoAssets(input.projectId, root, real, label) }
         : { reference: real };
-    yield* thumbnailFor(root, real, fingerprint.sha256, probe);
     const media: Omit<EditMedia, "id"> = {
       kind: probe.video !== null ? "video" : "audio",
       ...location,
@@ -688,6 +690,8 @@ const make = Effect.fn("MediaLibraryService.make")(function* (options: MediaLibr
     // The id is chosen against the document the edit lands on, so two imports of files with the
     // same name at once get two ids rather than one replacing the other.
     let mediaId = "";
+    // Marked before the edit lands: the list that edit triggers must not probe the file again.
+    proxyChecked.add(`${input.projectId}\0${fingerprint.sha256}`);
     yield* applyWith(input.projectId, input.origin ?? "import", (document) => {
       mediaId = existing?.id ?? mediaIdFor(label, allIds(document));
       return [{ _tag: "putMedia", media: { id: mediaId, ...media } }];
@@ -698,9 +702,12 @@ const make = Effect.fn("MediaLibraryService.make")(function* (options: MediaLibr
           : Effect.void,
       ),
     );
+    // The row is in the list already; its thumbnail (a 4K decode on big clips) follows.
+    if (yield* thumbnailFor(root, real, fingerprint.sha256, probe)) {
+      yield* notify(input.projectId);
+    }
     // Proxies read the project's copy when there is one, so a moved original cannot break them.
     const readable = location.path !== undefined ? path.join(root, location.path) : real;
-    proxyChecked.add(`${input.projectId}\0${fingerprint.sha256}`);
     const jobId = yield* startProxy(input.projectId, root, readable, fingerprint.sha256, probe);
     return { mediaId, ...(jobId === undefined ? {} : { jobId }) } satisfies MediaImportResult;
   });

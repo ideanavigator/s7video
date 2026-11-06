@@ -89,6 +89,8 @@ from; the per-ticket entries and how this file is compiled are in
 - When an undo or redo makes no visible difference, such as going back past adding a clip (which
   stays in Assets), the assistant says so and tells you whether there is more to undo, instead of
   saying "Undone". (S7V-063)
+- A large 4K clip now shows in Assets with its name, length and size in under two seconds; its
+  preview picture follows a moment later. (S7V-064)
 - A clip dropped into the chat that can't be added to Assets now says why, with Retry, instead of
   being attached to the message silently; a sound that can't be added stays attached, and the
   message says so. The video helper no longer writes Python bytecode into the app's folders.

@@ -27,6 +27,15 @@ original, and renders always read originals. Proxies are made only when `ProxyPo
 player would struggle (keyframe gap over 2 s in the first 10 s or 5 s from the middle, a codec or container Chromium cannot play smoothly,
 above 4K, or 4K above 60 fps); ordinary 4K plays from the original.
 
+## The row comes before its thumbnail
+
+Import records the media in `edit.json` right after the probe and fingerprint (and the copy), so
+the Assets row appears before the thumbnail is made: on a 4K clip that is a full-frame decode. The
+thumbnail is written next and the list is published again, so the row picks it up without a
+reload; a failed thumbnail leaves the film placeholder. The clip is marked as proxy-checked before
+the edit lands, or the list that edit triggers would probe the file a second time while the import
+decides its proxy (S7V-064).
+
 ## Serving is scoped to `edit.json`
 
 `/api/assets` serves project media through the `project-media` resource. Its token pins the file's
