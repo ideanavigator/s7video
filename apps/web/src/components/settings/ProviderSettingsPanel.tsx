@@ -94,7 +94,7 @@ import { ExpandableText } from "./ExpandableText";
 import { IntervalSecondsField } from "./IntervalSecondsField";
 import { ProviderInstanceCard } from "./ProviderInstanceCard";
 import { useSecretSources } from "./SecretSourceInput";
-import { SpeechModelSetup } from "../editor/SpeechModelSetup";
+import { SpeechModelSettings } from "./SpeechModelSettings";
 import { UsageProviderSettings } from "./UsageProviderSettings";
 import { ProviderSetupSection, readAntigravityAuthMethod } from "./ProviderSetupSection";
 import { ProviderAuthenticationSection } from "./ProviderAuthenticationSection";
@@ -1067,9 +1067,7 @@ export function EnvironmentProviderSettings({
         </SettingsGroup>
       </SettingsSection>
 
-      <SettingsSection title="Speech model" variant="plain">
-        <SpeechModelSetup environmentId={environmentId} />
-      </SettingsSection>
+      <SpeechModelSettings environmentId={environmentId} />
 
       <UsageProviderSettings
         key={environmentId}

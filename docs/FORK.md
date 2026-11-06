@@ -355,7 +355,7 @@ in `apps/web/src/components/editor/` and `apps/web/src/editor/`. These upstream 
 - `chat/TimelineWorkEntryRow.tsx` shows an "Open in Editor" button on `video_` tool rows.
 - `ChatView.tsx` calls `useOpenEditorOnModelsMissing`, which opens the Editor when a `video_` tool
   answers that the speech model is missing, so its download prompt is in view (S7V-067).
-- `onboarding/WelcomeWizard.tsx` (the agents step) and `settings/ProviderSettingsPanel.tsx` render
+- `onboarding/WelcomeWizard.tsx` (the agents step) and `settings/ProviderSettingsPanel.tsx` (through `SpeechModelSettings`) render
   `SpeechModelSetup`, the speech model download beside the agents (S7V-067).
 - `client-runtime/src/rpc/client.ts` adds `media.subscribe`, `edit.subscribe` and
   `engine.jobs.subscribe` to the subscriptions that resubscribe after a reconnect.

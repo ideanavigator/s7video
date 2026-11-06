@@ -246,10 +246,22 @@ const modelsStatusQuery = createEnvironmentRpcQueryAtomFamily(connectionAtomRunt
   refreshTrigger: ({ environmentId }) => modelsStatusTriggerAtom(environmentId),
 });
 
-/** The speech model's status on this server, refetched when a download ends; null until known. */
-export function useSpeechModelStatus(environmentId: EnvironmentId): TranscribeModelsStatus | null {
+export type SpeechModelStatusState =
+  | { readonly _tag: "loading" }
+  | { readonly _tag: "unavailable" }
+  | { readonly _tag: "ready"; readonly status: TranscribeModelsStatus };
+
+/** The speech model's status on this server, refetched when a download ends. */
+export function useSpeechModelStatusState(environmentId: EnvironmentId): SpeechModelStatusState {
   const result = useAtomValue(modelsStatusQuery({ environmentId, input: {} }));
-  return AsyncResult.isSuccess(result) ? result.value : null;
+  if (AsyncResult.isSuccess(result)) return { _tag: "ready", status: result.value };
+  return AsyncResult.isFailure(result) ? { _tag: "unavailable" } : { _tag: "loading" };
+}
+
+/** The status once known; null while loading or when the engine can't answer. */
+export function useSpeechModelStatus(environmentId: EnvironmentId): TranscribeModelsStatus | null {
+  const state = useSpeechModelStatusState(environmentId);
+  return state._tag === "ready" ? state.status : null;
 }
 
 export function refreshSpeechModelStatus(environmentId: EnvironmentId): void {
