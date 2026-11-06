@@ -282,7 +282,8 @@ export function useComposerMenuItems({
         type: "skill" as const,
         provider: selectedProvider,
         skill,
-        label: `/skill:${skill.name}`,
+        // s7video: skills with a friendly name (built-in skills, S7V-048) show it instead.
+        label: skill.displayName?.trim() || `/skill:${skill.name}`,
         description:
           skill.shortDescription ??
           skill.description ??
