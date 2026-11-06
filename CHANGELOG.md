@@ -72,6 +72,8 @@ from; the per-ticket entries and how this file is compiled are in
 - No visible change: three automated checks lost while removing unused agents are restored (agent
   wake-ups, the Push and Create PR buttons after a commit, usage stats with one broken agent config).
   (S7V-017)
+- Removing silences from a long recording answers at once: the clip's sound is measured once while
+  its words are found, and reused every time you cut. (S7V-055)
 
 ### Removed
 

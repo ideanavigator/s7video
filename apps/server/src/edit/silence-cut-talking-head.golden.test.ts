@@ -2,15 +2,16 @@
 // SPDX-License-Identifier: MIT
 // @effect-diagnostics nodeBuiltinImport:off globalConsoleInEffect:off -- Reads the cached clip and fixtures, prints the result for the ticket.
 /**
- * Golden `silence-cut-talking-head` (S7V-027): default silence removal on talking-head-01 through
- * the real service, engine and edit; cut list exact vs the reference, ±1 frame vs keep.json, no
- * clipped word. Update with S7VIDEO_GOLDEN_UPDATE=1; run `pnpm test:golden -- silence-cut-talking-head`.
+ * Golden `silence-cut-talking-head` (S7V-027): talking-head-01 through the real service and engine;
+ * cut list exact vs the reference, ±1 frame vs keep.json, no clipped word. The first rate's levels
+ * come from a `silence` job, the rest from the file it wrote (S7V-055). `S7VIDEO_GOLDEN_UPDATE=1`.
  */
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import {
   type EditDocument,
   type EditRational,
+  SilenceLevels,
   Transcript,
   validateEditDocument,
 } from "@t3tools/contracts";
@@ -71,6 +72,7 @@ interface RateResult {
 
 const decodeTranscript = Schema.decodeUnknownSync(Schema.fromJsonString(Transcript));
 const transcript = () => decodeTranscript(NodeFS.readFileSync(TRANSCRIPT, "utf8"));
+const decodeLevels = Schema.decodeUnknownSync(Schema.fromJsonString(SilenceLevels));
 
 /** One project at `fps` with the clip recorded by reference, cut with the defaults twice. */
 const cutAt = (fps: EditRational) =>
@@ -135,9 +137,30 @@ describe.skipIf(!available)("silence-cut-talking-head golden", () => {
       const fileSystem = yield* FileSystem.FileSystem;
       const baseDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "s7v-silence-golden-" });
       const words = transcript();
+      const cacheDir = NodePath.join(baseDir, "transcripts");
+      const levelsFile = NodePath.join(cacheDir, `${words.mediaFingerprint.sha256}.levels.json`);
+      const sources: string[] = [];
       const services = SilenceCutService.layer.pipe(
         Layer.provideMerge(
-          Layer.mock(TranscriptService.TranscriptService)({ get: () => Effect.succeed(words) }),
+          Layer.mock(TranscriptService.TranscriptService)({
+            get: () => Effect.succeed(words),
+            levels: (input) =>
+              Effect.sync(() => {
+                const cached = NodeFS.existsSync(levelsFile)
+                  ? decodeLevels(NodeFS.readFileSync(levelsFile, "utf8"))
+                  : null;
+                sources.push(cached === null ? "job" : "file");
+                return {
+                  cached,
+                  measure: {
+                    projectId: input.projectId,
+                    path: CLIP,
+                    cacheDir,
+                    fingerprint: words.mediaFingerprint,
+                  },
+                };
+              }),
+          }),
         ),
         Layer.provideMerge(EngineService.layer),
         Layer.provideMerge(layerEditTest(baseDir)),
@@ -191,6 +214,12 @@ describe.skipIf(!available)("silence-cut-talking-head golden", () => {
           removedSeconds: run.result.removedSeconds,
         };
       }
+
+      // AC-2 (S7V-055): one job measured the levels; every later call read its file.
+      expect(sources).toEqual(["job", ...Array.from({ length: 5 }, () => "file")]);
+      const file = decodeLevels(NodeFS.readFileSync(levelsFile, "utf8"));
+      expect(file.fps).toEqual(words.fps);
+      expect(file.durationFrames).toBe(words.durationFrames);
 
       if (UPDATE) {
         NodeFS.writeFileSync(

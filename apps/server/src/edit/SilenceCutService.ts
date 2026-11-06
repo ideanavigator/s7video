@@ -1,19 +1,24 @@
 // SPDX-FileCopyrightText: 2026 s7video contributors
 // SPDX-License-Identifier: MIT
-// Silence removal (S7V-027): reads a clip's cached transcript and its per-frame sound levels
-// (`silence.detect`), plans keep ranges (`silencePlan.ts`) and writes them as one `setKeepRanges`
-// through EditDocumentService, so the cut is one checkpoint and a repeat changes nothing.
+// Silence removal (S7V-027): reads a clip's cached transcript and its per-frame sound levels,
+// plans keep ranges (`silencePlan.ts`) and writes them as one `setKeepRanges` through
+// EditDocumentService, so the cut is one checkpoint and a repeat changes nothing. The levels come
+// from the file the transcribe job writes beside the transcript; when it is missing, a `silence`
+// engine job measures them once and writes it (S7V-055).
 import {
   type EditDocument,
   type EditMedia,
   type EditOp,
   type EngineError,
+  type EngineJobId,
   type ProjectId,
   SilenceCutError,
   SilenceDetectResult,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
@@ -47,6 +52,18 @@ export interface RemoveSilencesResult {
   readonly revision: number;
   /** False when the edit already had exactly these cuts, or there was nothing to cut. */
   readonly changed: boolean;
+}
+
+/**
+ * How long one call waits for a `silence` job before handing its id back: under Codex's 60 s tool
+ * limit. A 30-minute clip measures in about 1 s on an M-series Mac (S7V-055).
+ */
+const MEASURE_WAIT = "20 seconds";
+
+/** A running `silence` job; both fields are set once the job has its id. */
+interface Measuring {
+  fiber?: Fiber.Fiber<SilenceDetectResult, EngineError>;
+  jobId?: EngineJobId;
 }
 
 export class SilenceCutService extends Context.Service<
@@ -145,12 +162,58 @@ const make = Effect.gen(function* () {
   const edits = yield* EditDocumentService.EditDocumentService;
   const engine = yield* EngineService.EngineService;
   const transcripts = yield* TranscriptService.TranscriptService;
+  const serviceScope = yield* Effect.scope;
+  // One `silence` job per clip at a time: a call made while it runs waits on the same job.
+  const measuring = new Map<string, Measuring>();
   const context = yield* Effect.context<
     | ProjectService.ProjectService
     | EditDocumentService.EditDocumentService
     | FileSystem.FileSystem
     | Path.Path
   >();
+
+  /** Measures the clip's levels as a job (it writes the levels file); waits `MEASURE_WAIT` for it. */
+  const measure = Effect.fnUntraced(function* (
+    mediaId: string,
+    source: TranscriptService.TranscriptLevels["measure"],
+  ) {
+    const key = `${source.cacheDir}\0${source.fingerprint.sha256}`;
+    const running = measuring.get(key);
+    let fiber = running?.fiber;
+    let jobId = running?.jobId;
+    if (fiber === undefined || jobId === undefined) {
+      const started = yield* Deferred.make<EngineJobId>();
+      const own: Measuring = {};
+      measuring.set(key, own);
+      // In the service's scope, so the job keeps going when this call stops waiting or is cut off.
+      fiber = yield* engine
+        .runJob({
+          kind: "silence",
+          method: "silence.detect",
+          params: { path: source.path, cacheDir: source.cacheDir, fingerprint: source.fingerprint },
+          success: SilenceDetectResult,
+          projectId: source.projectId,
+          onStart: (id) => Deferred.succeed(started, id).pipe(Effect.asVoid),
+        })
+        .pipe(
+          Effect.onExit(() =>
+            Effect.sync(() => {
+              if (measuring.get(key) === own) measuring.delete(key);
+            }),
+          ),
+          Effect.forkIn(serviceScope),
+        );
+      jobId = yield* Deferred.await(started);
+      own.fiber = fiber;
+      own.jobId = jobId;
+    }
+    const done = yield* Fiber.join(fiber).pipe(Effect.timeoutOption(MEASURE_WAIT));
+    if (done._tag === "Some") return done.value;
+    return yield* refuse(
+      "measuring",
+      `Measuring the sound of ${mediaId} first (video job ${jobId}). Wait for it with video_job_status, then call video_remove_silences again.`,
+    );
+  });
 
   const removeSilences = Effect.fn("SilenceCutService.removeSilences")(function* (
     input: RemoveSilencesInput,
@@ -173,7 +236,7 @@ const make = Effect.gen(function* () {
         `${media.id} has linked sound on another track; silence removal cannot cut it yet.`,
       );
     }
-    const scoped = yield* resolveMedia(project, media.id).pipe(
+    yield* resolveMedia(project, media.id).pipe(
       Effect.mapError(scopeFailure),
       Effect.provideContext(context),
     );
@@ -186,13 +249,14 @@ const make = Effect.gen(function* () {
         `${media.id} has no transcript yet. Run video_transcribe first.`,
       );
     }
-    const detected = yield* engine.call(
-      "silence.detect",
-      { path: scoped.path },
-      SilenceDetectResult,
-    );
+    const found = yield* transcripts
+      .levels({ projectId: input.projectId, media: media.id })
+      .pipe(Effect.mapError((error) => refuse("no-transcript", error.message)));
+    // The cached file was already checked against the transcript (file, rate and frame count).
+    const detected = found.cached ?? (yield* measure(media.id, found.measure));
+    const detectedRate = "fps" in detected ? detected.fps : detected.rate;
     const sameRate =
-      detected.rate.num * transcript.fps.den === transcript.fps.num * detected.rate.den;
+      detectedRate.num * transcript.fps.den === transcript.fps.num * detectedRate.den;
     if (!sameRate) {
       return yield* refuse(
         "no-transcript",
