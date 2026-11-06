@@ -7,7 +7,8 @@ starting 0.4 s early so a chunk's first word is not lost; Qwen3-ASR then Qwen3-F
 chunk; words merged so each pause belongs to one chunk; words aligned onto audio below -50 dBFS
 dropped; times turned into integer frames at the video's rate, counted from its first frame.
 
-The result is cached at `<cacheDir>/<fingerprint sha256>.json` and returned as a path. A cache hit
+The result is cached at `<cacheDir>/<fingerprint sha256>.json` and returned as a path, with the
+clip's per-frame sound levels beside it in `<sha256>.levels.json` (`silence.py`, S7V-055). A cache hit
 for the same media and model never loads the model. Only frames reach the cache, never seconds.
 """
 
@@ -464,6 +465,11 @@ def _run(params: dict[str, Any], job: JobContext) -> dict[str, Any]:
     job.progress(0.0, "reading audio")
     info = _media_clock(path, job)
     pcm = decode_audio(path, job)
+    # The sound levels for silence removal, from this same audio on this same clock (S7V-055).
+    from .silence import frame_levels, levels_document, write_levels
+
+    frames = frame_levels(pcm, info.clock, info.duration_frames)
+    levels = levels_document(fingerprint, info.clock.rate, info.duration_frames, frames)
     chunks = plan_chunks(pcm)
     words_per_chunk: list[list[Word]] = []
     started = time.perf_counter()
@@ -494,6 +500,8 @@ def _run(params: dict[str, Any], job: JobContext) -> dict[str, Any]:
         "words": words_to_frames(words, info.clock),
         "createdAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     }
+    # Levels first: a transcript on disk always has its levels next to it.
+    write_levels(cache_dir, levels, job)
     _write_cache(target, transcript, job)
     result = _summary(target, transcript, cached=False)
     result["timings"] = {
