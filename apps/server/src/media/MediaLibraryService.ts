@@ -44,6 +44,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import * as EditDocumentService from "../edit/EditDocumentService.ts";
+import { allIds } from "../edit/applyEditOps.ts";
 import { CACHE_DIR } from "../edit/EditProjectLayout.ts";
 import * as EngineService from "../engine/EngineService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
@@ -688,7 +689,7 @@ const make = Effect.fn("MediaLibraryService.make")(function* (options: MediaLibr
     // same name at once get two ids rather than one replacing the other.
     let mediaId = "";
     yield* applyWith(input.projectId, input.origin ?? "import", (document) => {
-      mediaId = existing?.id ?? mediaIdFor(label, new Set(document.media.map((entry) => entry.id)));
+      mediaId = existing?.id ?? mediaIdFor(label, allIds(document));
       return [{ _tag: "putMedia", media: { id: mediaId, ...media } }];
     }).pipe(
       Effect.tapError(() =>

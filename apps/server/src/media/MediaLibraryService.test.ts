@@ -689,6 +689,65 @@ describe("MediaLibraryService", () => {
     ),
   );
 
+  it.effect("picks a new clip's id against every id in the edit, not only clips", () =>
+    withLibrary(({ projectId, desktop, library, edits }) =>
+      Effect.gen(function* () {
+        const before = yield* edits.read(projectId);
+        yield* edits.apply(
+          projectId,
+          [{ _tag: "addTrack", track: { kind: "video", id: "music", items: [] } }],
+          { origin: "agent", baseRevision: before.revision },
+        );
+        const { mediaId } = yield* library.import({
+          projectId,
+          sourcePath: writeClip(desktop, "music.mp4"),
+          mode: "copy",
+        });
+        assert.equal(mediaId, "music-2");
+      }),
+    ),
+  );
+
+  it.effect("refuses an undo that would clash with a kept clip, and history stays usable", () =>
+    withLibrary(({ projectId, desktop, library, edits }) =>
+      Effect.gen(function* () {
+        const marked = yield* edits.apply(
+          projectId,
+          [{ _tag: "setMarkers", markers: [{ id: "cam", start: 0, duration: 30, label: "Cam" }] }],
+          { origin: "agent", baseRevision: (yield* edits.read(projectId)).revision },
+        );
+        yield* edits.apply(projectId, [{ _tag: "setMarkers", markers: [] }], {
+          origin: "agent",
+          baseRevision: marked.revision,
+        });
+        yield* library.import({
+          projectId,
+          sourcePath: writeClip(desktop, "cam.mp4"),
+          mode: "copy",
+        });
+        yield* edits.undo(projectId);
+        const refused = yield* Effect.flip(edits.undo(projectId));
+        assert.deepInclude(refused, {
+          _tag: "EditUnavailableError",
+          reason: "library-conflict",
+          explanation:
+            'This undo would clash with the clip "cam". Remove that clip from Assets first, then undo again.',
+        });
+        // Nothing moved: the clip is still listed and redo still works.
+        assert.deepEqual(
+          (yield* library.list(projectId)).items.map((item) => item.id),
+          ["cam"],
+        );
+        const redone = yield* edits.redo(projectId);
+        assert.deepEqual(
+          redone.document.media.map((entry) => entry.id),
+          ["cam"],
+        );
+        assert.isFalse(redone.canRedo);
+      }),
+    ),
+  );
+
   it.effect("names a clip after the label it was given, never replacing a kept copy", () =>
     withLibrary(({ projectId, root, desktop, library }) =>
       Effect.gen(function* () {

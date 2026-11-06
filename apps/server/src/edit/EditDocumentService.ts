@@ -31,7 +31,7 @@ import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 
 import * as ProjectService from "../project/ProjectService.ts";
-import { applyEditOps } from "./applyEditOps.ts";
+import { allIds, applyEditOps } from "./applyEditOps.ts";
 import * as EditHistoryService from "./EditHistoryService.ts";
 import * as EditProjectLayout from "./EditProjectLayout.ts";
 import { migrateEditDocument } from "./editMigrations.ts";
@@ -324,10 +324,12 @@ const make = Effect.gen(function* () {
   /**
    * Undo and redo restore the edit, not the library: a clip in the library now stays there, even
    * when the restored edit is from before its import. Entries the restored edit has keep their
-   * recorded form. With nothing to add, the checkpoint's bytes are written as they are.
+   * recorded form. With nothing to add, the checkpoint's bytes are written as they are. A kept
+   * clip whose id the restored edit uses for something else refuses the step (ids share one space).
    */
   const keepLibrary = Effect.fnUntraced(function* (
     projectId: ProjectId,
+    direction: "undo" | "redo",
     restoredText: string,
     current: EditDocument,
   ) {
@@ -341,11 +343,26 @@ const make = Effect.gen(function* () {
     const ids = new Set(restored.document.media.map((media) => media.id));
     const kept = current.media.filter((media) => !ids.has(media.id));
     if (kept.length === 0) return restoredText;
+    const taken = allIds(restored.document);
+    const clash = kept.find((media) => taken.has(media.id));
+    if (clash !== undefined) {
+      return yield* unavailable(
+        projectId,
+        "library-conflict",
+        `This ${direction} would clash with the clip "${clash.id}". Remove that clip from Assets first, then ${direction} again.`,
+      );
+    }
     const merged = validateEditDocument({
       ...restored.document,
       media: [...restored.document.media, ...kept],
     });
-    if (!merged.ok) return yield* unreadable();
+    if (!merged.ok) {
+      return yield* unavailable(
+        projectId,
+        "library-conflict",
+        `This ${direction} does not fit the clips in Assets: ${merged.issues[0]!.explanation}`,
+      );
+    }
     return EditProjectLayout.editFileContents(merged.document);
   });
 
@@ -357,7 +374,7 @@ const make = Effect.gen(function* () {
           const before = yield* loadReconciled(projectId, root, "write");
           const moved = yield* history
             .step(root, direction, (editJson, revision) =>
-              keepLibrary(projectId, editJson, before.document).pipe(
+              keepLibrary(projectId, direction, editJson, before.document).pipe(
                 Effect.tap((text) => writeEdit(projectId, root, text, revision, before.editText)),
               ),
             )

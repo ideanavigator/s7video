@@ -218,6 +218,7 @@ export class EditUnavailableError extends Schema.TaggedError<EditUnavailableErro
       "nothing-to-undo",
       "nothing-to-redo",
       "checkpoint-failed",
+      "library-conflict",
     ]),
     explanation: Schema.String,
   },

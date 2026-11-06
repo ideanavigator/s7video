@@ -62,7 +62,10 @@ const byStart = (a: DraftItem, b: DraftItem) =>
 const sourceIn = (item: DraftItem) =>
   typeof item.in === "number" ? item.in : item.media !== undefined ? 0 : undefined;
 
-function allIds(document: DraftDocument): Set<string> {
+/** Every id in the document: media, markers, tracks and items share one namespace. */
+export function allIds(
+  document: Pick<EditDocument, "media" | "markers" | "tracks"> | DraftDocument,
+): Set<string> {
   const ids = new Set<string>();
   for (const media of document.media) ids.add(media.id);
   for (const marker of document.markers) ids.add(marker.id);
