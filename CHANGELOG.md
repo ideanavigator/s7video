@@ -86,6 +86,9 @@ from; the per-ticket entries and how this file is compiled are in
 
 ### Fixed
 
+- The speech model can be downloaded from first-run setup, Settings → Providers or a prompt at the
+  top of the Editor panel, which opens by itself when the assistant needs the model; before, only
+  the Transcript tab asked. (S7V-067)
 - A chat in plan mode can look at your video but no longer imports, transcribes, cuts, exports,
   undoes or redoes, and a device allowed to edit can no longer add a file from elsewhere on your Mac
   to a project to play or download it. (S7V-066)
