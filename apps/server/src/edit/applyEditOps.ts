@@ -350,6 +350,18 @@ function applyOne(document: DraftDocument, op: EditOp): void {
       document.markers = [...op.markers];
       return;
     }
+    case "setCanvas": {
+      const { width, height } = op.canvas;
+      // The encoder needs even sides (export.py refuses odd ones), so refuse them here, early.
+      if (!(width > 0 && height > 0) || width % 2 !== 0 || height % 2 !== 0) {
+        fail(null, `The canvas needs even sides above 0, not ${width}×${height}.`);
+      }
+      document.canvas = { width, height };
+      if (op.fromClip !== true) {
+        document.metadata = { ...(document.metadata as object), canvasChosen: true };
+      }
+      return;
+    }
   }
 }
 

@@ -26,6 +26,12 @@ const camera = {
   probe: { durationFrames: FRAMES, hasVideo: true, hasAudio: true, fps: { num: 30, den: 1 } },
 } as const;
 
+/** A wide 1894×1080 recording, as the S7V-021 talking-head clip. */
+const wideCamera = {
+  ...camera,
+  probe: { ...camera.probe, width: 1894, height: 1080 },
+} as const;
+
 /** Three spoken phrases with a second of room tone between them, at 30 fps. */
 const PHRASES: ReadonlyArray<readonly [number, number]> = [
   [30, 90],
@@ -149,6 +155,8 @@ describe("SilenceCutService", () => {
           changed: true,
         });
         const cut = yield* edits.read(projectId);
+        // A clip whose probe has no picture size leaves the canvas as it was.
+        assert.deepEqual(cut.document.canvas, start.document.canvas);
         const track = cut.document.tracks[0]!;
         assert.strictEqual(track.kind, "video");
         assert.deepEqual(
@@ -333,6 +341,71 @@ describe("SilenceCutService", () => {
             { in: 185, duration: 115 },
           ],
         },
+      ],
+    ),
+  );
+
+  it.effect("first placement of a wide clip sets a wide canvas", () =>
+    withProject(
+      ({ projectId, root, edits, silences }) =>
+        Effect.gen(function* () {
+          const before = readEdit(root);
+          const start = yield* edits.read(projectId);
+          assert.deepEqual(start.document.canvas, { width: 1080, height: 1920 });
+
+          const first = yield* silences.removeSilences({ projectId });
+          assert.strictEqual(first.revision, start.revision + 1);
+          const cut = yield* edits.read(projectId);
+          assert.deepEqual(cut.document.canvas, { width: 1894, height: 1080 });
+          assert.strictEqual(cut.document.tracks[0]!.items.length, 3);
+
+          // The canvas and the cut are one checkpoint: one undo takes both back.
+          yield* edits.undo(projectId);
+          assert.strictEqual(readEdit(root), before);
+        }),
+      [{ _tag: "putMedia", media: wideCamera }],
+    ),
+  );
+
+  it.effect("keeps a canvas the user chose before the first cut", () =>
+    withProject(
+      ({ projectId, edits, silences }) =>
+        Effect.gen(function* () {
+          const first = yield* silences.removeSilences({ projectId });
+          assert.isTrue(first.changed);
+          // Chosen on an empty timeline, even though it equals the default: the wide cut keeps it.
+          const cut = yield* edits.read(projectId);
+          assert.deepEqual(cut.document.canvas, { width: 1080, height: 1920 });
+          assert.strictEqual(cut.document.tracks[0]!.items.length, 3);
+        }),
+      [
+        { _tag: "putMedia", media: wideCamera },
+        { _tag: "setCanvas", canvas: { width: 1080, height: 1920 } },
+      ],
+    ),
+  );
+
+  it.effect("keeps the canvas when the timeline already has a clip", () =>
+    withProject(
+      ({ projectId, edits, silences }) =>
+        Effect.gen(function* () {
+          const first = yield* silences.removeSilences({ projectId });
+          assert.isTrue(first.changed);
+          const cut = yield* edits.read(projectId);
+          // The user chose this shape after placing the clip; a later cut never resets it.
+          assert.deepEqual(cut.document.canvas, { width: 1080, height: 1080 });
+        }),
+      [
+        { _tag: "putMedia", media: wideCamera },
+        { _tag: "addTrack", track: { kind: "video", id: "V1", items: [] } },
+        {
+          _tag: "setKeepRanges",
+          trackId: "V1",
+          mediaId: "cam",
+          ranges: [{ in: 0, duration: FRAMES }],
+        },
+        // Not marked chosen, so only the placed clip keeps the first cut from reshaping.
+        { _tag: "setCanvas", canvas: { width: 1080, height: 1080 }, fromClip: true },
       ],
     ),
   );

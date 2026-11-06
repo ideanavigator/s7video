@@ -11,6 +11,7 @@ import { projectComposerContextForProvider } from "@t3tools/shared/composerConte
 import {
   buildBase,
   buildMessages,
+  builtInSkillListing,
   failedEarly,
   executeCodex,
   gradeSample,
@@ -278,6 +279,34 @@ it("rebuilds the template from this checkout and sends a child T3's task prompt"
   const prompt = buildMessages(makeSample(childCase, base)).at(-1)?.content.at(-1);
   assert.equal(prompt?.text, taskPrompt({ task: childCase.prompt, role: "implementation" }));
   assert.notEqual(prompt?.text, childCase.prompt);
+});
+
+// S7V-061: video cases see what a thread in a video project sees.
+it("lists video tools, text and built-in skills only in a video case", () => {
+  const plain = buildBase(template, { model: "claude-sonnet-5-5", keepUserInstructions: false });
+  const video = buildBase(template, {
+    model: "claude-sonnet-5-5",
+    keepUserInstructions: false,
+    video: true,
+  });
+  const names = (base: typeof plain) => base.t3.map((tool) => tool.name);
+  assert.notInclude(names(plain), "mcp__t3-code__video_export");
+  assert.includeMembers(names(video), ["mcp__t3-code__video_export", "mcp__t3-code__video_canvas"]);
+  assert.notInclude(String(plain.system[1]?.text), "video_ tools");
+  assert.include(String(video.system[1]?.text), "video_ tools");
+
+  const videoCase: McpToolUseCase = {
+    ...childCase,
+    setup: { role: "top", video: true },
+    prompt: "remove the silences",
+  };
+  const reminders = (testCase: McpToolUseCase, base: typeof plain) =>
+    buildMessages(makeSample(testCase, base))[0]
+      ?.content.map((block) => String(block.text))
+      .join();
+  assert.include(reminders(videoCase, video), "- video:remove-silences: Remove silences");
+  assert.notInclude(reminders({ ...videoCase, setup: { role: "top" } }, plain), "remove-silences");
+  assert.include(builtInSkillListing(), "Use only when the user asks for it.");
 });
 
 it("lists link tools only while a case turns the beta on, and sends chips as T3 projects them", () => {

@@ -33,6 +33,10 @@ export type EditRational = typeof EditRational.Type;
 export const EditCanvas = Schema.Struct({ width: PositiveInt, height: PositiveInt });
 export type EditCanvas = typeof EditCanvas.Type;
 
+/** The shapes a user can ask for (PO, 2026-11-06); a new edit takes its first clip's own shape. */
+export const EditAspectRatio = Schema.Literals(["9:16", "16:9", "1:1", "4:5", "4:3"]);
+export type EditAspectRatio = typeof EditAspectRatio.Type;
+
 export const EditMediaKind = Schema.Literals(["video", "audio", "image"]);
 export type EditMediaKind = typeof EditMediaKind.Type;
 

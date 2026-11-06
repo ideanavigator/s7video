@@ -4,11 +4,11 @@
 // and descriptions say what they read: video, clip, frame, edit, job. Keep them short; every byte
 // is sent with each turn (AgentContextBudget.test.ts).
 import {
+  EditAspectRatio,
   EditRational,
   EngineJob,
   EngineJobId,
   EngineJobState,
-  ExportPreset,
   MediaProbeResult,
   OrchestratorMcpFailure,
 } from "@t3tools/contracts";
@@ -144,13 +144,12 @@ const VideoJobCancelTool = Tool.make("video_job_cancel", {
   .annotate(Tool.Title, "Cancel video job")
   .annotateMerge(videoAnnotations(false));
 
-// Answers with the job at once; the agent follows it with video_job_status (S7V-028).
+// Answers with the job at once; the agent follows it with video_job_status (S7V-028). User-triggered
+// only (S7V-061). No preset: the export renders the edit's canvas, which video_canvas changes, so the
+// video always has the shape the player shows.
 const VideoExportTool = Tool.make("video_export", {
-  description: "Export the edit to MP4 with captions; returns a video job.",
-  parameters: Schema.Struct({
-    preset: Schema.optional(ExportPreset),
-    captions: Schema.optional(Schema.Boolean),
-  }),
+  description: "Export video to MP4 only if user asks. Returns a job.",
+  parameters: Schema.Struct({ captions: Schema.optional(Schema.Boolean) }),
   success: Schema.Struct({ jobId: EngineJobId, path: Schema.String }),
   failure: OrchestratorMcpFailure,
   dependencies: [...dependencies, ExportService.ExportService],
@@ -219,6 +218,17 @@ const VideoRedoTool = Tool.make("video_redo", {
   .annotate(Tool.Title, "Redo edit")
   .annotateMerge(videoAnnotations(false));
 
+// S7V-061: user-triggered only. One checkpoint, so undo puts the old shape back.
+const VideoCanvasTool = Tool.make("video_canvas", {
+  description: "Set video aspect ratio only if user asks.",
+  parameters: Schema.Struct({ ratio: EditAspectRatio }),
+  success: EditStep,
+  failure: OrchestratorMcpFailure,
+  dependencies,
+})
+  .annotate(Tool.Title, "Set video shape")
+  .annotateMerge(videoAnnotations(false));
+
 // S7V-027: user-triggered only (PO rule). `keep` is text ("9-30,60-90", end exclusive) in clip
 // frames, as video_transcript_read shows them: a list of objects would not fit the 250 B budget.
 const VideoRemoveSilencesTool = Tool.make("video_remove_silences", {
@@ -258,6 +268,7 @@ export const VideoStandardToolkit = Toolkit.make(
   VideoUndoTool,
   VideoRedoTool,
   VideoRemoveSilencesTool,
+  VideoCanvasTool,
 );
 
 /** `video_frame` returns image content, so it registers on its own (`registerVideoFrame`). */
@@ -275,5 +286,6 @@ export const VideoToolkit = Toolkit.make(
   VideoUndoTool,
   VideoRedoTool,
   VideoRemoveSilencesTool,
+  VideoCanvasTool,
   VideoFrameTool,
 );
