@@ -194,6 +194,26 @@ const VideoImportTool = Tool.make("video_import", {
   .annotate(Tool.Title, "Import clip")
   .annotateMerge(videoAnnotations(false));
 
+const EditStep = Schema.Struct({ revision: Schema.Int, message: Schema.String });
+
+const VideoUndoTool = Tool.make("video_undo", {
+  description: "Undo the last edit to this video project. Use this, not git.",
+  success: EditStep,
+  failure: OrchestratorMcpFailure,
+  dependencies,
+})
+  .annotate(Tool.Title, "Undo edit")
+  .annotateMerge(videoAnnotations(false));
+
+const VideoRedoTool = Tool.make("video_redo", {
+  description: "Redo the last undone edit to this video project. Use this, not git.",
+  success: EditStep,
+  failure: OrchestratorMcpFailure,
+  dependencies,
+})
+  .annotate(Tool.Title, "Redo edit")
+  .annotateMerge(videoAnnotations(false));
+
 /** Tools that return JSON. A new tool goes here, with its handler in `handlers.ts`. */
 export const VideoStandardToolkit = Toolkit.make(
   VideoImportTool,
@@ -204,6 +224,8 @@ export const VideoStandardToolkit = Toolkit.make(
   VideoExportTool,
   VideoTranscribeTool,
   VideoTranscriptReadTool,
+  VideoUndoTool,
+  VideoRedoTool,
 );
 
 /** `video_frame` returns image content, so it registers on its own (`registerVideoFrame`). */
@@ -218,5 +240,7 @@ export const VideoToolkit = Toolkit.make(
   VideoExportTool,
   VideoTranscribeTool,
   VideoTranscriptReadTool,
+  VideoUndoTool,
+  VideoRedoTool,
   VideoFrameTool,
 );

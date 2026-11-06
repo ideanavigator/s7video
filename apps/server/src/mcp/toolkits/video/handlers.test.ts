@@ -188,6 +188,14 @@ const makeFixture = (): Fixture => {
     NodePath.join(rootA, "assets", "link.mp4"),
   );
   NodeFS.symlinkSync(outside, NodePath.join(rootA, "assets", "desktop"));
+  NodeFS.symlinkSync(
+    NodePath.join(outside, "nothing-here.mp4"),
+    NodePath.join(rootA, "assets", "dangling.mp4"),
+  );
+  NodeFS.symlinkSync("dangling.mp4", NodePath.join(rootA, "assets", "chained.mp4"));
+  NodeFS.symlinkSync("gone.mp4", NodePath.join(rootA, "assets", "dangling-inside.mp4"));
+  // Reached through assets/desktop, a lexical resolve would land inside Project A.
+  NodeFS.symlinkSync("../secret/missing.mp4", NodePath.join(outside, "rel-link.mp4"));
   const documents = new Map<ProjectId, EditDocument>([
     [
       projectA,
@@ -439,8 +447,10 @@ describe("video toolkit", () => {
           "video_job_cancel",
           "video_job_status",
           "video_probe",
+          "video_redo",
           "video_transcribe",
           "video_transcript_read",
+          "video_undo",
         ]);
         // ToolSearch finds deferred tools by these words, so each says what it reads.
         for (const tool of tools) {
@@ -455,6 +465,8 @@ describe("video toolkit", () => {
         expect(described.video_export).toContain("job");
         expect(described.video_transcribe).toContain("Transcribe");
         expect(described.video_transcript_read).toContain("transcript");
+        expect(described.video_undo).toMatch(/\bundo\b.*\bedit\b/iu);
+        expect(described.video_redo).toMatch(/\bredo\b.*\bedit\b/iu);
       }),
     ),
   );
@@ -582,6 +594,28 @@ describe("video toolkit", () => {
     );
     it.effect("should refuse a missing file behind a symlinked folder the same way", () =>
       refused(() => "assets/desktop/nothing-here.mp4"),
+    );
+    it.effect("should refuse a dangling symlink that points outside the project", () =>
+      refused(() => "assets/dangling.mp4"),
+    );
+    it.effect("should refuse a chain of symlinks that ends outside the project", () =>
+      refused(() => "assets/chained.mp4"),
+    );
+    it.effect("should refuse a relative dangling symlink behind a symlinked folder", () =>
+      refused(() => "assets/desktop/rel-link.mp4"),
+    );
+    it.effect("still says a dangling symlink inside the project is missing", () =>
+      withTools(({ fixture, call }) =>
+        Effect.gen(function* () {
+          const result = yield* call(threadA, "video_probe", {
+            media: "assets/dangling-inside.mp4",
+          });
+          expect(textOf(result)).toEqual([
+            "There is no file at assets/dangling-inside.mp4 in this project.",
+          ]);
+          expect(fixture.calls).toEqual([]);
+        }),
+      ),
     );
     it.effect("should refuse a missing recorded path outside the project the same way", () =>
       withTools(({ fixture, call }) =>
@@ -745,6 +779,8 @@ describe("video toolkit", () => {
           ["video_transcribe", { media: "cam" }],
           ["video_transcript_read", { media: "cam" }],
           ["video_import", { path: "/tmp/x.mp4" }],
+          ["video_undo", {}],
+          ["video_redo", {}],
         ] as const) {
           // A hidden tool is not callable at all: the server answers as for an unknown tool.
           const error = yield* call(threadA, tool, args, ["orchestration"]).pipe(Effect.flip);
@@ -1031,8 +1067,10 @@ it.effect("should hide tools without the video capability", () =>
         "video_job_cancel",
         "video_job_status",
         "video_probe",
+        "video_redo",
         "video_transcribe",
         "video_transcript_read",
+        "video_undo",
       ]);
       expect(yield* listed("plainToken")).toEqual([]);
       NodeFS.rmSync(NodePath.dirname(fixture.rootA), { recursive: true, force: true });

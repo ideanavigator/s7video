@@ -91,7 +91,7 @@ const toolHandlerServices = Layer.mergeAll(
 
 const utf8Bytes = (text: string) => Buffer.byteLength(text, "utf8");
 
-const claudeSystemAppend = () => {
+const claudeSystemAppend = (videoToolsAvailable = false) => {
   const { systemPrompt } = makeClaudeQueryOptions({
     modelSelection: {
       instanceId: ProviderInstanceId.make(CLAUDE_PROVIDER),
@@ -101,15 +101,16 @@ const claudeSystemAppend = () => {
     resume: false,
     cwd: null,
     mcpServers: { "t3-code": { type: "http", url: "http://127.0.0.1/mcp" } },
+    videoToolsAvailable,
   });
   return typeof systemPrompt === "object" && "append" in systemPrompt ? systemPrompt.append : "";
 };
 
-const codexAdditionalContext = () =>
+const codexAdditionalContext = (video = false) =>
   Object.values(
     buildCodexAdditionalContext(
       { model: "gpt-6.1-sol", modelName: "GPT-6.1 Sol", reasoningEffort: "high" },
-      { browser: true, device: true },
+      { browser: true, device: true, video },
     ),
   )
     .map((entry) => entry.value)
@@ -123,6 +124,9 @@ it.effect("agent context matches the committed budget", () =>
     const measured = {
       claudeSystemAppendBytes: utf8Bytes(claudeSystemAppend()),
       codexAdditionalContextBytes: utf8Bytes(codexAdditionalContext()),
+      // s7video: a video project's thread also gets the video edit line (S7V-041).
+      claudeSystemAppendVideoBytes: utf8Bytes(claudeSystemAppend(true)),
+      codexAdditionalContextVideoBytes: utf8Bytes(codexAdditionalContext(true)),
       // The model sees these fields. outputSchema and annotations are protocol metadata.
       mcpToolListJsonBytes: utf8Bytes(
         JSON.stringify(

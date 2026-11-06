@@ -51,6 +51,8 @@ from; the per-ticket entries and how this file is compiled are in
 - Exports now show captions made from your transcript, timed to your voice, with cut words left
   out. Without a transcript, the Export button asks you to transcribe the clip first, or offers to
   export without captions. (S7V-046)
+- Undo from chat: say "undo that" or "redo" and the assistant steps your edit back or forward. Your
+  footage is never touched. (S7V-041)
 
 ### Changed
 

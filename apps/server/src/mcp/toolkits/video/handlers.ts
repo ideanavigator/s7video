@@ -4,6 +4,7 @@
 // edit service method, map its errors. The Editor panel reaches the same services directly.
 import {
   type EditDocument,
+  type EditSnapshot,
   type EngineError,
   type TranscriptError,
   type EngineJobId,
@@ -15,11 +16,13 @@ import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 
+import * as EditDocumentService from "../../../edit/EditDocumentService.ts";
 import * as EngineService from "../../../engine/EngineService.ts";
 import * as ExportService from "../../../export/ExportService.ts";
 import * as TranscriptService from "../../../transcript/TranscriptService.ts";
 import * as MediaLibraryService from "../../../media/MediaLibraryService.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
+import { loadCaller } from "../../threadAccess.ts";
 import {
   callerProject,
   resolveMedia,
@@ -74,6 +77,52 @@ const projectJobs = Effect.fn("VideoHandlers.projectJobs")(function* (project: V
     Option.isSome(snapshot) && snapshot.value.type === "snapshot" ? snapshot.value.jobs : [];
   return jobs.filter((job) => job.projectId === project.projectId);
 });
+
+const count = (n: number, noun: string) => `${n} ${noun}${n === 1 ? "" : "s"}`;
+
+const editSummary = ({ revision, document }: EditSnapshot) => {
+  const items = document.tracks.reduce((total, track) => total + track.items.length, 0);
+  const captions = document.tracks.some(
+    (track) => track.kind === "caption" && track.items.length > 0,
+  );
+  return `revision ${revision}: ${count(items, "item")} on ${count(document.tracks.length, "track")}, ${count(editDurationFrames(document), "frame")}, captions ${captions ? "on" : "off"}`;
+};
+
+/**
+ * Undo and redo through the same service method as the edit.undo / edit.redo RPCs. They change
+ * the edit, so a plan-mode thread may not run them.
+ */
+const stepEdit = (direction: "undo" | "redo") =>
+  McpToolAccess.actsAsCaller(() =>
+    Effect.gen(function* () {
+      const caller = yield* loadCaller();
+      if (caller.limits.interactionMode === "plan") {
+        return yield* new OrchestratorMcpFailure({
+          code: "capability_denied",
+          message: `This thread is in plan mode, so it cannot change the edit. Switch out of plan mode to ${direction}.`,
+        });
+      }
+      const project = yield* callerProject();
+      const edits = yield* EditDocumentService.EditDocumentService;
+      return yield* edits[direction](project.projectId).pipe(
+        Effect.map((snapshot) => ({
+          revision: snapshot.revision,
+          message: `${direction === "undo" ? "Undone" : "Redone"}. The edit is now ${editSummary(snapshot)}.`,
+        })),
+        Effect.catchTags({
+          EditUnavailableError: (error) =>
+            error.reason === "nothing-to-undo" || error.reason === "nothing-to-redo"
+              ? Effect.succeed({ revision: project.snapshot.revision, message: error.explanation })
+              : Effect.fail(
+                  new OrchestratorMcpFailure({
+                    code: "orchestration_error",
+                    message: error.explanation,
+                  }),
+                ),
+        }),
+      );
+    }),
+  );
 
 const handlers = {
   // Always a copy: chat attachments live in the app's store, which may clean them up later.
@@ -291,6 +340,8 @@ const handlers = {
       return { text };
     }),
   ),
+  video_undo: stepEdit("undo"),
+  video_redo: stepEdit("redo"),
 } satisfies McpToolAccess.Handlers<typeof VideoToolkit.tools>;
 
 export const layerStandard = McpToolAccess.toLayer(VideoStandardToolkit, {
@@ -302,6 +353,8 @@ export const layerStandard = McpToolAccess.toLayer(VideoStandardToolkit, {
   video_export: handlers.video_export,
   video_transcribe: handlers.video_transcribe,
   video_transcript_read: handlers.video_transcript_read,
+  video_undo: handlers.video_undo,
+  video_redo: handlers.video_redo,
 });
 
 export const layerFrame = McpToolAccess.toLayer(VideoFrameToolkit, {

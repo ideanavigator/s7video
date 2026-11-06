@@ -187,6 +187,7 @@ import type { ManagedServerProvider } from "@t3tools/provider-core/server/snapsh
 import {
   T3_CODE_DEVICE_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH,
   T3_CODE_ORCHESTRATION_INSTRUCTIONS,
+  T3_CODE_VIDEO_EDIT_INSTRUCTIONS_WITH_TOOL_SEARCH,
 } from "@t3tools/provider-core/server/orchestrationInstructions";
 import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
 import {
@@ -1458,13 +1459,12 @@ To wait for a background command or Monitor you started (tests, a build), call \
 `;
 
 // Native subagents start from their task, not this session's system prompt.
-const subagentDeviceInstructions: HookCallback = () =>
-  Promise.resolve({
-    hookSpecificOutput: {
-      hookEventName: "SubagentStart",
-      additionalContext: T3_CODE_DEVICE_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH,
-    },
-  });
+const subagentInstructions =
+  (additionalContext: string): HookCallback =>
+  () =>
+    Promise.resolve({
+      hookSpecificOutput: { hookEventName: "SubagentStart", additionalContext },
+    });
 
 export function makeClaudeQueryOptions(input: {
   readonly modelSelection: ModelSelection;
@@ -1479,6 +1479,8 @@ export function makeClaudeQueryOptions(input: {
   readonly mcpServers?: ClaudeQueryOptions["mcpServers"];
   /** The thread's T3 MCP session holds the `device` capability. */
   readonly deviceToolsAvailable?: boolean;
+  /** The thread's T3 MCP session holds the `video` capability (an edit project). */
+  readonly videoToolsAvailable?: boolean;
   readonly tools?: ClaudeAgentSdkQueryTools;
   readonly allowedTools?: ReadonlyArray<string>;
   readonly disallowedTools?: ReadonlyArray<string>;
@@ -1547,6 +1549,11 @@ export function makeClaudeQueryOptions(input: {
           env: { ...compactQuerySettings?.env, ENABLE_TOOL_SEARCH: input.toolSearchOverride },
         } as ClaudeSdkSettings);
   const deviceInstructions = input.mcpServers !== undefined && input.deviceToolsAvailable === true;
+  const videoInstructions = input.mcpServers !== undefined && input.videoToolsAvailable === true;
+  const subagentContext = [
+    ...(deviceInstructions ? [T3_CODE_DEVICE_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH] : []),
+    ...(videoInstructions ? [T3_CODE_VIDEO_EDIT_INSTRUCTIONS_WITH_TOOL_SEARCH] : []),
+  ].join("\n\n");
   const options: ClaudeAgentSdkQueryOptions = {
     model: compiledSelection.apiModelId,
     tools: claudeAgentSdkQueryToolsForSdk(selectedTools),
@@ -1604,13 +1611,14 @@ export function makeClaudeQueryOptions(input: {
               CLAUDE_BACKGROUND_WAIT_INSTRUCTIONS +
               (deviceInstructions
                 ? `\n${T3_CODE_DEVICE_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH}\n`
-                : "")),
+                : "") +
+              (videoInstructions ? `\n${T3_CODE_VIDEO_EDIT_INSTRUCTIONS_WITH_TOOL_SEARCH}\n` : "")),
         ...launchAppendSystemPrompt,
       ].join("\n\n"),
     },
-    ...(deviceInstructions
-      ? { hooks: { SubagentStart: [{ hooks: [subagentDeviceInstructions] }] } }
-      : {}),
+    ...(subagentContext === ""
+      ? {}
+      : { hooks: { SubagentStart: [{ hooks: [subagentInstructions(subagentContext)] }] } }),
     ...(Object.keys(extraArgs).length === 0 ? {} : { extraArgs }),
   };
   const additionalDirectories = [
@@ -10373,6 +10381,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               ? {}
               : { mcpServers: mcpOverrides.mcpServers }),
             deviceToolsAvailable: mcpSession?.capabilities?.has("device") === true,
+            videoToolsAvailable: mcpSession?.capabilities?.has("video") === true,
             permissionMode: queryPolicy.permissionMode,
             ...(queryPolicy.allowDangerouslySkipPermissions === undefined
               ? {}
