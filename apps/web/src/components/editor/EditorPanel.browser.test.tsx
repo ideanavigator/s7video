@@ -79,8 +79,11 @@ vi.mock(import("../../assets/assetUrls"), () => ({
     resource: { readonly variant?: string } | null,
     revision?: string | null,
   ) => {
-    state.urlRevisions.push(revision);
-    if (resource?.variant !== undefined) state.urlVariants.push(resource.variant);
+    // Only the player's source counts: Assets thumbnails render on their own schedule.
+    if (resource !== null && resource.variant !== "thumbnail") {
+      state.urlRevisions.push(revision);
+      state.urlVariants.push(resource.variant);
+    }
     return { _tag: "Success", url: "" };
   }) as never,
 }));
