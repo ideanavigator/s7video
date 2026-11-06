@@ -438,6 +438,26 @@ def test_transcribe_writes_frames_and_returns_a_path(
     assert "start\"" not in Path(result["path"]).read_text()
 
 
+def test_progress_moves_through_model_load_and_word_timing(
+    hub: FakeHub, fake_models: Loads, tools: None, wire: Wire, talk: Path, tmp_path: Path
+) -> None:
+    """S7V-058: a cold run no longer sits at "loading model, 0%" for most of its time."""
+    _download()
+    assert "result" in _run(wire, talk, tmp_path / "cache")
+    reports = [
+        (m["params"]["progress"], m["params"]["stage"])
+        for m in wire.messages
+        if m.get("method") == "progress" and m["params"]["jobId"] == "t1"
+    ]
+    assert [value for value, _ in reports] == sorted(value for value, _ in reports)
+    stages = [stage for _, stage in reports]
+    assert stages[0] == "reading audio"
+    assert {"loading the speech model", "transcribing", "timing the words"} <= set(stages)
+    loading = [value for value, stage in reports if stage == "loading the speech model"]
+    assert len(loading) == 2 and 0 < loading[0] < loading[1]
+    assert max(value for value, stage in reports if stage == "timing the words") > loading[-1]
+
+
 def test_cache_hit_skips_model_load(
     hub: FakeHub, fake_models: Loads, tools: None, wire: Wire, talk: Path, tmp_path: Path
 ) -> None:

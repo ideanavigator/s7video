@@ -97,6 +97,27 @@ describe("applyEditOps", () => {
     expect(again.tracks[0]!.items[1]).toMatchObject({ id: "v2", gainDb: -3 });
   });
 
+  it("gives a new range an id no kept range still uses (S7V-058)", () => {
+    const cut = run([
+      keep([
+        [0, 90],
+        [120, 60],
+      ]),
+    ]);
+    // The first range splits; the second stays and keeps "v2".
+    const tighter = run(
+      [
+        keep([
+          [0, 40],
+          [50, 40],
+          [120, 60],
+        ]),
+      ],
+      cut,
+    );
+    expect(items(tighter).map((item) => item.id)).toEqual(["v1", "v3", "v2"]);
+  });
+
   it("splits, trims, moves and ripple-deletes on integer frames", () => {
     const start = run([
       keep([

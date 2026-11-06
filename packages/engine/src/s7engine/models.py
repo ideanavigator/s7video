@@ -400,6 +400,9 @@ def _release_memory() -> None:
         mx.clear_cache()
 
 
+LOADING_STAGE = "loading the speech model"
+
+
 class ModelHolder:
     """Keeps one ASR and aligner pair loaded, and unloads it after `idle_seconds` without use.
 
@@ -429,7 +432,8 @@ class ModelHolder:
         return self._profile
 
     @contextlib.contextmanager
-    def use(self, profile: str, job: JobContext):
+    def use(self, profile: str, job: JobContext, load_progress: tuple[float, float] = (0.0, 0.0)):
+        """`load_progress` is the job progress reported before each of the two models loads."""
         while not self._lock.acquire(timeout=0.2):
             job.raise_if_cancelled()
         try:
@@ -437,8 +441,10 @@ class ModelHolder:
             if self._profile != profile or self._pair is None:
                 self._unload_locked()
                 models = require_ready(profile)
-                job.progress(0.0, "loading model")
-                self._pair = (self._loader(models[0]), self._loader(models[1]))
+                job.progress(load_progress[0], LOADING_STAGE)
+                asr = self._loader(models[0])
+                job.progress(load_progress[1], LOADING_STAGE)
+                self._pair = (asr, self._loader(models[1]))
                 self._profile = profile
                 self.loads += 1
             yield self._pair

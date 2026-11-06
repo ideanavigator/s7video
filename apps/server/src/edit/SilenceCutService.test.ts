@@ -178,6 +178,52 @@ describe("SilenceCutService", () => {
     ),
   );
 
+  it.effect("a tighter second pass cuts more with unique ids and never restores a cut", () =>
+    withProject(({ projectId, root, scenario, edits, silences }) =>
+      Effect.gen(function* () {
+        // A third of a second inside the first phrase: kept at 0.4 s, cut at 0.25 s.
+        scenario.words = [[30, 55], [65, 90], ...PHRASES.slice(1)];
+        const spans = Effect.map(edits.read(projectId), ({ document }) =>
+          document.tracks[0]!.items.map((item) => ({
+            id: item.id,
+            from: "in" in item ? item.in : -1,
+            to: ("in" in item ? item.in : -1) + item.duration,
+          })),
+        );
+        const plays = (items: ReadonlyArray<{ from: number; to: number }>, frame: number) =>
+          items.some(({ from, to }) => from <= frame && frame < to);
+
+        const first = yield* silences.removeSilences({ projectId });
+        assert.isTrue(first.changed);
+        const afterFirst = yield* spans;
+        assert.strictEqual(afterFirst.length, 3);
+
+        const tighter = yield* silences.removeSilences({ projectId, minGapSeconds: 0.25 });
+        assert.isTrue(tighter.changed);
+        assert.strictEqual(tighter.cuts, 1);
+        const afterTighter = yield* spans;
+        assert.strictEqual(afterTighter.length, 4);
+        assert.strictEqual(new Set(afterTighter.map((item) => item.id)).size, 4);
+        assert.isFalse(plays(afterTighter, 60));
+        for (let frame = 0; frame < FRAMES; frame++) {
+          if (!plays(afterFirst, frame)) assert.isFalse(plays(afterTighter, frame), `${frame}`);
+        }
+
+        // A third pass, at either threshold, finds nothing new and brings nothing back.
+        const afterTighterText = readEdit(root);
+        for (const minGapSeconds of [undefined, 0.25]) {
+          const again = yield* silences.removeSilences({
+            projectId,
+            ...(minGapSeconds === undefined ? {} : { minGapSeconds }),
+          });
+          assert.isFalse(again.changed);
+          assert.strictEqual(again.cuts, 0);
+          assert.strictEqual(readEdit(root), afterTighterText);
+        }
+      }),
+    ),
+  );
+
   it.effect("keeps a pause the user asked for", () =>
     withProject(({ projectId, edits, silences }) =>
       Effect.gen(function* () {

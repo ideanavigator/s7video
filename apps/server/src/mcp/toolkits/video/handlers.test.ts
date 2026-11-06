@@ -25,9 +25,11 @@ import {
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import { McpSchema, McpServer } from "effect/ai";
 import { HttpBody, HttpClient, HttpRouter } from "effect/http";
 import * as NodeCrypto from "node:crypto";
@@ -165,6 +167,8 @@ interface Fixture {
   }>;
   readonly silences: Array<SilenceCutService.RemoveSilencesInput>;
   diskShort: boolean;
+  /** Runs as each job subscription starts. */
+  onSubscribe: Effect.Effect<void>;
 }
 
 const makeFixture = (): Fixture => {
@@ -233,6 +237,7 @@ const makeFixture = (): Fixture => {
     imports: [],
     silences: [],
     diskShort: false,
+    onSubscribe: Effect.void,
   };
 };
 
@@ -387,13 +392,19 @@ const layerFor = (fixture: Fixture, cancelSignal: Deferred.Deferred<string>) => 
           NodeFS.writeFileSync(file, png);
           return { path: file, frame: input.frame, rate: input.rate, width: 640, height: 360 };
         }),
-      subscribeJobs: Stream.concat(
-        Stream.make({ type: "snapshot", jobs } as EngineJobsEvent),
-        Stream.fromEffect(Deferred.await(cancelSignal)).pipe(
-          Stream.map((id): EngineJobsEvent => ({
-            type: "updated",
-            job: { ...jobs.find((entry) => entry.id === id)!, state: "cancelled" },
-          })),
+      subscribeJobs: Stream.unwrap(
+        Effect.suspend(() => fixture.onSubscribe).pipe(
+          Effect.as(
+            Stream.concat(
+              Stream.make({ type: "snapshot", jobs } as EngineJobsEvent),
+              Stream.fromEffect(Deferred.await(cancelSignal)).pipe(
+                Stream.map((id): EngineJobsEvent => ({
+                  type: "updated",
+                  job: { ...jobs.find((entry) => entry.id === id)!, state: "cancelled" },
+                })),
+              ),
+            ),
+          ),
         ),
       ),
       cancelJob: (jobId) =>
@@ -1042,6 +1053,46 @@ describe("video toolkit", () => {
           "There is no running video job with that id in this project.",
         ]);
         expect(fixture.cancelled).toEqual([]);
+      }),
+    ),
+  );
+
+  it.effect("video_job_status waitSeconds returns as soon as the job ends (S7V-058)", () =>
+    withTools(({ call }) =>
+      Effect.gen(function* () {
+        const waiting = yield* call(threadA, "video_job_status", {
+          jobId: "engine-job-1",
+          waitSeconds: 30,
+        }).pipe(Effect.forkChild);
+        yield* call(threadA, "video_job_cancel", { jobId: "engine-job-1" });
+        const result = yield* Fiber.join(waiting);
+        expect(result.structuredContent).toEqual({
+          jobs: [{ ...job("engine-job-1", projectA), state: "cancelled" }],
+        });
+        // A job that is not running (or not this project's) answers at once.
+        const other = yield* call(threadA, "video_job_status", {
+          jobId: "engine-job-2",
+          waitSeconds: 30,
+        });
+        expect(other.structuredContent).toEqual({ jobs: [] });
+      }),
+    ),
+  );
+
+  it.effect("video_job_status waitSeconds gives the running job back when the wait is over", () =>
+    withTools(({ fixture, call }) =>
+      Effect.gen(function* () {
+        const subscribed = yield* Deferred.make<void>();
+        fixture.onSubscribe = Deferred.succeed(subscribed, undefined).pipe(Effect.asVoid);
+        const waiting = yield* call(threadA, "video_job_status", {
+          jobId: "engine-job-1",
+          waitSeconds: 500,
+        }).pipe(Effect.forkChild);
+        yield* Deferred.await(subscribed);
+        // Capped at 30 s, so a long wait cannot hold the agent's turn.
+        yield* TestClock.adjust("30 seconds");
+        const result = yield* Fiber.join(waiting);
+        expect(result.structuredContent).toEqual({ jobs: [job("engine-job-1", projectA)] });
       }),
     ),
   );

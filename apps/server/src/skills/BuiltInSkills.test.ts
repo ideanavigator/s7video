@@ -113,6 +113,9 @@ it.layer(NodeServices.layer)("built-in skills", (it) => {
         text.indexOf(`\`${tool}\``),
       );
       assert.isTrue(order.every((index, i) => index >= 0 && (i === 0 || index > order[i - 1]!)));
+      // S7V-058: the agent waits out a long first transcription instead of giving up.
+      assert.include(text, "`waitSeconds: 30`");
+      assert.include(text, "do not end your turn");
       assert.include(text, "Say undo to put it back.");
       assert.include(text, "Never edit `edit.json` yourself and never use git on it.");
     }),
