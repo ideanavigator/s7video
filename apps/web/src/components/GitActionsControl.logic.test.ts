@@ -113,6 +113,22 @@ describe("when: ref has no upstream configured", () => {
       disabled: false,
     });
   });
+
+  it("resolveQuickAction offers no publish when no code host is registered (S7V-057)", () => {
+    const quick = resolveQuickAction(
+      status({ hasUpstream: false, aheadCount: 2, pr: null }),
+      false,
+      false,
+      false,
+      false,
+    );
+    assert.deepEqual(quick, {
+      kind: "show_hint",
+      label: "Push",
+      disabled: true,
+      hint: "This repository has no remote to push to.",
+    });
+  });
 });
 
 describe("git actions are local only (S7V-018)", () => {

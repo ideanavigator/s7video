@@ -151,6 +151,7 @@ export function resolveQuickAction(
   isBusy: boolean,
   isDefaultRef = false,
   hasPrimaryRemote = true,
+  canPublish = true,
 ): GitQuickAction {
   if (isBusy) {
     return { label: "Commit", disabled: true, kind: "show_hint", hint: "Git action in progress." };
@@ -189,6 +190,14 @@ export function resolveQuickAction(
 
   if (!gitStatus.hasUpstream) {
     if (!hasPrimaryRemote) {
+      if (!canPublish) {
+        return {
+          label: "Push",
+          disabled: true,
+          kind: "show_hint",
+          hint: "This repository has no remote to push to.",
+        };
+      }
       return {
         label: "Publish repository",
         disabled: false,
