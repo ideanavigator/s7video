@@ -203,6 +203,12 @@ describe("EditorPanel", () => {
     await expect.element(button).toBeDisabled();
     await expect.element(button).toHaveAccessibleDescription(BROWSER_ADD_MEDIA_HINT);
     expect(screen.getByText("Drop a clip here", { exact: false }).query()).toBeNull();
+    // The player and the Assets tab each say it once.
+    const assets = page.elementLocator(document.getElementById("editor-tabpanel-assets")!);
+    expect(assets.getByText(BROWSER_ADD_MEDIA_HINT).elements()).toHaveLength(1);
+    await expect
+      .element(assets.getByRole("button", { name: "Add media" }))
+      .toHaveAccessibleDescription(BROWSER_ADD_MEDIA_HINT);
     expect(document.querySelector("video")).toBeNull();
   });
 

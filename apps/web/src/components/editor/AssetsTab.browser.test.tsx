@@ -89,8 +89,9 @@ describe("AssetsTab", () => {
     const button = screen.getByRole("button", { name: "Add media" });
     await expect.element(button).toBeDisabled();
     await expect.element(button).toHaveAccessibleDescription(BROWSER_ADD_MEDIA_HINT);
-    // The header hint and the empty list both give the advice; neither offers a drop here.
-    await expect.poll(() => screen.getByText(BROWSER_ADD_MEDIA_HINT).elements().length).toBe(2);
+    // One copy: the empty list's text is the hint, so the header line hides; no drop offered.
+    await expect.element(screen.getByText(BROWSER_ADD_MEDIA_HINT)).toBeVisible();
+    expect(screen.getByText(BROWSER_ADD_MEDIA_HINT).elements()).toHaveLength(1);
     expect(screen.getByText("Drop clips here", { exact: false }).query()).toBeNull();
   });
 
