@@ -99,6 +99,58 @@ describe("EditPlayer", () => {
     expect(onPositionChange).toHaveBeenLastCalledWith(101);
   });
 
+  // S7V-061: the player shows the edit's shape, as export renders it, inside the 16:9 frame.
+  it("shows the edit in its canvas, with bars around a tall shape", async () => {
+    using _stubs = stubPlayback();
+    const edit = (canvas: { width: number; height: number }) =>
+      editPlaybackPlan({
+        version: 1,
+        fps: FPS,
+        canvas,
+        media: [],
+        tracks: [
+          {
+            kind: "video",
+            id: "v1",
+            items: [{ id: "a", media: "clip", start: 0, duration: 60, in: 0 }],
+          },
+        ],
+        markers: [],
+        metadata: {},
+      })!;
+    await using screen = await renderPlayer({ plan: edit({ width: 1080, height: 1920 }) });
+    const video = (await screen.getByLabelText("interview.mov").findElement()) as HTMLVideoElement;
+    const frame = video.parentElement!;
+    // Browser tests load no stylesheet, so this checks what the frame asks for, not its pixels.
+    expect(frame.dataset.canvas).toBe("1080x1920");
+    expect(frame.style.aspectRatio).toBe("1080 / 1920");
+    expect(frame.className).toContain("h-full");
+    expect(video.className).toContain("object-cover");
+
+    await screen.rerender(
+      <EditPlayer
+        projectKey="env-1:project-1"
+        src=""
+        label="interview.mov"
+        plan={edit({ width: 2560, height: 1080 })}
+        startFrame={0}
+        onPositionChange={vi.fn()}
+        onError={vi.fn()}
+      />,
+    );
+    const wide = (await screen.getByLabelText("interview.mov").findElement()).parentElement!;
+    expect(wide.style.aspectRatio).toBe("2560 / 1080");
+    expect(wide.className).toContain("w-full");
+  });
+
+  it("plays a raw clip whole, with no canvas", async () => {
+    using _stubs = stubPlayback();
+    await using screen = await renderPlayer();
+    const video = (await screen.getByLabelText("interview.mov").findElement()) as HTMLVideoElement;
+    expect(video.parentElement!.dataset.canvas).toBeUndefined();
+    expect(video.className).toContain("object-contain");
+  });
+
   it("measures the clock in edit time, without the cut parts", async () => {
     using _stubs = stubPlayback();
     const plan = editPlaybackPlan({

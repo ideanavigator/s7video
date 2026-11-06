@@ -5,12 +5,13 @@
  * Native controls are off, since their scrubber would show the uncut source.
  */
 import { ChevronLeftIcon, ChevronRightIcon, PauseIcon, PlayIcon } from "lucide-react";
-import { useEffect, useState, type KeyboardEvent } from "react";
+import { useEffect, useState, type KeyboardEvent, type ReactNode } from "react";
 
 import { formatPlaybackClock, type PlaybackPlan } from "../../editor/editPlayback";
 import { createPlaybackLoop, type PlaybackLoop } from "../../editor/editPlaybackLoop";
 import { publishPlayerFrame, subscribePlayerSeek } from "../../editor/editStore";
 import { useStableCallback } from "../../hooks/useStableCallback";
+import { cn } from "../../lib/utils";
 import { Button } from "../ui/button";
 
 export interface EditPlayerProps {
@@ -25,6 +26,34 @@ export interface EditPlayerProps {
   /** The first frame decoded, so the source plays. */
   readonly onLoaded?: (() => void) | undefined;
   readonly onError: () => void;
+}
+
+/**
+ * An edit plays inside its canvas, filled and cropped from the centre as export renders it
+ * (S7V-061), with black bars in the 16:9 frame around any other shape. A raw clip plays whole.
+ */
+function CanvasFrame(props: {
+  readonly canvas: PlaybackPlan["canvas"];
+  readonly children: ReactNode;
+}) {
+  const { canvas } = props;
+  if (canvas === undefined) return props.children;
+  const widerThanFrame = canvas.width * 9 > canvas.height * 16;
+  return (
+    <div
+      data-canvas={`${canvas.width}x${canvas.height}`}
+      // Out of flow, so the video's own size never stretches the 16:9 frame.
+      className={cn(
+        "absolute overflow-hidden",
+        widerThanFrame
+          ? "inset-x-0 top-1/2 w-full -translate-y-1/2"
+          : "inset-y-0 left-1/2 h-full -translate-x-1/2",
+      )}
+      style={{ aspectRatio: `${canvas.width} / ${canvas.height}` }}
+    >
+      {props.children}
+    </div>
+  );
 }
 
 const stepSize = (event: KeyboardEvent, plan: PlaybackPlan) =>
@@ -119,33 +148,38 @@ export function EditPlayer(props: EditPlayerProps) {
       className="flex min-h-0 flex-col gap-1.5 outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
       onKeyDown={onKeyDown}
     >
-      <div className="flex aspect-video max-h-[50vh] w-full items-center justify-center overflow-hidden rounded-md bg-black">
-        <video
-          ref={attachVideo}
-          src={props.src}
-          aria-label={props.label}
-          playsInline
-          preload="auto"
-          className="size-full object-contain"
-          onLoadedMetadata={() => {
-            loop?.setPlan(plan);
-            loop?.seekToTimelineFrame(props.startFrame);
-          }}
-          onLoadedData={props.onLoaded}
-          onPlay={() => setPlaying(true)}
-          onPause={() => {
-            setPlaying(false);
-            syncClock();
-          }}
-          onTimeUpdate={() => {
-            syncClock();
-          }}
-          onSeeked={() => {
-            syncClock();
-          }}
-          onError={props.onError}
-          onClick={togglePlay}
-        />
+      <div className="relative flex aspect-video max-h-[50vh] w-full items-center justify-center overflow-hidden rounded-md bg-black">
+        <CanvasFrame canvas={plan.canvas}>
+          <video
+            ref={attachVideo}
+            src={props.src}
+            aria-label={props.label}
+            playsInline
+            preload="auto"
+            className={cn(
+              "size-full",
+              plan.canvas === undefined ? "object-contain" : "object-cover",
+            )}
+            onLoadedMetadata={() => {
+              loop?.setPlan(plan);
+              loop?.seekToTimelineFrame(props.startFrame);
+            }}
+            onLoadedData={props.onLoaded}
+            onPlay={() => setPlaying(true)}
+            onPause={() => {
+              setPlaying(false);
+              syncClock();
+            }}
+            onTimeUpdate={() => {
+              syncClock();
+            }}
+            onSeeked={() => {
+              syncClock();
+            }}
+            onError={props.onError}
+            onClick={togglePlay}
+          />
+        </CanvasFrame>
       </div>
       <div className="flex items-center gap-1 px-1">
         <Button
