@@ -66,7 +66,8 @@ never attached to the message instead; a failed audio file stays attached, and i
 Import adds media only; it never changes the canvas. A new edit starts 1080×1920, and the first
 clip placed on an empty timeline (today only by silence removal) sets the canvas to that clip's
 display shape, long side at most 1920, sides even (`canvasForClip.ts`), in the same checkpoint as
-the cut, so one undo takes both back. Later placements never change it. The user changes it only
+the cut, so one undo takes both back. Later placements never change it, and nor does the first
+one once a shape was chosen (`metadata.canvasChosen`, set by any `setCanvas` not `fromClip`). The user changes it only
 on request, to 9:16, 16:9, 1:1, 4:5 or 4:3 (`video_canvas`, a `setCanvas` op). Export renders at
 the canvas, filling and cropping from the centre, and the player shows the same crop inside its
 16:9 frame, so the agent's `video_export` takes no shape of its own (S7V-061).
