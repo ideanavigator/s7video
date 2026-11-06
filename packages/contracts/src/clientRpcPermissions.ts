@@ -71,7 +71,8 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.engineJobsCancel]: AuthOrchestrationOperateScope,
   // Export writes a video into the project and runs FFmpeg.
   [WS_METHODS.exportStart]: AuthOrchestrationOperateScope,
-  // Edits rewrite the project's edit.json and move its undo history.
+  // Edits rewrite the project's edit.json and move its undo history. The handler refuses
+  // putMedia: media enters only through the media.* imports below (S7V-066).
   [WS_METHODS.editApply]: AuthOrchestrationOperateScope,
   [WS_METHODS.editUndo]: AuthOrchestrationOperateScope,
   [WS_METHODS.editRedo]: AuthOrchestrationOperateScope,

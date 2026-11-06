@@ -86,6 +86,9 @@ from; the per-ticket entries and how this file is compiled are in
 
 ### Fixed
 
+- A chat in plan mode can look at your video but no longer imports, transcribes, cuts, exports,
+  undoes or redoes, and a device allowed to edit can no longer add a file from elsewhere on your Mac
+  to a project to play or download it. (S7V-066)
 - No visible change: the Editor panel's video-retry tests no longer fail on a busy machine. (S7V-060)
 - Chats open again with the default settings: the Git actions row no longer crashes the page looking
   for a code-hosting site to publish to, and shows no publish option while none is set up. (S7V-057)

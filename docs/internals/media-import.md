@@ -34,6 +34,11 @@ device and inode like `media-file-exact`, and every request asks `MediaLibrarySe
 again, so media removed from that project's `edit.json`, another project's media, and a file swapped
 in at the same path are all refused. The generic `media-file` kinds are unchanged.
 
+So whatever records a media entry decides what can be served. Only `MediaLibraryService` (import
+and relink, which need filesystem read) writes one: the `edit.apply` RPC refuses `putMedia`, which
+would let an operate-only client record any path on the machine (S7V-066). Originals are also
+served only with a known video or audio extension.
+
 ## Where things live
 
 Copies go to `assets/<name>.<ext>`, named from the file (a chat attachment by the name it was sent with, not its stored id), which the project's whitelist `.gitignore`
