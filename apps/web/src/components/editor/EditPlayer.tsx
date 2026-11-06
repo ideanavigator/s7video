@@ -38,20 +38,21 @@ function CanvasFrame(props: {
 }) {
   const { canvas } = props;
   if (canvas === undefined) return props.children;
-  const widerThanFrame = canvas.width * 9 > canvas.height * 16;
+  const ratio = canvas.width / canvas.height;
   return (
-    <div
-      data-canvas={`${canvas.width}x${canvas.height}`}
-      // Out of flow, so the video's own size never stretches the 16:9 frame.
-      className={cn(
-        "absolute overflow-hidden",
-        widerThanFrame
-          ? "inset-x-0 top-1/2 w-full -translate-y-1/2"
-          : "inset-y-0 left-1/2 h-full -translate-x-1/2",
-      )}
-      style={{ aspectRatio: `${canvas.width} / ${canvas.height}` }}
-    >
-      {props.children}
+    // Out of flow and size-contained, so the video never stretches the frame, and the canvas fits
+    // both of the frame's sides, whatever shape `max-h` gives the frame.
+    <div className="absolute inset-0 flex items-center justify-center [container-type:size]">
+      <div
+        data-canvas={`${canvas.width}x${canvas.height}`}
+        className="overflow-hidden"
+        style={{
+          aspectRatio: `${canvas.width} / ${canvas.height}`,
+          width: `min(100cqw, ${ratio} * 100cqh)`,
+        }}
+      >
+        {props.children}
+      </div>
     </div>
   );
 }

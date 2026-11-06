@@ -357,6 +357,9 @@ function applyOne(document: DraftDocument, op: EditOp): void {
         fail(null, `The canvas needs even sides above 0, not ${width}×${height}.`);
       }
       document.canvas = { width, height };
+      if (op.fromClip !== true) {
+        document.metadata = { ...(document.metadata as object), canvasChosen: true };
+      }
       return;
     }
   }

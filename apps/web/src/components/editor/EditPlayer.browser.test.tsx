@@ -3,6 +3,8 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 
+import "~/index.css";
+
 import { act, render } from "../../../test/render";
 import { clipPlaybackPlan, editPlaybackPlan, timeOfFrame } from "../../editor/editPlayback";
 import { EditPlayer, type EditPlayerProps } from "./EditPlayer";
@@ -99,11 +101,20 @@ describe("EditPlayer", () => {
     expect(onPositionChange).toHaveBeenLastCalledWith(101);
   });
 
-  // S7V-061: the player shows the edit's shape, as export renders it, inside the 16:9 frame.
-  it("shows the edit in its canvas, with bars around a tall shape", async () => {
-    using _stubs = stubPlayback();
-    const edit = (canvas: { width: number; height: number }) =>
-      editPlaybackPlan({
+  // S7V-061: the player shows the edit's shape, as export renders it, inside its frame. The app's
+  // stylesheet is loaded, so these are real layout sizes.
+  it.each([
+    { canvas: { width: 1080, height: 1920 }, panel: 640 },
+    { canvas: { width: 1920, height: 1080 }, panel: 640 },
+    // A wide panel: max-h caps the frame, so it is wider than 16:9.
+    { canvas: { width: 1920, height: 1080 }, panel: 2400 },
+    { canvas: { width: 2560, height: 1080 }, panel: 640 },
+    { canvas: { width: 2560, height: 1080 }, panel: 2400 },
+  ])(
+    "fits a $canvas.width×$canvas.height edit inside a $panel px panel",
+    async ({ canvas, panel }) => {
+      using _stubs = stubPlayback();
+      const plan = editPlaybackPlan({
         version: 1,
         fps: FPS,
         canvas,
@@ -118,37 +129,49 @@ describe("EditPlayer", () => {
         markers: [],
         metadata: {},
       })!;
-    await using screen = await renderPlayer({ plan: edit({ width: 1080, height: 1920 }) });
-    const video = (await screen.getByLabelText("interview.mov").findElement()) as HTMLVideoElement;
-    const frame = video.parentElement!;
-    // Browser tests load no stylesheet, so this checks what the frame asks for, not its pixels.
-    expect(frame.dataset.canvas).toBe("1080x1920");
-    expect(frame.style.aspectRatio).toBe("1080 / 1920");
-    expect(frame.className).toContain("h-full");
-    expect(video.className).toContain("object-cover");
-
-    await screen.rerender(
-      <EditPlayer
-        projectKey="env-1:project-1"
-        src=""
-        label="interview.mov"
-        plan={edit({ width: 2560, height: 1080 })}
-        startFrame={0}
-        onPositionChange={vi.fn()}
-        onError={vi.fn()}
-      />,
-    );
-    const wide = (await screen.getByLabelText("interview.mov").findElement()).parentElement!;
-    expect(wide.style.aspectRatio).toBe("2560 / 1080");
-    expect(wide.className).toContain("w-full");
-  });
+      await using screen = await render(
+        <div style={{ width: panel }}>
+          <EditPlayer
+            projectKey="env-1:project-1"
+            src=""
+            label="interview.mov"
+            plan={plan}
+            startFrame={0}
+            onPositionChange={vi.fn()}
+            onError={vi.fn()}
+          />
+        </div>,
+        { router: false },
+      );
+      const video = (await screen
+        .getByLabelText("interview.mov")
+        .findElement()) as HTMLVideoElement;
+      const box = video.parentElement!;
+      expect(box.dataset.canvas).toBe(`${canvas.width}x${canvas.height}`);
+      const frame = box.parentElement!.parentElement!.getBoundingClientRect();
+      const inner = box.getBoundingClientRect();
+      expect(frame.width).toBeGreaterThan(0);
+      // The whole canvas is visible: inside the frame on both axes, touching it on one, centred.
+      expect(inner.width).toBeLessThanOrEqual(frame.width + 0.5);
+      expect(inner.height).toBeLessThanOrEqual(frame.height + 0.5);
+      expect(
+        Math.abs(inner.width - frame.width) < 1 || Math.abs(inner.height - frame.height) < 1,
+      ).toBe(true);
+      expect(inner.width / inner.height).toBeCloseTo(canvas.width / canvas.height, 1);
+      expect(inner.left - frame.left).toBeCloseTo(frame.right - inner.right, 0);
+      expect(inner.top - frame.top).toBeCloseTo(frame.bottom - inner.bottom, 0);
+      // The picture fills the canvas, cropped from the centre, as export renders it.
+      expect(getComputedStyle(video).objectFit).toBe("cover");
+      expect(video.getBoundingClientRect().width).toBeCloseTo(inner.width, 0);
+    },
+  );
 
   it("plays a raw clip whole, with no canvas", async () => {
     using _stubs = stubPlayback();
     await using screen = await renderPlayer();
     const video = (await screen.getByLabelText("interview.mov").findElement()) as HTMLVideoElement;
     expect(video.parentElement!.dataset.canvas).toBeUndefined();
-    expect(video.className).toContain("object-contain");
+    expect(getComputedStyle(video).objectFit).toBe("contain");
   });
 
   it("measures the clock in edit time, without the cut parts", async () => {

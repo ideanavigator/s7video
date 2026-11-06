@@ -367,6 +367,24 @@ describe("SilenceCutService", () => {
     ),
   );
 
+  it.effect("keeps a canvas the user chose before the first cut", () =>
+    withProject(
+      ({ projectId, edits, silences }) =>
+        Effect.gen(function* () {
+          const first = yield* silences.removeSilences({ projectId });
+          assert.isTrue(first.changed);
+          // Chosen on an empty timeline, even though it equals the default: the wide cut keeps it.
+          const cut = yield* edits.read(projectId);
+          assert.deepEqual(cut.document.canvas, { width: 1080, height: 1920 });
+          assert.strictEqual(cut.document.tracks[0]!.items.length, 3);
+        }),
+      [
+        { _tag: "putMedia", media: wideCamera },
+        { _tag: "setCanvas", canvas: { width: 1080, height: 1920 } },
+      ],
+    ),
+  );
+
   it.effect("keeps the canvas when the timeline already has a clip", () =>
     withProject(
       ({ projectId, edits, silences }) =>
@@ -386,7 +404,8 @@ describe("SilenceCutService", () => {
           mediaId: "cam",
           ranges: [{ in: 0, duration: FRAMES }],
         },
-        { _tag: "setCanvas", canvas: { width: 1080, height: 1080 } },
+        // Not marked chosen, so only the placed clip keeps the first cut from reshaping.
+        { _tag: "setCanvas", canvas: { width: 1080, height: 1080 }, fromClip: true },
       ],
     ),
   );

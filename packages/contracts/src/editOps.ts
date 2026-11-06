@@ -164,7 +164,14 @@ export const SetMarkersOp = Schema.TaggedStruct("setMarkers", {
 });
 
 /** The output frame size; the first clip placed sets it, and the user can change it on request. */
-export const SetCanvasOp = Schema.TaggedStruct("setCanvas", { canvas: EditCanvas });
+export const SetCanvasOp = Schema.TaggedStruct("setCanvas", {
+  canvas: EditCanvas,
+  /**
+   * The first clip's own shape. Any other setCanvas marks the canvas as chosen
+   * (`metadata.canvasChosen`), so a later first cut never resets it.
+   */
+  fromClip: Schema.optionalKey(Schema.Boolean),
+});
 
 export const EditOp = Schema.Union([
   SetKeepRangesOp,

@@ -248,16 +248,18 @@ const make = Effect.gen(function* () {
     };
     // Nothing new to remove: the edit stays exactly as it is.
     if (plan.cuts === 0) return { ...summary, revision, changed: false };
-    // The first clip on an empty timeline gives the edit its shape, in the same checkpoint (S7V-061).
+    // The first clip on an empty timeline gives the edit its shape, in the same checkpoint, unless
+    // the user already chose one (S7V-061).
     const empty = document.tracks.every(
       (track) => track.kind !== "video" || track.items.length === 0,
     );
-    const canvas = empty ? canvasForClip(media.probe) : undefined;
+    const chosen = document.metadata.canvasChosen === true;
+    const canvas = empty && !chosen ? canvasForClip(media.probe) : undefined;
     const reshape =
       canvas === undefined ||
       (canvas.width === document.canvas.width && canvas.height === document.canvas.height)
         ? []
-        : [{ _tag: "setCanvas", canvas } as const];
+        : [{ _tag: "setCanvas", canvas, fromClip: true } as const];
     const after = yield* edits.apply(
       input.projectId,
       [
