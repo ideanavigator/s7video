@@ -181,18 +181,24 @@ describe("ClipMediaSlot in the timeline", () => {
     onTestFinished(() => observer.disconnect());
     const drawsBefore = draws.all;
 
-    const pacing = recordFramePacing();
+    // Each gesture timed on its own, as Timeline.perf does, so its per-gesture bounds apply.
+    const timed = async (gesture: () => Promise<void>) => {
+      const pacing = recordFramePacing();
+      await gesture();
+      return pacing.stop();
+    };
     const coverage = recordCoverage(scroller);
-    // Into about 2 px per frame, across the whole edit and back, then all the way in and out.
-    await zoom(scroller, "in", 0.5, 13);
+    // Into about 2 px per frame, across a quarter of the edit and back, then all the way in and out.
+    const toScroll = await timed(() => zoom(scroller, "in", 0.5, 13));
     const rect = scroller.getBoundingClientRect();
     const distance = scroller.scrollWidth - scroller.clientWidth;
     const at = { x: rect.left + rect.width * 0.6, y: rect.top + rect.height * 0.6 };
-    await commands.cdpInput({ kind: "scroll", ...at, xDistance: -distance / 4, speed: 4_000 });
-    await commands.cdpInput({ kind: "scroll", ...at, xDistance: distance / 4, speed: 4_000 });
-    await zoom(scroller, "in", 0.8, 30);
-    await zoom(scroller, "out", 0.2, 45);
-    const frames = pacing.stop();
+    const scroll = await timed(async () => {
+      await commands.cdpInput({ kind: "scroll", ...at, xDistance: -distance / 4, speed: 4_000 });
+      await commands.cdpInput({ kind: "scroll", ...at, xDistance: distance / 4, speed: 4_000 });
+    });
+    const zoomIn = await timed(() => zoom(scroller, "in", 0.8, 30));
+    const zoomOut = await timed(() => zoom(scroller, "out", 0.2, 45));
     const covered = coverage.stop();
     observer.disconnect();
 
@@ -200,14 +206,24 @@ describe("ClipMediaSlot in the timeline", () => {
       longTasksMs: longTasks,
       draws: draws.all - drawsBefore,
       canvases: canvasesOf(scroller, "peaks") + canvasesOf(scroller, "filmstrip"),
-      frames,
+      dropped: {
+        toScroll: toScroll.dropped,
+        scroll: scroll.dropped,
+        zoomIn: zoomIn.dropped,
+        zoomOut: zoomOut.dropped,
+      },
       coverage: covered,
     };
     console.info(`S7V-035 AC-7 media tiles perf: ${JSON.stringify(report)}`);
     expect(report.draws).toBeGreaterThan(50);
     expect(longTasks.filter((duration) => duration > 50)).toEqual([]);
-    // Frame pacing and coverage are logged, not asserted: they swing with other load on the
-    // machine and with Timeline.perf running beside this file, which owns those bounds (S7V-033).
-    // The same sweep with no media data is the baseline to compare them with.
+    // Timeline.perf's frame budget: no dropped frame while scrolling, at most one per zoom gesture.
+    expect(scroll.dropped).toBe(0);
+    for (const gesture of [toScroll, zoomIn, zoomOut])
+      expect(gesture.dropped).toBeLessThanOrEqual(1);
+    // React's clip window may trail the view on a few frames while 120 worker canvases redraw
+    // each frame (2 to 6 of about 520 measured, 0 to 2 without media data;
+    // docs/internals/timeline.md); 8 is the budget for one sweep.
+    expect(covered.uncovered).toBeLessThanOrEqual(8);
   }, 90_000);
 });

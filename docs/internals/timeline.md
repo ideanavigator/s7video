@@ -59,11 +59,14 @@ and S7V-039 change the mapping there only.
   gets source frames at the edit's fps, with the item's `in` as `anchorFrame`
   ([media-data.md](media-data.md)).
 - **Cost:** a full zoom sweep of a 30-minute edit with 120 media canvases runs no main-thread task
-  over 50 ms and drops no frame, but React's clip window trails the view on 2 to 5 of about 520
+  over 50 ms and drops no frame, but React's clip window trails the view on 2 to 6 of about 520
   frames, against 0 to 2 with no media data (same sweep, same machine). Posting fewer views or
   redrawing at 30 Hz did not change it, but stopping the worker's draws did, so the cost follows
   the number of worker canvases presented per frame. One canvas per row instead of per clip is
   the next step if it ever shows.
+- **Colour:** the waveform takes the track colour the layer inherits. Each canvas reads it once,
+  not per view (that forced a style pass every frame), and again when the root element's class,
+  style or theme id changes, so a light or dark switch redraws in the new colour.
 - **Stacking:** the layer has a negative `z-index` inside the block (its `contain: strict` makes it a
   stacking context), so it paints over the block's fill and under its label.
 - **Placeholders:** the block's flat fill shows until `ClipMediaTiles` draws; the timeline never

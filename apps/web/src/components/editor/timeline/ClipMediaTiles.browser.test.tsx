@@ -223,6 +223,32 @@ describe("ClipMediaTiles", () => {
     await screen[Symbol.asyncDispose]();
   });
 
+  it("redraws in the new colour after a theme change", async () => {
+    const root = document.documentElement;
+    root.style.setProperty("--wave-test", "rgb(10, 20, 30)");
+    const worker = mediaTilesWorker()!;
+    const colours: string[] = [];
+    const realPost = worker.post;
+    const post = vi.spyOn(worker, "post").mockImplementation((message, transfer) => {
+      if (message.type === "view") colours.push(message.view.color);
+      realPost(message, transfer);
+    });
+    const { color: _color, ...uncoloured } = base;
+    await using _screen = await render(
+      <div style={{ color: "var(--wave-test)" }}>
+        <ClipMediaTiles {...uncoloured} variant="peaks" width={200} firstFrame={0} endFrame={300} />
+      </div>,
+    );
+    await vi.waitFor(() => expect(colours).toContain("rgb(10, 20, 30)"));
+    // A theme switch changes the root's class and colour variables.
+    root.style.setProperty("--wave-test", "rgb(200, 100, 50)");
+    root.classList.toggle("dark");
+    await vi.waitFor(() => expect(colours.at(-1)).toBe("rgb(200, 100, 50)"));
+    root.classList.toggle("dark");
+    root.style.removeProperty("--wave-test");
+    post.mockRestore();
+  });
+
   it("renders nothing until its part is ready", async () => {
     await using screen = await render(
       <ClipMediaTiles

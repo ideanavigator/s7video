@@ -86,6 +86,33 @@ export interface ClipMediaTilesProps {
 
 let nextClip = 0;
 
+const themeListeners = new Set<() => void>();
+let themeObserver: MutationObserver | null = null;
+
+/**
+ * Told when the theme may have changed: the root's class (light or dark), style (theme colour
+ * variables) or theme id. One observer for every canvas, created with the first listener.
+ */
+function subscribeTheme(listener: () => void): () => void {
+  themeListeners.add(listener);
+  if (themeObserver === null && typeof MutationObserver !== "undefined") {
+    themeObserver = new MutationObserver(() => {
+      for (const notify of themeListeners) notify();
+    });
+    themeObserver.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["class", "style", "data-theme-id"],
+    });
+  }
+  return () => {
+    themeListeners.delete(listener);
+    if (themeListeners.size === 0) {
+      themeObserver?.disconnect();
+      themeObserver = null;
+    }
+  };
+}
+
 /**
  * A canvas can be handed to the worker only once. StrictMode runs the attach effect twice for one
  * canvas, so a detach waits a task and the second attach cancels it.
@@ -194,11 +221,14 @@ function useTilesCanvas(props: {
   }, [source, variant]);
 
   const inherited = useRef<string | null>(null);
+  const lastView = useRef<ViewInput | null>(null);
   /**
    * Without a colour, the canvas's inherited text colour is used, since the worker cannot read
-   * styles. It is read once per canvas: reading it per view would force a style pass every frame.
+   * styles. It is read once per canvas, and again after a theme change: reading it per view
+   * would force a style pass every frame.
    */
   const post = (view: ViewInput) => {
+    lastView.current = view;
     const worker = mediaTilesWorker();
     const id = idRef.current;
     const canvas = canvasRef.current;
@@ -208,6 +238,14 @@ function useTilesCanvas(props: {
     const color = view.color ?? inherited.current;
     worker.post({ type: "view", id, view: { ...view, source, pixelRatio, color } });
   };
+  const repost = useEffectEvent(() => {
+    inherited.current = null;
+    if (lastView.current !== null) post(lastView.current);
+  });
+
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- redraws in the new theme's colour when the document's theme changes.
+  useEffect(() => subscribeTheme(() => repost()), []);
+
   return { canvasRef, key: `${source}/${variant}`, post };
 }
 
