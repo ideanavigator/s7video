@@ -806,6 +806,21 @@ export const XcodeGitLocation = Context.Reference<XcodeGitLocator>(
 
 const MACOS_GIT_SHIM = "/usr/bin/git";
 
+/**
+ * Whether `filePath` is Apple's `/usr/bin/git` stub under any name: the same file by device and
+ * inode catches `/USR/BIN/git` on case-insensitive APFS and symlinks to it. A plain stat.
+ */
+export function isMacosGitStub(filePath: string): boolean {
+  if (filePath === MACOS_GIT_SHIM) return true;
+  try {
+    const stub = NodeFS.statSync(MACOS_GIT_SHIM);
+    const candidate = NodeFS.statSync(filePath);
+    return stub.dev === candidate.dev && stub.ino === candidate.ino;
+  } catch {
+    return false;
+  }
+}
+
 /** No real git on this Mac; the spawn is refused before it can reach Apple's stub. */
 export class GitUnavailableError extends Schema.TaggedError<GitUnavailableError>()(
   "GitUnavailableError",
@@ -837,7 +852,7 @@ export const locateSystemGit = Effect.fnUntraced(function* (
   const resolveExecutable = yield* SpawnExecutableResolution;
   const locateXcodeGit = yield* XcodeGitLocation;
   const onPath = resolveExecutable("git", "darwin", env);
-  if (onPath !== undefined && onPath !== MACOS_GIT_SHIM) {
+  if (onPath !== undefined && !isMacosGitStub(onPath)) {
     return { available: true, path: onPath, fromPath: true };
   }
   const located = locateXcodeGit(env);
@@ -872,7 +887,7 @@ const resolveMacosGit = Effect.fnUntraced(function* (
   const cachedCommand = cached?.resolvedPath;
   if (cached !== undefined && cachedCommand != null && cached.expiresAtNanos > nowNanos) {
     const found = resolveExecutable(cachedCommand, "darwin", env);
-    if (found !== undefined && found !== MACOS_GIT_SHIM) return cachedCommand;
+    if (found !== undefined && !isMacosGitStub(found)) return cachedCommand;
   }
   const location = yield* locateSystemGit(env).pipe(
     Effect.provideService(SpawnExecutableResolution, resolveExecutable),

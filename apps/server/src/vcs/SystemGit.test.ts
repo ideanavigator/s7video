@@ -96,8 +96,12 @@ describe("SystemGit", () => {
       [{ id: ProjectId.make("project-1"), workspaceRoot: "/projects/one", autoPull: true }],
       { ...DEFAULT_SERVER_SETTINGS, defaultAutoPull: true },
     ).pipe(
-      Effect.provide(Layer.mock(GitVcsDriver.GitVcsDriver)({})),
-      Effect.provide(SystemGit.layerFixed({ available: false, path: null })),
+      Effect.provide(
+        Layer.mergeAll(
+          Layer.mock(GitVcsDriver.GitVcsDriver)({}),
+          SystemGit.layerFixed({ available: false, path: null }),
+        ),
+      ),
     ),
   );
 });

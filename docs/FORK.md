@@ -252,8 +252,10 @@ starting either opens the "install command line developer tools" dialog. s7video
 
 - **The probe.** `locateSystemGit` (`packages/shared/src/shell.ts`) decides from PATH and the
   developer folders (`$DEVELOPER_DIR`, the `/var/db/xcode_select_link` target, Command Line Tools,
-  Xcode) with plain file reads. A PATH git other than `/usr/bin/git` wins. Upstream ran
-  `xcrun --find git` and fell back to plain `git`, which is the stub.
+  Xcode) with plain file reads. A PATH git that is not the stub wins. The stub check compares device
+  and inode with `/usr/bin/git`, so a symlink to it or `/USR/BIN/git` on case-insensitive APFS
+  still counts as the stub. Upstream ran `xcrun --find git` and fell back to plain `git`, which is
+  the stub.
 - **The gate.** `resolveSpawnCommand("git")` fails with `GitUnavailableError` ("Git is not installed
   on this Mac.") when the probe finds no git, so even a missed feature gate spawns nothing.
   `processRunner`, `GitVcsDriverCore`, the ACP runtime, the external launcher and the provider and
@@ -270,6 +272,8 @@ starting either opens the "install command line developer tools" dialog. s7video
 - **Installing the tools later.** A missing git is looked for again when a project is opened or
   created, on every read of the cached "no", and every 5 seconds. When the answer changes, the
   server sends a new config snapshot, so the git UI appears without a restart.
+- **iOS Simulators.** `/usr/bin/xcrun` is a stub as well, so the iOS platform counts as available
+  only when the probe finds a real developer folder (`LocalDeviceHost.platformReason`).
 - **Not covered.** The agent CLIs run git themselves: Claude Code runs `git ls-files` in the project
   folder when it starts. On a clean Mac that is Apple's stub. A follow-up ticket handles it.
 - **Upstream files touched:** `shell.ts`, `processRunner.ts`, `GitVcsDriver.ts`,

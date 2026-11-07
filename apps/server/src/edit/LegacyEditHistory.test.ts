@@ -8,11 +8,10 @@
  */
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import type { EditOp, ProjectId } from "@t3tools/contracts";
+import { type EditOp, GitCommandError, type ProjectId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import * as NodeChildProcess from "node:child_process";
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
@@ -95,10 +94,20 @@ const writeOldHistory = (
 interface FakeGit {
   available: boolean;
   showWorks: boolean;
+  /** Git cannot run at all (timeout, spawn error, removed): nothing may be decided. */
+  runFails?: boolean;
+}
+
+/** The server's wiring, optionally with a git driver that cannot run. */
+interface ServerGit {
+  readonly server: SystemGit.SystemGitStatus;
+  readonly driver?: Layer.Layer<GitVcsDriver.GitVcsDriver>;
+  /** Bytes of trailing whitespace added to the oldest step's edit.json. */
+  readonly padOldestEdit?: number;
 }
 
 const withOldProject = <A, E>(
-  fake: FakeGit | { readonly server: SystemGit.SystemGitStatus },
+  fake: FakeGit | ServerGit,
   body: (input: {
     readonly root: string;
     readonly edits: EditDocumentService.EditDocumentService["Service"];
@@ -114,21 +123,28 @@ const withOldProject = <A, E>(
     "server" in fake
       ? // The server's wiring: SystemGit decides, the real git driver runs `git show`.
         LegacyEditHistory.layer.pipe(
-          Layer.provide(GitVcsDriver.layer.pipe(Layer.provide(VcsProcess.layer))),
-          Layer.provide(SystemGit.layerFixed(fake.server)),
+          Layer.provide(
+            Layer.mergeAll(
+              fake.driver ?? GitVcsDriver.layer.pipe(Layer.provide(VcsProcess.layer)),
+              SystemGit.layerFixed(fake.server),
+            ),
+          ),
         )
       : Layer.effect(
           LegacyEditHistory.LegacyEditHistory,
           LegacyEditHistory.make({
             available: Effect.sync(() => fake.available),
             show: (cwd, ref, file) =>
-              Effect.sync(() => {
+              Effect.suspend(() => {
                 shows.count += 1;
-                if (!fake.showWorks) return Option.none();
+                if (fake.runFails) {
+                  return Effect.fail(new LegacyEditHistory.LegacyGitRunError({ cause: "timeout" }));
+                }
+                if (!fake.showWorks) return Effect.succeedNone;
                 try {
-                  return Option.some(git(cwd, "show", `${ref}:${file}`));
+                  return Effect.succeedSome(git(cwd, "show", `${ref}:${file}`));
                 } catch {
-                  return Option.none();
+                  return Effect.succeedNone;
                 }
               }),
           }),
@@ -151,6 +167,9 @@ const withOldProject = <A, E>(
           baseRevision: snapshot.revision,
         });
         steps.push({ edit: read(root, "edit.json"), project: read(root, "project.json") });
+      }
+      if ("server" in fake && fake.padOldestEdit !== undefined) {
+        steps[0] = { ...steps[0]!, edit: steps[0]!.edit + " ".repeat(fake.padOldestEdit) };
       }
       writeOldHistory(root, steps, 2);
       shows.count = 0;
@@ -310,6 +329,65 @@ describe("LegacyEditHistory", () => {
             assert.strictEqual(spawns.count, 0);
           }),
       ),
+    );
+
+    it.effect("imports an edit.json bigger than git's default 1 MB output limit", () =>
+      withOldProject(
+        { server: { available: true, path: "git" }, padOldestEdit: 3 * 1024 * 1024 },
+        ({ root, edits, projectId }) =>
+          Effect.gen(function* () {
+            yield* edits.read(projectId);
+            const log = historyLog(root)!;
+            assert.strictEqual(log.legacy, "imported");
+            assert.strictEqual(log.entries.length, 4);
+          }),
+      ),
+    );
+
+    it.effect("leaves the history unchecked when git cannot run, so it is tried again", () =>
+      withOldProject(
+        {
+          server: { available: true, path: "git" },
+          driver: Layer.mock(GitVcsDriver.GitVcsDriver)({
+            execute: (input) =>
+              Effect.fail(
+                new GitCommandError({
+                  operation: input.operation,
+                  command: "git",
+                  cwd: input.cwd,
+                  detail: "Git is not installed on this Mac.",
+                }),
+              ),
+          }),
+        },
+        ({ root, edits, projectId }) =>
+          Effect.gen(function* () {
+            const opened = yield* edits.read(projectId);
+            assert.isFalse(opened.canUndo);
+            assert.strictEqual(historyLog(root)?.legacy ?? "unchecked", "unchecked");
+          }),
+      ),
+    );
+  });
+
+  it.effect("tries again after git could not run, then imports", () => {
+    const fake: FakeGit = { available: true, showWorks: true, runFails: true };
+    return withOldProject(fake, ({ root, edits, projectId, shows }) =>
+      Effect.gen(function* () {
+        const opened = yield* edits.read(projectId);
+        const changed = yield* edits.apply(projectId, [keep(60)], {
+          origin: "agent",
+          baseRevision: opened.revision,
+        });
+        assert.strictEqual(historyLog(root)!.legacy, "unchecked");
+        // Every read looked again, and none of them wrote "none".
+        assert.isAbove(shows.count, 1);
+
+        fake.runFails = false;
+        yield* edits.read(projectId);
+        assert.strictEqual(historyLog(root)!.legacy, "imported");
+        assert.strictEqual((yield* edits.read(projectId)).revision, changed.revision);
+      }),
     );
   });
 });

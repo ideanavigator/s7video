@@ -9,11 +9,15 @@ import { it as effectIt } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as NodeChildProcess from "node:child_process";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
   CommandResolutionCache,
   GitUnavailableError,
+  isMacosGitStub,
   locateDeveloperGit,
   locateSystemGit,
   resolveSpawnCommand,
@@ -171,3 +175,37 @@ describe("resolveSpawnCommand without git", () => {
     }),
   );
 });
+
+// Review finding: the stub reached under another name must still count as the stub.
+// Runs only on a Mac: /usr/bin/xcrun ships with macOS and nowhere else.
+describe.runIf(NodeFS.existsSync("/usr/bin/xcrun") && NodeFS.existsSync("/usr/bin/git"))(
+  "the Apple stub under another name",
+  () => {
+    const linkDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "s7v-stub-link-"));
+    const link = NodePath.join(linkDir, "git");
+    NodeFS.symlinkSync("/usr/bin/git", link);
+    // APFS is case-insensitive on a default Mac install; skip the case check where it is not.
+    const caseInsensitive = NodeFS.existsSync("/USR/BIN/git");
+    afterAll(() => NodeFS.rmSync(linkDir, { recursive: true, force: true }));
+
+    it("is recognised through a symlink and a different case", () => {
+      expect(isMacosGitStub("/usr/bin/git")).toBe(true);
+      expect(isMacosGitStub(link)).toBe(true);
+      if (caseInsensitive) expect(isMacosGitStub("/USR/BIN/git")).toBe(true);
+      expect(isMacosGitStub("/usr/bin/true")).toBe(false);
+      expect(isMacosGitStub(NodePath.join(linkDir, "missing"))).toBe(false);
+    });
+
+    effectIt.effect("is refused, not spawned, when PATH reaches it by symlink or case", () =>
+      Effect.gen(function* () {
+        for (const gitOnPath of [link, ...(caseInsensitive ? ["/USR/BIN/git"] : [])]) {
+          const refused = yield* onMac(Effect.flip(resolveSpawnCommand("git", ["status"])), {
+            gitOnPath,
+            disk: fakeDisk({}),
+          });
+          expect(refused).toBeInstanceOf(GitUnavailableError);
+        }
+      }),
+    );
+  },
+);

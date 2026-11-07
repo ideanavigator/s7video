@@ -63,9 +63,26 @@ const NONE: LegacyOutcome = { _tag: "none" };
 export interface LegacyGitAccess {
   /** Whether a working system git exists, decided without starting any process. */
   readonly available: Effect.Effect<boolean>;
-  /** `git show <ref>:<file>` in `cwd`; None when git cannot read it. */
-  readonly show: (cwd: string, ref: string, file: string) => Effect.Effect<Option.Option<string>>;
+  /**
+   * `git show <ref>:<file>` in `cwd`: None when git ran and cannot read it (the step is skipped);
+   * a failure when git could not run at all (timeout, spawn error, git gone), which leaves the
+   * history `unchecked` so the next read tries again instead of losing it.
+   */
+  readonly show: (
+    cwd: string,
+    ref: string,
+    file: string,
+  ) => Effect.Effect<Option.Option<string>, LegacyGitRunError>;
 }
+
+/** Git could not be run to read the old history; nothing about the history is decided. */
+export class LegacyGitRunError extends Schema.TaggedError<LegacyGitRunError>()(
+  "LegacyGitRunError",
+  { cause: Schema.Defect() },
+) {}
+
+/** Far above any edit.json the S7V-024 guard let into history (10 MB). */
+const SHOW_MAX_OUTPUT_BYTES = 64 * 1024 * 1024;
 
 export class LegacyEditHistory extends Context.Service<
   LegacyEditHistory,
@@ -97,15 +114,18 @@ export const make = Effect.fn("LegacyEditHistory.make")(function* (git: LegacyGi
       const steps: LegacyHistoryStep[] = [];
       let cursor = -1;
       for (const [index, entry] of state.value.entries.entries()) {
-        const editJson = yield* git.show(cwd, entry.ref, EDIT_FILE);
-        if (Option.isNone(editJson)) continue;
-        const projectJson = Option.getOrElse(yield* git.show(cwd, entry.ref, PROJECT_FILE), () =>
+        const editJson = yield* git.show(cwd, entry.ref, EDIT_FILE).pipe(Effect.option);
+        if (Option.isNone(editJson)) return UNCHECKED;
+        if (Option.isNone(editJson.value)) continue;
+        const projectShown = yield* git.show(cwd, entry.ref, PROJECT_FILE).pipe(Effect.option);
+        if (Option.isNone(projectShown)) return UNCHECKED;
+        const projectJson = Option.getOrElse(projectShown.value, () =>
           projectFileContents(entry.revision),
         );
         steps.push({
           seq: entry.seq,
           revision: entry.revision,
-          editJson: editJson.value,
+          editJson: editJson.value.value,
           projectJson,
         });
         if (index <= state.value.cursor) cursor = steps.length - 1;
@@ -142,14 +162,18 @@ export const layer = Layer.effect(
             args: ["show", `${ref}:${file}`],
             allowNonZeroExit: true,
             timeoutMs: 10_000,
+            maxOutputBytes: SHOW_MAX_OUTPUT_BYTES,
           })
           .pipe(
-            Effect.map((result) =>
-              result.exitCode === 0 && !result.stdoutTruncated
-                ? Option.some(result.stdout)
-                : Option.none<string>(),
+            Effect.mapError((cause) => new LegacyGitRunError({ cause })),
+            // Only git answering "cannot read this" skips a step; a cut-off read decides nothing.
+            Effect.filterOrFail(
+              (result) => result.exitCode !== 0 || !result.stdoutTruncated,
+              () => new LegacyGitRunError({ cause: "git show output was cut off" }),
             ),
-            Effect.orElseSucceed(() => Option.none<string>()),
+            Effect.map((result) =>
+              result.exitCode === 0 ? Option.some(result.stdout) : Option.none<string>(),
+            ),
           ),
     });
   }),
