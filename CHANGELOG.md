@@ -53,6 +53,9 @@ from; the per-ticket entries and how this file is compiled are in
   export without captions. (S7V-046)
 - Undo from chat: say "undo that" or "redo" and the assistant steps your edit back or forward. Your
   footage is never touched. (S7V-041)
+- Ask the assistant for a reel (9:16), wide (16:9), square (1:1), 4:5 or 4:3 video and it changes
+  the edit's shape in one step; undo takes it back, and the player and the export both follow it.
+  (S7V-061)
 - Pick "Remove silences" from the chat's / menu, or ask for it, and the assistant cuts the pauses and
   tells you how much it removed. It never does this unless you ask. (S7V-048)
 - Ask the assistant to remove the silences and it cuts the pauses between your sentences without
@@ -98,8 +101,7 @@ from; the per-ticket entries and how this file is compiled are in
 - A large 4K clip now shows in Assets with its name, length and size in under two seconds; its
   preview picture follows a moment later. (S7V-064)
 - The assistant makes a video only when you ask for one, and a video keeps the shape it was filmed
-  in: a wide clip exports wide unless you ask for a reel (9:16), wide (16:9), square (1:1), 4:5 or
-  4:3. The player shows the edit in that shape, with bars around it. (S7V-061)
+  in: a wide clip exports wide unless you ask for another shape. (S7V-061)
 - A clip dropped into the chat that can't be added to Assets now says why, with Retry, instead of
   being attached to the message silently; a sound that can't be added stays attached, and the
   message says so. The video helper no longer writes Python bytecode into the app's folders.
