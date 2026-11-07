@@ -14,6 +14,7 @@ import { render } from "../../../../test/render";
 
 import "../../../index.css";
 
+import { brandThemeTokenVariables } from "../../../themePalette";
 import { Timeline } from "./Timeline";
 
 type CdpInput =
@@ -45,6 +46,10 @@ const PROJECT_KEY = "env-perf:project-perf";
 const edit = makePerfEdit(1_000);
 
 async function mountPerfTimeline() {
+  // The app sets the track colours at start-up; without them clips would paint transparent.
+  for (const [name, value] of Object.entries(brandThemeTokenVariables("dark"))) {
+    document.documentElement.style.setProperty(name, value);
+  }
   const container = document.createElement("div");
   container.style.cssText = "width: 1112px; height: 240px; display: flex; flex-direction: column;";
   document.body.append(container);
