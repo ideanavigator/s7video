@@ -56,6 +56,19 @@ export const editEnvironment = {
         ),
       ),
   }),
+  /** Timeline gestures (S7V-034): one batch per gesture, with the revision it started from. */
+  apply: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "environment-data:edit:apply",
+    tag: WS_METHODS.editApply,
+  }),
+  undo: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "environment-data:edit:undo",
+    tag: WS_METHODS.editUndo,
+  }),
+  redo: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "environment-data:edit:redo",
+    tag: WS_METHODS.editRedo,
+  }),
   exportStart: createEnvironmentRpcCommand(connectionAtomRuntime, {
     label: "environment-data:export:start",
     tag: WS_METHODS.exportStart,

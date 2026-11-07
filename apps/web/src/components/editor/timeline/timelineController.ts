@@ -61,6 +61,10 @@ export interface TimelineController extends TimelineViewSource {
   readonly zoomBy: (factor: number, anchorX: number) => void;
   readonly seekToFrame: (editFrame: number) => void;
   readonly playheadFrame: () => number;
+  /** Edit keys (S7V-034) run first; a handler that returns true takes the key. */
+  readonly setKeyHandler: (handler: ((event: KeyboardEvent) => boolean) | null) => void;
+  /** Focuses the scroller without scrolling, so the timeline's keys work after a click. */
+  readonly focus: () => void;
 }
 
 export interface TimelineControllerOptions {
@@ -89,6 +93,7 @@ export function createTimelineController(options: TimelineControllerOptions): Ti
   let slider: HTMLDivElement | null = null;
   let seekHandler: (editFrame: number) => void = () => {};
   let formatFrame: (editFrame: number) => string = String;
+  let keyHandler: ((event: KeyboardEvent) => boolean) | null = null;
   let laneWidth = DEFAULT_LANE_WIDTH_PX;
   let durationFrames = options.durationFrames;
   let limits = zoomLimits(durationFrames, laneWidth);
@@ -371,6 +376,7 @@ export function createTimelineController(options: TimelineControllerOptions): Ti
   };
 
   const onKeyDown = (event: KeyboardEvent) => {
+    if (keyHandler?.(event) === true) return;
     if (event.metaKey || event.ctrlKey || event.altKey) return;
     if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
       event.preventDefault();
@@ -480,6 +486,10 @@ export function createTimelineController(options: TimelineControllerOptions): Ti
     zoomBy: (factor, anchorX) => applyZoom(pxPerFrame * factor, anchorX),
     seekToFrame,
     playheadFrame: () => playhead.frame(),
+    setKeyHandler: (handler) => {
+      keyHandler = handler;
+    },
+    focus: () => scroller?.focus({ preventScroll: true }),
   };
 }
 

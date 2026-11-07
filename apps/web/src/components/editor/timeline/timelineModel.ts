@@ -27,6 +27,10 @@ export interface TimelineItem {
   readonly mediaId: string | null;
   /** The source frame at the item's first frame. */
   readonly in: number;
+  /** Items sharing a link id move, trim, split and delete together (S7V-034). */
+  readonly linkId: string | null;
+  /** The media's length in frames, when probed: a trim never reads past it. */
+  readonly mediaFrames: number | null;
 }
 
 export interface TimelineRow {
@@ -37,6 +41,8 @@ export interface TimelineRow {
   readonly items: ReadonlyArray<TimelineItem>;
   readonly muted: boolean;
   readonly locked: boolean;
+  /** False for a kind the edit has no track of yet: nothing can be placed on it by hand. */
+  readonly real: boolean;
 }
 
 export interface TimelineModel {
@@ -47,7 +53,11 @@ export interface TimelineModel {
   readonly itemCount: number;
 }
 
-function itemsOf(track: EditTrack, mediaLabels: ReadonlyMap<string, string>): TimelineItem[] {
+function itemsOf(
+  track: EditTrack,
+  mediaLabels: ReadonlyMap<string, string>,
+  mediaFrames: ReadonlyMap<string, number>,
+): TimelineItem[] {
   const items: TimelineItem[] = [];
   for (const item of track.items) {
     const mediaId = "media" in item && item.media !== undefined ? item.media : null;
@@ -64,6 +74,8 @@ function itemsOf(track: EditTrack, mediaLabels: ReadonlyMap<string, string>): Ti
       label,
       mediaId,
       in: "in" in item && item.in !== undefined ? item.in : 0,
+      linkId: "linkId" in item && item.linkId !== undefined ? item.linkId : null,
+      mediaFrames: mediaId === null ? null : (mediaFrames.get(mediaId) ?? null),
     });
   }
   return items.sort((left, right) => left.start - right.start);
@@ -71,9 +83,12 @@ function itemsOf(track: EditTrack, mediaLabels: ReadonlyMap<string, string>): Ti
 
 export function timelineModelOf(document: EditDocument): TimelineModel {
   const mediaLabels = new Map<string, string>();
+  const mediaFrames = new Map<string, number>();
   for (const media of document.media) {
     const name = media.label ?? (media.path ?? media.reference ?? media.id).split("/").at(-1);
     mediaLabels.set(media.id, name ?? media.id);
+    const frames = media.probe.durationFrames;
+    if (frames !== undefined) mediaFrames.set(media.id, frames);
   }
   const rows: TimelineRow[] = [];
   let durationFrames = 0;
@@ -88,11 +103,12 @@ export function timelineModelOf(document: EditDocument): TimelineModel {
         items: [],
         muted: false,
         locked: false,
+        real: false,
       });
       continue;
     }
     tracks.forEach((track, index) => {
-      const items = itemsOf(track, mediaLabels);
+      const items = itemsOf(track, mediaLabels, mediaFrames);
       for (const item of items)
         durationFrames = Math.max(durationFrames, item.start + item.duration);
       itemCount += items.length;
@@ -105,6 +121,7 @@ export function timelineModelOf(document: EditDocument): TimelineModel {
         items,
         muted: track.muted ?? false,
         locked: track.locked ?? false,
+        real: true,
       });
     });
   }

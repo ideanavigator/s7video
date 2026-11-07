@@ -6,7 +6,16 @@ import { wheelScrollsRows } from "./timelineController";
 import type { TimelineItem } from "./timelineModel";
 import { clipSpanInView } from "./timelineView";
 
-const item: TimelineItem = { id: "a", start: 100, duration: 50, label: "a", mediaId: "m", in: 400 };
+const item: TimelineItem = {
+  id: "a",
+  start: 100,
+  duration: 50,
+  label: "a",
+  mediaId: "m",
+  in: 400,
+  linkId: null,
+  mediaFrames: null,
+};
 
 describe("clipSpanInView", () => {
   it("gives the visible part of a clip in edit frames, source frames and pixels", () => {
