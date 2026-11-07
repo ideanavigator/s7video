@@ -12,7 +12,12 @@ import "../../../index.css";
 
 import { act, fakeTimers, render } from "../../../../test/render";
 import { Timeline, type TimelineEditing } from "./Timeline";
-import { NUDGE_SETTLE_MS, type EditApplyOutcome, type TimelineNotice } from "./timelineEditor";
+import {
+  NUDGE_SETTLE_MS,
+  type EditApplyOutcome,
+  type EditStepOutcome,
+  type TimelineNotice,
+} from "./timelineEditor";
 
 const LABELS_PX = 112;
 
@@ -53,8 +58,8 @@ interface Harness {
   readonly apply: ReturnType<
     typeof vi.fn<(ops: ReadonlyArray<EditOp>, base: number) => Promise<EditApplyOutcome>>
   >;
-  readonly undo: ReturnType<typeof vi.fn>;
-  readonly redo: ReturnType<typeof vi.fn>;
+  readonly undo: ReturnType<typeof vi.fn<() => Promise<EditStepOutcome>>>;
+  readonly redo: ReturnType<typeof vi.fn<() => Promise<EditStepOutcome>>>;
   readonly notify: ReturnType<typeof vi.fn<(notice: TimelineNotice) => void>>;
 }
 
@@ -295,6 +300,38 @@ describe("Timeline editing (S7V-034)", () => {
     expect(view.harness.apply).toHaveBeenCalledWith(
       [{ _tag: "moveItem", itemId: "v3", start: 333 }],
       7,
+    );
+  });
+
+  it("lets the next gesture start while the last one is saved, and sends it on the new revision", async () => {
+    const view = await mount();
+    await using _screen = view.screen;
+    let reply: (outcome: EditApplyOutcome) => void = () => {};
+    view.harness.apply.mockImplementationOnce(
+      () => new Promise<EditApplyOutcome>((resolve) => (reply = resolve)),
+    );
+    await view.drag("v3", 350, 450, 10, { metaKey: true });
+    expect(view.harness.apply).toHaveBeenCalledTimes(1);
+    // While that save runs, a trim of v1 starts, previews and ends.
+    const y = view.yOf("v1");
+    view.pointer("pointerdown", view.block("v1"), view.xOf(99.6), y, { metaKey: true });
+    view.pointer("pointermove", window.document, view.xOf(80), y, { metaKey: true });
+    expect(view.container.querySelector('[data-timeline-ghost="v1"]')).not.toBeNull();
+    view.pointer("pointerup", window.document, view.xOf(80), y, { metaKey: true });
+    await act(async () => {});
+    // It waits for the first reply and the revision it made, then goes on that revision.
+    expect(view.harness.apply).toHaveBeenCalledTimes(1);
+    await act(async () => reply({ _tag: "applied", revision: 8 }));
+    expect(view.harness.apply).toHaveBeenCalledTimes(1);
+    const moved = structuredClone(edit) as unknown as {
+      tracks: Array<{ items: Array<{ id: string; start: number }> }>;
+    };
+    moved.tracks[0]!.items[2]!.start = 400;
+    await view.screen.rerender(view.ui(moved as unknown as EditDocument, 8));
+    expect(view.harness.notify).not.toHaveBeenCalled();
+    expect(view.harness.apply).toHaveBeenLastCalledWith(
+      [{ _tag: "trimItem", itemId: "v1", edge: "end", frame: 80 }],
+      8,
     );
   });
 });

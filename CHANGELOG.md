@@ -73,6 +73,8 @@ from; the per-ticket entries and how this file is compiled are in
   it. (S7V-069)
 - When a project's history grows large, s7video asks whether to keep only recent versions or remove
   all old ones, says how much space that frees, and never touches your footage. (S7V-050)
+- Drag, trim, split and delete clips on the timeline, with snapping to the playhead and other
+  clips. Undo and redo cover your changes and the assistant's in one history. (S7V-034)
 
 ### Changed
 

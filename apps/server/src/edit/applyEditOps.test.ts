@@ -356,7 +356,7 @@ describe("applyEditOps", () => {
     });
 
     it("refuses a linked trim that would read before the linked item's media", () => {
-      const later = structuredClone(linked) as {
+      const later = structuredClone(linked) as unknown as {
         tracks: Array<{ items: Array<Record<string, unknown>> }>;
       };
       Object.assign(later.tracks[0]!.items[0]!, { start: 50, duration: 50, in: 20 });
