@@ -56,6 +56,7 @@ import type * as EffectAcpSchema from "effect-acp/compat";
 
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
+import { T3_CODE_VIDEO_EDIT_INSTRUCTIONS } from "@t3tools/provider-core/server/orchestrationInstructions";
 import * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 import type { AcpToolCallState } from "@t3tools/provider-acp/server/runtimeModel";
 import {
@@ -502,6 +503,7 @@ const pollProtocolMethods = (events: Queue.Queue<EffectAcpProtocol.AcpProtocolLo
 
 const makeInstructionCompactionHarness = Effect.fnUntraced(function* (
   environment: Readonly<Record<string, string>>,
+  capabilities?: ReadonlySet<string>,
 ) {
   const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const path = yield* Path.Path;
@@ -520,6 +522,7 @@ const makeInstructionCompactionHarness = Effect.fnUntraced(function* (
     endpoint: "http://127.0.0.1:43123/mcp",
     authorizationHeader: "Bearer instruction-compaction-token",
     browserToolsAvailable: true,
+    ...(capabilities === undefined ? {} : { capabilities }),
   });
   const adapter = yield* makeAcpAdapterV2({
     instanceId,
@@ -2070,6 +2073,19 @@ describe("AcpAdapterV2", () => {
         assertReinjectedInstructions(yield* runTurn("Continue work."), "Continue work.");
         assert.equal((yield* runTurn("Finish work."))[0]?.text, "Finish work.");
       }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  // s7video (S7V-054): ACP agents get the video edit line once, like Claude and Codex.
+  it.live("tells an ACP session with video tools to edit only through them, once", () =>
+    Effect.gen(function* () {
+      const runTurn = yield* makeInstructionCompactionHarness({}, new Set(["video"]));
+      const first = (yield* runTurn("Cut the pauses."))[0]?.text ?? "";
+      assert.include(first, T3_CODE_VIDEO_EDIT_INSTRUCTIONS);
+      assert.include(first, "<user_request>\nCut the pauses.\n</user_request>");
+      assert.equal((yield* runTurn("Again."))[0]?.text, "Again.");
+      const plain = yield* makeInstructionCompactionHarness({});
+      assert.notInclude((yield* plain("Cut the pauses."))[0]?.text ?? "", "video_ tools");
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
   it.live("reapplies a selection after a switch away from it failed partway", () =>
