@@ -138,6 +138,8 @@ export function createPlayerClock(
   let active: Slot | null = null;
   let videoHandle: { slot: Slot; handle: number } | null = null;
   let animationHandle: number | null = null;
+  /** The join out of this segment once its last frame is on screen; whichever loop sees it due first takes it. */
+  let pendingJoin: { readonly index: number; readonly dueAt: number } | null = null;
   /** A screen refresh's length, measured from rAF while it runs (60 Hz until measured). */
   let refreshMs = 1000 / 60;
   let lastAnimationAt: number | null = null;
@@ -282,6 +284,7 @@ export function createPlayerClock(
     if (animationHandle !== null) host.cancelFrame(animationHandle);
     animationHandle = null;
     lastAnimationAt = null;
+    pendingJoin = null;
   };
 
   const animate = (step: (now: number) => void) => {
@@ -303,11 +306,21 @@ export function createPlayerClock(
   const onVideoFrame =
     (slot: Slot): VideoFrameRequestCallback =>
     (_now, metadata) => {
-      videoHandle = null;
+      if (videoHandle?.slot === slot) videoHandle = null;
       if (!playing || active !== slot || state._tag !== "source") return;
       const index = state.segment;
       const segment = plan.segments[index]!;
       const presented = editFrameInSegment(segment, frameAtTime(metadata.mediaTime, plan.fps));
+      if (pendingJoin !== null && pendingJoin.index === index && presented >= segment.end) {
+        // The element reached a frame past its item before the animation frame swapped it. rVFC
+        // runs in the rendering step that paints this frame, so swapping now keeps it off screen.
+        const { dueAt } = pendingJoin;
+        if (animationHandle !== null) host.cancelFrame(animationHandle);
+        animationHandle = null;
+        pendingJoin = null;
+        enterFrame(segment.end, metadata.expectedDisplayTime, dueAt);
+        return;
+      }
       if (presented < segment.start) {
         // A frame from before the park landed late; wait for the next one.
         watchVideo(slot);
@@ -323,24 +336,27 @@ export function createPlayerClock(
         watchVideo(slot);
         return;
       }
-      if (presented >= segment.end - 1) {
+      if (presented >= segment.end - 1 && pendingJoin === null) {
         // The segment's last frame is on screen: the next item is due one frame time after it.
         const dueAt = metadata.expectedDisplayTime + (segment.end - presented) * frameMs;
+        // The edit ends here: hold this frame rather than play into a frame export never shows.
+        if (segment.end >= plan.durationFrames) slot.video.pause();
+        pendingJoin = { index, dueAt };
         animate((now) => joinWhenDue(index, dueAt, now));
-        return;
       }
       watchVideo(slot);
     };
 
   /** At the join out of segment `index`: waits for the refresh where the next item is due. */
   const joinWhenDue = (index: number, dueAt: number, now: number) => {
-    if (!playing) return;
+    if (!playing || pendingJoin?.index !== index) return;
     // This animation frame reaches the screen about one refresh after `now`.
     const displayAt = now + refreshMs;
     if (displayAt < dueAt - refreshMs / 2) {
       animate((later) => joinWhenDue(index, dueAt, later));
       return;
     }
+    pendingJoin = null;
     const end = plan.segments[index]!.end;
     enterFrame(end, displayAt, dueAt);
   };
