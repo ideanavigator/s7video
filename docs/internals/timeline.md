@@ -70,6 +70,7 @@ This card merges first and leaves the seam; S7V-035 wires `ClipMediaTiles` into 
 scroll gesture and ctrl + wheel zoom sweeps, frames timed with `requestAnimationFrame`. It runs
 React's development build, which is slower than the app's, so its 4× throttle pass is pessimistic;
 it asserts the unthrottled numbers and that the mounted clips cover the screen on every frame,
-and the 4× numbers loosely (at most 3 dropped frames per run). CPU throttling slows script, style
-and layout but not the GPU or a 60 Hz panel, so it is a regression guard, not the M1 Air check;
-`--silent=false` prints every number.
+and logs the 4× numbers. `VITE_TIMELINE_PERF_THROTTLED=1` also asserts them loosely (at most 3
+dropped frames per run); run that on a quiet machine, since throttled timings swing with other
+load. CPU throttling slows script, style and layout but not the GPU or a 60 Hz panel, so it is a
+regression guard, not the M1 Air check. `--silent=false` prints every number.
