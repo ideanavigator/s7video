@@ -135,6 +135,7 @@ def _blocks(process: subprocess.Popen[bytes], job: JobContext, total_samples: in
 
     assert process.stdout is not None
     read = 0
+    reported = 0.0
     pending = b""
     while True:
         chunk = process.stdout.read(READ_SAMPLES * 4)
@@ -145,8 +146,11 @@ def _blocks(process: subprocess.Popen[bytes], job: JobContext, total_samples: in
         pending = data[usable:]
         block = np.frombuffer(data[:usable], dtype="<f4")
         read += len(block)
-        if total_samples > 0:
-            job.progress(min(read / total_samples, 0.99), "waveform")
+        done = min(read / total_samples, 0.99) if total_samples > 0 else 0.0
+        # Every 1 %, as for the filmstrip: each report republishes the media list.
+        if done - reported >= 0.01:
+            reported = done
+            job.progress(done, "waveform")
         yield block
 
 

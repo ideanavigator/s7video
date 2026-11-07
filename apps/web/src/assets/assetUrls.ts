@@ -134,6 +134,25 @@ export function useAssetUrlRefresh(
   };
 }
 
+/**
+ * Mints a URL for any resource on demand, for code outside React that needs many of them, such
+ * as the timeline's media-tiles worker asking for a `project-media` `part` (S7V-035).
+ */
+export function useAssetUrlMinter(
+  environmentId: EnvironmentId | null,
+): (resource: AssetResource) => Promise<string | null> {
+  const connection = usePreparedConnection(environmentId);
+  const httpBaseUrl = connection._tag === "Some" ? connection.value.httpBaseUrl : null;
+  const run = useAtomQueryRunner(assetEnvironment.createUrl, { reportFailure: false });
+  return async (resource) => {
+    if (environmentId === null || httpBaseUrl === null) return null;
+    const result = await run({ environmentId, input: { resource } });
+    return result._tag === "Failure"
+      ? null
+      : resolveAssetUrl(httpBaseUrl, result.value.relativeUrl);
+  };
+}
+
 export function useAssetUrls(
   environmentId: EnvironmentId,
   resources: ReadonlyArray<AssetResource>,

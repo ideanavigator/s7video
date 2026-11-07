@@ -5,6 +5,9 @@
 // real engine, the real /api/assets route and Electron's own Chromium for playback:
 //   S7VIDEO_MEDIA_TIMING=1 S7VIDEO_BIG_CLIP=/abs/big4k.mp4 S7VIDEO_GOP10_CLIP=/abs/gop10.mp4 \
 //     vp test run src/media/MediaImport.timing.test.ts
+// S7V-035 AC-2 (waveform and filmstrip of a 30-minute 1080p30 clip ready within 60 s of import):
+//   S7VIDEO_MEDIA_TIMING=1 S7VIDEO_LONG_CLIP=/abs/thirty.mp4 vp test run src/media/MediaImport.timing.test.ts
+// (the recipe is in packages/engine/tests/golden/peaks_filmstrip_golden.py).
 // Make the clips with spike A2's recipe (testsrc2 + noise, h264_videotoolbox 110 Mbit/s; -g 30 for
 // the 2 GB file, -g 300 for the long-GOP one), in a scratch folder on the same volume as $TMPDIR.
 import * as NodeHttpPlatform from "@effect/platform-node/NodeHttpPlatform";
@@ -41,6 +44,8 @@ import * as MediaLibraryService from "./MediaLibraryService.ts";
 const ENABLED = process.env.S7VIDEO_MEDIA_TIMING === "1";
 const BIG_CLIP = process.env.S7VIDEO_BIG_CLIP ?? "";
 const GOP10_CLIP = process.env.S7VIDEO_GOP10_CLIP ?? "";
+const LONG_CLIP = process.env.S7VIDEO_LONG_CLIP ?? "";
+const MEDIA_DATA_LIMIT_MS = 60_000;
 const SEEK_LIMIT_MS = 500;
 const APPEAR_LIMIT_MS = 2_000;
 const THUMBNAIL_LIMIT_MS = 3_000;
@@ -245,6 +250,59 @@ const withRoute = <A, E, R>(
       });
     }).pipe(Effect.provideContext(served));
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer));
+
+describe.runIf(ENABLED && LONG_CLIP !== "")("media data timing (S7V-035)", () => {
+  it.live("AC-2: a 30-minute clip's waveform and filmstrip are ready within 60 s of import", () =>
+    withRoute(({ baseUrl, library, newProject }) =>
+      Effect.gen(function* () {
+        const project = yield* newProject("Long clip");
+        yield* library.import({
+          projectId: project.projectId,
+          sourcePath: LONG_CLIP,
+          mode: "reference",
+        });
+        const start = yield* Clock.currentTimeNanos;
+        const since = Effect.map(Clock.currentTimeNanos, (now) => Number(now - start) / 1e6);
+        const seen = yield* library.subscribe(project.projectId).pipe(
+          Stream.mapEffect((snapshot) =>
+            Effect.map(since, (ms) => ({ ms, data: snapshot.items[0]?.mediaData })),
+          ),
+          Stream.takeUntil((entry) => entry.data?.status !== "preparing"),
+          Stream.runCollect,
+        );
+        const entries = Array.from(seen);
+        const peaksAt = entries.find((entry) => entry.data?.peaks === "ready")?.ms ?? -1;
+        const last = entries.at(-1)!;
+        console.log(
+          `S7V-035 AC-2: peaks ready ${(peaksAt / 1000).toFixed(1)} s, every filmstrip level ${(last.ms / 1000).toFixed(1)} s after import; ${entries.length} list updates`,
+        );
+        expect(last.data).toEqual({ status: "ready", peaks: "ready", filmstrip: "ready" });
+        expect(last.ms).toBeLessThan(MEDIA_DATA_LIMIT_MS);
+        // The parts are served through the project-media route, with ranges for peak tiles.
+        const item = (yield* library.list(project.projectId)).items[0]!;
+        const urlOf = (variant: "peaks" | "filmstrip", part: string) =>
+          issueAssetUrl({
+            resource: {
+              _tag: "project-media",
+              projectId: project.projectId,
+              mediaId: item.id,
+              variant,
+              part,
+            },
+          }).pipe(Effect.map((issued) => `${baseUrl}${issued.relativeUrl}`));
+        const levelUrl = yield* urlOf("peaks", "p256");
+        const tile = yield* Effect.promise(() =>
+          fetch(levelUrl, { headers: { Range: "bytes=0-16383" } }),
+        );
+        expect(tile.status).toBe(206);
+        expect((yield* Effect.promise(() => tile.arrayBuffer())).byteLength).toBe(16_384);
+        const indexUrl = yield* urlOf("filmstrip", "index");
+        const index = yield* Effect.promise(async () => (await fetch(indexUrl)).json());
+        expect(index).toMatchObject({ version: 1, tileWidth: 160, tileHeight: 90 });
+      }),
+    ),
+  );
+});
 
 describe.runIf(ENABLED)("media import timing (S7V-025)", () => {
   it.live(

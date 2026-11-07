@@ -31,6 +31,9 @@ DEFAULT_LEVELS = (16, 4, 1)
 DEFAULT_TILE_HEIGHT = 90
 COLUMNS = 10
 ROWS = 10
+#: FFmpeg mjpeg `-q:v` (2 best, 31 worst). At 160x90 a tile scores SSIM ~0.987 against its
+#: frame at 2, ~0.983 at 3 and ~0.972 at 5 (testsrc2), against the 0.98 floor.
+JPEG_QUALITY = 2
 _SHOWINFO = re.compile(r"\[showinfo@l(\d+) @ [^\]]*\] n:\s*\d+ pts:\s*(-?\d+)")
 
 
@@ -133,6 +136,7 @@ def _run_ffmpeg(
     stop = process.kill
     job.on_cancel(stop)
     kept: dict[int, list[int]] = {}
+    reported = Fraction(0)
     try:
         assert process.stderr is not None
         for line in process.stderr:
@@ -142,8 +146,11 @@ def _run_ffmpeg(
             level, pts = int(match.group(1)), int(match.group(2))
             kept.setdefault(level, []).append(pts)
             if level == finest and total > 0 and not job.cancelled:
-                done = pts * time_base - start
-                job.progress(min(max(done / total, Fraction(0)), Fraction(99, 100)), "picture strip")
+                done = min(max((pts * time_base - start) / total, Fraction(0)), Fraction(99, 100))
+                # Every 1 %, not every kept frame: each report republishes the media list.
+                if done - reported >= Fraction(1, 100):
+                    reported = done
+                    job.progress(done, "picture strip")
         process.wait()
     except Cancelled:
         process.kill()
@@ -188,7 +195,7 @@ def _filmstrip(params: dict[str, Any], job: JobContext) -> dict[str, Any]:
         ]
         for seconds in levels:
             pattern = os.path.join(staging, f"{level_name(seconds)}-%d.jpg")
-            args += ["-map", f"[o{seconds}]", "-fps_mode", "passthrough", "-c:v", "mjpeg", "-q:v", "5", "-f", "image2", pattern]
+            args += ["-map", f"[o{seconds}]", "-fps_mode", "passthrough", "-c:v", "mjpeg", "-q:v", str(JPEG_QUALITY), "-f", "image2", pattern]
         kept = _run_ffmpeg(args, job, duration, start, time_base, min(levels))
         entries = []
         names: list[str] = []
