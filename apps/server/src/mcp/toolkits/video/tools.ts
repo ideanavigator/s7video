@@ -255,6 +255,23 @@ const VideoRemoveSilencesTool = Tool.make("video_remove_silences", {
   .annotate(Tool.Title, "Remove silences")
   .annotateMerge(videoAnnotations(false));
 
+// S7V-039: user-triggered only. Inserts the clips in order (one checkpoint), at `at` or after the
+// video track's last item, pushing later items right. Frames are edit frames.
+const VideoAssembleTool = Tool.make("video_assemble", {
+  description: "Add video clip parts in order, only if user asks.",
+  parameters: Schema.Struct({
+    items: Schema.Array(
+      Schema.Struct({ mediaId: Schema.String, in: Schema.Int, duration: Schema.Int }),
+    ),
+    at: Schema.optional(Schema.Int),
+  }),
+  success: Schema.Struct({ revision: Schema.Int, itemIds: Schema.Array(Schema.String) }),
+  failure: OrchestratorMcpFailure,
+  dependencies,
+})
+  .annotate(Tool.Title, "Assemble clips")
+  .annotateMerge(videoAnnotations(false));
+
 /** Tools that return JSON. A new tool goes here, with its handler in `handlers.ts`. */
 export const VideoStandardToolkit = Toolkit.make(
   VideoImportTool,
@@ -269,6 +286,7 @@ export const VideoStandardToolkit = Toolkit.make(
   VideoRedoTool,
   VideoRemoveSilencesTool,
   VideoCanvasTool,
+  VideoAssembleTool,
 );
 
 /** `video_frame` returns image content, so it registers on its own (`registerVideoFrame`). */
@@ -287,5 +305,6 @@ export const VideoToolkit = Toolkit.make(
   VideoRedoTool,
   VideoRemoveSilencesTool,
   VideoCanvasTool,
+  VideoAssembleTool,
   VideoFrameTool,
 );

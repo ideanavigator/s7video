@@ -513,6 +513,74 @@ const handlers = {
         );
     }),
   ),
+  // Writes the edit (one checkpoint), so plan-mode and read-only callers are refused.
+  video_assemble: McpToolAccess.actsAsCaller(({ items, at }) =>
+    Effect.gen(function* () {
+      yield* refusePlanMode("assemble clips");
+      const project = yield* callerProject();
+      const { revision, document } = project.snapshot;
+      const invalid = (message: string) =>
+        new OrchestratorMcpFailure({ code: "invalid_request", message });
+      if (items.length === 0) return yield* invalid("Give at least one clip part to assemble.");
+      const track = document.tracks.find((entry) => entry.kind === "video");
+      if (track === undefined) return yield* invalid("This edit has no video track.");
+      const mediaIds: string[] = [];
+      for (const item of items) {
+        if (item.in < 0 || item.duration < 1) {
+          return yield* invalid("Each part needs in >= 0 and duration >= 1, in edit frames.");
+        }
+        // Scope check first: refuses anything outside the project, without saying whether it exists.
+        yield* resolveMedia(project, item.mediaId);
+        const media = document.media.find(
+          (entry) => entry.id === item.mediaId || entry.path === item.mediaId,
+        );
+        if (media === undefined) {
+          return yield* invalid(`${item.mediaId} is not in this edit's media. Import it first.`);
+        }
+        mediaIds.push(media.id);
+      }
+      const end = track.items.reduce((last, item) => Math.max(last, item.start + item.duration), 0);
+      const taken = new Set(document.tracks.flatMap((entry) => entry.items.map((item) => item.id)));
+      const itemIds: string[] = [];
+      for (let index = 0; itemIds.length < items.length; index++) {
+        const id = `asm${revision}-${index}`;
+        if (!taken.has(id)) itemIds.push(id);
+      }
+      let position = at ?? end;
+      const ops = items.map((item, index) => {
+        const op = {
+          _tag: "insertItem" as const,
+          trackId: track.id,
+          item: {
+            id: itemIds[index]!,
+            media: mediaIds[index]!,
+            start: position,
+            duration: item.duration,
+            in: item.in,
+          },
+          ripple: true,
+        };
+        position += item.duration;
+        return op;
+      });
+      const edits = yield* EditDocumentService.EditDocumentService;
+      return yield* edits
+        .apply(project.projectId, ops, { origin: "agent", baseRevision: revision })
+        .pipe(
+          Effect.map((after) => ({ revision: after.revision, itemIds })),
+          Effect.mapError(
+            (error) =>
+              new OrchestratorMcpFailure({
+                code:
+                  error._tag === "EditConflict" || error._tag === "EditValidationError"
+                    ? "invalid_request"
+                    : "orchestration_error",
+                message: error._tag === "EditUnavailableError" ? error.explanation : error.message,
+              }),
+          ),
+        );
+    }),
+  ),
 } satisfies McpToolAccess.Handlers<typeof VideoToolkit.tools>;
 
 export const layerStandard = McpToolAccess.toLayer(VideoStandardToolkit, {
@@ -528,6 +596,7 @@ export const layerStandard = McpToolAccess.toLayer(VideoStandardToolkit, {
   video_redo: handlers.video_redo,
   video_remove_silences: handlers.video_remove_silences,
   video_canvas: handlers.video_canvas,
+  video_assemble: handlers.video_assemble,
 });
 
 export const layerFrame = McpToolAccess.toLayer(VideoFrameToolkit, {
