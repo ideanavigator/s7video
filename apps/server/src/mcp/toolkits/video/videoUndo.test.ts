@@ -541,9 +541,11 @@ describe("video_undo and video_redo", () => {
         expect(after.revision).toBe(ready.revision + 1);
         const { itemIds } = result.structuredContent as { itemIds: string[] };
         expect(result.structuredContent).toEqual({ revision: after.revision, itemIds });
-        const placed = after.document.tracks[0]!.items.map(
-          ({ media: id, start, duration, in: at }) => [id, start, duration, at],
-        );
+        const track = after.document.tracks[0]!;
+        const placed =
+          track.kind === "video"
+            ? track.items.map((item) => [item.media, item.start, item.duration, item.in])
+            : [];
         expect(placed).toEqual([
           ["cam", 0, 30, 0],
           ["broll", 30, 20, 100],
