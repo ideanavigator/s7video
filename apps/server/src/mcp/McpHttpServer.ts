@@ -13,7 +13,7 @@ import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import type * as Types from "effect/Types";
 import { AiError, McpProtocol, McpSchema, McpServer, Tool, Toolkit } from "effect/ai";
-import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
+import { HttpBody, HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import {
   DeviceToolError,
   OrchestratorMcpFailure,
@@ -79,7 +79,12 @@ import {
 } from "./toolkits/device/tools.ts";
 import * as HtmlHandlers from "./toolkits/html/handlers.ts";
 import * as VideoHandlers from "./toolkits/video/handlers.ts";
-import { VideoFrameTool, VideoFrameToolkit, VideoStandardToolkit } from "./toolkits/video/tools.ts";
+import {
+  VIDEO_PROJECT_TOOL_NAMES,
+  VideoFrameTool,
+  VideoFrameToolkit,
+  VideoStandardToolkit,
+} from "./toolkits/video/tools.ts";
 import * as EditDocumentService from "../edit/EditDocumentService.ts";
 import * as EngineService from "../engine/EngineService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
@@ -155,6 +160,45 @@ const normalizeMcpHttpResponse = (
     (response.body._tag === "Raw" && response.body.contentLength === 0);
   return response.status === 200 && bodyIsEmpty
     ? HttpServerResponse.setStatus(response, 202)
+    : response;
+};
+
+const HIDDEN_TOOL_ERROR = /^Tool '(.+)' not found$/;
+const decodeJsonOption = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Unknown));
+
+/**
+ * s7video (S7V-072): the library answers a call to a tool it hides as an unknown tool. A video
+ * project's thread hides every coding tool, so it gets a plain reason instead. Only JSON-RPC
+ * errors for names outside the video toolkit change; a missing video tool still reads as missing.
+ */
+const explainHiddenTools = (
+  response: HttpServerResponse.HttpServerResponse,
+): HttpServerResponse.HttpServerResponse => {
+  const body = response.body;
+  if (body._tag !== "Uint8Array" || !body.contentType.includes("json")) return response;
+  const text = body.text ?? new TextDecoder().decode(body.body);
+  if (!text.includes("not found")) return response;
+  let changed = false;
+  const explain = (message: unknown) => {
+    if (typeof message !== "object" || message === null || !("error" in message)) return message;
+    const error = message.error as { readonly message?: unknown } | null;
+    const name =
+      typeof error?.message === "string" ? HIDDEN_TOOL_ERROR.exec(error.message)?.[1] : undefined;
+    if (name === undefined || VIDEO_PROJECT_TOOL_NAMES.has(name)) return message;
+    changed = true;
+    return {
+      ...message,
+      error: { ...error, message: McpInvocationContext.VIDEO_PROJECT_HIDDEN_TOOL_MESSAGE },
+    };
+  };
+  const parsed = decodeJsonOption(text);
+  if (Option.isNone(parsed)) return response;
+  const rewritten = Array.isArray(parsed.value) ? parsed.value.map(explain) : explain(parsed.value);
+  return changed
+    ? HttpServerResponse.setBody(
+        response,
+        HttpBody.text(JSON.stringify(rewritten), body.contentType),
+      )
     : response;
 };
 
@@ -244,7 +288,11 @@ const makeMcpAuthMiddleware = Effect.gen(function* () {
         ...limited,
         linkedEnvironments,
       }),
-      Effect.map(normalizeMcpHttpResponse),
+      Effect.map((response) =>
+        normalizeMcpHttpResponse(
+          limited.capabilities.has("video") ? explainHiddenTools(response) : response,
+        ),
+      ),
     );
   }) satisfies McpAuthMiddleware;
 }).pipe(Effect.withSpan("McpHttpServer.makeAuthMiddleware"));
@@ -1075,6 +1123,33 @@ const withAdvertisedSchemas = Effect.fn("McpHttpServer.withAdvertisedSchemas")(f
 });
 
 /**
+ * s7video (S7V-072): a video project's thread is offered only the video toolkit. Every other tool
+ * also gets `hiddenInVideoProjects`, on top of its own check, so a new upstream toolkit is hidden
+ * there by default. The library answers a call to a hidden tool as unknown before its handler runs.
+ */
+const withVideoProjectVisibility = Effect.fn("McpHttpServer.withVideoProjectVisibility")(function* <
+  A,
+  E,
+  R,
+>(registration: Effect.Effect<A, E, R>) {
+  const server = yield* McpServer.McpServer;
+  const visibilityServer = McpServer.McpServer.of({
+    ...server,
+    addTool: Effect.fn("McpServer.addTool")(function (options) {
+      if (VIDEO_PROJECT_TOOL_NAMES.has(options.tool.name)) return server.addTool(options);
+      const enabledWhen = Context.getOrUndefined(options.annotations, McpSchema.EnabledWhen);
+      return server.addTool({
+        ...options,
+        annotations: Context.add(options.annotations, McpSchema.EnabledWhen, (client) =>
+          McpInvocationContext.hiddenInVideoProjects() ? (enabledWhen?.(client) ?? true) : false,
+        ),
+      });
+    }),
+  });
+  return yield* registration.pipe(Effect.provideService(McpServer.McpServer, visibilityServer));
+});
+
+/**
  * `McpServer.toolkit` asks for every service its tools declare when it
  * registers them, but the auth middleware provides `McpInvocationContext` to
  * each request instead. Registration must not get one: the services it
@@ -1086,7 +1161,9 @@ export const toolkitRegistration = <Tools extends Record<string, Tool.Any>, EX, 
 ) => {
   const registration = Layer.effectDiscard(
     withToolAnalytics(
-      withAdvertisedSchemas(toolkit, McpServer.registerToolkit(decodeAsAdvertised(toolkit))),
+      withVideoProjectVisibility(
+        withAdvertisedSchemas(toolkit, McpServer.registerToolkit(decodeAsAdvertised(toolkit))),
+      ),
     ),
   ).pipe(Layer.provide(McpServer.McpServer.layer));
   // @effect-diagnostics-next-line unsafeEffectTypeAssertion:off - the auth middleware provides it per request.
@@ -1102,7 +1179,7 @@ const imageToolRegistration = <Tools extends Record<string, Tool.Any>, A, E, R, 
   register: Effect.Effect<A, E, R>,
   handlers: McpToolAccess.HandlersLayer<Tools, EX, RX>,
 ) =>
-  Layer.effectDiscard(withToolAnalytics(register)).pipe(
+  Layer.effectDiscard(withToolAnalytics(withVideoProjectVisibility(register))).pipe(
     Layer.provide(McpToolAccess.HandlersLayer.layer(handlers)),
   );
 

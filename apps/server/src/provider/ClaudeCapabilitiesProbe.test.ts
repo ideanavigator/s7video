@@ -8,6 +8,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import { projectFileContents } from "../edit/EditProjectLayout.ts";
 
 import {
   buildClaudeCapabilitiesProbeQueryOptions,
@@ -64,7 +65,7 @@ it.effect("lists the built-in skills in edit projects only (S7V-048)", () =>
     assert.deepEqual(names(plain), []);
 
     yield* fileSystem.writeFileString(path.join(cwd, "edit.json"), "{}\n");
-    yield* fileSystem.writeFileString(path.join(cwd, "project.json"), "{}\n");
+    yield* fileSystem.writeFileString(path.join(cwd, "project.json"), projectFileContents(0));
     const video = yield* probeClaudeWorkspaceSnapshot(settings, machine, cwd, { HOME: home });
     assert.deepEqual(names(video), ["video:remove-silences"]);
   }).pipe(

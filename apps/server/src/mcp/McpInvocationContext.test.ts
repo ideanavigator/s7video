@@ -95,3 +95,23 @@ it("acts at an administrator's ceiling for a client approved above it", () => {
   expect(modes(scope("auto-accept-edits"), "auto").runtimeMode).toBe("auto-accept-edits");
   expect(modes(scope("full-access")).runtimeMode).toBe("full-access");
 });
+
+it.effect("hides non-video tools only from a caller whose scope holds video", () =>
+  Effect.gen(function* () {
+    const scope = (capabilities: ReadonlyArray<McpInvocationContext.McpCapability>) => ({
+      environmentId: EnvironmentId.make("environment-1"),
+      requestNamespace: "provider-session-1",
+      thread: undefined,
+      client: undefined,
+      capabilities: new Set(capabilities),
+      issuedAt: 1,
+    });
+    const visible = (capabilities: ReadonlyArray<McpInvocationContext.McpCapability>) =>
+      Effect.sync(McpInvocationContext.hiddenInVideoProjects).pipe(
+        Effect.provideService(McpInvocationContext.McpInvocationContext, scope(capabilities)),
+      );
+    expect(yield* Effect.sync(McpInvocationContext.hiddenInVideoProjects)).toBe(true);
+    expect(yield* visible(["orchestration", "preview"])).toBe(true);
+    expect(yield* visible(["orchestration", "video"])).toBe(false);
+  }),
+);

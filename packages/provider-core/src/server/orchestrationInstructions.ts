@@ -62,8 +62,9 @@ const videoEditInstructions = (loadTools: string) =>
 
 export const T3_CODE_VIDEO_EDIT_INSTRUCTIONS = videoEditInstructions("");
 
+/** Claude Code defers the video tools; one keyword query loads them all (S7V-072). */
 export const T3_CODE_VIDEO_EDIT_INSTRUCTIONS_WITH_TOOL_SEARCH = videoEditInstructions(
-  " (ToolSearch `select:mcp__t3-code__video_undo,mcp__t3-code__video_redo`)",
+  " (load them all with one ToolSearch: query `+video`, max_results 30)",
 );
 
 // ACP only: some ACP agents accept the injected MCP server but never expose

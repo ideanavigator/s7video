@@ -3,6 +3,7 @@ import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import { projectFileContents } from "../edit/EditProjectLayout.ts";
 
 import {
   applyPreferredCodexDefaultModel,
@@ -225,7 +226,7 @@ it.effect("probeCodexSkillsForCwd adds the built-in skills in edit projects only
     assert.deepEqual(yield* requests, ["initialize", "skills/list"]);
 
     yield* fs.writeFileString(path.join(cwd, "edit.json"), "{}\n");
-    yield* fs.writeFileString(path.join(cwd, "project.json"), "{}\n");
+    yield* fs.writeFileString(path.join(cwd, "project.json"), projectFileContents(0));
     yield* fs.remove(logPath);
     const skills = yield* probe(cwd);
     assert.deepEqual(yield* requests, ["initialize", "skills/extraRoots/set", "skills/list"]);

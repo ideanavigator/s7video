@@ -348,6 +348,44 @@ undo history. These upstream files have small, additive edits:
   capability. ACP prompt text is not measured in `agentContextBudget.json`; the line adds 172 bytes
   to a video session's first prompt.
 
+## Video projects list only video tools (S7V-072)
+
+A thread in a video project is offered only the video toolkit; every other caller (code threads,
+OAuth clients, linked environments, delegated children outside video projects) keeps exactly what
+upstream offers. **This hides tools per project kind. It removes no T3 code**: every upstream toolkit
+is still registered, and the removal rule (planning `tickets/README.md` §10) does not apply. These
+upstream files have small edits:
+
+- `mcp/McpHttpServer.ts`: `withVideoProjectVisibility` wraps `addTool` in `toolkitRegistration` and
+  `imageToolRegistration`, so every toolkit in `layerTools` is covered. A tool outside
+  `VIDEO_PROJECT_TOOL_NAMES` gets `hiddenInVideoProjects` on top of its own `EnabledWhen`, so a new
+  upstream toolkit is hidden in video projects by default. The library already refuses a call to a
+  hidden tool before its handler runs ("Tool 'x' not found"); `explainHiddenTools` in the auth
+  middleware rewrites that message, for video sessions only, to "That isn't available in a video
+  project."
+- `mcp/McpInvocationContext.ts`: the `hiddenInVideoProjects` predicate and the refusal message.
+- `mcp/toolkits/video/tools.ts`: `VIDEO_PROJECT_TOOL_NAMES`, derived from the video toolkits.
+- `edit/EditProjectLayout.ts`: `isVideoProjectFolder` also needs `project.json` to say
+  `"format": "edit-project"`, so a code repo with another tool's `project.json` (Nx) keeps its
+  coding tools. `orchestration-v2/ProviderSessionManager.ts` and `skills/BuiltInSkills.ts` use it.
+- `orchestration-v2/Adapters/ClaudeAdapterV2.ts`: a video thread's system append is the runtime text
+  and the video line only (no orchestration, background-wait or device text), and Claude Code runs
+  with `ENABLE_TOOL_SEARCH=true` unless the user's own setting turns tool search off
+  (`videoToolSearchOverride`). `resolveToolSearchOverride` became `resolveToolSearchSetting`, which
+  returns the raw value; non-video threads resolve it exactly as before.
+- `orchestration-v2/Adapters/CodexAdapterV2.ts`: video threads get no `t3-code-direct` server, since
+  its only tool, `t3_thread_wait`, is hidden.
+- `provider/CodexDeveloperInstructions.ts`: video threads get no orchestration sections and no
+  browser or device text.
+- `packages/provider-core/src/server/orchestrationInstructions.ts`: the Claude video line says how to
+  load every video tool with one ToolSearch query.
+- `provider/AgentContextBudget.test.ts` and `agentContextBudget.json`: `mcpToolListVideoJsonBytes`,
+  the video-project tool list, measured by evaluating each tool's `EnabledWhen` under a video-thread
+  scope. The handler mocks moved to `mcp/McpTools.testkit.ts`.
+
+The ACP first-prompt text (`t3AcpPromptWithInstructions`) still carries the orchestration text; ACP
+gets the filtered list from the server.
+
 ## Built-in skills (S7V-048)
 
 `apps/server/skills/` is a Claude plugin folder (`.claude-plugin/plugin.json`, plugin name `video`)

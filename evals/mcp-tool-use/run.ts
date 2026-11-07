@@ -61,7 +61,10 @@ import {
   PullRequestsToolkit,
 } from "../../apps/server/src/mcp/toolkits/pullRequests/tools.ts";
 import { ThreadToolkit } from "../../apps/server/src/mcp/toolkits/thread/tools.ts";
-import { VideoToolkit } from "../../apps/server/src/mcp/toolkits/video/tools.ts";
+import {
+  VIDEO_PROJECT_TOOL_NAMES,
+  VideoToolkit,
+} from "../../apps/server/src/mcp/toolkits/video/tools.ts";
 import { WorktreeToolkit } from "../../apps/server/src/mcp/toolkits/worktree/tools.ts";
 import {
   CLAUDE_PROVIDER,
@@ -421,6 +424,10 @@ const hiddenFromSubagents = enabledWhen(McpInvocationContext.hiddenFromSubagents
 const hiddenWhileLinksOff = enabledWhen(McpInvocationContext.hiddenWhileLinksOff);
 // T3 lists the video tools only to a thread in a video project.
 const hiddenWithoutVideo = enabledWhen(McpInvocationContext.hiddenWithoutVideo);
+// s7video (S7V-072): a video project's thread is offered the video tools and nothing else.
+const videoProjectTools = new Set(
+  [...VIDEO_PROJECT_TOOL_NAMES].map((name) => `${T3_PREFIX}${name}`),
+);
 const visibleT3Tools = (options: {
   readonly subagent?: boolean;
   readonly links?: boolean;
@@ -429,7 +436,9 @@ const visibleT3Tools = (options: {
   t3Tools.filter(
     (tool) =>
       (options.links === true || !hiddenWhileLinksOff.has(tool.name)) &&
-      (options.video === true || !hiddenWithoutVideo.has(tool.name)) &&
+      (options.video === true
+        ? videoProjectTools.has(tool.name)
+        : !hiddenWithoutVideo.has(tool.name)) &&
       !(options.subagent === true && hiddenFromSubagents.has(tool.name)),
   );
 
@@ -498,13 +507,22 @@ export const t3SubagentContext = async (model: Model, device = true) => {
  */
 const t3ContextReport = (model: Model) => {
   const size = (chars: number) => `${chars} chars (~${Math.round(chars / 4)} tokens)`;
-  const descriptions = t3Tools.reduce((sum, tool) => sum + valueText(tool.description).length, 0);
-  const schemas = JSON.stringify(t3Tools).length;
-  return [
-    `- T3 context: system text ${size((isCodex(model) ? JSON.stringify(buildCodexAdditionalContext({ model }, { browser: true, device: true })) : t3SystemAppend(model)).length)}`,
-    `tool descriptions ${size(descriptions)}`,
-    `full tool schemas ${size(schemas)} across ${t3Tools.length} tools.`,
-  ].join(", ");
+  const line = (label: string, video: boolean) => {
+    const tools = video ? visibleT3Tools({ video }) : t3Tools;
+    const descriptions = tools.reduce((sum, tool) => sum + valueText(tool.description).length, 0);
+    const system = isCodex(model)
+      ? JSON.stringify(
+          buildCodexAdditionalContext({ model }, { browser: true, device: true, video }),
+        )
+      : t3SystemAppend(model, true, video);
+    return [
+      `- ${label}: system text ${size(system.length)}`,
+      `tool descriptions ${size(descriptions)}`,
+      `full tool schemas ${size(JSON.stringify(tools).length)} across ${tools.length} tools.`,
+    ].join(", ");
+  };
+  // s7video (S7V-072): a video project's thread gets only the video tools and their line.
+  return [line("T3 context", false), line("T3 context in a video project", true)].join("\n");
 };
 
 const stringProperty = (description: string) => ({ type: "string", description });

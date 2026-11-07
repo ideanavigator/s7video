@@ -10,6 +10,7 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
@@ -87,7 +88,7 @@ export class EditLayoutError extends Schema.TaggedError<EditLayoutError>()("Edit
 }
 
 /** Whether `cwd` holds an edit project: both `edit.json` and `project.json`. */
-export const isEditProjectFolder =
+const isEditProjectFolder =
   (fileSystem: FileSystem.FileSystem) =>
   (cwd: string): Effect.Effect<boolean> =>
     Effect.all([
@@ -95,6 +96,28 @@ export const isEditProjectFolder =
       fileSystem.exists(`${cwd}/${PROJECT_FILE}`),
     ]).pipe(
       Effect.map(([edit, project]) => edit && project),
+      Effect.orElseSucceed(() => false),
+    );
+
+const decodeProjectFormat = Schema.decodeUnknownOption(
+  Schema.fromJsonString(Schema.Struct({ format: Schema.Literal("edit-project") })),
+);
+
+/**
+ * Whether `cwd` is a video project, which gets the video tools and only them (S7V-072). Other tools
+ * use a root `project.json` too, so it must also say `"format": "edit-project"`.
+ */
+export const isVideoProjectFolder =
+  (fileSystem: FileSystem.FileSystem) =>
+  (cwd: string): Effect.Effect<boolean> =>
+    isEditProjectFolder(fileSystem)(cwd).pipe(
+      Effect.flatMap((present) =>
+        present
+          ? fileSystem
+              .readFileString(`${cwd}/${PROJECT_FILE}`)
+              .pipe(Effect.map((text) => Option.isSome(decodeProjectFormat(text))))
+          : Effect.succeed(false),
+      ),
       Effect.orElseSucceed(() => false),
     );
 

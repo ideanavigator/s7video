@@ -2,6 +2,7 @@ import * as NodeAssert from "node:assert/strict";
 
 import {
   T3_CODE_DEVICE_TOOL_INSTRUCTIONS,
+  T3_CODE_ORCHESTRATION_SECTIONS,
   T3_CODE_VIDEO_EDIT_INSTRUCTIONS,
 } from "@t3tools/provider-core/server/orchestrationInstructions";
 import { describe, it } from "vite-plus/test";
@@ -103,6 +104,25 @@ describe("Codex video edit context", () => {
     NodeAssert.ok(!tools(true).includes("ToolSearch"));
     NodeAssert.ok(!tools(false).includes("video_ tools"));
     NodeAssert.ok(Buffer.byteLength(T3_CODE_VIDEO_EDIT_INSTRUCTIONS, "utf8") <= 250);
+  });
+
+  // S7V-072: a video project hides every coding tool, so their sections go with them.
+  it("gives a video session only the runtime and video entries", () => {
+    const context = (video: boolean) =>
+      buildCodexAdditionalContext({ model: "gpt-6.1-sol" }, { browser: true, device: true, video });
+    const video = context(true);
+    NodeAssert.deepStrictEqual(Object.keys(video), ["t3_code_runtime", "t3_code_tools"]);
+    NodeAssert.strictEqual(video.t3_code_tools?.value, T3_CODE_VIDEO_EDIT_INSTRUCTIONS);
+    const text = JSON.stringify(video);
+    for (const hidden of ["delegate_task", "html_preview", "preview_", "device_open"]) {
+      NodeAssert.ok(!text.includes(hidden), hidden);
+    }
+    NodeAssert.deepStrictEqual(
+      Object.keys(context(false)).filter((key) => key.startsWith("t3_code_orchestration_")),
+      T3_CODE_ORCHESTRATION_SECTIONS.map(
+        (_, index) => `t3_code_orchestration_${String(index + 1).padStart(2, "0")}`,
+      ),
+    );
   });
 });
 

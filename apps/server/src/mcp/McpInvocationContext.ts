@@ -178,6 +178,19 @@ export const hiddenWithoutVideo = (): boolean => {
   return scope?.capabilities.has("video") === true;
 };
 
+/**
+ * s7video (S7V-072): `McpSchema.EnabledWhen` for every tool outside the video toolkit. A video
+ * project's thread sees only video tools; every other caller sees what it always did.
+ */
+export const hiddenInVideoProjects = (): boolean => {
+  const fiber = Fiber.getCurrent();
+  const scope = fiber && Context.getOrUndefined(fiber.context, McpInvocationContext);
+  return scope?.capabilities.has("video") !== true;
+};
+
+/** The plain refusal a video project's thread gets for a tool it is not offered (S7V-072). */
+export const VIDEO_PROJECT_HIDDEN_TOOL_MESSAGE = "That isn't available in a video project.";
+
 export type McpCapabilityError<C extends McpCapability> = C extends "preview"
   ? PreviewAutomationUnavailableError
   : McpCapabilityUnavailableError;
