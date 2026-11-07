@@ -87,6 +87,9 @@ from; the per-ticket entries and how this file is compiled are in
 - No install prompts on a fresh Mac: s7video works without Apple's coding tools and never asks to
   install them. Coder features that need git appear only when git is installed, and new projects no
   longer record your name and computer name. (S7V-052)
+- In a video project the assistant is offered only its video-editing tools, and none of the coding,
+  pull-request, browser or device tools it inherited. Each reply sends about 95% less tool setup
+  text. Other projects are unchanged. (S7V-072)
 
 ### Removed
 
