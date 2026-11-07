@@ -77,6 +77,8 @@ from; the per-ticket entries and how this file is compiled are in
   (S7V-017)
 - Removing silences from a long recording answers at once: the clip's sound is measured once while
   its words are found, and reused every time you cut. (S7V-055)
+- Undo works on any Mac: the edit's undo history is kept by s7video itself in the project, so undo
+  and redo need no extra tools, and saving each step is faster. (S7V-051)
 
 ### Removed
 

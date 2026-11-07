@@ -43,6 +43,8 @@ describe("EditProjectLayout", () => {
           "exports/final.mp4",
           "clip-at-root.mp4",
           "notes.txt",
+          ".s7history/log.json",
+          ".s7history/objects/ab.json.gz",
         ];
         const tracked = [
           "edit.json",
@@ -54,6 +56,13 @@ describe("EditProjectLayout", () => {
         ];
         for (const file of ignored) assert.isTrue(isIgnored(root, file), file);
         for (const file of tracked) assert.isFalse(isIgnored(root, file), file);
+        // The media guard checks TRACKED_PATHS without git, so it must cover what git tracks.
+        for (const file of tracked) {
+          const covered = EditProjectLayout.TRACKED_PATHS.some((entry) =>
+            entry.endsWith("/") ? file.startsWith(entry) : file === entry,
+          );
+          assert.isTrue(covered, file);
+        }
         assert.strictEqual(
           NodeFS.readFileSync(NodePath.join(root, ".gitignore"), "utf8"),
           EditProjectLayout.WHITELIST_GITIGNORE,

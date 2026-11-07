@@ -20,6 +20,8 @@ const STYLES_DIR = "styles";
 const ASSETS_DIR = "assets";
 export const CACHE_DIR = ".s7cache";
 const EXPORTS_DIR = "exports";
+/** The edit history's own store (S7V-051); `/*` in the whitelist keeps it out of git. */
+export const HISTORY_DIR = ".s7history";
 
 /**
  * ADR-005's whitelist plus the scaffold's README and icon (PO, 2026-11-05). `/*` ignores the
@@ -40,6 +42,19 @@ export const WHITELIST_GITIGNORE = [
   `!/${ASSETS_DIR}/icon.svg`,
   "",
 ].join("\n");
+
+/**
+ * What the whitelist `.gitignore` keeps, so T3's turn checkpoints save it: root files, and folders
+ * ending in `/`. The media guard checks exactly these without asking git.
+ */
+export const TRACKED_PATHS: ReadonlyArray<string> = [
+  ".gitignore",
+  EDIT_FILE,
+  PROJECT_FILE,
+  "README.md",
+  `${ASSETS_DIR}/icon.svg`,
+  `${STYLES_DIR}/`,
+];
 
 const DEFAULT_EDIT_FPS: EditRational = { num: 30, den: 1 };
 const DEFAULT_EDIT_CANVAS: EditCanvas = { width: 1080, height: 1920 };
