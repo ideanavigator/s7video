@@ -42,6 +42,8 @@ export interface TimelineSourceView {
   readonly mediaId: string;
   /** Undefined when the edit names media the library does not have. */
   readonly asset: MediaAsset | undefined;
+  /** The library's label, or the file name the edit records; never an internal id. */
+  readonly label: string;
   readonly variant: Extract<MediaVariant, "original" | "proxy">;
 }
 
@@ -102,7 +104,14 @@ export function playerViewOf(
       plan: timeline,
       sources: timeline.mediaIds.map((mediaId) => {
         const asset = assetOf(mediaId);
-        return { mediaId, asset, variant: asset === undefined ? "original" : variantOf(asset) };
+        const recorded = document.media.find((entry) => entry.id === mediaId);
+        const file = (recorded?.path ?? recorded?.reference)?.split(/[\\/]/u).at(-1);
+        return {
+          mediaId,
+          asset,
+          label: asset?.label ?? (file || "a clip"),
+          variant: asset === undefined ? "original" : variantOf(asset),
+        };
       }),
     };
   }

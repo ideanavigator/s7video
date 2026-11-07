@@ -133,6 +133,12 @@ class FakeVideo extends EventTarget {
     this.paused = true;
     this.dispatchEvent(new Event("pause"));
   }
+  removeAttribute(name: string) {
+    if (name === "src") this.url = "";
+  }
+  load() {
+    this.readyState = 0;
+  }
   requestVideoFrameCallback(callback: VideoFrameRequestCallback) {
     const handle = this.sim.handle();
     this.frameCallbacks.set(handle, callback);
@@ -431,6 +437,58 @@ describe("createPlayerClock", () => {
     expect(clock.frame()).toBe(40);
     clock.setPlan(planOf(FPS_30, [segment("a", 0, 20, 0)]));
     expect(clock.frame()).toBe(19);
+  });
+
+  // Review of PR #48: a parked element that played must be parked again before it is trusted.
+  describe("parks a played element again", () => {
+    const twoClips = planOf(FPS_30, [segment("a", 0, 30, 100), segment("b", 30, 60, 0)]);
+    const distinctAfter = (frames: number[], from: number) =>
+      frames.slice(from).filter((frame, index, all) => index === 0 || frame !== all[index - 1]);
+
+    it("replays from the first clip's first frame after the end", () => {
+      const { sim, clock, frames } = setUp(twoClips);
+      clock.play();
+      while (clock.playing()) sim.tick();
+      const replayAt = frames.length;
+      clock.play();
+      sim.run(6);
+      expect(clock.state()).toMatchObject({ _tag: "source", segment: 0, mediaId: "a" });
+      expect(sim.shown()?.url).toBe("media:a");
+      expect(sim.shown()!.frame).toBeLessThanOrEqual(102);
+      expect(distinctAfter(frames, replayAt).slice(0, 3)).toEqual([0, 1, 2]);
+    });
+
+    it("shows the clip's start on a seek there while it plays", () => {
+      const plan = planOf(FPS_30, [segment("a", 0, 60, 100)]);
+      const { sim, clock } = setUp(plan);
+      clock.play();
+      while (clock.frame() < 41) sim.tick();
+      clock.seek(0);
+      sim.run(4);
+      expect(clock.playing()).toBe(true);
+      expect(sim.shown()!.frame).toBeGreaterThanOrEqual(100);
+      expect(sim.shown()!.frame).toBeLessThanOrEqual(102);
+    });
+
+    it("plays the next clip from its start after a seek back across a join", () => {
+      const { sim, clock, frames } = setUp(twoClips);
+      clock.play();
+      while (clock.frame() < 36) sim.tick();
+      const seekAt = frames.length;
+      clock.seek(20);
+      while (clock.frame() < 45) sim.tick();
+      const after = distinctAfter(frames, seekAt);
+      expect(after.slice(0, 26)).toEqual(Array.from({ length: 26 }, (_, i) => 20 + i));
+      expect(sim.shown()?.url).toBe("media:b");
+      expect(Math.abs(sim.shown()!.frame - (clock.frame() - 30))).toBeLessThanOrEqual(1);
+    });
+  });
+
+  it("releases every element's source on dispose", () => {
+    const { sim, clock } = setUp(MIXED);
+    expect(sim.videos.some((video) => video.src !== "")).toBe(true);
+    clock.dispose();
+    expect(sim.videos.every((video) => video.src === "")).toBe(true);
   });
 
   it("should advance clock in whole frames at 30/1 and 30000/1001", () => {

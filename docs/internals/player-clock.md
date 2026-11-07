@@ -53,6 +53,10 @@ clock.dispose();
   through it as black), `preparing` (the next element was not parked in time; the clock holds).
 - `events.onJoin` reports each swap (due time, display time, how long the element was parked).
   The playback golden reads it; production ignores it.
+- A playing element is unparked: its parked frame is cleared the moment it plays or carries on
+  into the next item, so a replay, a seek while playing or a join after a seek parks it again.
+  Trusting an old park skipped a whole clip on replay (review of PR #48).
+- `dispose` empties every element's `src` and calls `load()`, so the decoders are freed at once.
 - A gesture that edits the timeline (S7V-034) writes `edit.json` and lets the new plan arrive;
   `setPlan` keeps the position (clamped) and keeps playing. Do not drive elements from outside.
 

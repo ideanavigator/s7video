@@ -546,8 +546,25 @@ const handlers = {
         const id = `asm${revision}-${index}`;
         if (!taken.has(id)) itemIds.push(id);
       }
-      let position = at ?? end;
-      const ops = items.map((item, index) => {
+      const from = at ?? end;
+      // Mid-edit inserts only between items, and only when no other track has anything from
+      // there on: moving captions (whose words hold timeline frames), sounds and overlays in
+      // step is S7V-034's ripple work (review of PR #48).
+      if (from !== end) {
+        if (!track.items.some((item) => item.start === from)) {
+          return yield* invalid(
+            `at must be where a video item starts, or the end of the edit (frame ${end}).`,
+          );
+        }
+        const others = document.tracks.filter((entry) => entry.id !== track.id);
+        if (others.some((entry) => entry.items.some((item) => item.start + item.duration > from))) {
+          return yield* invalid(
+            `Captions, sounds or overlays come after frame ${from}, so clips can only be added at the end (frame ${end}) for now.`,
+          );
+        }
+      }
+      let position = from;
+      const inserts = items.map((item, index) => {
         const op = {
           _tag: "insertItem" as const,
           trackId: track.id,
@@ -565,7 +582,7 @@ const handlers = {
       });
       const edits = yield* EditDocumentService.EditDocumentService;
       return yield* edits
-        .apply(project.projectId, ops, { origin: "agent", baseRevision: revision })
+        .apply(project.projectId, inserts, { origin: "agent", baseRevision: revision })
         .pipe(
           Effect.map((after) => ({ revision: after.revision, itemIds })),
           Effect.mapError(

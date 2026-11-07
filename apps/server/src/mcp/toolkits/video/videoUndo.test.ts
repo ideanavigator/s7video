@@ -570,6 +570,40 @@ describe("video_undo and video_redo", () => {
         yield* call("video_undo");
         expect(readFile(root, "edit.json")).toBe(before);
 
+        // `at` inside an item, or with a caption after it, is refused and changes nothing.
+        const inside = yield* call("video_assemble", {
+          items: [{ mediaId: "cam", in: 0, duration: 5 }],
+          at: 12,
+        });
+        expect(textOf(inside).join("")).toBe(
+          "at must be where a video item starts, or the end of the edit (frame 30).",
+        );
+        const captioned = yield* edits.read(thread.projectId);
+        yield* edits.apply(
+          thread.projectId,
+          [
+            {
+              _tag: "addTrack",
+              track: {
+                kind: "caption",
+                id: "C1",
+                items: [{ id: "cap", start: 20, duration: 10, text: "hi" }],
+              },
+            },
+          ],
+          { origin: "agent", baseRevision: captioned.revision },
+        );
+        const withCaption = readFile(root, "edit.json");
+        const blocked = yield* call("video_assemble", {
+          items: [{ mediaId: "cam", in: 0, duration: 5 }],
+          at: 0,
+        });
+        expect(textOf(blocked).join("")).toBe(
+          "Captions, sounds or overlays come after frame 0, so clips can only be added at the end (frame 30) for now.",
+        );
+        expect(readFile(root, "edit.json")).toBe(withCaption);
+        yield* call("video_undo");
+
         for (const [items, message] of [
           [[{ mediaId: "nope", in: 0, duration: 5 }], "There is no file at nope"],
           [[{ mediaId: "cam", in: 890, duration: 30 }], ""],

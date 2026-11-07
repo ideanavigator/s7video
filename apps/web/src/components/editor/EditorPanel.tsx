@@ -248,7 +248,7 @@ function PlayingTimeline(props: {
 
   const sources = new Map<string, MultiClipSource>();
   for (const source of view.sources) {
-    const label = source.asset?.label ?? source.mediaId;
+    const { label } = source;
     const resolved = urls.get(source.mediaId);
     if (source.asset === undefined || source.asset.state === "missing") {
       sources.set(source.mediaId, { label, url: null, status: "missing" });
@@ -261,7 +261,7 @@ function PlayingTimeline(props: {
     }
   }
   const stableSources = useStableSources(sources);
-  const firstLabel = view.sources[0]?.asset?.label ?? "the edit";
+  const firstLabel = view.sources[0]?.label ?? "the edit";
 
   return (
     <>

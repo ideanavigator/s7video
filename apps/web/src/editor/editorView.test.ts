@@ -139,9 +139,35 @@ describe("playerViewOf", () => {
     expect(view).toMatchObject({
       _tag: "play-timeline",
       sources: [
-        { mediaId: "clip", asset: { id: "clip" }, variant: "proxy" },
-        { mediaId: "broll", asset: undefined, variant: "original" },
+        { mediaId: "clip", asset: { id: "clip" }, label: "interview.mov", variant: "proxy" },
+        { mediaId: "broll", asset: undefined, label: "a clip", variant: "original" },
       ],
     });
+  });
+
+  it("names a clip the library lacks by the file the edit records, never its id", () => {
+    const base = edit([
+      {
+        kind: "video",
+        id: "v1",
+        items: [
+          { id: "a", media: "clip", start: 0, duration: 30, in: 0 },
+          { id: "b", media: "m-7f3a", start: 30, duration: 30, in: 0 },
+        ],
+      },
+    ] as never);
+    if (base._tag !== "ready") throw new Error("edit not ready");
+    const withMedia: ProjectEditState = {
+      ...base,
+      snapshot: {
+        ...base.snapshot,
+        document: {
+          ...base.snapshot.document,
+          media: [{ id: "m-7f3a", kind: "video", path: "assets/Beach take 2.mov" } as never],
+        },
+      },
+    };
+    const view = playerViewOf(withMedia, library([asset()]), EDIT);
+    expect(view._tag === "play-timeline" && view.sources[1]!.label).toBe("Beach take 2.mov");
   });
 });

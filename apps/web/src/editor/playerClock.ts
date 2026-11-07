@@ -33,6 +33,8 @@ export type ClockVideo = Pick<
   | "cancelVideoFrameCallback"
   | "addEventListener"
   | "removeEventListener"
+  | "removeAttribute"
+  | "load"
 >;
 
 /** What the clock needs from the page around it. */
@@ -184,6 +186,16 @@ export function createPlayerClock(
     return slot;
   });
 
+  /**
+   * A playing element is no longer parked anywhere: its media time moves on, so a later play,
+   * seek or join must park it again rather than trust where it once was (review, S7V-039).
+   */
+  const unpark = (slot: Slot) => {
+    slot.generation += 1;
+    slot.parkedFrame = null;
+    slot.target = null;
+  };
+
   const forget = (slot: Slot) => {
     slot.generation += 1;
     slot.segment = -1;
@@ -331,6 +343,7 @@ export function createPlayerClock(
       if (presented >= segment.end - 1 && next !== undefined && continues(segment, next)) {
         // The next item carries on in the same source: no swap, the element plays on.
         slot.segment = index + 1;
+        unpark(slot);
         setState({ _tag: "source", segment: index + 1, mediaId: next.mediaId });
         prepareAfter(index + 1);
         watchVideo(slot);
@@ -397,6 +410,7 @@ export function createPlayerClock(
     setState({ _tag: "source", segment: index, mediaId: segment.mediaId });
     publish(segment.start);
     events.onJoin?.({ segment: index, displayAt, dueAt, readyLeadMs: displayAt - slot.readyAt });
+    unpark(slot);
     void slot.video.play().catch(() => {
       if (active === slot) pause();
     });
@@ -469,6 +483,7 @@ export function createPlayerClock(
     show(slot);
     setState({ _tag: "source", segment: index, mediaId: segment.mediaId });
     publish(at);
+    unpark(slot);
     void slot.video.play().catch(() => {
       if (active === slot) pause();
     });
@@ -599,7 +614,13 @@ export function createPlayerClock(
       playing = false;
       for (const slot of slots) {
         slot.cleanup();
+        forget(slot);
         if (!slot.video.paused) slot.video.pause();
+        // Releases the decoder now rather than at garbage collection (the M1 Air floor).
+        slot.video.removeAttribute("src");
+        slot.video.load();
+        slot.url = null;
+        slot.mediaId = null;
       }
     },
   };
