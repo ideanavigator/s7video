@@ -17,7 +17,7 @@ import {
 } from "@t3tools/contracts";
 import { ClapperboardIcon, FilmIcon, PlusIcon, TriangleAlertIcon, UploadIcon } from "lucide-react";
 import * as Schema from "effect/Schema";
-import { useId, useState, type DragEvent, type ReactNode } from "react";
+import { useEffect, useId, useState, type DragEvent, type ReactNode } from "react";
 
 import { useAssetUrlState } from "../../assets/assetUrls";
 import {
@@ -26,13 +26,23 @@ import {
   rememberPlayerFrame,
   requestPlayerSeek,
   selectPlayerSource,
+  subscribePlayerFrame,
   useEditPlayerStore,
   useProjectExport,
   useProjectEdit,
 } from "../../editor/editStore";
-import { editPlaybackPlan } from "../../editor/editPlayback";
-import { playerViewOf, type PlayerView } from "../../editor/editorView";
-import type { TranscriptPlayback } from "../../editor/transcriptModel";
+import {
+  editPlaybackPlan,
+  type PlayerFramePlan,
+  type TimelinePlan,
+} from "../../editor/editPlayback";
+import { playerViewOf, type PlayerView, type TimelineSourceView } from "../../editor/editorView";
+import {
+  timelineTranscriptPlayback,
+  timelineTranscriptSegment,
+  type TranscriptPlayback,
+} from "../../editor/transcriptModel";
+import { useStableCallback } from "../../hooks/useStableCallback";
 import { useMediaLibrary, type MediaLibraryState } from "../../state/media";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { Alert, AlertAction, AlertDescription } from "../ui/alert";
@@ -44,6 +54,7 @@ import { BROWSER_ADD_MEDIA_HINT } from "./addMediaHint";
 import { AssetsTab, useAssetsActions } from "./AssetsTab";
 import { EditPlayer } from "./EditPlayer";
 import { ImportDialog } from "./ImportDialog";
+import { MultiClipPlayer, type MultiClipSource } from "./MultiClipPlayer";
 import { SpeechModelPrompt } from "./SpeechModelPrompt";
 import { editFrameToPlayerFrame } from "./timeline/editFrames";
 import { TimelinePane } from "./timeline/TimelinePane";
@@ -161,6 +172,172 @@ function PlayingSource(props: {
   );
 }
 
+/** Resolves one source's URL for the multi-clip player; renders nothing. */
+function SourceUrl(props: {
+  readonly projectRef: ScopedProjectRef;
+  readonly mediaId: string;
+  readonly variant: TimelineSourceView["variant"];
+  readonly attempt: number;
+  readonly onChange: (mediaId: string, url: string | null, failed: boolean) => void;
+}) {
+  const { mediaId, onChange } = props;
+  const state = useAssetUrlState(
+    props.projectRef.environmentId,
+    {
+      _tag: "project-media",
+      projectId: props.projectRef.projectId,
+      mediaId,
+      variant: props.variant,
+    },
+    // A new revision mints a fresh URL, so an expired one recovers on retry.
+    String(props.attempt),
+  );
+  const url = state._tag === "Success" ? state.url : null;
+  const failed = state._tag === "Failure";
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- one hook per source cannot run in a loop, so each source reports its URL up to the player
+  useEffect(() => onChange(mediaId, url, failed), [mediaId, url, failed, onChange]);
+  return null;
+}
+
+interface SourceAttempts {
+  readonly attempt: number;
+  readonly errors: number;
+}
+
+/** The edit on the player clock: each source with its own URL, retry and missing state. */
+function PlayingTimeline(props: {
+  readonly projectRef: ScopedProjectRef;
+  readonly view: Extract<PlayerView, { _tag: "play-timeline" }>;
+  readonly actions: ReturnType<typeof useAssetsActions>;
+}) {
+  const { projectRef, view, actions } = props;
+  const projectKey = scopedProjectKey(projectRef);
+  const [playing, setPlaying] = useState(false);
+  const [attempts, setAttempts] = useState<ReadonlyMap<string, SourceAttempts>>(new Map());
+  const [urls, setUrls] = useState<ReadonlyMap<string, { url: string | null; failed: boolean }>>(
+    new Map(),
+  );
+  // A proxy that finishes mid-playback takes over at the next pause, as in Engine A's player.
+  const [variants, setVariants] = useState(
+    () => new Map(view.sources.map((source) => [source.mediaId, source.variant])),
+  );
+  const changed = view.sources.some((source) => variants.get(source.mediaId) !== source.variant);
+  if (changed && !playing) {
+    setVariants(new Map(view.sources.map((source) => [source.mediaId, source.variant])));
+  }
+  const attemptsOf = (mediaId: string) => attempts.get(mediaId) ?? { attempt: 0, errors: 0 };
+  const onUrl = useStableCallback((mediaId: string, url: string | null, failed: boolean) => {
+    setUrls((current) => {
+      const before = current.get(mediaId);
+      if (before?.url === url && before.failed === failed) return current;
+      return new Map(current).set(mediaId, { url, failed });
+    });
+  });
+  const retry = (mediaId: string) =>
+    setAttempts((current) =>
+      new Map(current).set(mediaId, { attempt: attemptsOf(mediaId).attempt + 1, errors: 0 }),
+    );
+  const onSourceError = (mediaId: string) => {
+    const { attempt, errors } = attemptsOf(mediaId);
+    // One quiet retry covers an expired URL; a second failure marks the source failed.
+    setAttempts((current) =>
+      new Map(current).set(mediaId, {
+        attempt: errors < MAX_AUTOMATIC_RETRIES ? attempt + 1 : attempt,
+        errors: errors + 1,
+      }),
+    );
+  };
+
+  const sources = new Map<string, MultiClipSource>();
+  for (const source of view.sources) {
+    const { label } = source;
+    const resolved = urls.get(source.mediaId);
+    if (source.asset === undefined || source.asset.state === "missing") {
+      sources.set(source.mediaId, { label, url: null, status: "missing" });
+    } else if (resolved?.failed || attemptsOf(source.mediaId).errors > MAX_AUTOMATIC_RETRIES) {
+      sources.set(source.mediaId, { label, url: null, status: "failed" });
+    } else if (resolved !== undefined && resolved.url !== null) {
+      sources.set(source.mediaId, { label, url: resolved.url, status: "ready" });
+    } else {
+      sources.set(source.mediaId, { label, url: null, status: "loading" });
+    }
+  }
+  const stableSources = useStableSources(sources);
+  const firstLabel = view.sources[0]?.label ?? "the edit";
+
+  return (
+    <>
+      {view.sources.map((source) =>
+        source.asset === undefined || source.asset.state === "missing" ? null : (
+          <SourceUrl
+            key={source.mediaId}
+            projectRef={projectRef}
+            mediaId={source.mediaId}
+            variant={variants.get(source.mediaId) ?? source.variant}
+            attempt={attemptsOf(source.mediaId).attempt}
+            onChange={onUrl}
+          />
+        ),
+      )}
+      <MultiClipPlayer
+        projectKey={projectKey}
+        plan={view.plan}
+        sources={stableSources}
+        label={
+          view.sources.length > 1 ? `${firstLabel} and ${view.sources.length - 1} more` : firstLabel
+        }
+        startFrame={rememberedPlayerFrame(projectKey)}
+        onPositionChange={(frame) => rememberPlayerFrame(projectKey, frame)}
+        onPlayingChange={setPlaying}
+        onSourceError={onSourceError}
+        renderSourceProblem={(mediaId) => {
+          const source = view.sources.find((entry) => entry.mediaId === mediaId);
+          const status = sources.get(mediaId)?.status;
+          if (status === "failed") {
+            return (
+              <Button size="sm" variant="outline" onClick={() => retry(mediaId)}>
+                Retry
+              </Button>
+            );
+          }
+          const asset = source?.asset;
+          if (asset === undefined) return null;
+          return (
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={window.desktopBridge === undefined}
+              onClick={() => void actions.relinkItem(asset)}
+            >
+              Find file…
+            </Button>
+          );
+        }}
+      />
+    </>
+  );
+}
+
+/** The same map object while its entries are equal, so the player's effect runs only on change. */
+function useStableSources(
+  next: ReadonlyMap<string, MultiClipSource>,
+): ReadonlyMap<string, MultiClipSource> {
+  const [kept, setKept] = useState(next);
+  const same =
+    kept.size === next.size &&
+    [...next].every(([mediaId, source]) => {
+      const other = kept.get(mediaId);
+      return (
+        other !== undefined &&
+        other.url === source.url &&
+        other.status === source.status &&
+        other.label === source.label
+      );
+    });
+  if (!same) setKept(next);
+  return same ? kept : next;
+}
+
 function PlayerArea(props: {
   readonly projectRef: ScopedProjectRef;
   readonly view: PlayerView;
@@ -255,6 +432,15 @@ function PlayerArea(props: {
           </Button>
         </PlayerMessage>
       );
+    case "play-timeline":
+      return (
+        <PlayingTimeline
+          key="timeline"
+          projectRef={props.projectRef}
+          view={view}
+          actions={actions}
+        />
+      );
     case "play":
       return (
         <PlayingSource
@@ -296,6 +482,34 @@ function transcriptSourceOf(
     default:
       return { mediaId: null, playback: null };
   }
+}
+
+/**
+ * The Transcript tab over a multi-clip edit: the words of the clip on screen. It re-renders only
+ * when the playhead crosses into another item, never per frame.
+ */
+function TimelineTranscriptTab(props: {
+  readonly projectRef: ScopedProjectRef;
+  readonly plan: TimelinePlan;
+}) {
+  const { plan } = props;
+  const projectKey = scopedProjectKey(props.projectRef);
+  const [segment, setSegment] = useState(() =>
+    timelineTranscriptSegment(plan, rememberedPlayerFrame(projectKey)),
+  );
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- follows the player clock (outside React) to switch clips at a join
+  useEffect(
+    () =>
+      subscribePlayerFrame(projectKey, (frame) => {
+        const next = timelineTranscriptSegment(plan, frame);
+        setSegment((current) => (current === next ? current : next));
+      }),
+    [projectKey, plan],
+  );
+  const index = Math.min(segment, plan.segments.length - 1);
+  return (
+    <TranscriptTab projectRef={props.projectRef} {...timelineTranscriptPlayback(plan, index)} />
+  );
 }
 
 const isExportStartError = Schema.is(ExportStartError);
@@ -449,9 +663,14 @@ export default function EditorPanel(props: {
   };
 
   const previewingClip = view._tag === "play" && view.mode === "clip";
-  const playingPlan = view._tag === "play" && view.mode === "edit" ? view.plan : null;
-  // A click while a clip previews goes back to the edit, at the clicked frame. A frame the player
-  // can't show (a later clip, "Plays X only") moves only the timeline's playhead.
+  const playingPlan: PlayerFramePlan | null =
+    view._tag === "play-timeline"
+      ? view.plan
+      : view._tag === "play" && view.mode === "edit"
+        ? view.plan
+        : null;
+  // A click while a clip previews goes back to the edit, at the clicked frame. A frame past the
+  // edit's end moves only the timeline's playhead.
   const seekFromTimeline = (editFrame: number) => {
     if (source.kind === "clip") {
       rememberPlayerFrame(projectKey, editFrame);
@@ -483,13 +702,10 @@ export default function EditorPanel(props: {
                 </Button>
               ) : null}
             </>
-          ) : view._tag === "play" && view.plan.otherClipItems > 0 ? (
-            <span className="min-w-0 truncate text-muted-foreground">
-              Plays {view.asset.label} only; other clips play in a later version.
-            </span>
           ) : null}
         </div>
-        {edit._tag === "ready" && view._tag === "play" && view.mode === "edit" ? (
+        {edit._tag === "ready" &&
+        (view._tag === "play-timeline" || (view._tag === "play" && view.mode === "edit")) ? (
           <ExportButton projectRef={projectRef} />
         ) : null}
       </div>
@@ -519,7 +735,11 @@ export default function EditorPanel(props: {
         hidden={tab !== "transcript"}
         className="min-h-0 flex-1"
       >
-        <TranscriptTab projectRef={projectRef} {...transcriptSourceOf(view, library, edit)} />
+        {view._tag === "play-timeline" ? (
+          <TimelineTranscriptTab projectRef={projectRef} plan={view.plan} />
+        ) : (
+          <TranscriptTab projectRef={projectRef} {...transcriptSourceOf(view, library, edit)} />
+        )}
       </div>
       <div
         role="tabpanel"

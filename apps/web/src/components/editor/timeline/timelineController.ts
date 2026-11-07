@@ -7,7 +7,7 @@
  * few widths here and React catches up the mounted window in a transition.
  */
 import { observeResize } from "../../../lib/observeResize";
-import type { PlaybackPlan } from "../../../editor/editPlayback";
+import type { PlayerFramePlan } from "../../../editor/editPlayback";
 import { createPlayheadDriver, type PlayheadDriver } from "./playheadDriver";
 import type { TimelineView, TimelineViewSource } from "./timelineView";
 import {
@@ -51,7 +51,7 @@ export interface TimelineController extends TimelineViewSource {
   /** The rows' total height, which React knows; the wheel decides with it without a layout read. */
   readonly setContentHeight: (heightPx: number) => void;
   /** The player's plan, for mapping its frames (`editFrames.ts`). */
-  readonly setPlan: (plan: PlaybackPlan | null) => void;
+  readonly setPlan: (plan: PlayerFramePlan | null) => void;
   /** Sizes span boxes React mounted since the last zoom (`laneGeometry.ts`). */
   readonly sizeSpans: () => void;
   readonly setPlayheadVisible: (visible: boolean, frame: number) => void;
