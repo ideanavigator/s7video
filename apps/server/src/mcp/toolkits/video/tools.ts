@@ -187,7 +187,11 @@ const VideoTranscriptReadTool = Tool.make("video_transcript_read", {
 const VideoImportTool = Tool.make("video_import", {
   description: "Import a file the user shared into the video project.",
   parameters: Schema.Struct({ path: Schema.String }),
-  success: Schema.Struct({ media: Schema.String, jobId: Schema.optional(EngineJobId) }),
+  success: Schema.Struct({
+    media: Schema.String,
+    jobId: Schema.optional(EngineJobId),
+    cleanup: Schema.optional(Schema.String),
+  }),
   failure: OrchestratorMcpFailure,
   dependencies: [
     ...dependencies,
@@ -198,7 +202,9 @@ const VideoImportTool = Tool.make("video_import", {
   .annotate(Tool.Title, "Import clip")
   .annotateMerge(videoAnnotations(false));
 
-const EditStep = Schema.Struct({ revision: Schema.Int, message: Schema.String });
+/** `cleanup`: S7V-050's one-line hint, present when the history is due a cleanup question. */
+const Cleanup = Schema.optional(Schema.String);
+const EditStep = Schema.Struct({ revision: Schema.Int, message: Schema.String, cleanup: Cleanup });
 
 const VideoUndoTool = Tool.make("video_undo", {
   description: "Undo the last edit to this video project. Use this, not git.",
@@ -248,6 +254,7 @@ const VideoRemoveSilencesTool = Tool.make("video_remove_silences", {
     message: Schema.String,
     revision: Schema.Int,
     changed: Schema.Boolean,
+    cleanup: Cleanup,
   }),
   failure: OrchestratorMcpFailure,
   dependencies: [...dependencies, SilenceCutService.SilenceCutService],
@@ -265,7 +272,11 @@ const VideoAssembleTool = Tool.make("video_assemble", {
     ),
     at: Schema.optional(Schema.Int),
   }),
-  success: Schema.Struct({ revision: Schema.Int, itemIds: Schema.Array(Schema.String) }),
+  success: Schema.Struct({
+    revision: Schema.Int,
+    itemIds: Schema.Array(Schema.String),
+    cleanup: Cleanup,
+  }),
   failure: OrchestratorMcpFailure,
   dependencies,
 })

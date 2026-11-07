@@ -378,6 +378,8 @@ import {
 import {
   EditApplyInput,
   EditOpError,
+  EditHistoryCleanInput,
+  EditHistoryCleanResult,
   EditProjectInput,
   EditSnapshot,
   EditUnavailableError,
@@ -660,6 +662,8 @@ export const WS_METHODS = {
   editVersionTag: "edit.versionTag",
   editVersionRestore: "edit.versionRestore",
   editVersionDelete: "edit.versionDelete",
+  editHistoryClean: "edit.historyClean",
+  editHistoryDismiss: "edit.historyDismiss",
   transcriptGet: "transcript.get",
   transcribeRun: "transcribe.run",
   transcribeModelsStatus: "transcribe.models.status",
@@ -2104,6 +2108,16 @@ const WsEditVersionDeleteRpc = Rpc.make(WS_METHODS.editVersionDelete, {
   success: EditVersionsResult,
   error: EditRpcError,
 });
+const WsEditHistoryCleanRpc = Rpc.make(WS_METHODS.editHistoryClean, {
+  payload: EditHistoryCleanInput,
+  success: EditHistoryCleanResult,
+  error: EditRpcError,
+});
+const WsEditHistoryDismissRpc = Rpc.make(WS_METHODS.editHistoryDismiss, {
+  payload: EditProjectInput,
+  success: EditSnapshot,
+  error: EditRpcError,
+});
 
 const TranscriptRpcError = Schema.Union([
   EnvironmentAuthorizationError,
@@ -2391,6 +2405,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsEditVersionTagRpc,
   WsEditVersionRestoreRpc,
   WsEditVersionDeleteRpc,
+  WsEditHistoryCleanRpc,
+  WsEditHistoryDismissRpc,
   WsTranscriptGetRpc,
   WsTranscribeRunRpc,
   WsTranscribeModelsStatusRpc,

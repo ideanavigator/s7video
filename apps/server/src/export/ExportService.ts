@@ -151,6 +151,8 @@ const make = Effect.gen(function* () {
   const start: ExportService["Service"]["start"] = Effect.fn("ExportService.start")(
     function* (input) {
       const snapshot = yield* edits.read(input.projectId);
+      // S7V-050: a finished export marks its version, so "Keep recent" keeps it.
+      const markExported = yield* edits.exportMarker(input.projectId, snapshot.revision);
       const project = yield* projects
         .getById(input.projectId)
         .pipe(Effect.orElseSucceed(() => Option.none()));
@@ -221,20 +223,24 @@ const make = Effect.gen(function* () {
             return Exit.isFailure(exit) ? Deferred.failCause(started, exit.cause) : Effect.void;
           }
           if (Exit.isSuccess(exit)) {
-            return remember({
-              ...entry(jobId),
-              state: "succeeded",
-              result: {
-                path: relative,
-                durationFrames: exit.value.durationFrames,
-                fps: exit.value.fps,
-                width: exit.value.width,
-                height: exit.value.height,
-                captions: exit.value.captions,
-                lufs: exit.value.lufs,
-                truePeak: exit.value.truePeak,
-              },
-            });
+            return markExported.pipe(
+              Effect.andThen(
+                remember({
+                  ...entry(jobId),
+                  state: "succeeded",
+                  result: {
+                    path: relative,
+                    durationFrames: exit.value.durationFrames,
+                    fps: exit.value.fps,
+                    width: exit.value.width,
+                    height: exit.value.height,
+                    captions: exit.value.captions,
+                    lufs: exit.value.lufs,
+                    truePeak: exit.value.truePeak,
+                  },
+                }),
+              ),
+            );
           }
           const failure = exit.cause.reasons.find(Cause.isFailReason)?.error;
           if (failure?.reason === "cancelled")

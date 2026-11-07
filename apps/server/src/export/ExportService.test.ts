@@ -21,7 +21,7 @@ import * as Stream from "effect/Stream";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
-import { isIgnored, layerEditTest } from "../edit/editHarness.testkit.ts";
+import { historyLog, isIgnored, layerEditTest } from "../edit/editHarness.testkit.ts";
 import * as EngineService from "../engine/EngineService.ts";
 import * as EditDocumentService from "../edit/EditDocumentService.ts";
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
@@ -254,6 +254,38 @@ describe("ExportService", () => {
         assert.isTrue(NodeFS.existsSync(NodePath.join(root, started.path)));
         assert.isTrue(isIgnored(root, started.path));
       }),
+    ),
+  );
+
+  it.effect("marks the exported version once the export finishes (S7V-050)", () =>
+    withExports(
+      "ok",
+      ({ projectId, root, exports, finish }) =>
+        Effect.gen(function* () {
+          const exportedOf = () => historyLog(root)?.entries.map((entry) => entry.exported);
+          assert.deepStrictEqual(exportedOf(), [undefined, undefined]);
+          const started = yield* exports.start({ projectId, captions: false });
+          // Running: nothing is marked yet.
+          assert.deepStrictEqual(exportedOf(), [undefined, undefined]);
+          yield* finish;
+          yield* settled(exports, started.jobId);
+          assert.deepStrictEqual(exportedOf(), [undefined, true]);
+        }),
+      { ops: withVideo },
+    ),
+  );
+
+  it.effect("a cancelled export marks no version", () =>
+    withExports(
+      "cancelled",
+      ({ projectId, root, exports, finish }) =>
+        Effect.gen(function* () {
+          const started = yield* exports.start({ projectId, captions: false });
+          yield* finish;
+          yield* settled(exports, started.jobId);
+          assert.isTrue(historyLog(root)?.entries.every((entry) => entry.exported === undefined));
+        }),
+      { ops: withVideo },
     ),
   );
 
