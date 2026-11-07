@@ -1,4 +1,5 @@
 import * as NetAddress from "effect/net/NetAddress";
+import { projectFileContents } from "../edit/EditProjectLayout.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import { AgentScope } from "@t3tools/shared/AgentScope";
@@ -647,8 +648,11 @@ function runBrowserAccessScenario(input: {
   readonly projectExists?: boolean;
   readonly delegatedBy?: ThreadId;
   readonly workspaceRoot?: string;
+  /** Opens a second session after the thread's project moves here. */
+  readonly reopenWorkspaceRoot?: string;
 }) {
   return Effect.gen(function* () {
+    let workspaceRoot = input.workspaceRoot;
     const state = yield* Ref.make(emptyState);
     const mcpConfigs = yield* Ref.make<
       ReadonlyArray<McpProviderSession.McpProviderSessionConfig | undefined>
@@ -660,7 +664,7 @@ function runBrowserAccessScenario(input: {
         Effect.succeed(
           input.projectExists === false
             ? Option.none()
-            : Option.some(makeBrowserAccessProject(requestedProjectId, input.workspaceRoot)),
+            : Option.some(makeBrowserAccessProject(requestedProjectId, workspaceRoot)),
         ),
     });
 
@@ -689,6 +693,17 @@ function runBrowserAccessScenario(input: {
       yield* manager
         .open({ threadId, providerSessionId, modelSelection, runtimePolicy })
         .pipe(Effect.ignore);
+      if (input.reopenWorkspaceRoot !== undefined) {
+        workspaceRoot = input.reopenWorkspaceRoot;
+        yield* manager.release({ providerSessionId, reason: "idle_timeout" }).pipe(Effect.ignore);
+        const reopenedSessionId = yield* idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+        });
+        yield* manager
+          .open({ threadId, providerSessionId: reopenedSessionId, modelSelection, runtimePolicy })
+          .pipe(Effect.ignore);
+      }
     }).pipe(
       Effect.provide(
         layerTest({
@@ -711,7 +726,8 @@ function runBrowserAccessScenario(input: {
       ),
     );
 
-    return (yield* Ref.get(mcpConfigs))[0];
+    const configs = yield* Ref.get(mcpConfigs);
+    return input.reopenWorkspaceRoot === undefined ? configs[0] : configs.at(-1);
   });
 }
 
@@ -3813,10 +3829,29 @@ it.effect("ProviderSessionManagerV2 grants video tools only to threads of an edi
     const fileSystem = yield* FileSystem.FileSystem;
     const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: "s7v-video-grant-" });
     yield* fileSystem.writeFileString(`${root}/edit.json`, "{}");
-    yield* fileSystem.writeFileString(`${root}/project.json`, "{}");
+    yield* fileSystem.writeFileString(`${root}/project.json`, projectFileContents(0));
     const scenario = { enableAgentBrowserAccess: true, projectOverride: true } as const;
     const edit = yield* runBrowserAccessScenario({ ...scenario, workspaceRoot: root });
     assert.isTrue(edit?.capabilities?.has("video"));
+    // S7V-072: another tool's root project.json (Nx) has no edit-project format, so no video.
+    const other = yield* fileSystem.makeTempDirectoryScoped({ prefix: "s7v-video-other-" });
+    yield* fileSystem.writeFileString(`${other}/edit.json`, "{}");
+    yield* fileSystem.writeFileString(`${other}/project.json`, '{"name":"app","targets":{}}');
+    const nx = yield* runBrowserAccessScenario({ ...scenario, workspaceRoot: other });
+    assert.isFalse(nx?.capabilities?.has("video"));
+    // The capability follows the project on the next session open, both ways.
+    const movedIn = yield* runBrowserAccessScenario({
+      ...scenario,
+      workspaceRoot: other,
+      reopenWorkspaceRoot: root,
+    });
+    assert.isTrue(movedIn?.capabilities?.has("video"));
+    const movedOut = yield* runBrowserAccessScenario({
+      ...scenario,
+      workspaceRoot: root,
+      reopenWorkspaceRoot: other,
+    });
+    assert.isFalse(movedOut?.capabilities?.has("video"));
     const plain = yield* runBrowserAccessScenario(scenario);
     assert.isFalse(plain?.capabilities?.has("video"));
     const gone = yield* runBrowserAccessScenario({ ...scenario, projectExists: false });

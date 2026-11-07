@@ -274,6 +274,7 @@ export const VideoStandardToolkit = Toolkit.make(
 /** `video_frame` returns image content, so it registers on its own (`registerVideoFrame`). */
 export const VideoFrameToolkit = Toolkit.make(VideoFrameTool);
 
+/** Every video tool. A video project's thread is offered these and nothing else (S7V-072). */
 export const VideoToolkit = Toolkit.make(
   VideoImportTool,
   VideoProbeTool,
@@ -288,4 +289,14 @@ export const VideoToolkit = Toolkit.make(
   VideoRemoveSilencesTool,
   VideoCanvasTool,
   VideoFrameTool,
+);
+
+/**
+ * s7video (S7V-072): the only tools a video project's thread is offered. Derived from the toolkits,
+ * so a tool added to them shows up there with no other change.
+ */
+export const VIDEO_PROJECT_TOOL_NAMES: ReadonlySet<string> = new Set(
+  [VideoToolkit, VideoStandardToolkit, VideoFrameToolkit].flatMap((toolkit) =>
+    Object.keys(toolkit.tools),
+  ),
 );

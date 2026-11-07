@@ -26,10 +26,11 @@ const normalizeAvailability = (
 /** Instructions for unavailable tools would steer the model away from its remaining automation. */
 const toolInstructions = (availability: boolean | T3CodeToolAvailability): string => {
   const tools = normalizeAvailability(availability);
+  // s7video (S7V-072): a video project's session is offered only the video tools.
+  if (tools.video === true) return T3_CODE_VIDEO_EDIT_INSTRUCTIONS;
   return [
     tools.browser ? T3_CODE_BROWSER_TOOL_INSTRUCTIONS : "",
     tools.device ? T3_CODE_DEVICE_TOOL_INSTRUCTIONS : "",
-    tools.video === true ? T3_CODE_VIDEO_EDIT_INSTRUCTIONS : "",
   ]
     .filter(Boolean)
     .join("\n\n");
@@ -47,10 +48,11 @@ export function buildCodexAdditionalContext(
   toolsAvailable: boolean | T3CodeToolAvailability = true,
 ): Record<string, V2TurnStartParams__AdditionalContextEntry> {
   const tools = toolInstructions(toolsAvailable);
+  const video = normalizeAvailability(toolsAvailable).video === true;
   // Split values to fit per-entry caps; number keys because Codex emits them in key order.
   return {
     ...Object.fromEntries(
-      T3_CODE_ORCHESTRATION_SECTIONS.map((section, index) => [
+      (video ? [] : T3_CODE_ORCHESTRATION_SECTIONS).map((section, index) => [
         `t3_code_orchestration_${String(index + 1).padStart(2, "0")}`,
         { kind: "application" as const, value: section },
       ]),

@@ -1,100 +1,52 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, expect, it } from "@effect/vitest";
-import { ProviderInstanceId } from "@t3tools/contracts";
-import { McpProviderSessions } from "@t3tools/provider-core/server/McpProviderSessions";
+import { EnvironmentId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
-import { McpServer } from "effect/ai";
+import * as Context from "effect/Context";
+import { McpSchema, McpServer } from "effect/ai";
 
-import { ServerSecretStore } from "../auth/ServerSecretStore.ts";
-import { ServerConfig } from "../config.ts";
-import { DeviceService } from "../device/DeviceService.ts";
-import { EditDocumentService } from "../edit/EditDocumentService.ts";
-import { EngineService } from "../engine/EngineService.ts";
-import { ExportService } from "../export/ExportService.ts";
-import { TranscriptService } from "../transcript/TranscriptService.ts";
-import { SilenceCutService } from "../edit/SilenceCutService.ts";
-import { MediaLibraryService } from "../media/MediaLibraryService.ts";
-import { ServerEnvironment } from "../environment/ServerEnvironment.ts";
-import { GitWorkflowService } from "../git/GitWorkflowService.ts";
 import * as McpHttpServer from "../mcp/McpHttpServer.ts";
-import { PreviewAutomationBroker } from "../mcp/PreviewAutomationBroker.ts";
+import * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
+import { toolHandlerServices } from "../mcp/McpTools.testkit.ts";
+import { VIDEO_PROJECT_TOOL_NAMES } from "../mcp/toolkits/video/tools.ts";
 import {
   CLAUDE_PROVIDER,
   makeClaudeQueryOptions,
 } from "../orchestration-v2/Adapters/ClaudeAdapterV2.ts";
-import { OrchestratorV2 } from "../orchestration-v2/Orchestrator.ts";
-import { ProviderAdapterRegistryV2 } from "../orchestration-v2/ProviderAdapterRegistry.ts";
-import { ThreadLaunchService } from "../orchestration-v2/ThreadLaunchService.ts";
-import { ThreadManagementService } from "../orchestration-v2/ThreadManagementService.ts";
-import { ThreadSearch } from "../orchestration-v2/ThreadSearch.ts";
-import { PeerForwarding } from "../peer/PeerForwarding.ts";
-import { PeerLinkRequests } from "../peer/PeerLinkRequests.ts";
-import { PeerLinks } from "../peer/PeerLinks.ts";
-import { RemoteDelegation } from "../peer/RemoteDelegation.ts";
-import { PreviewManager } from "../preview/Manager.ts";
-import { PreviewBrowser } from "../preview/PreviewBrowser.ts";
-import { ManagedProjectFolders } from "../project/ManagedProjectFolders.ts";
-import { ProjectCloneTracker } from "../project/ProjectCloneTracker.ts";
-import { ProjectService } from "../project/ProjectService.ts";
-import { ProjectSetupScriptRunner } from "../project/ProjectSetupScriptRunner.ts";
-import { PullRequestReviewGuideService } from "../pullRequest/PullRequestReviewGuideService.ts";
-import { ScheduledTaskService } from "../scheduledTasks/ScheduledTaskService.ts";
-import { SecretRequests } from "../secrets/SecretRequests.ts";
-import { ServerSettingsService } from "../serverSettings.ts";
-import { SourceControlRepositoryService } from "../sourceControl/SourceControlRepositoryService.ts";
-import { GitVcsDriver } from "../vcs/GitVcsDriver.ts";
-import { VcsStatusBroadcaster } from "../vcs/VcsStatusBroadcaster.ts";
 import { buildCodexAdditionalContext } from "./CodexDeveloperInstructions.ts";
-import { DocumentText } from "./DocumentText.ts";
-import { ProviderRegistry } from "./ProviderRegistry.ts";
 import budget from "./agentContextBudget.json" with { type: "json" };
 import { discoverClaudeSkills } from "./Drivers/ClaudeSkills.ts";
 import { resolveBuiltInSkillsPluginDir } from "../skills/BuiltInSkills.ts";
 
-// Registration only stores tool definitions, so the handlers' services are never called.
-const toolHandlerServices = Layer.mergeAll(
-  Layer.mock(DeviceService)({}),
-  Layer.mock(DocumentText)({}),
-  Layer.mock(EditDocumentService)({}),
-  Layer.mock(EngineService)({}),
-  Layer.mock(ExportService)({}),
-  Layer.mock(TranscriptService)({}),
-  Layer.mock(SilenceCutService)({}),
-  Layer.mock(MediaLibraryService)({}),
-  Layer.mock(GitVcsDriver)({}),
-  Layer.mock(GitWorkflowService)({}),
-  Layer.mock(ManagedProjectFolders)({ namedProjectsRoot: "" }),
-  Layer.mock(McpProviderSessions)({}),
-  Layer.mock(OrchestratorV2)({}),
-  Layer.mock(PeerForwarding)({}),
-  Layer.mock(PeerLinkRequests)({}),
-  Layer.mock(PeerLinks)({}),
-  Layer.mock(PreviewAutomationBroker)({}),
-  Layer.mock(PreviewBrowser)({}),
-  Layer.mock(PreviewManager)({}),
-  Layer.mock(ProjectCloneTracker)({}),
-  Layer.mock(ProjectService)({}),
-  Layer.mock(ProjectSetupScriptRunner)({}),
-  Layer.mock(ProviderAdapterRegistryV2)({}),
-  Layer.mock(ProviderRegistry)({}),
-  Layer.mock(PullRequestReviewGuideService)({}),
-  Layer.mock(RemoteDelegation)({}),
-  Layer.mock(ScheduledTaskService)({}),
-  Layer.mock(SecretRequests)({}),
-  ServerConfig.layerTest(process.cwd(), { prefix: "t3-agent-context-budget-" }),
-  Layer.mock(ServerEnvironment)({}),
-  Layer.mock(ServerSecretStore)({}),
-  Layer.mock(ServerSettingsService)({}),
-  Layer.mock(SourceControlRepositoryService)({}),
-  Layer.mock(ThreadLaunchService)({}),
-  Layer.mock(ThreadManagementService)({}),
-  Layer.mock(ThreadSearch)({}),
-  Layer.mock(VcsStatusBroadcaster)({}),
-).pipe(Layer.provideMerge(NodeServices.layer));
-
 const utf8Bytes = (text: string) => Buffer.byteLength(text, "utf8");
+
+// The model sees these fields. outputSchema and annotations are protocol metadata.
+const toolListJson = (tools: ReadonlyArray<{ readonly tool: McpSchema.Tool }>) =>
+  JSON.stringify(
+    tools.map(({ tool }) => ({
+      name: tool.name,
+      description: tool.description,
+      inputSchema: tool.inputSchema,
+    })),
+  );
+
+// s7video (S7V-072): what a video project's top-level thread is offered, links off.
+const videoThreadScope: McpInvocationContext.McpInvocationScope = {
+  environmentId: EnvironmentId.make("environment-context-budget"),
+  requestNamespace: "context-budget",
+  thread: {
+    threadId: ThreadId.make("thread-context-budget"),
+    providerSessionId: "context-budget",
+    providerInstanceId: ProviderInstanceId.make(CLAUDE_PROVIDER),
+  },
+  client: undefined,
+  capabilities: new Set(["orchestration", "worktree", "pull-requests", "preview", "video"]),
+  issuedAt: 1,
+  linkedEnvironments: false,
+};
+const clientProfile = { protocolVersion: "2025-06-18", capabilities: {} };
 
 const claudeSystemAppend = (videoToolsAvailable = false) => {
   const { systemPrompt } = makeClaudeQueryOptions({
@@ -146,6 +98,12 @@ it.effect("agent context matches the committed budget", () =>
     const mcp = yield* McpServer.McpServer;
     const skills = yield* builtInSkills;
     const toolList = JSON.stringify(mcp.tools.map(({ tool }) => tool));
+    const videoTools = yield* Effect.sync(() =>
+      mcp.tools.filter(({ annotations }) => {
+        const enabledWhen = Context.getOrUndefined(annotations, McpSchema.EnabledWhen);
+        return enabledWhen === undefined || enabledWhen(clientProfile);
+      }),
+    ).pipe(Effect.provideService(McpInvocationContext.McpInvocationContext, videoThreadScope));
     for (const { body } of skills) {
       for (const context of [claudeSystemAppend(), codexAdditionalContext(), toolList]) {
         expect(context.includes(body.slice(0, 80))).toBe(false);
@@ -158,17 +116,16 @@ it.effect("agent context matches the committed budget", () =>
       // s7video: a video project's thread also gets the video edit line (S7V-041).
       claudeSystemAppendVideoBytes: utf8Bytes(claudeSystemAppend(true)),
       codexAdditionalContextVideoBytes: utf8Bytes(codexAdditionalContext(true)),
-      // The model sees these fields. outputSchema and annotations are protocol metadata.
-      mcpToolListJsonBytes: utf8Bytes(
-        JSON.stringify(
-          mcp.tools.map(({ tool }) => ({
-            name: tool.name,
-            description: tool.description,
-            inputSchema: tool.inputSchema,
-          })),
-        ),
-      ),
+      mcpToolListJsonBytes: utf8Bytes(toolListJson(mcp.tools)),
+      // s7video (S7V-072): the tool-adding cards build against this number.
+      mcpToolListVideoJsonBytes: utf8Bytes(toolListJson(videoTools)),
     };
+    expect(videoTools.map(({ tool }) => tool.name).toSorted()).toEqual(
+      [...VIDEO_PROJECT_TOOL_NAMES].toSorted(),
+    );
+    expect(measured.mcpToolListVideoJsonBytes).toBeLessThanOrEqual(
+      measured.mcpToolListJsonBytes * 0.3,
+    );
 
     expect(
       measured,

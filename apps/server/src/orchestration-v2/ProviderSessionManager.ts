@@ -42,7 +42,7 @@ import {
 } from "../observability/Metrics.ts";
 import { ProviderWorkspaceMissingError } from "../provider/Errors.ts";
 import * as ProjectService from "../project/ProjectService.ts";
-import { isEditProjectFolder } from "../edit/EditProjectLayout.ts";
+import { isVideoProjectFolder } from "../edit/EditProjectLayout.ts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as ServerSettings from "../serverSettings.ts";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
@@ -386,7 +386,7 @@ export const layerWithOptions = (
         },
       );
       // Video tools work on the thread's own edit project (S7V-023), so only its threads get them.
-      const isEditProject = isEditProjectFolder(fileSystem);
+      const isEditProject = isVideoProjectFolder(fileSystem);
       const videoToolsAvailable = Effect.fn("ProviderSessionManagerV2.videoToolsAvailable")(
         function* (threadId: ThreadId) {
           if (Option.isNone(projectService)) return false;

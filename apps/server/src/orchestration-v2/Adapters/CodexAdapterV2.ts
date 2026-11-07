@@ -1396,11 +1396,16 @@ function codexThreadRuntimeParams(input: {
             "mcp_servers.t3-code": { ...t3Server, disabled_tools: [CODEX_DIRECT_ONLY_T3_TOOL] },
             // Code Mode runs a blocking wait as a nested call, and the model keeps working
             // around it. A second, direct-only registration makes it a plain tool call.
-            [`mcp_servers.${CODEX_T3_DIRECT_MCP_SERVER}`]: {
-              ...t3Server,
-              enabled_tools: [CODEX_DIRECT_ONLY_T3_TOOL],
-              omit_tools_from: ["code_mode", "deferred"],
-            },
+            // s7video (S7V-072): a video project hides that wait, so it gets no such entry.
+            ...(mcpSession?.capabilities?.has("video") === true
+              ? {}
+              : {
+                  [`mcp_servers.${CODEX_T3_DIRECT_MCP_SERVER}`]: {
+                    ...t3Server,
+                    enabled_tools: [CODEX_DIRECT_ONLY_T3_TOOL],
+                    omit_tools_from: ["code_mode", "deferred"],
+                  },
+                }),
           }),
     },
   };

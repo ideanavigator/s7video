@@ -108,4 +108,28 @@ describe("EditProjectLayout", () => {
       }),
     ),
   );
+
+  // S7V-072: a video project hides every coding tool, so another tool's project.json must not count.
+  it.effect("counts a folder as a video project only when project.json says edit-project", () =>
+    withRoot((root) =>
+      Effect.gen(function* () {
+        const layout = yield* EditProjectLayout.EditProjectLayout;
+        const isVideoProject = EditProjectLayout.isVideoProjectFolder(
+          yield* FileSystem.FileSystem.pipe(Effect.provide(NodeServices.layer)),
+        );
+        assert.isFalse(yield* isVideoProject(root));
+        yield* layout.ensure(root);
+        assert.isTrue(yield* isVideoProject(root));
+        const projectFile = NodePath.join(root, EditProjectLayout.PROJECT_FILE);
+        // A later version or extra keys still count: only the format decides.
+        NodeFS.writeFileSync(projectFile, '{"format":"edit-project","version":99,"extra":1}');
+        assert.isTrue(yield* isVideoProject(root));
+        for (const other of ['{"name":"app","targets":{}}', "{}", "not json", "[]"]) {
+          NodeFS.writeFileSync(projectFile, other);
+          assert.isFalse(yield* isVideoProject(root), other);
+        }
+        assert.isTrue(yield* layout.isEditProject(root));
+      }),
+    ),
+  );
 });
