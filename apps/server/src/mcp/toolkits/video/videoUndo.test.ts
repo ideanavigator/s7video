@@ -570,7 +570,7 @@ describe("video_undo and video_redo", () => {
         yield* call("video_undo");
         expect(readFile(root, "edit.json")).toBe(before);
 
-        // `at` inside an item, or with a caption after it, is refused and changes nothing.
+        // `at` inside an item is refused and changes nothing.
         const inside = yield* call("video_assemble", {
           items: [{ mediaId: "cam", in: 0, duration: 5 }],
           at: 12,
@@ -578,6 +578,10 @@ describe("video_undo and video_redo", () => {
         expect(textOf(inside).join("")).toBe(
           "at must be where a video item starts, or the end of the edit (frame 30).",
         );
+        expect(readFile(root, "edit.json")).toBe(before);
+
+        // S7V-034: a mid-edit `at` moves every later item on every track in step, caption words
+        // and markers included; an item running across `at` is refused.
         const captioned = yield* edits.read(thread.projectId);
         yield* edits.apply(
           thread.projectId,
@@ -587,21 +591,58 @@ describe("video_undo and video_redo", () => {
               track: {
                 kind: "caption",
                 id: "C1",
-                items: [{ id: "cap", start: 20, duration: 10, text: "hi" }],
+                items: [
+                  {
+                    id: "cap",
+                    start: 20,
+                    duration: 10,
+                    text: "hi",
+                    words: [{ text: "hi", start: 22, duration: 4 }],
+                  },
+                ],
               },
             },
+            { _tag: "setMarkers", markers: [{ id: "mk", start: 25, duration: 0, label: "Hook" }] },
           ],
           { origin: "agent", baseRevision: captioned.revision },
         );
         const withCaption = readFile(root, "edit.json");
-        const blocked = yield* call("video_assemble", {
+        const shifted = yield* call("video_assemble", {
           items: [{ mediaId: "cam", in: 0, duration: 5 }],
           at: 0,
         });
-        expect(textOf(blocked).join("")).toBe(
-          "Captions, sounds or overlays come after frame 0, so clips can only be added at the end (frame 30) for now.",
-        );
+        expect(shifted.isError, textOf(shifted).join("")).toBe(false);
+        const afterShift = (yield* edits.read(thread.projectId)).document;
+        expect(afterShift.tracks.map((entry) => entry.items.map((item) => item.start))).toEqual([
+          [0, 5],
+          [25],
+        ]);
+        expect(afterShift.tracks[1]!.items[0]).toMatchObject({
+          words: [{ text: "hi", start: 27, duration: 4 }],
+        });
+        expect(afterShift.markers).toEqual([{ id: "mk", start: 30, duration: 0, label: "Hook" }]);
+        yield* call("video_undo");
         expect(readFile(root, "edit.json")).toBe(withCaption);
+        const uncut = yield* edits.read(thread.projectId);
+        const videoId = uncut.document.tracks[0]!.items[0]!.id;
+        yield* edits.apply(
+          thread.projectId,
+          [{ _tag: "splitItem", itemId: videoId, atFrame: 25 }],
+          {
+            origin: "agent",
+            baseRevision: uncut.revision,
+          },
+        );
+        const cut = readFile(root, "edit.json");
+        const across = yield* call("video_assemble", {
+          items: [{ mediaId: "cam", in: 0, duration: 5 }],
+          at: 25,
+        });
+        expect(textOf(across).join("")).toBe(
+          `"cap" runs across frame 25, so clips can't be added there. Pick a frame where it has ended, or the end (frame 30).`,
+        );
+        expect(readFile(root, "edit.json")).toBe(cut);
+        yield* call("video_undo");
         yield* call("video_undo");
 
         for (const [items, message] of [
