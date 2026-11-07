@@ -31,6 +31,7 @@ import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import { SystemGit } from "./SystemGit.ts";
 
 const VCS_STATUS_REFRESH_FAILURE_BASE_DELAY = Duration.seconds(30);
 const VCS_STATUS_REFRESH_FAILURE_MAX_DELAY = Duration.minutes(15);
@@ -241,6 +242,7 @@ export const make = Effect.gen(function* () {
   const workflow = yield* GitWorkflowService.GitWorkflowService;
   const backgroundPolicy = yield* BackgroundPolicy.BackgroundPolicy;
   const fs = yield* FileSystem.FileSystem;
+  const systemGit = yield* SystemGit;
   const changesPubSub = yield* Effect.acquireRelease(
     PubSub.unbounded<VcsStatusChange>(),
     (pubsub) => PubSub.shutdown(pubsub),
@@ -377,7 +379,8 @@ export const make = Effect.gen(function* () {
           const shared = localRefreshResults.get(cwd);
           if (shared !== undefined && shared.startedAt >= requestedAt) return shared.local;
           const startedAt = localRefreshRequests.get(cwd) ?? requestedAt;
-          yield* workflow.invalidateLocalStatus(cwd);
+          // Without git there is no git status to invalidate; localStatus answers "not a repo".
+          if ((yield* systemGit.status).available) yield* workflow.invalidateLocalStatus(cwd);
           const local = yield* workflow.localStatus({ cwd });
           localRefreshResults.set(cwd, { startedAt, local });
           return yield* updateCachedLocalStatus(cwd, local, { publish: true });
@@ -729,21 +732,23 @@ export const make = Effect.gen(function* () {
     Stream.unwrap(
       Effect.gen(function* () {
         const cwd = yield* withFileSystem(normalizeCwd(input.cwd));
+        // Opening a project looks for git again, so tools installed since then are picked up.
+        const gitAvailable = (yield* systemGit.refresh).available;
         const subscription = yield* PubSub.subscribe(changesPubSub);
         const initialLocal = yield* getOrLoadLocalStatus(cwd);
         const cachedStatus = yield* getCachedStatus(cwd);
         const initialRemote = cachedStatus?.remote?.value ?? null;
-        if (input.includeRemote !== false) {
+        const pollRemote = input.includeRemote !== false && gitAvailable;
+        if (pollRemote) {
           yield* retainRemotePoller(
             cwd,
             input.cwd,
             cachedStatus?.remote === null || cachedStatus?.remote === undefined,
           );
         }
-        const release =
-          input.includeRemote === false
-            ? Effect.void
-            : releaseRemotePoller(cwd, input.cwd).pipe(Effect.ignore, Effect.asVoid);
+        const release = !pollRemote
+          ? Effect.void
+          : releaseRemotePoller(cwd, input.cwd).pipe(Effect.ignore, Effect.asVoid);
 
         return Stream.concat(
           Stream.make({

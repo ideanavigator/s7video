@@ -24,6 +24,7 @@ import type {
 } from "@t3tools/contracts";
 import { GitCommandError, GitManagerError } from "@t3tools/contracts";
 
+import * as SystemGit from "./SystemGit.ts";
 import * as VcsStatusBroadcaster from "./VcsStatusBroadcaster.ts";
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
@@ -79,8 +80,14 @@ function layerTestFor(state: {
   beforeLocalStatus?: Effect.Effect<void>;
   fileSystem?: FileSystem.FileSystem;
   pullCurrentBranch?: GitWorkflowService.GitWorkflowService["Service"]["pullCurrentBranch"];
+  systemGitAvailable?: boolean;
 }) {
   return VcsStatusBroadcaster.layer.pipe(
+    Layer.provide(
+      state.systemGitAvailable === false
+        ? SystemGit.layerFixed({ available: false, path: null })
+        : Layer.empty,
+    ),
     Layer.provideMerge(
       state.fileSystem
         ? Layer.succeed(FileSystem.FileSystem, state.fileSystem)
@@ -692,6 +699,33 @@ describe("VcsStatusBroadcaster", () => {
       yield* Deferred.await(polled);
       const status = yield* broadcaster.getStatus({ cwd: "/repo" });
       assert.deepStrictEqual(status.branchChanges, state.currentLocalStatus.branchChanges);
+    }).pipe(Effect.provide(layerTestFor(state)), Effect.scoped);
+  });
+
+  // S7V-052: no remote poll can start without a real git.
+  it.effect("does not poll remote status when the Mac has no git", () => {
+    const state: Parameters<typeof layerTestFor>[0] = {
+      currentLocalStatus: { ...baseLocalStatus, isRepo: false, refName: null },
+      currentRemoteStatus: baseRemoteStatus,
+      localStatusCalls: 0,
+      remoteStatusCalls: 0,
+      localInvalidationCalls: 0,
+      remoteInvalidationCalls: 0,
+      systemGitAvailable: false,
+    };
+
+    return Effect.gen(function* () {
+      const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+      const subscribed = yield* Deferred.make<void>();
+      yield* broadcaster.streamStatus({ cwd: "/repo" }).pipe(
+        Stream.runForEach((event) =>
+          event._tag === "snapshot" ? Deferred.succeed(subscribed, undefined) : Effect.void,
+        ),
+        Effect.forkScoped,
+      );
+      yield* Deferred.await(subscribed);
+      yield* TestClock.adjust("10 minutes");
+      assert.equal(state.remoteStatusCalls, 0);
     }).pipe(Effect.provide(layerTestFor(state)), Effect.scoped);
   });
 

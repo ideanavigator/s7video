@@ -88,9 +88,12 @@ project without one never asks about git. `EditHistoryService` writes only the f
 
 The old file and refs are never changed. A failed save of the outcome is retried on the next read.
 
-The server uses `LegacyEditHistory.layerNone` until S7V-052 lands, so every log says `"unchecked"`.
-An old project edited in such a build is therefore still imported later. S7V-052 provides
-`LegacyEditHistory.make` with its no-spawn `SystemGit` probe as `available` and a
-`git show <ref>:<file>` as `show`, because starting Apple's `/usr/bin/git` stub opens the "install
-developer tools" dialog. Without a working git the outcome stays `unchecked`, so an old project
-works with a fresh history until git is found.
+The server provides `LegacyEditHistory.layer`: S7V-052's no-spawn `SystemGit` probe is
+`available`, and `git show <ref>:<file>` through `GitVcsDriver` is `show`. Only a non-zero git exit
+counts as an unreadable step. A git that cannot run (a timeout, a spawn error, git removed, output
+cut off at 64 MiB) leaves the outcome `unchecked`, so a later read tries again and the old history
+is never written off. Git is never asked
+before the probe says yes, because starting Apple's `/usr/bin/git` stub opens the "install developer
+tools" dialog. Without a working git the outcome stays `unchecked`, so an old project works with a
+fresh history until git is found. Builds before S7V-052 used `layerNone`, so their logs say
+`"unchecked"` and are imported later too. Tests use `layerNone` when they never look.

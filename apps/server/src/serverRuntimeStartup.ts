@@ -41,6 +41,7 @@ import * as ThreadLaunch from "./orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagement from "./orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "./project/ProjectService.ts";
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
+import { SystemGit } from "./vcs/SystemGit.ts";
 import * as ProjectStore from "./orchestration-v2/ProjectStore.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerSettings from "./serverSettings.ts";
@@ -193,6 +194,10 @@ export const autoPullProjects = Effect.fn("autoPullProjects")(function* (
   settings = DEFAULT_SERVER_SETTINGS,
 ) {
   const git = yield* GitVcsDriver.GitVcsDriver;
+  if (!(yield* (yield* SystemGit).status).available) {
+    yield* Effect.logDebug("Skipped automatic project pull", { reason: "git-not-installed" });
+    return;
+  }
   const workspaceRoots = [
     ...new Set(
       projects

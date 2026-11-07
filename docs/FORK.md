@@ -245,6 +245,44 @@ New: `docs/engineering/` (standards), `docs/changelog/` (per-ticket entries), `d
 - **What is tracked.** The whitelist ignores everything except `edit.json`, `project.json`, `.gitignore`, `styles/`, `README.md` and `assets/icon.svg`. As a result, T3's per-turn checkpoints, turn diffs and turn reverts in an edit project only see those files. Media, cache, exports and anything else an agent writes outside them never show in a diff and are never reverted.
 - **Edit undo is separate from turn reverts and needs no git (S7V-051).** Edit undo (`edit.undo`) restores only `edit.json` (and bumps `project.json`) from s7video's own store in `.s7history/` ([edit history](internals/edit-history.md)); T3's turn checkpoints, turn diffs and reverts still use git where it exists. Projects from before S7V-051 kept edit history in `.s7cache/edit-history.json` and refs under `refs/t3/edit/checkpoints/`; those are left in place and only read once for import. It restores the edit, not the library: a clip in the media list now stays there even when the restored edit is from before its import (S7V-059); with no such clip, the saved bytes are written unchanged. Media, track, item and marker ids share one namespace, so a kept clip whose id the restored edit uses for something else refuses that step (`library-conflict`) and history stays where it was; new clip ids are picked against every id in the edit. If a turn revert changes `edit.json`, the edit service records it as a new revision the next time the edit is read or changed.
 
+## Git is optional (S7V-052)
+
+On a Mac without Apple's developer tools, `/usr/bin/git` and `/usr/bin/xcrun` are stubs, and
+starting either opens the "install command line developer tools" dialog. s7video never starts them.
+
+- **The probe.** `locateSystemGit` (`packages/shared/src/shell.ts`) decides from PATH and the
+  developer folders (`$DEVELOPER_DIR`, the `/var/db/xcode_select_link` target, Command Line Tools,
+  Xcode) with plain file reads. A PATH git that is not the stub wins. The stub check compares device
+  and inode with `/usr/bin/git`, so a symlink to it or `/USR/BIN/git` on case-insensitive APFS
+  still counts as the stub. Upstream ran `xcrun --find git` and fell back to plain `git`, which is
+  the stub.
+- **The gate.** `resolveSpawnCommand("git")` fails with `GitUnavailableError` ("Git is not installed
+  on this Mac.") when the probe finds no git, so even a missed feature gate spawns nothing.
+  `processRunner`, `GitVcsDriverCore`, the ACP runtime, the external launcher and the provider and
+  text-generation spawns map it into their own errors.
+- **What hides.** `SystemGit` (`apps/server/src/vcs/SystemGit.ts`) caches the answer. Without git,
+  `VcsDriverRegistry` detects no repository, so turn checkpoints, turn diffs, reverts and git status
+  report "not a repository". Remote status polling, auto-pull, worktrees, clone, the composer's
+  `git check-ignore` and Settings → Source control's `git --version` probe are skipped. Clients read
+  `ServerConfig.systemGit`. With `false`, the branch toolbar (including the worktree option), the
+  diff panel's git views and the git actions, including "Initialize Git", are not shown.
+- **Projects without git.** A new named project gets no `.git`. Editing and undo do not need one
+  (S7V-051). With git, its first commit is made as s7video (`BRAND_COMMIT_IDENTITY`, the same as
+  checkpoints), never as a name and hostname git guessed.
+- **Installing the tools later.** A missing git is looked for again when a project is opened or
+  created, on every read of the cached "no", and every 5 seconds. When the answer changes, the
+  server sends a new config snapshot, so the git UI appears without a restart.
+- **iOS Simulators.** `/usr/bin/xcrun` is a stub as well, so the iOS platform counts as available
+  only when the probe finds a real developer folder (`LocalDeviceHost.platformReason`).
+- **Not covered.** The agent CLIs run git themselves: Claude Code runs `git ls-files` in the project
+  folder when it starts. On a clean Mac that is Apple's stub. A follow-up ticket handles it.
+- **Upstream files touched:** `shell.ts`, `processRunner.ts`, `GitVcsDriver.ts`,
+  `GitVcsDriverCore.ts`, `VcsDriverRegistry.ts`, `VcsStatusBroadcaster.ts`,
+  `serverRuntimeStartup.ts`, `SourceControlDiscovery.ts`, `WorkspaceEntries.ts`,
+  `ProjectCloneTracker.ts`, `ws.ts`, `server.ts`, `contracts/src/server.ts`, the error mapping in
+  `AcpSessionRuntime.ts`, `externalLauncher.ts`, `CodexAdapterV2.ts`, `CodexProvider.ts` and the two
+  text-generation files, and in the web `ChatView.tsx`, `DiffPanel.tsx` and `GitActionsControl.tsx`.
+
 ## HEIC decoding (S7V-014)
 
 T3 Code decodes iPhone HEIC photos with `heic-to`, which bundles libheif and libde265 under

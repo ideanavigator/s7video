@@ -272,10 +272,22 @@ const runProcessCore = Effect.fn("processRunner.runProcessCore")(function* (
   const outputMode = input.outputMode ?? "error";
   const truncatedMarker = input.truncatedMarker ?? "";
   const extendEnv = input.env !== undefined;
+  // On a Mac without git this refuses `git` before anything is spawned (S7V-052).
   const spawnCommand = yield* resolveSpawnCommand(
     input.command,
     input.args,
     input.env === undefined ? {} : { env: input.env, extendEnv },
+  ).pipe(
+    Effect.mapError(
+      (cause) =>
+        new ProcessSpawnError({
+          command: input.command,
+          argumentCount: input.args.length,
+          cwd: input.cwd,
+          spawnCwd: input.spawnCwd,
+          cause,
+        }),
+    ),
   );
 
   const toSpawnError = (cause: unknown) =>

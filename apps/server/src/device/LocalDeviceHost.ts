@@ -15,7 +15,7 @@ import {
   type NodeRuntimeUnavailableError,
 } from "@t3tools/shared/nodeRuntime";
 import * as NetService from "@t3tools/shared/Net";
-import { isCommandAvailable } from "@t3tools/shared/shell";
+import { XcodeGitLocation } from "@t3tools/shared/shell";
 import * as Clock from "effect/Clock";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -106,7 +106,12 @@ const platformReason = Effect.fn("LocalDeviceHost.platformReason")(function* (
   const hostPlatform = yield* HostProcess.Platform;
   if (platform === "ios") {
     if (hostPlatform !== "darwin") return "iOS Simulators need macOS with Xcode.";
-    if (!(yield* isCommandAvailable("xcrun"))) return "Xcode command line tools were not found.";
+    // `/usr/bin/xcrun` exists on every Mac as Apple's stub, which opens the install dialog
+    // (S7V-052); only a real developer folder means simctl can run.
+    const locateDeveloperGit = yield* XcodeGitLocation;
+    if (locateDeveloperGit(yield* HostProcess.Environment) === undefined) {
+      return "Xcode command line tools were not found.";
+    }
     return null;
   }
   const sdk = yield* androidSdk;

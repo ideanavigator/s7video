@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: MIT
 /**
  * Reads the S7V-024 git edit history once for import into `.s7history/` (S7V-051 AC-7); it never
- * writes the old file or refs. Git access comes in as parameters so it is only used when S7V-052's
- * no-spawn probe finds a real git; until then the server uses `layerNone`.
+ * writes the old file or refs. Git is only used when S7V-052's no-spawn `SystemGit` probe finds a
+ * real one, because Apple's `/usr/bin/git` stub opens the "install developer tools" dialog.
  */
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -13,6 +13,8 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
+import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
+import { SystemGit } from "../vcs/SystemGit.ts";
 import { CACHE_DIR, EDIT_FILE, PROJECT_FILE, projectFileContents } from "./EditProjectLayout.ts";
 
 const LEGACY_HISTORY_FILE = "edit-history.json";
@@ -57,13 +59,30 @@ export type LegacyOutcome =
 const UNCHECKED: LegacyOutcome = { _tag: "unchecked" };
 const NONE: LegacyOutcome = { _tag: "none" };
 
-/** Git access for the import; S7V-052 provides it from `SystemGit` and `GitVcsDriver`. */
+/** Git access for the import; `layer` provides it from `SystemGit` and `GitVcsDriver`. */
 export interface LegacyGitAccess {
   /** Whether a working system git exists, decided without starting any process. */
   readonly available: Effect.Effect<boolean>;
-  /** `git show <ref>:<file>` in `cwd`; None when git cannot read it. */
-  readonly show: (cwd: string, ref: string, file: string) => Effect.Effect<Option.Option<string>>;
+  /**
+   * `git show <ref>:<file>` in `cwd`: None when git ran and cannot read it (the step is skipped);
+   * a failure when git could not run at all (timeout, spawn error, git gone), which leaves the
+   * history `unchecked` so the next read tries again instead of losing it.
+   */
+  readonly show: (
+    cwd: string,
+    ref: string,
+    file: string,
+  ) => Effect.Effect<Option.Option<string>, LegacyGitRunError>;
 }
+
+/** Git could not be run to read the old history; nothing about the history is decided. */
+export class LegacyGitRunError extends Schema.TaggedError<LegacyGitRunError>()(
+  "LegacyGitRunError",
+  { cause: Schema.Defect() },
+) {}
+
+/** Far above any edit.json the S7V-024 guard let into history (10 MB). */
+const SHOW_MAX_OUTPUT_BYTES = 64 * 1024 * 1024;
 
 export class LegacyEditHistory extends Context.Service<
   LegacyEditHistory,
@@ -95,15 +114,18 @@ export const make = Effect.fn("LegacyEditHistory.make")(function* (git: LegacyGi
       const steps: LegacyHistoryStep[] = [];
       let cursor = -1;
       for (const [index, entry] of state.value.entries.entries()) {
-        const editJson = yield* git.show(cwd, entry.ref, EDIT_FILE);
-        if (Option.isNone(editJson)) continue;
-        const projectJson = Option.getOrElse(yield* git.show(cwd, entry.ref, PROJECT_FILE), () =>
+        const editJson = yield* git.show(cwd, entry.ref, EDIT_FILE).pipe(Effect.option);
+        if (Option.isNone(editJson)) return UNCHECKED;
+        if (Option.isNone(editJson.value)) continue;
+        const projectShown = yield* git.show(cwd, entry.ref, PROJECT_FILE).pipe(Effect.option);
+        if (Option.isNone(projectShown)) return UNCHECKED;
+        const projectJson = Option.getOrElse(projectShown.value, () =>
           projectFileContents(entry.revision),
         );
         steps.push({
           seq: entry.seq,
           revision: entry.revision,
-          editJson: editJson.value,
+          editJson: editJson.value.value,
           projectJson,
         });
         if (index <= state.value.cursor) cursor = steps.length - 1;
@@ -124,7 +146,40 @@ export const make = Effect.fn("LegacyEditHistory.make")(function* (git: LegacyGi
   return LegacyEditHistory.of({ read });
 });
 
-/** No probe yet (until S7V-052): every project reports "unchecked" and is looked at later. */
+/** The server's import: `SystemGit` decides, `git show <ref>:<file>` reads. */
+export const layer = Layer.effect(
+  LegacyEditHistory,
+  Effect.gen(function* () {
+    const systemGit = yield* SystemGit;
+    const git = yield* GitVcsDriver.GitVcsDriver;
+    return yield* make({
+      available: systemGit.status.pipe(Effect.map((status) => status.available)),
+      show: (cwd, ref, file) =>
+        git
+          .execute({
+            operation: "LegacyEditHistory.show",
+            cwd,
+            args: ["show", `${ref}:${file}`],
+            allowNonZeroExit: true,
+            timeoutMs: 10_000,
+            maxOutputBytes: SHOW_MAX_OUTPUT_BYTES,
+          })
+          .pipe(
+            Effect.mapError((cause) => new LegacyGitRunError({ cause })),
+            // Only git answering "cannot read this" skips a step; a cut-off read decides nothing.
+            Effect.filterOrFail(
+              (result) => result.exitCode !== 0 || !result.stdoutTruncated,
+              () => new LegacyGitRunError({ cause: "git show output was cut off" }),
+            ),
+            Effect.map((result) =>
+              result.exitCode === 0 ? Option.some(result.stdout) : Option.none<string>(),
+            ),
+          ),
+    });
+  }),
+);
+
+/** Never looks: every project reports "unchecked" and is looked at later (tests). */
 export const layerNone = Layer.succeed(
   LegacyEditHistory,
   LegacyEditHistory.of({

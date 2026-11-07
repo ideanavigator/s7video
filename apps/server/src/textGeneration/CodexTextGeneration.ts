@@ -163,7 +163,8 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
         input.binary,
         [...input.launchArgs, ...CODEX_NO_PLUGIN_ARGS, "mcp", "list", "--json"],
         { env: input.env },
-      );
+        // Only a Codex binary configured as `git` on a Mac without git can fail here.
+      ).pipe(Effect.orDie);
       const child = yield* commandSpawner.spawn(
         ChildProcess.make(spawnCommand.command, spawnCommand.args, {
           env: input.env,
@@ -301,6 +302,10 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
           "-",
         ],
         { env: effectiveEnvironment },
+      ).pipe(
+        Effect.mapError((cause) =>
+          normalizeCliError("codex", operation, cause, "Failed to spawn Codex CLI process"),
+        ),
       );
       const command = ChildProcess.make(spawnCommand.command, spawnCommand.args, {
         env,

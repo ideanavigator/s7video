@@ -511,6 +511,14 @@ export const withCodexAppServerClient = Effect.fn("withCodexAppServerClient")(fu
     input.binaryPath,
     codexAppServerArgs(input.launchArgs),
     { env: environment, extendEnv: true },
+  ).pipe(
+    Effect.mapError(
+      (cause) =>
+        new CodexErrors.CodexAppServerSpawnError({
+          command: `${input.binaryPath} app-server`,
+          cause,
+        }),
+    ),
   );
   const child = yield* spawner
     .spawn(

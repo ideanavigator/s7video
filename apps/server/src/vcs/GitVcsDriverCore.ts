@@ -982,7 +982,16 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         };
         const env = { ...baseEnv, ...explicitBareRepositoryEnv(baseEnv, hostPlatform) };
         const spawnEnv = { ...env, ...windowsLongPathConfigEnv(hostPlatform, env) };
-        const resolved = yield* resolveSpawnCommand("git", [], { env: spawnEnv });
+        const resolved = yield* resolveSpawnCommand("git", [], { env: spawnEnv }).pipe(
+          Effect.mapError(
+            (cause) =>
+              new GitCommandError({
+                ...gitCommandContext(commandInput),
+                detail: cause.message,
+                cause,
+              }),
+          ),
+        );
         // cmd wrappers truncate multiline commits; leave git.cmd handling to Node lookup.
         const executable = resolved.shell ? "git" : resolved.command;
         const child = yield* commandSpawner

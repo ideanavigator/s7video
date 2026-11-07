@@ -1373,7 +1373,11 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
       : yield* resolveSpawnCommand(options.spawn.command, options.spawn.args, {
           ...(options.spawn.env ? { env: options.spawn.env } : {}),
           extendEnv: options.spawn.extendEnv ?? true,
-        });
+        }).pipe(
+          Effect.mapError(
+            (cause) => new EffectAcpErrors.AcpSpawnError({ command: options.spawn.command, cause }),
+          ),
+        );
   const linuxCgroupLease =
     options.ownDescendantProcessGroups === true && options.processGroupPlatform === "linux"
       ? yield* Effect.sync(() => {

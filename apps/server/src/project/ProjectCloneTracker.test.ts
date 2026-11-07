@@ -15,6 +15,7 @@ import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as SourceControlRepositoryService from "../sourceControl/SourceControlRepositoryService.ts";
+import * as SystemGit from "../vcs/SystemGit.ts";
 import * as ProjectCloneTracker from "./ProjectCloneTracker.ts";
 import { parseGitCloneProgressLine } from "./gitCloneProgress.ts";
 
@@ -66,6 +67,23 @@ function makeHarness(options?: {
 }
 
 describe("ProjectCloneTracker", () => {
+  // S7V-052: a clone would run Apple's git stub on a Mac without the developer tools.
+  it.effect("refuses to clone with a plain message when the Mac has no git", () => {
+    const harness = makeHarness({ clone: () => Effect.die("no clone may start without git") });
+    return Effect.gen(function* () {
+      const tracker = yield* ProjectCloneTracker.ProjectCloneTracker;
+      const error = yield* Effect.flip(tracker.start(startInput, harness.hooks));
+      expect(error).toBeInstanceOf(SourceControlRepositoryError);
+      expect(error.message).toContain("Git is not installed on this Mac.");
+      expect(harness.created).toEqual([]);
+      expect(yield* tracker.get(projectId)).toBeNull();
+    }).pipe(
+      Effect.provide(
+        harness.layer.pipe(Layer.provide(SystemGit.layerFixed({ available: false, path: null }))),
+      ),
+    );
+  });
+
   it.effect("creates the project first and reports the clone through the stream", () => {
     const release = Deferred.makeUnsafe<void>();
     const harness = makeHarness({

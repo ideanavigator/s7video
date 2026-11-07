@@ -25,6 +25,7 @@ import * as ServerConfig from "../config.ts";
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
 import * as EditProjectLayout from "../edit/EditProjectLayout.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
+import { SystemGit } from "../vcs/SystemGit.ts";
 import * as ProjectService from "./ProjectService.ts";
 
 export class ScratchUnavailableError extends Schema.TaggedError<ScratchUnavailableError>()(
@@ -212,6 +213,7 @@ const make = Effect.gen(function* () {
   const projects = yield* ProjectService.ProjectService;
   const crypto = yield* Crypto.Crypto;
   const editLayout = yield* EditProjectLayout.EditProjectLayout;
+  const systemGit = yield* SystemGit;
 
   // Non-recursive mkdir atomically claims a name; racers move on after AlreadyExists.
   const claimFreeFolder = Effect.fnUntraced(function* <E>(
@@ -382,6 +384,21 @@ const make = Effect.gen(function* () {
     cwd: string,
     name: string,
   ) {
+    const writeFiles = Effect.gen(function* () {
+      yield* fileSystem.writeFileString(path.join(cwd, "README.md"), namedProjectReadme(name));
+      yield* fileSystem.makeDirectory(path.join(cwd, "assets"));
+      yield* fileSystem.writeFileString(
+        path.join(cwd, "assets", "icon.svg"),
+        namedProjectIconSvg(name),
+      );
+      // Every named project is an edit project: edit.json, project.json and the whitelist ignore.
+      return yield* editLayout.ensure(cwd);
+    });
+    // Without a real git the project has no .git; editing and undo do not need one (S7V-051/052).
+    if (!(yield* systemGit.refresh).available) {
+      yield* writeFiles;
+      return undefined;
+    }
     const branch =
       (yield* git
         .readConfigValue(cwd, "init.defaultBranch")
@@ -392,14 +409,7 @@ const make = Effect.gen(function* () {
       args: ["init", `--initial-branch=${branch}`],
       timeoutMs: 10_000,
     });
-    yield* fileSystem.writeFileString(path.join(cwd, "README.md"), namedProjectReadme(name));
-    yield* fileSystem.makeDirectory(path.join(cwd, "assets"));
-    yield* fileSystem.writeFileString(
-      path.join(cwd, "assets", "icon.svg"),
-      namedProjectIconSvg(name),
-    );
-    // Every named project is an edit project: edit.json, project.json and the whitelist ignore.
-    const layoutFiles = yield* editLayout.ensure(cwd);
+    const layoutFiles = yield* writeFiles;
     // Force explicit filenames so global ignore rules cannot drop them.
     yield* git.execute({
       operation: "ManagedProjectFolders.add",
@@ -412,6 +422,8 @@ const make = Effect.gen(function* () {
         operation: "ManagedProjectFolders.commit",
         cwd,
         args: ["commit", "--message", "Initial commit"],
+        // The project records s7video, never the user's guessed name and hostname.
+        env: GitVcsDriver.BRAND_COMMIT_IDENTITY,
         allowNonZeroExit: true,
         timeoutMs: 30_000,
       })

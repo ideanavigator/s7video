@@ -8,17 +8,19 @@
  */
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import type { EditOp, ProjectId } from "@t3tools/contracts";
+import { type EditOp, GitCommandError, type ProjectId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import * as NodeChildProcess from "node:child_process";
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
+import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
+import * as SystemGit from "../vcs/SystemGit.ts";
+import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as EditDocumentService from "./EditDocumentService.ts";
 import { git, historyLog, layerEditTest, type SpawnCounter } from "./editHarness.testkit.ts";
 import * as LegacyEditHistory from "./LegacyEditHistory.ts";
@@ -92,10 +94,20 @@ const writeOldHistory = (
 interface FakeGit {
   available: boolean;
   showWorks: boolean;
+  /** Git cannot run at all (timeout, spawn error, removed): nothing may be decided. */
+  runFails?: boolean;
+}
+
+/** The server's wiring, optionally with a git driver that cannot run. */
+interface ServerGit {
+  readonly server: SystemGit.SystemGitStatus;
+  readonly driver?: Layer.Layer<GitVcsDriver.GitVcsDriver>;
+  /** Bytes of trailing whitespace added to the oldest step's edit.json. */
+  readonly padOldestEdit?: number;
 }
 
 const withOldProject = <A, E>(
-  fake: FakeGit,
+  fake: FakeGit | ServerGit,
   body: (input: {
     readonly root: string;
     readonly edits: EditDocumentService.EditDocumentService["Service"];
@@ -107,22 +119,36 @@ const withOldProject = <A, E>(
 ) => {
   const shows = { count: 0 };
   const spawns: SpawnCounter = { count: 0 };
-  const legacy = Layer.effect(
-    LegacyEditHistory.LegacyEditHistory,
-    LegacyEditHistory.make({
-      available: Effect.sync(() => fake.available),
-      show: (cwd, ref, file) =>
-        Effect.sync(() => {
-          shows.count += 1;
-          if (!fake.showWorks) return Option.none();
-          try {
-            return Option.some(git(cwd, "show", `${ref}:${file}`));
-          } catch {
-            return Option.none();
-          }
-        }),
-    }),
-  );
+  const legacy =
+    "server" in fake
+      ? // The server's wiring: SystemGit decides, the real git driver runs `git show`.
+        LegacyEditHistory.layer.pipe(
+          Layer.provide(
+            Layer.mergeAll(
+              fake.driver ?? GitVcsDriver.layer.pipe(Layer.provide(VcsProcess.layer)),
+              SystemGit.layerFixed(fake.server),
+            ),
+          ),
+        )
+      : Layer.effect(
+          LegacyEditHistory.LegacyEditHistory,
+          LegacyEditHistory.make({
+            available: Effect.sync(() => fake.available),
+            show: (cwd, ref, file) =>
+              Effect.suspend(() => {
+                shows.count += 1;
+                if (fake.runFails) {
+                  return Effect.fail(new LegacyEditHistory.LegacyGitRunError({ cause: "timeout" }));
+                }
+                if (!fake.showWorks) return Effect.succeedNone;
+                try {
+                  return Effect.succeedSome(git(cwd, "show", `${ref}:${file}`));
+                } catch {
+                  return Effect.succeedNone;
+                }
+              }),
+          }),
+        );
   return Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
     const baseDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "s7v-legacy-" });
@@ -141,6 +167,9 @@ const withOldProject = <A, E>(
           baseRevision: snapshot.revision,
         });
         steps.push({ edit: read(root, "edit.json"), project: read(root, "project.json") });
+      }
+      if ("server" in fake && fake.padOldestEdit !== undefined) {
+        steps[0] = { ...steps[0]!, edit: steps[0]!.edit + " ".repeat(fake.padOldestEdit) };
       }
       writeOldHistory(root, steps, 2);
       shows.count = 0;
@@ -265,4 +294,100 @@ describe("LegacyEditHistory", () => {
       }),
     ),
   );
+
+  // S7V-052 wires the import into the server: SystemGit's probe and a real `git show`.
+  describe("as the server wires it", () => {
+    it.effect("imports once with a real git found by SystemGit", () =>
+      withOldProject(
+        { server: { available: true, path: "git" } },
+        ({ root, edits, projectId, steps }) =>
+          Effect.gen(function* () {
+            const refs = git(root, "for-each-ref", "refs/t3/edit");
+            const opened = yield* edits.read(projectId);
+            assert.isTrue(opened.canUndo && opened.canRedo);
+            assert.strictEqual(historyLog(root)!.legacy, "imported");
+            assert.strictEqual(historyLog(root)!.entries.length, 4);
+            yield* edits.undo(projectId);
+            assert.strictEqual(read(root, "edit.json"), steps[1]!.edit);
+            assert.strictEqual(git(root, "for-each-ref", "refs/t3/edit"), refs);
+          }),
+      ),
+    );
+
+    it.effect("starts fresh and spawns nothing when SystemGit finds no git", () =>
+      withOldProject(
+        { server: { available: false, path: null } },
+        ({ root, edits, projectId, spawns }) =>
+          Effect.gen(function* () {
+            const opened = yield* edits.read(projectId);
+            assert.isFalse(opened.canUndo);
+            yield* edits.apply(projectId, [keep(60)], {
+              origin: "agent",
+              baseRevision: opened.revision,
+            });
+            assert.strictEqual(historyLog(root)!.legacy, "unchecked");
+            assert.strictEqual(spawns.count, 0);
+          }),
+      ),
+    );
+
+    it.effect("imports an edit.json bigger than git's default 1 MB output limit", () =>
+      withOldProject(
+        { server: { available: true, path: "git" }, padOldestEdit: 3 * 1024 * 1024 },
+        ({ root, edits, projectId }) =>
+          Effect.gen(function* () {
+            yield* edits.read(projectId);
+            const log = historyLog(root)!;
+            assert.strictEqual(log.legacy, "imported");
+            assert.strictEqual(log.entries.length, 4);
+          }),
+      ),
+    );
+
+    it.effect("leaves the history unchecked when git cannot run, so it is tried again", () =>
+      withOldProject(
+        {
+          server: { available: true, path: "git" },
+          driver: Layer.mock(GitVcsDriver.GitVcsDriver)({
+            execute: (input) =>
+              Effect.fail(
+                new GitCommandError({
+                  operation: input.operation,
+                  command: "git",
+                  cwd: input.cwd,
+                  detail: "Git is not installed on this Mac.",
+                }),
+              ),
+          }),
+        },
+        ({ root, edits, projectId }) =>
+          Effect.gen(function* () {
+            const opened = yield* edits.read(projectId);
+            assert.isFalse(opened.canUndo);
+            assert.strictEqual(historyLog(root)?.legacy ?? "unchecked", "unchecked");
+          }),
+      ),
+    );
+  });
+
+  it.effect("tries again after git could not run, then imports", () => {
+    const fake: FakeGit = { available: true, showWorks: true, runFails: true };
+    return withOldProject(fake, ({ root, edits, projectId, shows }) =>
+      Effect.gen(function* () {
+        const opened = yield* edits.read(projectId);
+        const changed = yield* edits.apply(projectId, [keep(60)], {
+          origin: "agent",
+          baseRevision: opened.revision,
+        });
+        assert.strictEqual(historyLog(root)!.legacy, "unchecked");
+        // Every read looked again, and none of them wrote "none".
+        assert.isAbove(shows.count, 1);
+
+        fake.runFails = false;
+        yield* edits.read(projectId);
+        assert.strictEqual(historyLog(root)!.legacy, "imported");
+        assert.strictEqual((yield* edits.read(projectId)).revision, changed.revision);
+      }),
+    );
+  });
 });

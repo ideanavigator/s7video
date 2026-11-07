@@ -98,6 +98,7 @@ import { serverEnvironment } from "~/state/server";
 import { sourceControlEnvironment } from "~/state/sourceControl";
 import { threadEnvironment } from "~/state/threads";
 import { useAtomCommand } from "~/state/use-atom-command";
+import { useSystemGitAvailable } from "~/state/systemGit";
 import { vcsActionManager, vcsEnvironment, vcsStatusRevalidation } from "~/state/vcs";
 import { randomUUID } from "~/lib/utils";
 import { resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
@@ -1031,6 +1032,7 @@ export default function GitActionsControl({
   const changeRequestTerminology = sourceControlPresentation.terminology;
   const SourceControlIcon = sourceControlPresentation.Icon;
   const isRepo = gitStatus?.isRepo ?? true;
+  const systemGit = useSystemGitAvailable(activeEnvironmentId);
   const hasPrimaryRemote = gitStatus?.hasPrimaryRemote ?? false;
   const gitStatusForActions = gitStatus;
   const changesTotals = resolveChangesTotals(gitStatusForActions) ?? {
@@ -1455,7 +1457,7 @@ export default function GitActionsControl({
     </>
   );
 
-  if (!gitCwd) return null;
+  if (!gitCwd || !systemGit) return null;
 
   return (
     <>

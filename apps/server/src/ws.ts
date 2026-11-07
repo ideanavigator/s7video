@@ -205,6 +205,7 @@ import * as WorkspaceFileSystem from "./workspace/WorkspaceFileSystem.ts";
 import { readWorkflowScript } from "./orchestration-v2/workflowScriptQuery.ts";
 import * as WorkspacePaths from "./workspace/WorkspacePaths.ts";
 import * as VcsStatusBroadcaster from "./vcs/VcsStatusBroadcaster.ts";
+import * as SystemGit from "./vcs/SystemGit.ts";
 import * as VcsProvisioningService from "./vcs/VcsProvisioningService.ts";
 import * as GitWorkflowService from "./git/GitWorkflowService.ts";
 import { refreshPushedPullRequests } from "./git/refreshPushedPullRequests.ts";
@@ -320,6 +321,7 @@ export const withLateConfigDiscovery = <E, R>(
   liveUpdates: Stream.Stream<ServerConfigStreamEvent, E, R>,
   launcher: EditorDiscovery,
   remoteOpenTargets: RemoteOpenTargets.RemoteOpenTargets["Service"],
+  systemGitChanges: Stream.Stream<boolean> = Stream.empty,
 ) => {
   const lateEditorConfig = Stream.fromEffect(launcher.resolveAvailableEditors()).pipe(
     Stream.filter(
@@ -347,7 +349,15 @@ export const withLateConfigDiscovery = <E, R>(
     Stream.map((targets) => ({ type: "remoteOpenTargetsResolved" as const, targets })),
   );
 
-  return Stream.merge(liveUpdates, Stream.merge(lateEditorConfig, lateRemoteOpenTargets)).pipe(
+  // Git installed or removed while connected (S7V-052): a new snapshot shows or hides the git UI.
+  const systemGitUpdates = systemGitChanges.pipe(
+    Stream.map((available) => ({ type: "systemGitResolved" as const, available })),
+  );
+
+  return Stream.merge(
+    liveUpdates,
+    Stream.merge(lateEditorConfig, Stream.merge(lateRemoteOpenTargets, systemGitUpdates)),
+  ).pipe(
     Stream.mapAccum(
       (): ClientServerConfig => config,
       (current, event): readonly [ClientServerConfig, ReadonlyArray<ServerConfigStreamEvent>] => {
@@ -364,6 +374,11 @@ export const withLateConfigDiscovery = <E, R>(
           }
           case "remoteOpenTargetsResolved": {
             const next = { ...current, remoteOpenTargets: event.targets };
+            return [next, [{ version: 1, type: "snapshot", config: next }]];
+          }
+          case "systemGitResolved": {
+            if (current.systemGit === event.available) return [current, []];
+            const next = { ...current, systemGit: event.available };
             return [next, [{ version: 1, type: "snapshot", config: next }]];
           }
           case "keybindingsUpdated":
@@ -1284,6 +1299,7 @@ export const layerWsRpc = (
       const projectStore = yield* ProjectStore.ProjectStoreV2;
       const projectService = yield* ProjectService.ProjectService;
       const managedFolders = yield* ManagedProjectFolders.ManagedProjectFolders;
+      const systemGit = yield* SystemGit.SystemGit;
       const editDocuments = yield* EditDocumentService.EditDocumentService;
       const mediaLibrary = yield* MediaLibraryService.MediaLibraryService;
       const scratchThreadPromotion = yield* ScratchThreadPromotion.ScratchThreadPromotion;
@@ -1851,6 +1867,7 @@ export const layerWsRpc = (
             onSome: (root) => ({ scratchWorkspaceRoot: root }),
           }),
           newProjectsRoot: managedFolders.namedProjectsRoot,
+          systemGit: (yield* systemGit.status).available,
           ...(lastEventLoopStall === undefined ? {} : { lastEventLoopStall }),
         };
       });
@@ -3127,6 +3144,10 @@ export const layerWsRpc = (
               // Buffer changes through discovery and the initial snapshot's RPC ACK wait.
               const keybindingsChanges = yield* keybindings.subscribeChanges;
               const settingsChanges = yield* serverSettings.subscribeChanges;
+              // Subscribed before the snapshot reads the answer, so no change falls between.
+              const systemGitChanges = (yield* systemGit.subscribeChanges).pipe(
+                Stream.map((status) => status.available),
+              );
               const remoteTargets = yield* Effect.forkScoped(remoteOpenTargets.resolveTargets(), {
                 startImmediately: true,
               });
@@ -3229,9 +3250,13 @@ export const layerWsRpc = (
                 rpcInitialItems([
                   { version: 1 as const, type: "snapshot" as const, config: initialConfig },
                 ]),
-                withLateConfigDiscovery(initialConfig, liveUpdates, externalLauncher, {
-                  resolveTargets: () => Fiber.join(remoteTargets),
-                }),
+                withLateConfigDiscovery(
+                  initialConfig,
+                  liveUpdates,
+                  externalLauncher,
+                  { resolveTargets: () => Fiber.join(remoteTargets) },
+                  systemGitChanges,
+                ),
               );
             }),
           ),

@@ -16,6 +16,7 @@ import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSour
 
 import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import * as SystemGit from "../vcs/SystemGit.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as SourceControlDiscovery from "./SourceControlDiscovery.ts";
@@ -171,3 +172,32 @@ it.effect.each(["darwin", "linux"] as const)(
     );
   },
 );
+
+// S7V-052: `git --version` would run Apple's stub on a Mac without the developer tools.
+it.effect("reports Git as missing without probing when the Mac has no git", () => {
+  const commands: string[] = [];
+  const runProcess: typeof run = (input) =>
+    Effect.suspend(() => {
+      commands.push(input.command);
+      return run(input);
+    });
+  return Effect.gen(function* () {
+    const discovery = yield* SourceControlDiscovery.SourceControlDiscovery;
+    const result = yield* discovery.discover;
+    assert.deepStrictEqual(
+      result.versionControlSystems.map((item) => [item.kind, item.status]),
+      [
+        ["git", "missing"],
+        ["jj", "available"],
+      ],
+    );
+    assert.notInclude(commands, "git");
+  }).pipe(
+    Effect.provide(
+      SourceControlDiscovery.layer.pipe(
+        Layer.provide(layerDiscovery(runProcess)),
+        Layer.provide(SystemGit.layerFixed({ available: false, path: null })),
+      ),
+    ),
+  );
+});

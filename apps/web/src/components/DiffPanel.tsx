@@ -98,6 +98,7 @@ import { useEnvironmentQuery } from "../state/query";
 import { useAtomCommand } from "../state/use-atom-command";
 import { serverEnvironment } from "../state/server";
 import { reviewEnvironment } from "../state/review";
+import { useSystemGitAvailable } from "../state/systemGit";
 import { vcsEnvironment } from "../state/vcs";
 import { buildBaseRefChoices, filterBaseRefChoices } from "../lib/baseRefChoices";
 import { createGitDiffFileContentsLoader } from "../lib/diffFileContents";
@@ -288,7 +289,8 @@ export default function DiffPanel({
       : null,
   );
   const toolCallItem = toolCallDetail.data?.item;
-  const isGitRepo = gitStatusQuery.data?.isRepo ?? true;
+  const systemGit = useSystemGitAvailable(activeThread?.environmentId ?? null);
+  const isGitRepo = systemGit && (gitStatusQuery.data?.isRepo ?? true);
   const turnDiffSummaries = useThreadCheckpointSummaries(routeThreadRef);
   const orderedTurnDiffSummaries = turnDiffSummaries.toSorted((left, right) => {
     if (left.checkpointTurnCount !== right.checkpointTurnCount) {

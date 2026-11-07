@@ -234,6 +234,7 @@ import {
 } from "../state/server";
 import { threadEnvironment } from "../state/threads";
 import { resolveProviderSkillsForCwd } from "@t3tools/client-runtime/providerSkills";
+import { useSystemGitAvailable } from "../state/systemGit";
 import { vcsEnvironment } from "../state/vcs";
 import {
   type EnvironmentPresentation,
@@ -1711,7 +1712,9 @@ export default function ChatView(props: ChatViewProps) {
       rememberCheckoutIsRepo(environmentId, gitStatusCwd, liveIsGitRepo);
     }
   }, [environmentId, gitStatusCwd, liveIsGitRepo]);
-  const isGitRepo = liveIsGitRepo ?? recallCheckoutIsRepo(environmentId, gitStatusCwd) ?? true;
+  const systemGit = useSystemGitAvailable(environmentId);
+  const isGitRepo =
+    systemGit && (liveIsGitRepo ?? recallCheckoutIsRepo(environmentId, gitStatusCwd) ?? true);
   // Provider-native subagents cannot take messages; approvals and questions go to the top-level parent.
   const showProviderSubagentBar = isProviderSubagent;
   const composerMounted = !showProviderSubagentBar;
@@ -2006,7 +2009,7 @@ export default function ChatView(props: ChatViewProps) {
     latestRun: activeLatestRun,
     latestRunSettled,
     turnDiffSummaries,
-    isGitRepo: gitStatusQuery.data?.isRepo,
+    isGitRepo: systemGit ? gitStatusQuery.data?.isRepo : false,
     linkedPullRequest: linkedThreadPullRequest,
     hasLinkedPullRequestDetail,
     pullRequestsKey: proactivePullRequestsKey,
