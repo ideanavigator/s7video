@@ -1,8 +1,8 @@
 // SPDX-FileCopyrightText: 2026 s7video contributors
 // SPDX-License-Identifier: MIT
 /**
- * The Editor right-panel kind (S7V-029): the player over the project's edit, with Transcript and
- * Assets tabs below and Export in the header. The panel belongs to a thread; the edit belongs to
+ * The Editor right-panel kind (S7V-029): the player over the project's edit, with Transcript,
+ * Assets and Versions (S7V-069) tabs below and Export in the header. The panel belongs to a thread; the edit belongs to
  * the project, so every thread of a project shows the same edit.
  */
 import { scopedProjectKey } from "@t3tools/client-runtime/environment";
@@ -59,14 +59,16 @@ import { SpeechModelPrompt } from "./SpeechModelPrompt";
 import { editFrameToPlayerFrame } from "./timeline/editFrames";
 import { TimelinePane } from "./timeline/TimelinePane";
 import { TranscriptTab } from "./TranscriptTab";
+import { VersionsTab } from "./VersionsTab";
 
-type EditorTab = "transcript" | "assets";
+type EditorTab = "transcript" | "assets" | "versions";
 
 const MAX_AUTOMATIC_RETRIES = 1;
 
 const TABS: ReadonlyArray<{ readonly id: EditorTab; readonly label: string }> = [
   { id: "transcript", label: "Transcript" },
   { id: "assets", label: "Assets" },
+  { id: "versions", label: "Versions" },
 ];
 
 function PlayerMessage(props: {
@@ -663,16 +665,19 @@ export default function EditorPanel(props: {
   };
 
   const previewingClip = view._tag === "play" && view.mode === "clip";
+  const previewingVersion = source.kind === "version" ? source.n : null;
   const playingPlan: PlayerFramePlan | null =
-    view._tag === "play-timeline"
-      ? view.plan
-      : view._tag === "play" && view.mode === "edit"
+    previewingVersion !== null
+      ? null
+      : view._tag === "play-timeline"
         ? view.plan
-        : null;
+        : view._tag === "play" && view.mode === "edit"
+          ? view.plan
+          : null;
   // A click while a clip previews goes back to the edit, at the clicked frame. A frame past the
   // edit's end moves only the timeline's playhead.
   const seekFromTimeline = (editFrame: number) => {
-    if (source.kind === "clip") {
+    if (source.kind !== "edit") {
       rememberPlayerFrame(projectKey, editFrame);
       setSource(projectKey, { kind: "edit" });
       return;
@@ -703,8 +708,19 @@ export default function EditorPanel(props: {
               ) : null}
             </>
           ) : null}
+          {previewingVersion !== null ? (
+            <>
+              <span role="status" className="min-w-0 truncate text-muted-foreground">
+                Previewing v{previewingVersion}
+              </span>
+              <Button size="compact" variant="ghost" onClick={showEdit}>
+                Back to current
+              </Button>
+            </>
+          ) : null}
         </div>
         {edit._tag === "ready" &&
+        previewingVersion === null &&
         (view._tag === "play-timeline" || (view._tag === "play" && view.mode === "edit")) ? (
           <ExportButton projectRef={projectRef} />
         ) : null}
@@ -727,7 +743,7 @@ export default function EditorPanel(props: {
           </button>
         ))}
       </div>
-      {/* Both tabs stay mounted, so each keeps its scroll position. */}
+      {/* Every tab stays mounted, so each keeps its scroll position. */}
       <div
         role="tabpanel"
         id="editor-tabpanel-transcript"
@@ -756,11 +772,28 @@ export default function EditorPanel(props: {
           }}
         />
       </div>
+      <div
+        role="tabpanel"
+        id="editor-tabpanel-versions"
+        aria-labelledby="editor-tab-versions"
+        hidden={tab !== "versions"}
+        className="min-h-0 flex-1"
+      >
+        <VersionsTab
+          projectRef={projectRef}
+          previewing={previewingVersion}
+          onPreview={(n, document) => {
+            rememberPlayerFrame(projectKey, 0);
+            setSource(projectKey, { kind: "version", n, document });
+          }}
+          onShowCurrent={showEdit}
+        />
+      </div>
       {edit._tag === "unavailable" ? null : (
         <TimelinePane
           projectKey={projectKey}
           document={edit._tag === "ready" ? edit.snapshot.document : null}
-          playheadVisible={!previewingClip}
+          playheadVisible={!previewingClip && previewingVersion === null}
           initialFrame={rememberedPlayerFrame(projectKey)}
           onSeek={seekFromTimeline}
           plan={playingPlan}

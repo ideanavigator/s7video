@@ -39,8 +39,8 @@ Undo and redo for `edit.json` keep their history in the project's `.s7history/` 
   on `EditDocumentService`; they do not call `EditSnapshotStore` directly.
 - **Only `collect` deletes**, and only objects and temp files inside `.s7history/` (never
   `log.json`); `keepRefused` prunes old files in `refused/` and nothing else. It keeps every object
-  that `liveObjects(log)` names. A card that adds references to the log (for example S7V-069's
-  `versions[*].files`) adds them to `liveObjects` in the same file. Otherwise `collect` deletes them.
+  that `liveObjects(log)` names: undo entries, `versions[*].files` and `knownEdit`. A card that adds
+  references to the log adds them to `liveObjects` in the same file. Otherwise `collect` deletes them.
 - **Log format changes:** a new optional key keeps `version: 1`. A new required key needs
   `version: 2` and a migration test.
 - `collect` runs after a step drops redo entries or goes past the 200-entry cap, and after an
@@ -58,6 +58,30 @@ Undo and redo for `edit.json` keep their history in the project's `.s7history/` 
 | `collect(cwd, log)`                   | Deletes unnamed objects, temp files in `objects/` and stale `.log.json.*.tmp` files; returns `{ removedObjects, freedBytes }`. Temp files count in `freedBytes` only. |
 | `keepRefused(cwd, editJson)`          | Saves a refused outside edit under `refused/` (newest 20, no repeat of the newest).                                                                                   |
 | `usage(cwd)`                          | `{ objects, bytes }` of the objects on disk, plus `refusedEdits`, `refusedBytes`.                                                                                     |
+
+## Versions (S7V-069)
+
+`log.json` keeps a second list, `versions`, beside the undo `entries`, and a counter `nextVersion`
+(both optional keys, so the format stays `version: 1`). Undo and versions answer different
+questions: undo steps back one change; a version is what the edit looked like after one assistant
+reply or one Editor action, and stays listed when undo steps are capped or a redo branch is dropped.
+
+- **One reply, one version.** A change carrying the same `threadId` + `runId` as the newest version
+  (the reply's run, from the thread shell's `activeRunId`, or `latestRunId` while that run waits)
+  folds into it: its `files` move to the new edit and its `changes` gain a line (at most 10, each
+  at most 200 characters). Anything else appends a version with the next number. A change that
+  writes the same bytes makes none; an undo or redo that changes nothing visible makes none either.
+- **The newest version is the current edit.** Every committed change records one (author `you` for
+  the Editor, `outside` for an outside edit that was kept), so the last entry always names it.
+- **Numbers are never reused.** `nextVersion` only goes up. Code that rebuilds a log from
+  `EMPTY_HISTORY_LOG` (cleanup, imports) must carry `nextVersion` and `versions` over, or numbers
+  restart and versions vanish.
+- **Each version names its own objects**, and `liveObjects` keeps them. Deleting a version removes
+  its record and runs `collect`; objects an undo step still names stay.
+- **Tags** are 1-40 characters, unique per project ignoring case and spacing. S7V-050's cleanup
+  must keep every version with a `tag`, and the current (last) one.
+- **Make current** reads the version's `edit.json`, keeps today's library clips (`keepLibrary`, as
+  undo does), and commits it as a new change with `restoredFrom`. Undo then steps back over it.
 
 ## Outside changes (S7V-054)
 
