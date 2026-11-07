@@ -8,6 +8,7 @@ import {
   type MediaPeaksIndex,
   ProjectId,
 } from "@t3tools/contracts";
+import { StrictMode } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import { render } from "../../../../test/render";
@@ -208,8 +209,9 @@ describe("ClipMediaTiles", () => {
   it("draws in a worker with OffscreenCanvas, fetching only parts it needs", async () => {
     expect("transferControlToOffscreen" in HTMLCanvasElement.prototype).toBe(true);
     const done = nextDraw(true);
+    // StrictMode attaches each canvas twice; a canvas can be transferred only once.
     await using screen = await render(
-      <div>
+      <StrictMode>
         <ClipMediaTiles {...base} variant="peaks" width={600} firstFrame={0} endFrame={54_000} />
         <ClipMediaTiles
           {...base}
@@ -218,7 +220,7 @@ describe("ClipMediaTiles", () => {
           firstFrame={0}
           endFrame={54_000}
         />
-      </div>,
+      </StrictMode>,
     );
     await done;
     await expect.poll(() => screen.container.querySelectorAll("canvas").length).toBe(2);

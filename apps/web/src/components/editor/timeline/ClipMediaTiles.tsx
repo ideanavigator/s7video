@@ -80,6 +80,36 @@ export interface ClipMediaTilesProps {
 
 let nextClip = 0;
 
+/**
+ * A canvas can be handed to the worker only once. StrictMode runs the attach effect twice for one
+ * canvas, so a detach waits a task and the second attach cancels it.
+ */
+interface Attached {
+  readonly id: string;
+  detach?: ReturnType<typeof setTimeout> | undefined;
+}
+
+const attached = new WeakMap<HTMLCanvasElement, Attached>();
+
+const attachCanvas = (
+  worker: TilesWorker,
+  canvas: HTMLCanvasElement,
+  variant: MediaDataVariant,
+) => {
+  const known = attached.get(canvas);
+  if (known !== undefined) {
+    clearTimeout(known.detach);
+    known.detach = undefined;
+    return known;
+  }
+  nextClip += 1;
+  const entry: Attached = { id: `clip-${nextClip}` };
+  const offscreen = canvas.transferControlToOffscreen();
+  worker.post({ type: "attach", id: entry.id, canvas: offscreen, variant }, [offscreen]);
+  attached.set(canvas, entry);
+  return entry;
+};
+
 export function ClipMediaTiles(props: ClipMediaTilesProps) {
   const part = props.variant === "peaks" ? props.mediaData?.peaks : props.mediaData?.filmstrip;
   if (part !== "ready") return null;
@@ -101,15 +131,15 @@ function ClipMediaCanvas(props: ClipMediaTilesProps) {
     const worker = mediaTilesWorker();
     const canvas = canvasRef.current;
     if (worker === null || canvas === null) return;
-    nextClip += 1;
-    const id = `clip-${nextClip}`;
-    idRef.current = id;
     worker.minters.set(source, (partVariant, part) => mintPart(partVariant, part));
-    const offscreen = canvas.transferControlToOffscreen();
-    worker.post({ type: "attach", id, canvas: offscreen, variant }, [offscreen]);
+    const entry = attachCanvas(worker, canvas, variant);
+    idRef.current = entry.id;
     return () => {
-      worker.post({ type: "detach", id });
       idRef.current = null;
+      entry.detach = setTimeout(() => {
+        attached.delete(canvas);
+        worker.post({ type: "detach", id: entry.id });
+      }, 0);
     };
   }, [source, variant]);
 
