@@ -24,7 +24,6 @@ import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as TranscriptService from "../transcript/TranscriptService.ts";
 import * as EditDocumentService from "./EditDocumentService.ts";
 import { layerEditTest } from "./editHarness.testkit.ts";
-import * as EditProjectLayout from "./EditProjectLayout.ts";
 import * as SilenceCutService from "./SilenceCutService.ts";
 
 const ENABLED = process.env.S7VIDEO_MEDIA_TIMING === "1";
@@ -115,9 +114,17 @@ describe.skipIf(!ENABLED || FFMPEG === undefined)("silence removal on a 30-minut
             markers: [],
             metadata: {},
           };
+          // The frame rate is the user's own edit; the clip is imported through the service, since an
+          // outside write of a reference is refused (S7V-054).
           NodeFS.writeFileSync(
-            NodePath.join(created.workspaceRoot, EditProjectLayout.EDIT_FILE),
-            EditProjectLayout.editFileContents(document),
+            NodePath.join(created.workspaceRoot, "edit.json"),
+            `${JSON.stringify({ ...document, media: [] }, null, 2)}\n`,
+          );
+          const opened = yield* edits.read(created.projectId);
+          yield* edits.apply(
+            created.projectId,
+            document.media.map((media) => ({ _tag: "putMedia" as const, media })),
+            { origin: "import", baseRevision: opened.revision },
           );
           const timed = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
             Effect.gen(function* () {

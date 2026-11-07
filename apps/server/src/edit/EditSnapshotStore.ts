@@ -139,6 +139,9 @@ const liveObjects = (log: HistoryLog): ReadonlySet<string> => {
     live.add(entry.files["edit.json"]);
     live.add(entry.files["project.json"]);
   }
+  // The edit last written, which an outside change is put back to (S7V-054); after an undo that
+  // kept library clips it is not any entry's edit.json.
+  if (log.knownEdit !== undefined) live.add(log.knownEdit);
   return live;
 };
 

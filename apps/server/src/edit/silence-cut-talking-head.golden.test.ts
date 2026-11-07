@@ -100,9 +100,16 @@ const cutAt = (fps: EditRational) =>
       markers: [],
       metadata: {},
     };
-    // Written as the user's own edit, which the service records on its next read.
     const editFile = NodePath.join(created.workspaceRoot, EditProjectLayout.EDIT_FILE);
-    NodeFS.writeFileSync(editFile, EditProjectLayout.editFileContents(document));
+    // The frame rate is the user's own edit; the clip is imported through the service, since an
+    // outside write of a reference is refused (S7V-054).
+    NodeFS.writeFileSync(editFile, EditProjectLayout.editFileContents({ ...document, media: [] }));
+    const opened = yield* edits.read(created.projectId);
+    yield* edits.apply(
+      created.projectId,
+      document.media.map((media) => ({ _tag: "putMedia" as const, media })),
+      { origin: "import", baseRevision: opened.revision },
+    );
 
     const started = yield* Clock.currentTimeMillis;
     const result = yield* silences.removeSilences({ projectId: created.projectId });
