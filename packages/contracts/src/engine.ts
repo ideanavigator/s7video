@@ -142,6 +142,65 @@ export type MediaProxyInput = typeof MediaProxyInput.Type;
 export const MediaProxyResult = Schema.Struct({ path: Schema.String });
 export type MediaProxyResult = typeof MediaProxyResult.Type;
 
+/** `media.peaks` (S7V-035): a waveform mip written into `outputDir`, which the server chooses. */
+export const MediaPeaksInput = Schema.Struct({
+  path: TrimmedNonEmptyString,
+  outputDir: TrimmedNonEmptyString,
+  /** Samples per peak, ascending, each dividing the next. Default 256, 1,024, 4,096, 16,384. */
+  levels: Schema.optional(Schema.Array(PositiveInt)),
+});
+export type MediaPeaksInput = typeof MediaPeaksInput.Type;
+
+export const MediaPeaksLevel = Schema.Struct({
+  samplesPerPeak: PositiveInt,
+  count: NonNegativeInt,
+  /** A file in `outputDir`: `count` little-endian float32 `[min, max]` pairs. */
+  file: TrimmedNonEmptyString,
+});
+export type MediaPeaksLevel = typeof MediaPeaksLevel.Type;
+
+/** `audio: false` is the "no audio" marker: no levels, nothing to draw. */
+export const MediaPeaksResult = Schema.Struct({
+  audio: Schema.Boolean,
+  sampleRate: PositiveInt,
+  durationSamples: Schema.optional(NonNegativeInt),
+  offsetSamples: Schema.optional(Schema.Int),
+  levels: Schema.Array(MediaPeaksLevel),
+});
+export type MediaPeaksResult = typeof MediaPeaksResult.Type;
+
+/** `media.filmstrip` (S7V-035): JPEG sprite sheets per level, written into `outputDir`. */
+export const MediaFilmstripInput = Schema.Struct({
+  path: TrimmedNonEmptyString,
+  outputDir: TrimmedNonEmptyString,
+  /** The rate tile frames are counted at: the media's own frame rate. */
+  rate: EngineRational,
+  /** Seconds per tile. Default 16, 4 and 1. */
+  levels: Schema.optional(Schema.Array(PositiveInt)),
+  tileHeight: Schema.optional(Schema.Int.check(Schema.isBetween({ minimum: 16, maximum: 360 }))),
+});
+export type MediaFilmstripInput = typeof MediaFilmstripInput.Type;
+
+export const MediaFilmstripLevelSummary = Schema.Struct({
+  level: TrimmedNonEmptyString,
+  secondsPerTile: PositiveInt,
+  framesPerTile: PositiveInt,
+  sheets: Schema.Array(TrimmedNonEmptyString),
+  count: NonNegativeInt,
+});
+
+export const MediaFilmstripResult = Schema.Struct({
+  rate: EngineRational,
+  tileWidth: PositiveInt,
+  tileHeight: PositiveInt,
+  columns: PositiveInt,
+  rows: PositiveInt,
+  /** The index file in `outputDir` that maps every tile to its frame. */
+  index: TrimmedNonEmptyString,
+  levels: Schema.Array(MediaFilmstripLevelSummary),
+});
+export type MediaFilmstripResult = typeof MediaFilmstripResult.Type;
+
 export const EngineJobCancelResult = Schema.Struct({ cancelled: Schema.Boolean });
 
 /** `export.render`'s reply: the finished MP4 (S7V-028). Loudness is null for a silent export. */
@@ -168,6 +227,8 @@ export const ENGINE_RESPONSE_SCHEMAS = {
   "media.thumbnail": MediaThumbnailResult,
   "media.keyframes": MediaKeyframesResult,
   "media.proxy": MediaProxyResult,
+  "media.peaks": MediaPeaksResult,
+  "media.filmstrip": MediaFilmstripResult,
   "job.cancel": EngineJobCancelResult,
   "export.render": ExportRenderResult,
 } as const;

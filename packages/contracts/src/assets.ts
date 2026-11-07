@@ -8,7 +8,7 @@ import {
   TurnItemId,
 } from "./baseSchemas.ts";
 import { EditId } from "./edit.ts";
-import { MediaVariant } from "./media.ts";
+import { MediaDataPartName, MediaVariant } from "./media.ts";
 import {
   PROVIDER_SEND_TURN_MAX_FILE_BYTES,
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
@@ -65,6 +65,8 @@ export const AssetResource = Schema.Union([
     projectId: ProjectId,
     mediaId: EditId,
     variant: MediaVariant,
+    /** Which file of a `peaks` or `filmstrip` variant (S7V-035); refused for the others. */
+    part: Schema.optional(MediaDataPartName),
   }),
   // Media a change request body points at on its host. A private repository serves these only
   // to a request that carries a credential, which the client has none of, so the server fetches

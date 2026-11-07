@@ -80,7 +80,8 @@ link, an exclusive create: a kept copy of a removed clip or a concurrent same-na
 replaced, and the name moves on to `<name>-2`. A media counts as present only when the file at its
 path still has its fingerprint, so an undo to an older entry never plays other bytes. Undo and redo never take a clip out of the list: entries the restored edit lacks are kept. When that leaves the edit as it was (a step over an import; the order of the clip list is ignored, since kept clips go to the end), the agent's `video_undo` / `video_redo` reply says nothing on the timeline changed and whether there is more to step, but the step is still taken. `EditDocumentService.step` decides this inside the project's lock (S7V-063). Thumbnails and proxies go to `.s7cache/thumbs/` and
 `.s7cache/proxies/`, named by the media's fingerprint. Import and proxy progress live in memory and
-`media.subscribe`, never in `edit.json`.
+`media.subscribe`, never in `edit.json`. Waveforms and filmstrips go to `.s7cache/peaks/` and
+`.s7cache/filmstrip/` the same way ([media-data.md](media-data.md)).
 
 Transcripts go to `.s7cache/transcripts/<sha256>.json`. The transcribe job also writes the clip's
 per-frame sound levels beside it, as `<sha256>.levels.json`, before the transcript, from the audio it

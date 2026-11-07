@@ -97,15 +97,16 @@ const oversizedScreenshotItem = {
   },
 };
 
-/** What each project's edit.json records, as `${projectId}/${mediaId}/${variant}` → file. */
+/** What each project's edit.json records, as `${projectId}/${mediaId}/${variant}[/${part}]` → file. */
 const recordedProjectMedia = new Map<string, string>();
 
 const layerTest = Layer.mergeAll(
   NodeHttpPlatform.layer,
   Layer.mock(MediaLibraryService.MediaLibraryService)({
-    resolveVariant: (projectId, mediaId, variant) =>
+    resolveVariant: (projectId, mediaId, variant, part) =>
       Effect.sync(() => {
-        const file = recordedProjectMedia.get(`${projectId}/${mediaId}/${variant}`);
+        const key = `${projectId}/${mediaId}/${variant}${part === undefined ? "" : `/${part}`}`;
+        const file = recordedProjectMedia.get(key);
         return file === undefined
           ? Option.none()
           : Option.some({ path: file, mimeType: "video/mp4" });
@@ -265,6 +266,46 @@ describe("AssetAccess", () => {
       expect(yield* resolveAsset(fresh, "cam.mp4")).toMatchObject({ path: clip });
       recordedProjectMedia.delete("project-a/cam/original");
       expect(yield* resolveAsset(fresh, "cam.mp4")).toBeNull();
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect("project-media tokens carry the media-data part they were issued for", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const folder = yield* fs.realPath(
+        yield* fs.makeTempDirectoryScoped({ prefix: "t3-project-media-data-" }),
+      );
+      const level = path.join(folder, "1024.f32");
+      const sheet = path.join(folder, "16s-1.jpg");
+      yield* fs.writeFileString(level, "peaks");
+      yield* fs.writeFileString(sheet, "sheet");
+      recordedProjectMedia.clear();
+      recordedProjectMedia.set("project-a/cam/peaks/p1024", level);
+      recordedProjectMedia.set("project-a/cam/filmstrip/f16s-1", sheet);
+      const resource = {
+        _tag: "project-media" as const,
+        projectId: ProjectId.make("project-a"),
+        mediaId: "cam",
+        variant: "peaks" as const,
+        part: "p1024",
+      };
+      const issued = yield* issueAssetUrl({ resource });
+      const token = issued.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length).split("/")[0]!;
+      expect(yield* resolveAsset(token, "1024.f32")).toMatchObject({ path: level });
+      expect(yield* resolveAsset(token, "16s-1.jpg")).toBeNull();
+      const strip = yield* issueAssetUrl({
+        resource: { ...resource, variant: "filmstrip" as const, part: "f16s-1" },
+      });
+      const stripToken = strip.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length).split("/")[0]!;
+      expect(yield* resolveAsset(stripToken, "16s-1.jpg")).toMatchObject({ path: sheet });
+      // The claims name the part: once that part is gone, its token stops working.
+      recordedProjectMedia.delete("project-a/cam/peaks/p1024");
+      expect(yield* resolveAsset(token, "1024.f32")).toBeNull();
+      const unknown = yield* issueAssetUrl({ resource: { ...resource, part: "p256" } }).pipe(
+        Effect.flip,
+      );
+      expect(unknown._tag).toBe("AssetWorkspaceAssetNotFoundError");
     }).pipe(Effect.provide(layerTest)),
   );
 
