@@ -1615,6 +1615,7 @@ export function brandThemeTokenVariables(appearance: ThemeAppearance): Record<st
     "--track-text": theme.track.text,
     "--track-sfx": theme.track.sfx,
     "--track-music": theme.track.music,
+    "--track-overlay": theme.track.overlay,
     "--diff-add": theme.diff.add,
     "--diff-remove": theme.diff.remove,
     "--radius": `${theme.radius / 16}rem`,

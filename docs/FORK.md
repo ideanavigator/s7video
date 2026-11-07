@@ -381,8 +381,8 @@ wire them in:
 ## Licensing (S7V-004)
 
 `LICENSE` is T3 Code's MIT licence with a second line, `Copyright (c) 2026 s7video contributors`.
-`NOTICE` credits T3 Code, names OpenCut for when its code is used, and lists the Claude Agent SDK as
-the one proprietary part (ADR-002).
+`NOTICE` credits T3 Code and the OpenCut classic timeline code the timeline adapts (S7V-033), and
+lists the Claude Agent SDK as the one proprietary part (ADR-002).
 
 **REUSE without touching upstream files.** `pnpm reuse:lint` passes for every tracked file, but no
 T3 Code file gets an SPDX header. One catch-all `**` annotation in `REUSE.toml` gives every file

@@ -11,10 +11,17 @@ import {
 import * as Cause from "effect/Cause";
 import { useSyncExternalStore } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
-import { page } from "vite-plus/test/browser";
+import { page, userEvent } from "vite-plus/test/browser";
 
 import { act, render } from "../../../test/render";
-import type { ProjectEditState, ProjectExport } from "../../editor/editStore";
+import { scopedProjectKey } from "@t3tools/client-runtime/environment";
+
+import {
+  type ProjectEditState,
+  type ProjectExport,
+  subscribePlayerSeek,
+  useEditPlayerStore,
+} from "../../editor/editStore";
 import type { MediaLibraryState } from "../../state/media";
 
 const state = vi.hoisted(() => ({
@@ -439,5 +446,47 @@ describe("EditorPanel", () => {
     await expect.element(screen.getByLabelText("clip-0.mov", { exact: true })).toBeInTheDocument();
     expect(state.urlVariants.at(-1)).toBe("proxy");
     expect(screen.getByText("Video unavailable").query()).toBeNull();
+  });
+
+  it("shows the edit on a timeline under the player, and a click there seeks the player", async () => {
+    setState([asset("clip-0")], true);
+    const projectKey = scopedProjectKey({ environmentId: EnvironmentId.make("env-1"), projectId });
+    const seeks: number[] = [];
+    const stop = subscribePlayerSeek(projectKey, (frame) => seeks.push(frame));
+    try {
+      await using screen = await renderPanel();
+      const timeline = screen.getByRole("region", { name: "Timeline" });
+      await expect.element(timeline).toBeVisible();
+      for (const kind of ["Overlays", "Video", "Captions", "Sound effects", "Music"]) {
+        await expect
+          .element(timeline.getByRole("list", { name: new RegExp(`^${kind} track`) }))
+          .toBeInTheDocument();
+      }
+      await expect
+        .element(timeline.getByRole("listitem", { name: /^a, from 0:00/u }))
+        .toBeVisible();
+      const ruler = document.querySelector<HTMLElement>("[data-timeline-ruler]")!;
+      const scroller = document.querySelector<HTMLElement>("[data-testid=timeline-scroller]")!;
+      const ppf = Number(scroller.dataset.pxPerFrame);
+      await userEvent.click(ruler, { position: { x: 12.5 * ppf, y: 10 } });
+      expect(seeks.at(-1)).toBe(12);
+    } finally {
+      stop();
+    }
+  });
+
+  it("hides the timeline playhead while a clip previews, and a click goes back to the edit", async () => {
+    setState([asset("clip-0")], true);
+    const projectKey = scopedProjectKey({ environmentId: EnvironmentId.make("env-1"), projectId });
+    useEditPlayerStore.getState().setSource(projectKey, { kind: "clip", mediaId: "clip-0" });
+    await using screen = await renderPanel();
+    await expect.element(screen.getByText("Clip: clip-0.mov")).toBeVisible();
+    const playhead = document.querySelector<HTMLElement>("[data-testid=timeline-playhead]")!;
+    await expect.poll(() => playhead.hidden).toBe(true);
+    const ruler = document.querySelector<HTMLElement>("[data-timeline-ruler]")!;
+    await userEvent.click(ruler, { position: { x: 30, y: 10 } });
+    await expect.element(screen.getByText("Clip: clip-0.mov")).not.toBeInTheDocument();
+    expect(useEditPlayerStore.getState().sourceByProjectKey[projectKey]).toEqual({ kind: "edit" });
+    await expect.poll(() => playhead.hidden).toBe(false);
   });
 });

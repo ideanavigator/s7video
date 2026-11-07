@@ -60,3 +60,6 @@ fixtures/media/**/*.webm
 .venv/
 __pycache__/
 .pytest_cache/
+
+# Local test output (S7V-033 timeline evidence, traces)
+/test-results/
