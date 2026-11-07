@@ -13,6 +13,7 @@ import {
   type EditOrigin,
   type EditSnapshot,
   EditUnavailableError,
+  type EditVersion,
   type EditValidationError,
   type EditOpError,
   type ProjectId,
@@ -36,6 +37,8 @@ import { allIds, applyEditOps } from "./applyEditOps.ts";
 import * as EditHistoryService from "./EditHistoryService.ts";
 import * as EditProjectLayout from "./EditProjectLayout.ts";
 import { migrateEditDocument } from "./editMigrations.ts";
+import type { EditVersionRecord } from "./EditSnapshotStore.ts";
+import { describeOps } from "./describeOps.ts";
 import { newOutsideMedia, outsideRefused } from "./outsideEdit.ts";
 
 export type EditApplyError =
@@ -44,19 +47,40 @@ export type EditApplyError =
   | EditValidationError
   | EditOpError;
 
+export type EditReply = EditHistoryService.EditReply;
+
+/** Who asked for a change: the chat reply it came from, when the agent made it (S7V-069). */
+export interface EditCaller {
+  readonly reply?: EditReply | undefined;
+}
+
 export class EditDocumentService extends Context.Service<
   EditDocumentService,
   {
     readonly read: (projectId: ProjectId) => Effect.Effect<EditSnapshot, EditUnavailableError>;
+    /**
+     * `summary` is the change's line in the version list (S7V-069); without one it is worded from
+     * the ops. Changes with the same `reply` fold into one version.
+     */
     readonly apply: (
       projectId: ProjectId,
       ops: ReadonlyArray<EditOp>,
-      options: { readonly origin: EditOrigin; readonly baseRevision: number },
+      options: EditCaller & {
+        readonly origin: EditOrigin;
+        readonly baseRevision: number;
+        readonly summary?: string | undefined;
+      },
     ) => Effect.Effect<EditSnapshot, EditApplyError>;
     /** The current snapshot, then one per change, until the subscriber stops. */
     readonly subscribe: (projectId: ProjectId) => Stream.Stream<EditSnapshot, EditUnavailableError>;
-    readonly undo: (projectId: ProjectId) => Effect.Effect<EditSnapshot, EditUnavailableError>;
-    readonly redo: (projectId: ProjectId) => Effect.Effect<EditSnapshot, EditUnavailableError>;
+    readonly undo: (
+      projectId: ProjectId,
+      options?: EditCaller,
+    ) => Effect.Effect<EditSnapshot, EditUnavailableError>;
+    readonly redo: (
+      projectId: ProjectId,
+      options?: EditCaller,
+    ) => Effect.Effect<EditSnapshot, EditUnavailableError>;
     /**
      * Undo or redo, and whether the step changed the edit, decided inside the project's lock so
      * a write landing just before it cannot make the answer wrong. Clip-list order is ignored:
@@ -65,12 +89,54 @@ export class EditDocumentService extends Context.Service<
     readonly step: (
       projectId: ProjectId,
       direction: "undo" | "redo",
+      options?: EditCaller,
     ) => Effect.Effect<
       { readonly snapshot: EditSnapshot; readonly changed: boolean },
       EditUnavailableError
     >;
+    /** The project's versions, newest first; the newest is `current` (S7V-069). */
+    readonly versions: (
+      projectId: ProjectId,
+    ) => Effect.Effect<ReadonlyArray<EditVersion>, EditUnavailableError>;
+    /** One version and its edit, for a read-only preview: nothing is written. */
+    readonly versionDocument: (
+      projectId: ProjectId,
+      n: number,
+    ) => Effect.Effect<
+      { readonly version: EditVersion; readonly document: EditDocument },
+      EditUnavailableError
+    >;
+    /** Sets or clears (null) a version's tag; a tag another version has is refused. */
+    readonly tagVersion: (
+      projectId: ProjectId,
+      n: number,
+      tag: string | null,
+    ) => Effect.Effect<EditVersion, EditUnavailableError>;
+    /**
+     * Writes version `n`'s edit as a new change (keeping clips in Assets, as undo does), which
+     * adds a version "Restored from vN". Nothing is deleted or renumbered.
+     */
+    readonly restoreVersion: (
+      projectId: ProjectId,
+      n: number,
+      options: EditCaller & { readonly baseRevision: number },
+    ) => Effect.Effect<EditSnapshot, EditUnavailableError | EditConflict>;
+    /** Removes a version that is not the current one; clips in Assets are never touched. */
+    readonly deleteVersion: (
+      projectId: ProjectId,
+      n: number,
+    ) => Effect.Effect<ReadonlyArray<EditVersion>, EditUnavailableError>;
   }
 >()("t3/edit/EditDocumentService") {}
+
+/** What clients see of a version: its record without the object ids. */
+const versionOf = (record: EditVersionRecord, current: boolean): EditVersion => {
+  const { files: _files, ...rest } = record;
+  return { ...rest, current };
+};
+
+const newestFirst = (records: ReadonlyArray<EditVersionRecord>) =>
+  records.map((record, index) => versionOf(record, index === records.length - 1)).toReversed();
 
 const decodeJson = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown));
 const startingEdit = EditProjectLayout.STARTING_EDIT;
@@ -194,7 +260,13 @@ const make = Effect.gen(function* () {
     document: EditDocument,
   ) {
     const status = yield* history.status(root);
-    return { revision, document, canUndo: status.canUndo, canRedo: status.canRedo };
+    return {
+      revision,
+      document,
+      canUndo: status.canUndo,
+      canRedo: status.canRedo,
+      ...(status.version === undefined ? {} : { version: status.version }),
+    };
   });
 
   /**
@@ -331,7 +403,13 @@ const make = Effect.gen(function* () {
         ),
       );
       yield* history
-        .record(root, revision, current.editText)
+        .record(root, revision, current.editText, {
+          author: "outside",
+          change:
+            standing === "earlier"
+              ? "Went back to an earlier edit outside the Editor"
+              : "Changed outside the Editor",
+        })
         .pipe(Effect.mapError(historyError(projectId)));
       yield* publish(root, yield* snapshotOf(root, revision, current.document));
       return { ...current, revision };
@@ -363,6 +441,48 @@ const make = Effect.gen(function* () {
       Effect.tapError(() => writeAtomic(editFile, previousEdit).pipe(Effect.ignore)),
       Effect.mapError(writeFailed),
     );
+  });
+
+  /**
+   * Writes a changed edit as one committed change: a new revision, an undo step and a version
+   * line (`meta`). Callers hold the project lock and have checked the base revision.
+   */
+  const commit = Effect.fnUntraced(function* (
+    projectId: ProjectId,
+    root: string,
+    current: { readonly revision: number; readonly editText: string },
+    editText: string,
+    document: EditDocument,
+    meta: EditHistoryService.VersionMeta,
+  ) {
+    yield* history.guard(root).pipe(Effect.mapError(historyError(projectId)));
+    yield* history
+      .ensureBaseline(root, current.revision, current.editText)
+      .pipe(Effect.mapError(historyError(projectId)));
+    const { highestRevision } = yield* history.status(root);
+    const revision = Math.max(current.revision, highestRevision) + 1;
+    const editFile = path.join(root, EditProjectLayout.EDIT_FILE);
+    const projectFile = path.join(root, EditProjectLayout.PROJECT_FILE);
+    const previous = yield* Effect.all([
+      fileSystem.readFileString(editFile),
+      fileSystem.readFileString(projectFile),
+    ]).pipe(Effect.orElseSucceed(() => null));
+    yield* writeEdit(projectId, root, editText, revision, current.editText);
+    yield* history.record(root, revision, editText, meta).pipe(
+      Effect.mapError(historyError(projectId)),
+      // Keep the edit and its history in step: without a checkpoint the change is undone.
+      Effect.tapError(() =>
+        previous === null
+          ? Effect.void
+          : Effect.all([
+              writeAtomic(editFile, previous[0]),
+              writeAtomic(projectFile, previous[1]),
+            ]).pipe(Effect.ignore),
+      ),
+    );
+    const snapshot = yield* snapshotOf(root, revision, document);
+    yield* publish(root, snapshot);
+    return snapshot;
   });
 
   const read: EditDocumentService["Service"]["read"] = Effect.fn("EditDocumentService.read")(
@@ -400,35 +520,11 @@ const make = Effect.gen(function* () {
           if (editText === current.editText) {
             return yield* snapshotOf(root, current.revision, current.document);
           }
-
-          yield* history.guard(root).pipe(Effect.mapError(historyError(projectId)));
-          yield* history
-            .ensureBaseline(root, current.revision, current.editText)
-            .pipe(Effect.mapError(historyError(projectId)));
-          const { highestRevision } = yield* history.status(root);
-          const revision = Math.max(current.revision, highestRevision) + 1;
-          const editFile = path.join(root, EditProjectLayout.EDIT_FILE);
-          const projectFile = path.join(root, EditProjectLayout.PROJECT_FILE);
-          const previous = yield* Effect.all([
-            fileSystem.readFileString(editFile),
-            fileSystem.readFileString(projectFile),
-          ]).pipe(Effect.orElseSucceed(() => null));
-          yield* writeEdit(projectId, root, editText, revision, current.editText);
-          yield* history.record(root, revision, editText).pipe(
-            Effect.mapError(historyError(projectId)),
-            // Keep the edit and its history in step: without a checkpoint the change is undone.
-            Effect.tapError(() =>
-              previous === null
-                ? Effect.void
-                : Effect.all([
-                    writeAtomic(editFile, previous[0]),
-                    writeAtomic(projectFile, previous[1]),
-                  ]).pipe(Effect.ignore),
-            ),
-          );
-          const snapshot = yield* snapshotOf(root, revision, validated.document);
-          yield* publish(root, snapshot);
-          return snapshot;
+          return yield* commit(projectId, root, current, editText, validated.document, {
+            author: options.origin === "agent" ? "assistant" : "you",
+            reply: options.reply,
+            change: options.summary ?? describeOps(ops),
+          });
         }),
       );
     },
@@ -442,10 +538,13 @@ const make = Effect.gen(function* () {
    */
   const keepLibrary = Effect.fnUntraced(function* (
     projectId: ProjectId,
-    direction: "undo" | "redo",
+    action: "undo" | "redo" | { readonly restore: number },
     restoredText: string,
     current: EditDocument,
   ) {
+    const doing =
+      typeof action === "string" ? `This ${action}` : `Making v${action.restore} current`;
+    const again = typeof action === "string" ? `${action} again` : "try again";
     const unreadable = () =>
       unavailable(projectId, "unreadable", "The saved version of this edit could not be read.");
     const parsed = yield* decodeJson(restoredText).pipe(Effect.mapError(unreadable));
@@ -462,7 +561,7 @@ const make = Effect.gen(function* () {
       return yield* unavailable(
         projectId,
         "library-conflict",
-        `This ${direction} would clash with the clip "${clash.id}". Remove that clip from Assets first, then ${direction} again.`,
+        `${doing} would clash with the clip "${clash.id}". Remove that clip from Assets first, then ${again}.`,
       );
     }
     const merged = validateEditDocument({
@@ -473,7 +572,7 @@ const make = Effect.gen(function* () {
       return yield* unavailable(
         projectId,
         "library-conflict",
-        `This ${direction} does not fit the clips in Assets: ${merged.issues[0]!.explanation}`,
+        `${doing} does not fit the clips in Assets: ${merged.issues[0]!.explanation}`,
       );
     }
     return EditProjectLayout.editFileContents(merged.document);
@@ -482,16 +581,39 @@ const make = Effect.gen(function* () {
   const step = Effect.fn("EditDocumentService.step")(function* (
     projectId: ProjectId,
     direction: "undo" | "redo",
+    options?: EditCaller,
   ) {
     const root = yield* resolveRoot(projectId);
     return yield* lockFor(root).withPermit(
       Effect.gen(function* () {
         const before = yield* loadReconciled(projectId, root, "write");
+        // A step that changes nothing visible (only clip order) makes no version (S7V-069).
+        let visible = true;
+        const reply = options?.reply;
         const moved = yield* history
-          .step(root, direction, (editJson, revision) =>
-            keepLibrary(projectId, direction, editJson, before.document).pipe(
-              Effect.tap((text) => writeEdit(projectId, root, text, revision, before.editText)),
-            ),
+          .step(
+            root,
+            direction,
+            (editJson, revision) =>
+              keepLibrary(projectId, direction, editJson, before.document).pipe(
+                Effect.tap((text) => writeEdit(projectId, root, text, revision, before.editText)),
+                Effect.tap((text) =>
+                  parseEdit(projectId, text).pipe(
+                    Effect.map((document) => {
+                      visible = !sameEdit(before.document, document);
+                    }),
+                    Effect.ignore,
+                  ),
+                ),
+              ),
+            () =>
+              visible
+                ? {
+                    author: reply === undefined ? "you" : "assistant",
+                    reply,
+                    change: direction === "undo" ? "Undid the last change" : "Redid a change",
+                  }
+                : undefined,
           )
           .pipe(
             Effect.mapError((error) =>
@@ -509,6 +631,125 @@ const make = Effect.gen(function* () {
         const snapshot = yield* snapshotOf(root, current.revision, current.document);
         yield* publish(root, snapshot);
         return { snapshot, changed: !sameEdit(before.document, current.document) };
+      }),
+    );
+  });
+
+  const unknownVersion = (projectId: ProjectId, n: number) =>
+    unavailable(projectId, "unknown-version", `There is no version v${n} in this project.`);
+
+  /** A version read under the project's lock, so it never sees a half-written log. */
+  const withRoot = <A, E>(
+    projectId: ProjectId,
+    body: (root: string) => Effect.Effect<A, E>,
+  ): Effect.Effect<A, E | EditUnavailableError> =>
+    resolveRoot(projectId).pipe(Effect.flatMap((root) => lockFor(root).withPermit(body(root))));
+
+  const versions: EditDocumentService["Service"]["versions"] = Effect.fn(
+    "EditDocumentService.versions",
+  )(function* (projectId) {
+    return yield* withRoot(projectId, (root) =>
+      history
+        .versions(root)
+        .pipe(Effect.map(newestFirst), Effect.mapError(historyError(projectId))),
+    );
+  });
+
+  const versionDocument: EditDocumentService["Service"]["versionDocument"] = Effect.fn(
+    "EditDocumentService.versionDocument",
+  )(function* (projectId, n) {
+    return yield* withRoot(projectId, (root) =>
+      Effect.gen(function* () {
+        const found = yield* history
+          .versionText(root, n)
+          .pipe(Effect.mapError(historyError(projectId)));
+        if (Option.isNone(found)) return yield* unknownVersion(projectId, n);
+        const all = yield* history.versions(root).pipe(Effect.mapError(historyError(projectId)));
+        return {
+          version: versionOf(found.value.version, all.at(-1)?.n === n),
+          document: yield* parseEdit(projectId, found.value.editJson),
+        };
+      }),
+    );
+  });
+
+  const tagVersion: EditDocumentService["Service"]["tagVersion"] = Effect.fn(
+    "EditDocumentService.tagVersion",
+  )(function* (projectId, n, tag) {
+    return yield* withRoot(projectId, (root) =>
+      Effect.gen(function* () {
+        const outcome = yield* history
+          .tagVersion(root, n, tag)
+          .pipe(Effect.mapError(historyError(projectId)));
+        if (outcome._tag === "unknown-version") return yield* unknownVersion(projectId, n);
+        if (outcome._tag === "tag-taken") {
+          return yield* unavailable(
+            projectId,
+            "tag-taken",
+            `v${outcome.by} already has that name. Pick another name.`,
+          );
+        }
+        const all = yield* history.versions(root).pipe(Effect.mapError(historyError(projectId)));
+        return versionOf(outcome.version, all.at(-1)?.n === n);
+      }),
+    );
+  });
+
+  const restoreVersion: EditDocumentService["Service"]["restoreVersion"] = Effect.fn(
+    "EditDocumentService.restoreVersion",
+  )(function* (projectId, n, options) {
+    return yield* withRoot(projectId, (root) =>
+      Effect.gen(function* () {
+        const current = yield* loadReconciled(projectId, root, "write");
+        if (options.baseRevision !== current.revision) {
+          return yield* new EditConflict({
+            baseRevision: options.baseRevision,
+            currentRevision: current.revision,
+          });
+        }
+        const found = yield* history
+          .versionText(root, n)
+          .pipe(Effect.mapError(historyError(projectId)));
+        if (Option.isNone(found)) return yield* unknownVersion(projectId, n);
+        const editText = yield* keepLibrary(
+          projectId,
+          { restore: n },
+          found.value.editJson,
+          current.document,
+        );
+        // Already the edit: nothing to write, and no version.
+        if (editText === current.editText) {
+          return yield* snapshotOf(root, current.revision, current.document);
+        }
+        const document = yield* parseEdit(projectId, editText);
+        return yield* commit(projectId, root, current, editText, document, {
+          author: options.reply === undefined ? "you" : "assistant",
+          reply: options.reply,
+          change: `Restored from v${n}`,
+          restoredFrom: n,
+        });
+      }),
+    );
+  });
+
+  const deleteVersion: EditDocumentService["Service"]["deleteVersion"] = Effect.fn(
+    "EditDocumentService.deleteVersion",
+  )(function* (projectId, n) {
+    return yield* withRoot(projectId, (root) =>
+      Effect.gen(function* () {
+        const outcome = yield* history
+          .deleteVersion(root, n)
+          .pipe(Effect.mapError(historyError(projectId)));
+        if (outcome === "unknown-version") return yield* unknownVersion(projectId, n);
+        if (outcome === "current-version") {
+          return yield* unavailable(
+            projectId,
+            "current-version",
+            `v${n} is the current version, so it can't be deleted.`,
+          );
+        }
+        const all = yield* history.versions(root).pipe(Effect.mapError(historyError(projectId)));
+        return newestFirst(all);
       }),
     );
   });
@@ -536,13 +777,18 @@ const make = Effect.gen(function* () {
     read,
     apply,
     subscribe,
-    undo: Effect.fn("EditDocumentService.undo")(function* (projectId) {
-      return (yield* step(projectId, "undo")).snapshot;
+    undo: Effect.fn("EditDocumentService.undo")(function* (projectId, options) {
+      return (yield* step(projectId, "undo", options)).snapshot;
     }),
-    redo: Effect.fn("EditDocumentService.redo")(function* (projectId) {
-      return (yield* step(projectId, "redo")).snapshot;
+    redo: Effect.fn("EditDocumentService.redo")(function* (projectId, options) {
+      return (yield* step(projectId, "redo", options)).snapshot;
     }),
     step,
+    versions,
+    versionDocument,
+    tagVersion,
+    restoreVersion,
+    deleteVersion,
   });
 });
 

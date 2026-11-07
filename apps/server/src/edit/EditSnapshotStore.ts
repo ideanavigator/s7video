@@ -19,6 +19,8 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as NodeZlib from "node:zlib";
 
+import { EditVersionAuthor, RunId, ThreadId } from "@t3tools/contracts";
+
 import { HISTORY_DIR } from "./EditProjectLayout.ts";
 
 const OBJECTS_DIR = "objects";
@@ -49,6 +51,29 @@ export const HistoryEntry = Schema.Struct({
 export type HistoryEntry = typeof HistoryEntry.Type;
 
 /**
+ * One numbered version (S7V-069): the edit after one assistant reply or Editor action. A second,
+ * append-only list beside the undo `entries`, naming its own objects, so the undo cap and dropped
+ * redo steps never lose a version. Lengths are checked on write, not on read, so a change in those
+ * limits never makes an existing log unreadable.
+ */
+export const EditVersionRecord = Schema.Struct({
+  n: Schema.Int,
+  files: HistoryFiles,
+  revision: Schema.Int,
+  /** Epoch milliseconds of its last change. */
+  at: Schema.Int,
+  author: EditVersionAuthor,
+  threadId: Schema.optionalKey(ThreadId),
+  runId: Schema.optionalKey(RunId),
+  /** One line per change, in order: at most 10, each at most 200 characters. */
+  changes: Schema.Array(Schema.String),
+  /** 1-40 characters, unique in the project; a tagged version is never cleaned up (S7V-050). */
+  tag: Schema.optionalKey(Schema.String),
+  restoredFrom: Schema.optionalKey(Schema.Int),
+});
+export type EditVersionRecord = typeof EditVersionRecord.Type;
+
+/**
  * `.s7history/log.json`, format version 1. Later cards add optional keys only; a new required key
  * needs `version: 2` and a migration test.
  */
@@ -67,6 +92,13 @@ export const HistoryLog = Schema.Struct({
    * check ran; "unchecked" (or absent) until then, so it is still imported later.
    */
   legacy: Schema.optionalKey(Schema.Literals(["imported", "none", "unchecked"])),
+  /**
+   * The next version number (S7V-069). Never goes down, also when versions are deleted or
+   * cleaned up, so a number is never reused. Absent means 1.
+   */
+  nextVersion: Schema.optionalKey(Schema.Int),
+  /** Numbered versions, oldest first; the last one is the current edit (S7V-069). */
+  versions: Schema.optionalKey(Schema.Array(EditVersionRecord)),
 });
 export type HistoryLog = typeof HistoryLog.Type;
 
@@ -151,12 +183,12 @@ const refusedOrder = (name: string) => {
   return [Number(at), counter === undefined ? 0 : Number(counter)] as const;
 };
 
-/** Every object `log` names. Later cards add their own references here (S7V-069's versions). */
+/** Every object `log` names: undo steps and versions (S7V-069). */
 const liveObjects = (log: HistoryLog): ReadonlySet<string> => {
   const live = new Set<string>();
-  for (const entry of log.entries) {
-    live.add(entry.files["edit.json"]);
-    live.add(entry.files["project.json"]);
+  for (const { files } of [...log.entries, ...(log.versions ?? [])]) {
+    live.add(files["edit.json"]);
+    live.add(files["project.json"]);
   }
   // The edit last written, which an outside change is put back to (S7V-054); after an undo that
   // kept library clips it is not any entry's edit.json.

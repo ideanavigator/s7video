@@ -820,6 +820,8 @@ describe("video toolkit", () => {
               { fromFrame: 30, toFrame: 60 },
               { fromFrame: 90, toFrame: 120 },
             ],
+            // S7V-069: the reply calling the tool, so its changes make one version.
+            reply: { threadId: threadA, runId: "run:mcp-test" },
           },
         ]);
         for (const [keep, reason] of [

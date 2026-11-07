@@ -76,6 +76,11 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.editApply]: AuthOrchestrationOperateScope,
   [WS_METHODS.editUndo]: AuthOrchestrationOperateScope,
   [WS_METHODS.editRedo]: AuthOrchestrationOperateScope,
+  // Tagging, restoring and deleting change the project's version list (S7V-069); listing and
+  // reading a version need only read scope, like edit.get.
+  [WS_METHODS.editVersionTag]: AuthOrchestrationOperateScope,
+  [WS_METHODS.editVersionRestore]: AuthOrchestrationOperateScope,
+  [WS_METHODS.editVersionDelete]: AuthOrchestrationOperateScope,
   // Transcription loads a 4-6 GB model; the download fetches 2.3-3.7 GB from Hugging Face.
   [WS_METHODS.transcribeRun]: AuthOrchestrationOperateScope,
   [WS_METHODS.transcribeModelsDownload]: AuthOrchestrationOperateScope,

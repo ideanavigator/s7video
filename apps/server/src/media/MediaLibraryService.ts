@@ -83,7 +83,12 @@ export class MediaLibraryService extends Context.Service<
     ) => Effect.Effect<MediaImportPlan, MediaLibraryError>;
     /** `label` names a file stored under another name (a chat attachment's id). */
     readonly import: (
-      input: MediaImportInput & { readonly origin?: EditOrigin; readonly label?: string },
+      input: MediaImportInput & {
+        readonly origin?: EditOrigin;
+        readonly label?: string;
+        /** The chat reply importing, so its changes make one version (S7V-069). */
+        readonly reply?: EditDocumentService.EditReply | undefined;
+      },
     ) => Effect.Effect<MediaImportResult, MediaLibraryError>;
     /** Points a media at a moved original; refused unless the fingerprint matches. */
     readonly relink: (
@@ -284,11 +289,21 @@ const make = Effect.fn("MediaLibraryService.make")(function* (options: MediaLibr
     projectId: ProjectId,
     origin: EditOrigin,
     build: (document: EditDocument) => ReadonlyArray<EditOp>,
+    version: {
+      readonly summary: () => string;
+      readonly reply?: EditDocumentService.EditReply | undefined;
+    },
   ) {
     for (let attempt = 1; ; attempt += 1) {
       const snapshot = yield* readDocument(projectId);
+      const ops = build(snapshot.document);
       const result = yield* edits
-        .apply(projectId, build(snapshot.document), { origin, baseRevision: snapshot.revision })
+        .apply(projectId, ops, {
+          origin,
+          baseRevision: snapshot.revision,
+          reply: version.reply,
+          summary: version.summary(),
+        })
         .pipe(
           Effect.asSome,
           Effect.catchIf(
@@ -902,10 +917,15 @@ const make = Effect.fn("MediaLibraryService.make")(function* (options: MediaLibr
     // Marked before the edit lands: the list that edit triggers must not probe the file again.
     proxyChecked.add(`${input.projectId}\0${fingerprint.sha256}`);
     mediaDataChecked.add(`${input.projectId}\0${fingerprint.sha256}`);
-    yield* applyWith(input.projectId, input.origin ?? "import", (document) => {
-      mediaId = existing?.id ?? mediaIdFor(label, allIds(document));
-      return [{ _tag: "putMedia", media: { id: mediaId, ...media } }];
-    }).pipe(
+    yield* applyWith(
+      input.projectId,
+      input.origin ?? "import",
+      (document) => {
+        mediaId = existing?.id ?? mediaIdFor(label, allIds(document));
+        return [{ _tag: "putMedia", media: { id: mediaId, ...media } }];
+      },
+      { summary: () => `Imported ${label}`, reply: input.reply },
+    ).pipe(
       Effect.tapError(() =>
         location.path !== undefined && !inAssets
           ? fileSystem.remove(path.join(root, location.path), { force: true }).pipe(Effect.ignore)
@@ -956,7 +976,9 @@ const make = Effect.fn("MediaLibraryService.make")(function* (options: MediaLibr
         ...(media.label === undefined ? {} : { label: media.label }),
         ...(media.metadata === undefined ? {} : { metadata: media.metadata }),
       };
-      yield* applyWith(input.projectId, "import", () => [{ _tag: "putMedia", media: relinked }]);
+      yield* applyWith(input.projectId, "import", () => [{ _tag: "putMedia", media: relinked }], {
+        summary: () => `Found the moved file for ${media.label ?? media.id}`,
+      });
       return { mediaId: media.id };
     },
   );

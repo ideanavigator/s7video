@@ -5,6 +5,12 @@
  * git. Each committed change is one log entry naming saved copies of `edit.json` and `project.json`.
  * A step reads only `edit.json` back; nothing else in the project is restored, cleaned or deleted.
  */
+import {
+  EDIT_VERSION_TAG_MAX,
+  type EditVersionAuthor,
+  type RunId,
+  type ThreadId,
+} from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
@@ -25,8 +31,10 @@ import {
 import {
   EditHistoryError,
   EditSnapshotStore,
+  type EditVersionRecord,
   EMPTY_HISTORY_LOG,
   type HistoryEntry,
+  type HistoryFiles,
   type HistoryLog,
   Sha256Hex,
 } from "./EditSnapshotStore.ts";
@@ -76,7 +84,104 @@ export interface EditHistoryStatus {
   readonly canUndo: boolean;
   readonly canRedo: boolean;
   readonly highestRevision: number;
+  /** The newest version's number (S7V-069), when there is one. */
+  readonly version: number | undefined;
 }
+
+/** The chat reply a change came from: every change with the same pair folds into one version. */
+export interface EditReply {
+  readonly threadId: ThreadId;
+  readonly runId: RunId;
+}
+
+/** What a committed change records in the version list (S7V-069). */
+export interface VersionMeta {
+  readonly author: EditVersionAuthor;
+  readonly reply?: EditReply | undefined;
+  /** One plain line: "Removed 14.2 s of silence in 26 cuts". */
+  readonly change: string;
+  readonly restoredFrom?: number | undefined;
+}
+
+const MAX_VERSION_CHANGES = 10;
+const MAX_CHANGE_CHARS = 200;
+const MORE_CHANGES = "…and more changes";
+
+const clipChange = (text: string) => {
+  const line = text.trim().replace(/\s+/gu, " ") || "Changed the edit";
+  return line.length > MAX_CHANGE_CHARS ? `${line.slice(0, MAX_CHANGE_CHARS - 1)}…` : line;
+};
+
+/** The version keys of a log, for code that rebuilds a log from `EMPTY_HISTORY_LOG`. */
+const versionKeys = (log: HistoryLog) => ({
+  ...(log.nextVersion === undefined ? {} : { nextVersion: log.nextVersion }),
+  ...(log.versions === undefined ? {} : { versions: log.versions }),
+});
+
+/** The next unused number: `nextVersion` never goes down, and is never below a listed one. */
+const nextVersionOf = (log: HistoryLog) =>
+  Math.max(log.nextVersion ?? 1, ...(log.versions ?? []).map((version) => version.n + 1));
+
+/**
+ * The version keys after one committed change: folded into the newest version when the same
+ * reply made it (one reply, one version), else a new version with the next number.
+ */
+const withVersion = (
+  log: HistoryLog,
+  files: HistoryFiles,
+  revision: number,
+  at: number,
+  meta: VersionMeta,
+): Pick<HistoryLog, "nextVersion" | "versions"> => {
+  const versions = log.versions ?? [];
+  const newest = versions.at(-1);
+  const change = clipChange(meta.change);
+  const sameReply =
+    newest !== undefined &&
+    meta.reply !== undefined &&
+    newest.author === meta.author &&
+    newest.threadId === meta.reply.threadId &&
+    newest.runId === meta.reply.runId;
+  if (sameReply) {
+    const changes =
+      newest.changes.length < MAX_VERSION_CHANGES - 1
+        ? [...newest.changes, change]
+        : [...newest.changes.slice(0, MAX_VERSION_CHANGES - 1), MORE_CHANGES];
+    const folded: EditVersionRecord = {
+      ...newest,
+      files,
+      revision,
+      at,
+      changes,
+      ...(newest.restoredFrom === undefined && meta.restoredFrom !== undefined
+        ? { restoredFrom: meta.restoredFrom }
+        : {}),
+    };
+    return { nextVersion: nextVersionOf(log), versions: [...versions.slice(0, -1), folded] };
+  }
+  const n = nextVersionOf(log);
+  const added: EditVersionRecord = {
+    n,
+    files,
+    revision,
+    at,
+    author: meta.author,
+    ...(meta.reply === undefined ? {} : { threadId: meta.reply.threadId, runId: meta.reply.runId }),
+    changes: [change],
+    ...(meta.restoredFrom === undefined ? {} : { restoredFrom: meta.restoredFrom }),
+  };
+  return { nextVersion: n + 1, versions: [...versions, added] };
+};
+
+/** Tags compare without case or surrounding space, so "Tight cut" and "tight cut" clash. */
+const tagKey = (tag: string) => tag.trim().toLowerCase();
+
+export type TagVersionOutcome =
+  | { readonly _tag: "tagged"; readonly version: EditVersionRecord }
+  | { readonly _tag: "unknown-version" }
+  | { readonly _tag: "tag-taken"; readonly by: number };
+
+export type DeleteVersionOutcome = "deleted" | "unknown-version" | "current-version";
 
 export class EditHistoryService extends Context.Service<
   EditHistoryService,
@@ -89,11 +194,16 @@ export class EditHistoryService extends Context.Service<
       revision: number,
       editJson: string,
     ) => Effect.Effect<void, EditHistoryError>;
-    /** Captures the files after a committed change and drops any redo steps. */
+    /**
+     * Captures the files after a committed change and drops any redo steps. With `meta`, the
+     * change also goes into the version list (S7V-069): folded into the newest version when the
+     * same reply made it, else as a new version.
+     */
     readonly record: (
       cwd: string,
       revision: number,
       editJson: string,
+      meta?: VersionMeta,
     ) => Effect.Effect<void, EditHistoryError>;
     /**
      * Whether edit.json is what the history last recorded or restored. A missing or unparseable
@@ -109,17 +219,43 @@ export class EditHistoryService extends Context.Service<
     /** Keeps a refused outside edit.json under `.s7history/refused/` (see `EditSnapshotStore`). */
     readonly keepRefused: (cwd: string, editJson: string) => Effect.Effect<void, EditHistoryError>;
     /**
-     * Steps back or forward. Only `edit.json` comes from the saved step: `write` saves it with the
-     * new revision, so no other file (styles, README, notes) is ever restored or deleted. `write`
-     * returns the text it saved, which may keep more than the saved step (clips in the library).
-     * None when there is nothing to undo or redo.
+     * Steps back or forward; only `edit.json` comes from the saved step, and `write` returns the
+     * text it saved (it may keep library clips). None when there is nothing to step to. `meta`,
+     * asked after `write`, also records a version (S7V-069); undefined records none.
      */
     readonly step: <E>(
       cwd: string,
       direction: "undo" | "redo",
       write: (editJson: string, revision: number) => Effect.Effect<string, E>,
+      meta?: () => VersionMeta | undefined,
     ) => Effect.Effect<Option.Option<number>, EditHistoryError | E>;
     readonly status: (cwd: string) => Effect.Effect<EditHistoryStatus>;
+    /** The project's versions, oldest first (S7V-069). */
+    readonly versions: (
+      cwd: string,
+    ) => Effect.Effect<ReadonlyArray<EditVersionRecord>, EditHistoryError>;
+    /** One version and its saved edit.json text; None for a number not in the list. */
+    readonly versionText: (
+      cwd: string,
+      n: number,
+    ) => Effect.Effect<
+      Option.Option<{ readonly version: EditVersionRecord; readonly editJson: string }>,
+      EditHistoryError
+    >;
+    /** Sets (trimmed, 1-40 characters) or clears one version's tag; tags are unique per project. */
+    readonly tagVersion: (
+      cwd: string,
+      n: number,
+      tag: string | null,
+    ) => Effect.Effect<TagVersionOutcome, EditHistoryError>;
+    /**
+     * Removes one version from the list (never the current one) and the objects only it named.
+     * Numbers are not reused; nothing in Assets is touched.
+     */
+    readonly deleteVersion: (
+      cwd: string,
+      n: number,
+    ) => Effect.Effect<DeleteVersionOutcome, EditHistoryError>;
   }
 >()("t3/edit/EditHistoryService") {}
 
@@ -183,6 +319,7 @@ const make = Effect.gen(function* () {
       entries,
       ...(knownEdit !== undefined && isSha256Hex(knownEdit) ? { knownEdit } : {}),
       legacy: "imported",
+      ...versionKeys(log),
     } satisfies HistoryLog;
   });
 
@@ -261,14 +398,16 @@ const make = Effect.gen(function* () {
     state: HistoryLog,
     revision: number,
     editJson: string,
+    meta?: VersionMeta,
   ) {
     const projectJson = yield* fileSystem
       .readFileString(path.join(cwd, PROJECT_FILE))
       .pipe(Effect.orElseSucceed(() => projectFileContents(revision)));
     const files = yield* store.put(cwd, { editJson, projectJson });
+    const at = yield* Clock.currentTimeMillis;
     const entries: HistoryEntry[] = [
       ...state.entries.slice(0, state.cursor + 1),
-      { seq: state.nextSeq, revision, files, at: yield* Clock.currentTimeMillis },
+      { seq: state.nextSeq, revision, files, at },
     ];
     const overCap = entries.length > MAX_HISTORY_ENTRIES;
     if (overCap) entries.splice(0, entries.length - MAX_HISTORY_ENTRIES);
@@ -280,6 +419,7 @@ const make = Effect.gen(function* () {
       entries,
       knownEdit: yield* hashOf(editJson),
       legacy: state.legacy ?? "unchecked",
+      ...(meta === undefined ? versionKeys(state) : withVersion(state, files, revision, at, meta)),
     };
     yield* store.writeLog(cwd, next);
     const droppedRedo = state.cursor + 1 < state.entries.length;
@@ -295,8 +435,8 @@ const make = Effect.gen(function* () {
   });
 
   const record: EditHistoryService["Service"]["record"] = Effect.fn("EditHistoryService.record")(
-    function* (cwd, revision, editJson) {
-      yield* capture(cwd, yield* readState(cwd), revision, editJson);
+    function* (cwd, revision, editJson, meta) {
+      yield* capture(cwd, yield* readState(cwd), revision, editJson, meta);
     },
   );
 
@@ -331,7 +471,7 @@ const make = Effect.gen(function* () {
     store.keepRefused(cwd, editJson);
 
   const step: EditHistoryService["Service"]["step"] = Effect.fn("EditHistoryService.step")(
-    function* (cwd, direction, write) {
+    function* (cwd, direction, write, meta) {
       const state = yield* readState(cwd);
       const cursor = state.cursor + (direction === "undo" ? -1 : 1);
       const target = state.entries[cursor];
@@ -339,18 +479,23 @@ const make = Effect.gen(function* () {
       const saved = yield* store.read(cwd, target.files[EDIT_FILE]);
       const revision = state.highestRevision + 1;
       const written = yield* write(saved, revision);
+      let files = target.files;
       if (written !== saved) {
         // Library clips were kept: save that text too, so `knownEdit` always names an object.
         const projectJson = yield* fileSystem
           .readFileString(path.join(cwd, PROJECT_FILE))
           .pipe(Effect.orElseSucceed(() => projectFileContents(revision)));
-        yield* store.put(cwd, { editJson: written, projectJson });
+        files = yield* store.put(cwd, { editJson: written, projectJson });
       }
+      const version = meta?.();
       yield* store.writeLog(cwd, {
         ...state,
         cursor,
         highestRevision: revision,
         knownEdit: yield* hashOf(written),
+        ...(version === undefined
+          ? {}
+          : withVersion(state, files, revision, yield* Clock.currentTimeMillis, version)),
       });
       return Option.some(revision);
     },
@@ -362,8 +507,67 @@ const make = Effect.gen(function* () {
         canUndo: state.cursor > 0,
         canRedo: state.cursor >= 0 && state.cursor < state.entries.length - 1,
         highestRevision: state.highestRevision,
+        version: state.versions?.at(-1)?.n,
       })),
     );
+
+  const versions: EditHistoryService["Service"]["versions"] = Effect.fn(
+    "EditHistoryService.versions",
+  )(function* (cwd) {
+    return (yield* readState(cwd)).versions ?? [];
+  });
+
+  const versionText: EditHistoryService["Service"]["versionText"] = Effect.fn(
+    "EditHistoryService.versionText",
+  )(function* (cwd, n) {
+    const version = ((yield* readState(cwd)).versions ?? []).find((entry) => entry.n === n);
+    if (version === undefined) return Option.none();
+    return Option.some({ version, editJson: yield* store.read(cwd, version.files[EDIT_FILE]) });
+  });
+
+  const tagVersion: EditHistoryService["Service"]["tagVersion"] = Effect.fn(
+    "EditHistoryService.tagVersion",
+  )(function* (cwd, n, tag) {
+    const state = yield* readState(cwd);
+    const list = state.versions ?? [];
+    const index = list.findIndex((entry) => entry.n === n);
+    const found = list[index];
+    if (found === undefined) return { _tag: "unknown-version" } as const;
+    const trimmed = tag?.trim().replace(/\s+/gu, " ").slice(0, EDIT_VERSION_TAG_MAX) ?? "";
+    if (trimmed !== "") {
+      const clash = list.find(
+        (entry) =>
+          entry.n !== n && entry.tag !== undefined && tagKey(entry.tag) === tagKey(trimmed),
+      );
+      if (clash !== undefined) return { _tag: "tag-taken", by: clash.n } as const;
+    }
+    const { tag: _old, ...untagged } = found;
+    const version: EditVersionRecord = trimmed === "" ? untagged : { ...untagged, tag: trimmed };
+    if (version.tag !== found.tag) {
+      yield* store.writeLog(cwd, {
+        ...state,
+        versions: list.map((entry, at) => (at === index ? version : entry)),
+      });
+    }
+    return { _tag: "tagged", version } as const;
+  });
+
+  const deleteVersion: EditHistoryService["Service"]["deleteVersion"] = Effect.fn(
+    "EditHistoryService.deleteVersion",
+  )(function* (cwd, n) {
+    const state = yield* readState(cwd);
+    const list = state.versions ?? [];
+    if (!list.some((entry) => entry.n === n)) return "unknown-version";
+    if (list.at(-1)?.n === n) return "current-version";
+    const next: HistoryLog = {
+      ...state,
+      nextVersion: nextVersionOf(state),
+      versions: list.filter((entry) => entry.n !== n),
+    };
+    yield* store.writeLog(cwd, next);
+    yield* store.collect(cwd, next).pipe(Effect.ignore);
+    return "deleted";
+  });
 
   return EditHistoryService.of({
     guard,
@@ -374,6 +578,10 @@ const make = Effect.gen(function* () {
     keepRefused,
     step,
     status,
+    versions,
+    versionText,
+    tagVersion,
+    deleteVersion,
   });
 });
 

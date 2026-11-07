@@ -163,7 +163,7 @@ const stepEdit = (direction: "undo" | "redo") =>
       yield* refusePlanMode(direction);
       const project = yield* callerProject();
       const edits = yield* EditDocumentService.EditDocumentService;
-      return yield* edits.step(project.projectId, direction).pipe(
+      return yield* edits.step(project.projectId, direction, { reply: project.reply }).pipe(
         Effect.map(({ snapshot, changed }) => ({
           revision: snapshot.revision,
           message: changed
@@ -214,6 +214,7 @@ const handlers = {
           sourcePath: file,
           mode: "copy",
           origin: "agent",
+          reply: project.reply,
           ...(label === undefined ? {} : { label }),
         })
         .pipe(Effect.mapError(libraryFailure));
@@ -452,6 +453,8 @@ const handlers = {
         .apply(project.projectId, [{ _tag: "setCanvas", canvas }], {
           origin: "agent",
           baseRevision: revision,
+          reply: project.reply,
+          summary: `Made the video ${shape}`,
         })
         .pipe(
           Effect.map((after) => ({
@@ -496,6 +499,7 @@ const handlers = {
           ...(media === undefined ? {} : { media }),
           ...(minGapSeconds === undefined ? {} : { minGapSeconds }),
           ...(ranges === undefined ? {} : { keep: ranges }),
+          reply: project.reply,
         })
         .pipe(
           Effect.mapError((error) =>
@@ -582,7 +586,12 @@ const handlers = {
       });
       const edits = yield* EditDocumentService.EditDocumentService;
       return yield* edits
-        .apply(project.projectId, inserts, { origin: "agent", baseRevision: revision })
+        .apply(project.projectId, inserts, {
+          origin: "agent",
+          baseRevision: revision,
+          reply: project.reply,
+          summary: `Added ${count(items.length, "clip part")} to the timeline`,
+        })
         .pipe(
           Effect.map((after) => ({ revision: after.revision, itemIds })),
           Effect.mapError(
