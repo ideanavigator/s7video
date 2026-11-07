@@ -273,12 +273,12 @@ describe("ClipMediaTiles", () => {
       </div>
     );
     await using screen = await render(clips(0, 54_000));
-    // Zoom from the whole clip to 10 s, then scroll across 20 minutes, one change per frame.
+    // Zoom from the whole clip to 13 s, then scroll across 20 minutes.
     // Each step waits for the worker to draw it, so changes arrive at the pace it paints.
-    for (let step = 0; step < 60; step += 1) {
-      const span = Math.round(54_000 / 1.15 ** step);
+    // 54,000 frames down to about 400, each step a new view.
+    for (let step = 1; step <= 35; step += 1) {
       const drawn = nextDraw();
-      await screen.rerender(clips(0, Math.max(300, span)));
+      await screen.rerender(clips(0, Math.round(54_000 / 1.15 ** step)));
       await drawn;
     }
     for (let step = 0; step < 60; step += 1) {

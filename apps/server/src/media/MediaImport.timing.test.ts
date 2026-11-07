@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 s7video contributors
 // SPDX-License-Identifier: MIT
-// @effect-diagnostics nodeBuiltinImport:off globalConsole:off globalConsoleInEffect:off - hashes big files, drives Electron and prints timings for the ticket.
+// @effect-diagnostics nodeBuiltinImport:off globalConsole:off globalConsoleInEffect:off globalFetchInEffect:off - hashes big files, drives Electron, fetches from the test route and prints timings.
 // Big-file checks for S7V-025 AC-1 (row and thumbnail split by S7V-064), AC-2, AC-3, AC-5 and AC-9, run by hand on a Mac with the
 // real engine, the real /api/assets route and Electron's own Chromium for playback:
 //   S7VIDEO_MEDIA_TIMING=1 S7VIDEO_BIG_CLIP=/abs/big4k.mp4 S7VIDEO_GOP10_CLIP=/abs/gop10.mp4 \

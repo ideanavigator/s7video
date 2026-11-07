@@ -1173,6 +1173,41 @@ describe("MediaLibraryService", () => {
     ),
   );
 
+  it.effect("media data never enters edit history after 5 imports and 5 edits", () =>
+    withLibrary(({ projectId, root, desktop, library, edits }) =>
+      Effect.gen(function* () {
+        for (let index = 1; index <= 5; index += 1) {
+          yield* library.import({
+            projectId,
+            sourcePath: writeClip(desktop, `talk-${index}.mp4`, 20 + index),
+            mode: index % 2 === 0 ? "copy" : "reference",
+          });
+        }
+        const sizes = [1080, 1920, 1080, 1350, 1080];
+        for (const [index, height] of sizes.entries()) {
+          const current = yield* edits.read(projectId);
+          yield* edits.apply(
+            projectId,
+            [{ _tag: "setCanvas", canvas: { width: 1080 + index * 2, height } }],
+            { origin: "agent", baseRevision: current.revision },
+          );
+        }
+        yield* library.subscribe(projectId).pipe(
+          Stream.filter((snapshot) =>
+            snapshot.items.every((item) => item.mediaData?.status === "ready"),
+          ),
+          Stream.runHead,
+        );
+        const cache = NodePath.join(root, ".s7cache");
+        assert.equal(NodeFS.readdirSync(NodePath.join(cache, "peaks")).length, 5);
+        assert.equal(NodeFS.readdirSync(NodePath.join(cache, "filmstrip")).length, 5);
+        assert.notInclude(git(root, "ls-files"), ".s7cache");
+        // Not in any commit of the edit history either.
+        assert.notInclude(git(root, "log", "--all", "--name-only", "--format="), ".s7cache");
+      }),
+    ),
+  );
+
   it.effect("audio-only media gets no filmstrip, and video without sound no waveform", () =>
     withLibrary(({ projectId, desktop, library, fake }) =>
       Effect.gen(function* () {
