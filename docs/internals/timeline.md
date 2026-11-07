@@ -44,25 +44,26 @@ and S7V-039 change the mapping there only.
 
 ## Waveforms and filmstrips (S7V-035)
 
-This card merges first and leaves the seam; S7V-035 wires `ClipMediaTiles` into it.
-
 - **Where:** `ClipMediaSlot.tsx`. `TimelineClip` renders it inside every block that shows project
   media, with `environmentId`, `projectId`, the `TimelineItem` (`start`, `duration`, `in`,
   `mediaId`), the track kind, the edit fps, the block height and the media library's
-  `MediaAsset`. S7V-035 reads `asset.mediaData` and renders `ClipMediaTiles` in place of the
-  `null`.
-- **Pixel span:** `ClipMediaTiles` needs the visible width and frame range, which change on every
-  scroll and zoom step. Do not pass them from React (see above). Read them from
-  `TimelineViewContext`: `getView()` and `subscribeView(listener)` give the frames on screen and
-  the px per frame now, synchronously from the scroll or zoom, and `clipSpanInView(item, view)`
-  turns that into the clip's visible part in edit frames, source frames (`in` added) and pixels.
-  A slot holds the span in state it updates from the subscription, so only clips with media
-  data re-render, and it may coalesce updates to one per animation frame. Position the canvas
-  at `offsetPx` inside the block, with the worker given the source frames.
+  `MediaAsset`. It renders `ClipMediaTiles` once `asset.mediaData` has that part `ready`. Video
+  clips show the filmstrip edge to edge and their sound along the bottom 40 %; SFX and music clips
+  show only the waveform; text items get no slot.
+- **Pixel span:** the visible width and frame range change on every scroll and zoom step, so they
+  never come from React props. The slot reads `TimelineViewContext` (`getView()`, and
+  `subscribeView(listener)`, coalesced to one update per animation frame) and
+  `clipSpanInView(item, view)`, keeps the span in state, and re-renders only when the span
+  changes. Only slots with ready media data subscribe, so a zoom step re-renders those, never
+  every clip. The canvas sits at `offsetPx` inside the block, and the worker gets source frames
+  at the edit's fps, with the item's `in` as `anchorFrame` ([media-data.md](media-data.md)).
+- **Stacking:** the layer has `z-index: -1` inside the block (its `contain: strict` makes it a
+  stacking context), so it paints over the block's fill and under its label.
 - **Placeholders:** the block's flat fill shows until `ClipMediaTiles` draws; the timeline never
   waits for media data.
-- `ClipMediaSlot.browser.test.tsx` mounts a stand-in in the slot and checks the props and the
-  view, as S7V-035 will use them.
+- `ClipMediaSlot.browser.test.tsx` checks the seam's props with a stand-in;
+  `ClipMediaSlot.tiles.browser.test.tsx` draws real tiles from synthetic media data and is S7V-035's
+  AC-7 check (no main-thread task over 50 ms while scrolling and zooming a 30-minute edit).
 
 ## Performance test
 

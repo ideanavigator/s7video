@@ -120,7 +120,45 @@ export function ClipMediaTiles(props: ClipMediaTilesProps) {
   return <ClipMediaCanvas {...props} />;
 }
 
-function ClipMediaCanvas(props: ClipMediaTilesProps) {
+/** What a live canvas shows now; the frames are as in `ClipMediaTilesProps`. */
+export interface TilesSpan {
+  readonly width: number;
+  readonly firstFrame: number;
+  readonly endFrame: number;
+}
+
+export interface TilesSpanSource {
+  readonly get: () => TilesSpan;
+  /** Called whenever the span changes; returns the unsubscribe. */
+  readonly subscribe: (listener: () => void) => () => void;
+}
+
+export type ClipMediaTilesLiveProps = Omit<
+  ClipMediaTilesProps,
+  "width" | "firstFrame" | "endFrame"
+> & {
+  /** Drives the canvas outside React: a scroll or zoom step re-renders nothing. */
+  readonly span: TilesSpanSource;
+};
+
+/** `ClipMediaTiles` for a span that changes every frame, such as the timeline's live view. */
+export function ClipMediaTilesLive(props: ClipMediaTilesLiveProps) {
+  const part = props.variant === "peaks" ? props.mediaData?.peaks : props.mediaData?.filmstrip;
+  if (part !== "ready") return null;
+  return <ClipMediaLiveCanvas {...props} />;
+}
+
+type ViewInput = Omit<ClipView, "source" | "pixelRatio" | "color"> & {
+  readonly color?: string | undefined;
+};
+
+/** Hands a canvas to the worker for one media and variant, and posts views for it. */
+function useTilesCanvas(props: {
+  readonly environmentId: EnvironmentId;
+  readonly projectId: ProjectId;
+  readonly mediaId: string;
+  readonly variant: MediaDataVariant;
+}) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const idRef = useRef<string | null>(null);
   const mint = useAssetUrlMinter(props.environmentId);
@@ -153,38 +191,83 @@ function ClipMediaCanvas(props: ClipMediaTilesProps) {
     };
   }, [source, variant]);
 
-  const view: Omit<ClipView, "color"> & { readonly color: string | null } = {
-    source,
-    width: props.width,
-    height: props.height,
-    pixelRatio: typeof window === "undefined" ? 1 : window.devicePixelRatio || 1,
-    firstFrame: props.firstFrame,
-    endFrame: props.endFrame,
-    anchorFrame: props.anchorFrame ?? props.firstFrame,
-    fps: props.fps,
-    color: props.color ?? null,
-  };
-  const viewKey = JSON.stringify(view);
-
-  // Without a colour, the canvas's inherited text colour is used; the worker cannot read styles.
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps the worker's view of this clip in step with its props.
-  useEffect(() => {
+  /** Without a colour, the canvas's inherited text colour is used; the worker cannot read styles. */
+  const post = (view: ViewInput) => {
     const worker = mediaTilesWorker();
     const id = idRef.current;
     const canvas = canvasRef.current;
     if (worker === null || id === null || canvas === null) return;
-    const next = JSON.parse(viewKey) as typeof view;
-    const color = next.color ?? getComputedStyle(canvas).color;
-    worker.post({ type: "view", id, view: { ...next, color } });
+    const pixelRatio = typeof window === "undefined" ? 1 : window.devicePixelRatio || 1;
+    const color = view.color ?? getComputedStyle(canvas).color;
+    worker.post({ type: "view", id, view: { ...view, source, pixelRatio, color } });
+  };
+  return { canvasRef, key: `${source}/${variant}`, post };
+}
+
+function ClipMediaCanvas(props: ClipMediaTilesProps) {
+  const { canvasRef, key, post } = useTilesCanvas(props);
+  const viewKey = JSON.stringify({
+    width: props.width,
+    height: props.height,
+    firstFrame: props.firstFrame,
+    endFrame: props.endFrame,
+    anchorFrame: props.anchorFrame ?? props.firstFrame,
+    fps: props.fps,
+    color: props.color,
+  } satisfies ViewInput);
+  const postView = useEffectEvent((view: ViewInput) => post(view));
+
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps the worker's view of this clip in step with its props.
+  useEffect(() => {
+    postView(JSON.parse(viewKey) as ViewInput);
   }, [viewKey]);
 
   return (
     <canvas
-      key={`${source}/${variant}`}
+      key={key}
       ref={canvasRef}
       className={props.className}
       style={{ width: props.width, height: props.height, display: "block" }}
-      data-media-tiles={variant}
+      data-media-tiles={props.variant}
+      aria-hidden
+    />
+  );
+}
+
+function ClipMediaLiveCanvas(props: ClipMediaTilesLiveProps) {
+  const { canvasRef, key, post } = useTilesCanvas(props);
+  const { span, height, fps, color } = props;
+  const anchor = props.anchorFrame;
+  const postView = useEffectEvent((view: ViewInput) => post(view));
+
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- follows the live span outside React: sizes the canvas and posts each view to the worker.
+  useEffect(() => {
+    const update = () => {
+      const now = span.get();
+      const canvas = canvasRef.current;
+      if (canvas !== null) canvas.style.width = `${now.width}px`;
+      if (now.width <= 0 || now.endFrame <= now.firstFrame) return;
+      postView({
+        width: now.width,
+        height,
+        firstFrame: now.firstFrame,
+        endFrame: now.endFrame,
+        anchorFrame: anchor ?? now.firstFrame,
+        fps,
+        color,
+      });
+    };
+    update();
+    return span.subscribe(update);
+  }, [span, height, fps, anchor, color, canvasRef]);
+
+  return (
+    <canvas
+      key={key}
+      ref={canvasRef}
+      className={props.className}
+      style={{ height, display: "block" }}
+      data-media-tiles={props.variant}
       aria-hidden
     />
   );

@@ -4,81 +4,24 @@ import {
   EnvironmentId,
   type AssetResource,
   type MediaDataState,
-  type MediaFilmstripIndex,
-  type MediaPeaksIndex,
   ProjectId,
 } from "@t3tools/contracts";
 import { StrictMode } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
 
+import {
+  filmstripIndex,
+  levelBytes,
+  makeMediaDataServer,
+  peaksIndex,
+  sheetCanvas,
+  stripLevel,
+} from "../../../../test/fixtures/timeline/mediaData";
 import { render } from "../../../../test/render";
 import { drawFilmstrip, drawWaveform } from "./mediaTilesDraw";
 import type { ClipView } from "./mediaTilesProtocol";
 
-// 30 minutes at 48 kHz: a tone for 12 s of every 20, silence in between.
-const SAMPLES = 30 * 60 * 48_000;
-const LEVELS = [256, 1024, 4096, 16_384];
-const peaksIndex: MediaPeaksIndex = {
-  version: 1,
-  audio: true,
-  sampleRate: 48_000,
-  channels: 1,
-  durationSamples: SAMPLES,
-  offsetSamples: 0,
-  levels: LEVELS.map((samplesPerPeak) => ({
-    samplesPerPeak,
-    count: Math.ceil(SAMPLES / samplesPerPeak),
-    file: `${samplesPerPeak}.f32`,
-  })),
-};
-const loud = (sample: number) => sample % (20 * 48_000) < 12 * 48_000;
-const levelBytes = (samplesPerPeak: number) => {
-  const count = Math.ceil(SAMPLES / samplesPerPeak);
-  const pairs = new Float32Array(count * 2);
-  for (let peak = 0; peak < count; peak += 1) {
-    const level = loud(peak * samplesPerPeak) ? 0.6 : 0;
-    pairs[peak * 2] = -level;
-    pairs[peak * 2 + 1] = level;
-  }
-  return pairs;
-};
-
-const stripLevel = (seconds: number) => {
-  const tiles = Math.ceil(1800 / seconds);
-  return {
-    level: `${seconds}s`,
-    secondsPerTile: seconds,
-    framesPerTile: seconds * 30,
-    sheets: Array.from({ length: Math.ceil(tiles / 100) }, (_, n) => `${seconds}s-${n + 1}.jpg`),
-    frames: Array.from({ length: tiles }, (_, tile) => tile * seconds * 30),
-  };
-};
-const filmstripIndex: MediaFilmstripIndex = {
-  version: 1,
-  video: true,
-  rate: { num: 30, den: 1 },
-  tileWidth: 160,
-  tileHeight: 90,
-  columns: 10,
-  rows: 10,
-  levels: [stripLevel(16), stripLevel(4), stripLevel(1)],
-};
-
-/** A sheet whose tile in column `c` is a flat colour, so a drawn slot shows which tile it is. */
-const sheetCanvas = () => {
-  const canvas = new OffscreenCanvas(1600, 900);
-  const context = canvas.getContext("2d")!;
-  for (let column = 0; column < 10; column += 1) {
-    context.fillStyle = `rgb(${column * 25}, 0, ${255 - column * 25})`;
-    context.fillRect(column * 160, 0, 160, 900);
-  }
-  return canvas;
-};
-
-// Served once per part for the whole file; the page that holds them goes with the test run.
-const blobUrl = (blob: Blob) => URL.createObjectURL(blob);
-
-const served = new Map<string, Promise<string>>();
+const serve = makeMediaDataServer();
 const minted: AssetResource[] = [];
 const refreshed: AssetResource[] = [];
 /** Media whose first URL for each part is dead, as an expired token would be. */
@@ -88,26 +31,6 @@ const deadUrl = (() => {
   URL.revokeObjectURL(url);
   return url;
 })();
-const serve = (resource: AssetResource) => {
-  if (resource._tag !== "project-media" || resource.part === undefined) return null;
-  const key = `${resource.variant}/${resource.part}`;
-  let url = served.get(key);
-  if (url === undefined) {
-    url = (async () => {
-      if (resource.part === "index") {
-        const index = resource.variant === "peaks" ? peaksIndex : filmstripIndex;
-        return blobUrl(new Blob([JSON.stringify(index)], { type: "application/json" }));
-      }
-      if (resource.variant === "peaks") {
-        return blobUrl(new Blob([levelBytes(Number(resource.part!.slice(1)))]));
-      }
-      return blobUrl(await sheetCanvas().convertToBlob({ type: "image/jpeg", quality: 0.9 }));
-    })();
-    served.set(key, url);
-  }
-  return url;
-};
-
 vi.mock("~/assets/assetUrls", () => ({
   useAssetUrlMinter:
     () => async (resource: AssetResource, options?: { readonly refresh?: boolean }) => {

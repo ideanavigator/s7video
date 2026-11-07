@@ -74,6 +74,7 @@ levels are fetched by HTTP range, 2,048 pairs (16 KiB) at a time.
 
 ## Drawing
 
+The timeline mounts it through `ClipMediaSlot` ([timeline.md](timeline.md)).
 `ClipMediaTiles` renders a canvas only once its part is `ready`, and hands it to one shared worker
 with `transferControlToOffscreen` (checked in Electron 44.10.0, Chromium 152). The page posts the
 visible span as `firstFrame`, `endFrame` and `anchorFrame` counted from the media's first frame

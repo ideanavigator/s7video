@@ -94,6 +94,8 @@ vi.mock(import("../../assets/assetUrls"), () => ({
     }
     return { _tag: "Success", url: "" };
   }) as never,
+  // The timeline's waveforms and filmstrips (S7V-035) mint part URLs; none are served here.
+  useAssetUrlMinter: () => async () => null,
 }));
 
 import "../../index.css";
