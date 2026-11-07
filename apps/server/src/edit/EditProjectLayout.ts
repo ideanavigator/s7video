@@ -71,6 +71,12 @@ export const projectFileContents = (revision: number) =>
 
 export const editFileContents = (document: unknown) => `${JSON.stringify(document, null, 2)}\n`;
 
+/** The edit a new project starts with; an outside change to a project with no history goes back to it. */
+export const STARTING_EDIT = emptyEditDocument({
+  fps: DEFAULT_EDIT_FPS,
+  canvas: DEFAULT_EDIT_CANVAS,
+});
+
 export class EditLayoutError extends Schema.TaggedError<EditLayoutError>()("EditLayoutError", {
   cwd: Schema.String,
   cause: Schema.Defect(),
@@ -126,12 +132,7 @@ const make = Effect.gen(function* () {
       }
       const files: Array<readonly [string, string]> = [
         [".gitignore", WHITELIST_GITIGNORE],
-        [
-          EDIT_FILE,
-          editFileContents(
-            emptyEditDocument({ fps: DEFAULT_EDIT_FPS, canvas: DEFAULT_EDIT_CANVAS }),
-          ),
-        ],
+        [EDIT_FILE, editFileContents(STARTING_EDIT)],
         [PROJECT_FILE, projectFileContents(0)],
       ];
       const written: string[] = [];

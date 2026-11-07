@@ -784,4 +784,286 @@ describe("EditDocumentService", () => {
       }),
     ),
   );
+
+  // S7V-054: an outside edit.json is kept only when valid and adding no media file.
+  describe("outside changes", () => {
+    const refusedFiles = (root: string) => {
+      const folder = NodePath.join(root, ".s7history", "refused");
+      return NodeFS.existsSync(folder)
+        ? NodeFS.readdirSync(folder)
+            .toSorted()
+            .map((name) => ({
+              name,
+              text: NodeFS.readFileSync(NodePath.join(folder, name), "utf8"),
+            }))
+        : [];
+    };
+    const writeOutside = (root: string, text: string) =>
+      NodeFS.writeFileSync(NodePath.join(root, "edit.json"), text);
+    const desktopClip = {
+      ...media,
+      id: "desk",
+      path: undefined,
+      reference: "/Users/someone/Desktop/private.mov",
+    };
+    const { path: _unused, ...desktopReference } = desktopClip;
+
+    it.effect.each([
+      { label: "a reference anywhere on the Mac", added: desktopReference },
+      {
+        label: "a path inside the project",
+        added: { ...media, id: "copied", path: "assets/copied.mov" },
+      },
+    ])("refuses an outside edit that adds $label and puts back the last edit", ({ added }) =>
+      withProject(({ projectId, edits, root }) =>
+        Effect.gen(function* () {
+          const initial = yield* edits.read(projectId);
+          const applied = yield* edits.apply(projectId, [...setup, keep([[0, 300]])], {
+            origin: "agent",
+            baseRevision: initial.revision,
+          });
+          const accepted = readEdit(root);
+          const logBefore = historyLog(root);
+          const outside = JSON.stringify({
+            ...applied.document,
+            media: [...applied.document.media, added],
+          });
+          writeOutside(root, outside);
+          const error = yield* edits.read(projectId).pipe(Effect.flip);
+          assert.strictEqual(error.reason, "outside-change-refused");
+          assert.include(error.explanation, "not added through Assets or chat");
+          assert.strictEqual(readEdit(root), accepted);
+          assert.deepEqual(historyLog(root), logBefore);
+          assert.deepEqual(
+            refusedFiles(root).map((file) => file.text),
+            [outside],
+          );
+          assert.match(refusedFiles(root)[0]!.name, /^\d+-edit\.json$/u);
+          const next = yield* edits.read(projectId);
+          assert.deepEqual(next.document, applied.document);
+          assert.strictEqual(next.revision, applied.revision);
+          assert.isTrue(next.canUndo);
+        }),
+      ),
+    );
+
+    it.effect.each([
+      { label: "not valid JSON", text: "{ broken" },
+      {
+        label: "not a valid edit",
+        text: JSON.stringify({ version: 1, fps: { num: 30, den: 1 }, media: "everything" }),
+      },
+    ])("refuses an outside edit that is $label", ({ text }) =>
+      withProject(({ projectId, edits, root }) =>
+        Effect.gen(function* () {
+          const initial = yield* edits.read(projectId);
+          const applied = yield* edits.apply(projectId, setup, {
+            origin: "agent",
+            baseRevision: initial.revision,
+          });
+          const accepted = readEdit(root);
+          writeOutside(root, text);
+          const error = yield* edits.read(projectId).pipe(Effect.flip);
+          assert.strictEqual(error.reason, "outside-change-refused");
+          assert.include(error.explanation, "could not be read");
+          assert.strictEqual(readEdit(root), accepted);
+          assert.deepEqual(
+            refusedFiles(root).map((file) => file.text),
+            [text],
+          );
+          assert.deepEqual((yield* edits.read(projectId)).document, applied.document);
+        }),
+      ),
+    );
+
+    it.effect("refuses with no history yet and leaves the starting edit", () =>
+      withProject(({ projectId, edits, root }) =>
+        Effect.gen(function* () {
+          const starting = readEdit(root);
+          const initial = yield* edits.read(projectId);
+          const outside = JSON.stringify({ ...initial.document, media: [desktopReference] });
+          writeOutside(root, outside);
+          const error = yield* edits.read(projectId).pipe(Effect.flip);
+          assert.strictEqual(error.reason, "outside-change-refused");
+          assert.include(error.explanation, "back to how it started");
+          assert.strictEqual(readEdit(root), starting);
+          assert.deepEqual(
+            refusedFiles(root).map((file) => file.text),
+            [outside],
+          );
+          writeOutside(root, "{ broken");
+          assert.strictEqual(
+            (yield* edits.read(projectId).pipe(Effect.flip)).reason,
+            "outside-change-refused",
+          );
+          const read = yield* edits.read(projectId);
+          assert.deepEqual(read.document, initial.document);
+          assert.isFalse(read.canUndo);
+          // A valid change with no media is kept, and becomes what a later refusal puts back.
+          const mine = JSON.stringify({ ...initial.document, metadata: { note: "mine" } });
+          writeOutside(root, mine);
+          assert.deepEqual((yield* edits.read(projectId)).document.metadata, { note: "mine" });
+          writeOutside(root, outside);
+          const again = yield* edits.read(projectId).pipe(Effect.flip);
+          assert.strictEqual(again.reason, "outside-change-refused");
+          assert.include(again.explanation, "last saved version");
+          assert.strictEqual(readEdit(root), mine);
+          assert.strictEqual((yield* edits.read(projectId)).revision, 0);
+        }),
+      ),
+    );
+
+    it.effect("checks a log from a git import, which has no knownEdit, against its cursor", () =>
+      withProject(({ projectId, edits, root }) =>
+        Effect.gen(function* () {
+          const initial = yield* edits.read(projectId);
+          const applied = yield* edits.apply(projectId, setup, {
+            origin: "agent",
+            baseRevision: initial.revision,
+          });
+          const accepted = readEdit(root);
+          const { knownEdit: _known, ...imported } = historyLog(root)!;
+          NodeFS.writeFileSync(
+            NodePath.join(root, ".s7history", "log.json"),
+            JSON.stringify(imported),
+          );
+          assert.deepEqual((yield* edits.read(projectId)).document, applied.document);
+          writeOutside(
+            root,
+            JSON.stringify({
+              ...applied.document,
+              media: [...applied.document.media, desktopReference],
+            }),
+          );
+          const error = yield* edits.read(projectId).pipe(Effect.flip);
+          assert.strictEqual(error.reason, "outside-change-refused");
+          assert.strictEqual(readEdit(root), accepted);
+        }),
+      ),
+    );
+
+    it.effect("a second refused write keeps both rejected files", () =>
+      withProject(({ projectId, edits, root }) =>
+        Effect.gen(function* () {
+          yield* edits.read(projectId);
+          writeOutside(root, "{ first");
+          yield* edits.read(projectId).pipe(Effect.flip);
+          writeOutside(root, "{ second");
+          yield* edits.read(projectId).pipe(Effect.flip);
+          assert.sameMembers(
+            refusedFiles(root).map((file) => file.text),
+            ["{ first", "{ second"],
+          );
+        }),
+      ),
+    );
+
+    it.effect("a T3 turn revert to an earlier edit is still accepted", () =>
+      withProject(({ projectId, edits, root }) =>
+        Effect.gen(function* () {
+          const initial = yield* edits.read(projectId);
+          const withClip = yield* edits.apply(projectId, setup, {
+            origin: "agent",
+            baseRevision: initial.revision,
+          });
+          const earlier = readEdit(root);
+          const removed = yield* edits.apply(projectId, [{ _tag: "removeMedia", mediaId: "cam" }], {
+            origin: "timeline",
+            baseRevision: withClip.revision,
+          });
+          assert.isEmpty(removed.document.media);
+          // The clip is not in the last edit, but this exact text was accepted before.
+          writeOutside(root, earlier);
+          const read = yield* edits.read(projectId);
+          assert.deepEqual(read.document, withClip.document);
+          assert.isAbove(read.revision, removed.revision);
+          assert.isEmpty(refusedFiles(root));
+        }),
+      ),
+    );
+
+    it.effect("puts back the edit an undo wrote, with the clips it kept", () =>
+      withProject(({ projectId, edits, root }) =>
+        Effect.gen(function* () {
+          const initial = yield* edits.read(projectId);
+          const first = yield* edits.apply(projectId, setup, {
+            origin: "agent",
+            baseRevision: initial.revision,
+          });
+          yield* edits.apply(
+            projectId,
+            [
+              { _tag: "putMedia", media: { ...media, id: "mic", path: "assets/mic.m4a" } },
+              keep([[0, 300]]),
+            ],
+            { origin: "agent", baseRevision: first.revision },
+          );
+          const undone = yield* edits.undo(projectId);
+          assert.include(
+            undone.document.media.map((entry) => entry.id),
+            "mic",
+          );
+          const accepted = readEdit(root);
+          writeOutside(root, JSON.stringify({ ...undone.document, media: [desktopReference] }));
+          yield* edits.read(projectId).pipe(Effect.flip);
+          assert.strictEqual(readEdit(root), accepted);
+        }),
+      ),
+    );
+
+    it.effect("a refused write publishes one snapshot with the notice", () =>
+      withProject(({ projectId, edits, root }) =>
+        Effect.gen(function* () {
+          const initial = yield* edits.read(projectId);
+          const applied = yield* edits.apply(projectId, setup, {
+            origin: "agent",
+            baseRevision: initial.revision,
+          });
+          const seen: EditSnapshot[] = [];
+          const subscribed = yield* Deferred.make<void>();
+          const fiber = yield* edits.subscribe(projectId).pipe(
+            Stream.take(3),
+            Stream.runForEach((snapshot) =>
+              Effect.sync(() => seen.push(snapshot)).pipe(
+                Effect.andThen(Deferred.succeed(subscribed, undefined)),
+              ),
+            ),
+            Effect.forkScoped,
+          );
+          yield* Deferred.await(subscribed);
+          writeOutside(root, "{ broken");
+          const error = yield* edits.read(projectId).pipe(Effect.flip);
+          // The next reads find the restored edit and publish nothing more.
+          yield* edits.read(projectId);
+          yield* edits.read(projectId);
+          const next = yield* edits.apply(projectId, [keep([[0, 30]])], {
+            origin: "agent",
+            baseRevision: applied.revision,
+          });
+          yield* Fiber.join(fiber);
+          assert.deepEqual(
+            seen.map((snapshot) => [snapshot.revision, snapshot.notice]),
+            [
+              [applied.revision, undefined],
+              [applied.revision, error.explanation],
+              [next.revision, undefined],
+            ],
+          );
+          assert.deepEqual(seen[1]!.document, applied.document);
+        }).pipe(Effect.scoped),
+      ),
+    );
+
+    it.effect("a subscriber whose first read finds the refusal gets the notice first", () =>
+      withProject(({ projectId, edits, root }) =>
+        Effect.gen(function* () {
+          const initial = yield* edits.read(projectId);
+          writeOutside(root, "{ broken");
+          const [first] = yield* edits.subscribe(projectId).pipe(Stream.take(1), Stream.runCollect);
+          assert.include(first!.notice, "could not be read");
+          assert.deepEqual(first!.document, initial.document);
+        }),
+      ),
+    );
+  });
 });

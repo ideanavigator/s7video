@@ -3,12 +3,18 @@
 /** Folds for the Editor's streams (S7V-029): edit snapshots and engine jobs. */
 import type { EditSnapshot, EngineJob, EngineJobsEvent } from "@t3tools/contracts";
 
-/** Drops a snapshot older than one already shown, so a late reply never rolls the edit back. */
+/**
+ * Drops a snapshot older than one already shown, so a late reply never rolls the edit back. A
+ * refusal notice (S7V-054) comes at the revision already shown, since the edit is put back.
+ */
 export function acceptNewerSnapshot(
   shownRevision: number,
   snapshot: EditSnapshot,
 ): readonly [number, ReadonlyArray<EditSnapshot>] {
-  return snapshot.revision > shownRevision ? [snapshot.revision, [snapshot]] : [shownRevision, []];
+  const newer =
+    snapshot.revision > shownRevision ||
+    (snapshot.notice !== undefined && snapshot.revision === shownRevision);
+  return newer ? [snapshot.revision, [snapshot]] : [shownRevision, []];
 }
 
 /** Folds the jobs stream into the current jobs by id. */

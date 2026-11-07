@@ -17,6 +17,7 @@ import {
   type HistoryFiles,
   type HistoryLog,
   layer as layerStore,
+  MAX_REFUSED_EDITS,
 } from "./EditSnapshotStore.ts";
 
 const withStore = <A, E>(
@@ -187,14 +188,56 @@ describe("EditSnapshotStore", () => {
   it.effect("reports usage", () =>
     withStore(({ root, store }) =>
       Effect.gen(function* () {
-        assert.deepEqual(yield* store.usage(root), { objects: 0, bytes: 0 });
+        assert.deepEqual(yield* store.usage(root), {
+          objects: 0,
+          bytes: 0,
+          refusedEdits: 0,
+          refusedBytes: 0,
+        });
         yield* store.put(root, { editJson: "a\n", projectJson: "b\n" });
         yield* store.put(root, { editJson: "c\n", projectJson: "b\n" });
         const names = historyObjects(root);
         const bytes = names
           .map((name) => NodeFS.statSync(historyPath(root, "objects", name)).size)
           .reduce((sum, size) => sum + size, 0);
-        assert.deepEqual(yield* store.usage(root), { objects: 3, bytes });
+        assert.deepEqual(yield* store.usage(root), {
+          objects: 3,
+          bytes,
+          refusedEdits: 0,
+          refusedBytes: 0,
+        });
+      }),
+    ),
+  );
+
+  // S7V-054: refused outside edits are kept for the user, but never pile up.
+  it.effect("keeps the newest refused edits, skips a repeat and counts them in usage", () =>
+    withStore(({ root, store }) =>
+      Effect.gen(function* () {
+        const refused = () =>
+          NodeFS.readdirSync(historyPath(root, "refused"))
+            .toSorted()
+            .map((name) => NodeFS.readFileSync(historyPath(root, "refused", name), "utf8"));
+        yield* store.keepRefused(root, "{ first");
+        yield* store.keepRefused(root, "{ first");
+        assert.deepEqual(refused(), ["{ first"]);
+        for (let index = 0; index < MAX_REFUSED_EDITS + 4; index++) {
+          yield* store.keepRefused(root, `{ broken ${index}`);
+        }
+        const kept = refused();
+        assert.lengthOf(kept, MAX_REFUSED_EDITS);
+        assert.notInclude(kept, "{ first");
+        assert.include(kept, `{ broken ${MAX_REFUSED_EDITS + 3}`);
+        assert.notInclude(kept, "{ broken 3");
+        const usage = yield* store.usage(root);
+        assert.strictEqual(usage.refusedEdits, MAX_REFUSED_EDITS);
+        assert.strictEqual(
+          usage.refusedBytes,
+          kept.reduce((sum, text) => sum + Buffer.byteLength(text), 0),
+        );
+        // collect never touches them.
+        yield* store.collect(root, logOf([]));
+        assert.lengthOf(refused(), MAX_REFUSED_EDITS);
       }),
     ),
   );

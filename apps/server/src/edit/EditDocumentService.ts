@@ -8,6 +8,7 @@
 import {
   EditConflict,
   type EditDocument,
+  type EditMedia,
   type EditOp,
   type EditOrigin,
   type EditSnapshot,
@@ -35,6 +36,7 @@ import { allIds, applyEditOps } from "./applyEditOps.ts";
 import * as EditHistoryService from "./EditHistoryService.ts";
 import * as EditProjectLayout from "./EditProjectLayout.ts";
 import { migrateEditDocument } from "./editMigrations.ts";
+import { newOutsideMedia, outsideRefused } from "./outsideEdit.ts";
 
 export type EditApplyError =
   | EditUnavailableError
@@ -71,6 +73,8 @@ export class EditDocumentService extends Context.Service<
 >()("t3/edit/EditDocumentService") {}
 
 const decodeJson = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown));
+const startingEdit = EditProjectLayout.STARTING_EDIT;
+const startingEditText = EditProjectLayout.editFileContents(startingEdit);
 const decodeProjectFile = Schema.decodeUnknownOption(
   Schema.fromJsonString(EditProjectLayout.EditProjectFile),
 );
@@ -144,7 +148,7 @@ const make = Effect.gen(function* () {
     return root;
   });
 
-  const load = Effect.fnUntraced(function* (projectId: ProjectId, root: string) {
+  const readFiles = Effect.fnUntraced(function* (projectId: ProjectId, root: string) {
     const unreadable = (explanation: string) => unavailable(projectId, "unreadable", explanation);
     const projectText = yield* fileSystem
       .readFileString(path.join(root, EditProjectLayout.PROJECT_FILE))
@@ -154,6 +158,12 @@ const make = Effect.gen(function* () {
     const editText = yield* fileSystem
       .readFileString(path.join(root, EditProjectLayout.EDIT_FILE))
       .pipe(Effect.mapError(() => unreadable("Could not read edit.json.")));
+    return { revision: project.value.revision, editText };
+  });
+
+  /** Parses an edit.json text; the failure is the plain reason it cannot be used. */
+  const parseEdit = Effect.fnUntraced(function* (projectId: ProjectId, editText: string) {
+    const unreadable = (explanation: string) => unavailable(projectId, "unreadable", explanation);
     const parsed = yield* decodeJson(editText).pipe(
       Effect.mapError(() => unreadable("edit.json is not valid JSON.")),
     );
@@ -170,7 +180,12 @@ const make = Effect.gen(function* () {
     if (!validated.ok) {
       return yield* unreadable(`edit.json is not valid: ${validated.issues[0]!.explanation}`);
     }
-    return { revision: project.value.revision, document: validated.document, editText };
+    return validated.document;
+  });
+
+  const load = Effect.fnUntraced(function* (projectId: ProjectId, root: string) {
+    const files = yield* readFiles(projectId, root);
+    return { ...files, document: yield* parseEdit(projectId, files.editText) };
   });
 
   const snapshotOf = Effect.fnUntraced(function* (
@@ -216,19 +231,93 @@ const make = Effect.gen(function* () {
     yield* PubSub.publish(yield* channelFor(root), snapshot);
   });
 
+  const locateMedia = (root: string) => (media: EditMedia) =>
+    media.path !== undefined ? path.resolve(root, media.path) : path.resolve(media.reference ?? "");
+
   /**
-   * Notices an edit.json changed outside this service (a T3 turn revert, an agent writing the file)
-   * and records it as a new revision and history step, so subscribers and undo stay in step.
-   * Runs under the project lock. A read never fails on recording: it returns the file as it is and
-   * leaves recording to the next change, which reports the problem (the media guard, say).
+   * Puts the last accepted edit back over a refused outside one (S7V-054), keeping the refused
+   * text under `.s7history/refused/`. Nothing is recorded; subscribers get one snapshot carrying
+   * the reason as `notice`, and the caller fails with it.
+   */
+  const refuseOutside = Effect.fnUntraced(function* (
+    projectId: ProjectId,
+    root: string,
+    current: { readonly revision: number; readonly editText: string },
+    restored: { readonly editText: string; readonly document: EditDocument },
+    explanation: string,
+  ) {
+    yield* history
+      .keepRefused(root, current.editText)
+      .pipe(Effect.mapError(historyError(projectId)));
+    const { highestRevision } = yield* history.status(root);
+    const revision = Math.max(current.revision, highestRevision);
+    yield* writeEdit(projectId, root, restored.editText, revision, current.editText);
+    const snapshot = yield* snapshotOf(root, revision, restored.document);
+    yield* publish(root, { ...snapshot, notice: explanation });
+    return yield* unavailable(projectId, "outside-change-refused", explanation);
+  });
+
+  /**
+   * Records an edit.json changed outside this service as a new step, under the project lock, if it
+   * is valid and adds no media file; else `refuseOutside`. A read never fails on recording: it
+   * returns the file and leaves the problem (the media guard, say) to the next change.
    */
   const loadReconciled = Effect.fnUntraced(function* (
     projectId: ProjectId,
     root: string,
     mode: "read" | "write",
   ) {
-    const current = yield* load(projectId, root);
-    if (yield* history.isKnown(root, current.editText)) return current;
+    const files = yield* readFiles(projectId, root);
+    const standing = yield* history
+      .standing(root, files.editText)
+      .pipe(Effect.mapError(historyError(projectId)));
+    // No history on a project the service has changed (revision above 0) means the history was
+    // lost (a damaged log, an old project): nothing to compare with, so the file is used as it is.
+    if (standing === "known" || (standing === "no-history" && files.revision > 0)) {
+      return { ...files, document: yield* parseEdit(projectId, files.editText) };
+    }
+    const parsed = yield* parseEdit(projectId, files.editText).pipe(
+      Effect.map((document) => ({ _tag: "valid" as const, document })),
+      Effect.catchIf(
+        (error) => error.reason !== "unsupported-version",
+        () => Effect.succeed({ _tag: "invalid" as const }),
+      ),
+    );
+    if (standing !== "earlier") {
+      const accepted = yield* history
+        .lastAccepted(root)
+        .pipe(Effect.mapError(historyError(projectId)));
+      const restored = Option.isSome(accepted)
+        ? {
+            editText: accepted.value,
+            document: yield* parseEdit(projectId, accepted.value),
+          }
+        : { editText: startingEditText, document: startingEdit };
+      const backTo = Option.isSome(accepted) ? "saved" : "start";
+      if (parsed._tag === "invalid") {
+        const explanation = outsideRefused("invalid", backTo);
+        return yield* refuseOutside(projectId, root, files, restored, explanation);
+      }
+      if (newOutsideMedia(restored.document, parsed.document, locateMedia(root)).length > 0) {
+        const explanation = outsideRefused("media", backTo);
+        return yield* refuseOutside(projectId, root, files, restored, explanation);
+      }
+    } else if (parsed._tag === "invalid") {
+      // An earlier step's own text cannot be invalid; this only guards the type.
+      return yield* unavailable(projectId, "unreadable", "edit.json is not valid.");
+    }
+    const current = { ...files, document: parsed.document };
+    if (standing === "no-history") {
+      // A new project (AC-7). A kept outside change becomes the baseline, so a later refusal
+      // puts it back instead of the starting edit; a read still never fails on recording.
+      if (current.editText !== startingEditText) {
+        const baseline = history
+          .ensureBaseline(root, current.revision, current.editText)
+          .pipe(Effect.mapError(historyError(projectId)));
+        yield* mode === "read" ? baseline.pipe(Effect.ignore) : baseline;
+      }
+      return current;
+    }
     const record = Effect.gen(function* () {
       yield* history.guard(root).pipe(Effect.mapError(historyError(projectId)));
       const { highestRevision } = yield* history.status(root);
@@ -430,8 +519,16 @@ const make = Effect.gen(function* () {
         const root = yield* resolveRoot(projectId);
         // Subscribe before reading so no change between the two is lost.
         const subscription = yield* PubSub.subscribe(yield* channelFor(root));
-        const initial = yield* read(projectId);
-        return Stream.concat(Stream.make(initial), Stream.fromSubscription(subscription));
+        // A refused outside change already published its snapshot, with the notice, to this
+        // subscription; the read's failure is that same news.
+        const initial = yield* read(projectId).pipe(
+          Effect.map(Stream.make),
+          Effect.catchIf(
+            (error) => error.reason === "outside-change-refused",
+            () => Effect.succeed(Stream.empty),
+          ),
+        );
+        return Stream.concat(initial, Stream.fromSubscription(subscription));
       }),
     );
 

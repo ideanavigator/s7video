@@ -8,6 +8,7 @@
 import { scopedProjectKey } from "@t3tools/client-runtime/environment";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import {
+  type EditSnapshot,
   type EngineJobId,
   type EnvironmentId,
   ExportStartError,
@@ -34,6 +35,7 @@ import { playerViewOf, type PlayerView } from "../../editor/editorView";
 import type { TranscriptPlayback } from "../../editor/transcriptModel";
 import { useMediaLibrary, type MediaLibraryState } from "../../state/media";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { Alert, AlertAction, AlertDescription } from "../ui/alert";
 import { Button } from "../ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "../ui/empty";
 import { Spinner } from "../ui/spinner";
@@ -404,6 +406,24 @@ function ExportButton(props: { readonly projectRef: ScopedProjectRef }) {
   );
 }
 
+/** Why an outside change to the edit was not kept (S7V-054), until dismissed or the next change. */
+function RefusedChangeNotice(props: { readonly snapshot: EditSnapshot | null }) {
+  const [dismissed, setDismissed] = useState<EditSnapshot | null>(null);
+  const { snapshot } = props;
+  if (snapshot?.notice === undefined || snapshot === dismissed) return null;
+  return (
+    <Alert variant="warning" role="status">
+      <TriangleAlertIcon aria-hidden />
+      <AlertDescription>{snapshot.notice}</AlertDescription>
+      <AlertAction>
+        <Button size="compact" variant="ghost" onClick={() => setDismissed(snapshot)}>
+          Dismiss
+        </Button>
+      </AlertAction>
+    </Alert>
+  );
+}
+
 export default function EditorPanel(props: {
   readonly environmentId: EnvironmentId;
   readonly projectId: ProjectId;
@@ -473,6 +493,7 @@ export default function EditorPanel(props: {
           <ExportButton projectRef={projectRef} />
         ) : null}
       </div>
+      <RefusedChangeNotice snapshot={edit._tag === "ready" ? edit.snapshot : null} />
       <PlayerArea projectRef={projectRef} view={view} actions={actions} />
       <div role="tablist" aria-label="Editor views" className="flex shrink-0 gap-1 border-b">
         {TABS.map((entry) => (

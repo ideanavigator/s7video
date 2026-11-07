@@ -204,6 +204,8 @@ export const EditSnapshot = Schema.Struct({
   document: EditDocument,
   canUndo: Schema.Boolean,
   canRedo: Schema.Boolean,
+  /** Set only on the snapshot published when an outside change was refused (S7V-054). */
+  notice: Schema.optionalKey(Schema.String),
 });
 export type EditSnapshot = typeof EditSnapshot.Type;
 
@@ -231,6 +233,7 @@ export class EditUnavailableError extends Schema.TaggedError<EditUnavailableErro
       "nothing-to-redo",
       "checkpoint-failed",
       "library-conflict",
+      "outside-change-refused",
     ]),
     explanation: Schema.String,
   },

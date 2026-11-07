@@ -4,6 +4,7 @@ import {
   T3_CODE_DEVICE_TOOL_INSTRUCTIONS,
   T3_CODE_DEVICE_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH,
   T3_CODE_ORCHESTRATION_INSTRUCTIONS,
+  T3_CODE_VIDEO_EDIT_INSTRUCTIONS,
   t3AcpPromptWithInstructions,
   t3OrchestrationPrompt,
   t3OrchestrationSystemPrompt,
@@ -69,7 +70,12 @@ describe("T3 device instructions", () => {
   });
 
   it("reach ACP agents again when device access changes mid-thread", () => {
-    const state = { interactionMode: "default", hasT3Mcp: true, hasDeviceTools: false } as const;
+    const state = {
+      interactionMode: "default",
+      hasT3Mcp: true,
+      hasDeviceTools: false,
+      hasVideoTools: false,
+    } as const;
     const withDevices = t3AcpPromptWithInstructions({
       prompt: "Check the login screen.",
       state: { ...state, hasDeviceTools: true },
@@ -81,5 +87,34 @@ describe("T3 device instructions", () => {
       "Again.",
     );
     assert.notInclude(t3AcpPromptWithInstructions({ prompt: "Hi.", state }), "## T3 Code devices");
+  });
+});
+
+// s7video (S7V-054): ACP agents get the video edit line too, once per session and on a change.
+describe("T3 video edit instructions for ACP", () => {
+  it("t3AcpPromptWithInstructions adds the video line when the session has video tools", () => {
+    const state = {
+      interactionMode: "default",
+      hasT3Mcp: true,
+      hasDeviceTools: false,
+      hasVideoTools: true,
+    } as const;
+    assert.include(
+      t3AcpPromptWithInstructions({ prompt: "Cut it.", state }),
+      T3_CODE_VIDEO_EDIT_INSTRUCTIONS,
+    );
+    assert.equal(
+      t3AcpPromptWithInstructions({ prompt: "Again.", state, previousState: state }),
+      "Again.",
+    );
+    const without = { ...state, hasVideoTools: false };
+    assert.notInclude(
+      t3AcpPromptWithInstructions({ prompt: "Hi.", state: without }),
+      T3_CODE_VIDEO_EDIT_INSTRUCTIONS,
+    );
+    assert.include(
+      t3AcpPromptWithInstructions({ prompt: "Now video.", state, previousState: without }),
+      T3_CODE_VIDEO_EDIT_INSTRUCTIONS,
+    );
   });
 });
