@@ -32,8 +32,8 @@ export interface EditPlayerProps {
  * An edit plays inside its canvas, filled and cropped from the centre as export renders it
  * (S7V-061), with black bars in the 16:9 frame around any other shape. A raw clip plays whole.
  */
-function CanvasFrame(props: {
-  readonly canvas: PlaybackPlan["canvas"];
+export function CanvasFrame(props: {
+  readonly canvas: PlaybackPlan["canvas"] | undefined;
   readonly children: ReactNode;
 }) {
   const { canvas } = props;

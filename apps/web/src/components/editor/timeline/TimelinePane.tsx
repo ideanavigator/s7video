@@ -8,7 +8,7 @@ import type { EditDocument, MediaAsset, ScopedProjectRef } from "@t3tools/contra
 import * as Schema from "effect/Schema";
 import { useState, type KeyboardEvent, type PointerEvent } from "react";
 
-import type { PlaybackPlan } from "../../../editor/editPlayback";
+import type { PlayerFramePlan } from "../../../editor/editPlayback";
 import { getLocalStorageItem, setLocalStorageItem } from "../../../hooks/useLocalStorage";
 import { observeResize } from "../../../lib/observeResize";
 import { Timeline, TimelineSkeleton } from "./Timeline";
@@ -61,7 +61,7 @@ export function TimelinePane(props: {
   readonly playheadVisible: boolean;
   readonly initialFrame: number;
   readonly onSeek: (editFrame: number) => void;
-  readonly plan: PlaybackPlan | null;
+  readonly plan: PlayerFramePlan | null;
   readonly projectRef: ScopedProjectRef;
   readonly mediaById: ReadonlyMap<string, MediaAsset>;
 }) {

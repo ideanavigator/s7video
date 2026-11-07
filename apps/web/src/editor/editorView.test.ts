@@ -106,4 +106,42 @@ describe("playerViewOf", () => {
     ).toEqual({ _tag: "unavailable", message: "Not a video project." });
     expect(playerViewOf(cut, { _tag: "unavailable" }, EDIT)._tag).toBe("unavailable");
   });
+
+  it("should pick EditPlayer for one source and MultiClipPlayer for several", () => {
+    const media = library([asset(), asset({ id: "broll", label: "broll.mov" })]);
+    expect(playerViewOf(cut, media, EDIT)._tag).toBe("play");
+    const layouts: ReadonlyArray<EditDocument["tracks"][number]["items"]> = [
+      // Two sources.
+      [
+        { id: "a", media: "clip", start: 0, duration: 30, in: 0 },
+        { id: "b", media: "broll", start: 30, duration: 30, in: 0 },
+      ],
+      // One source with a gap.
+      [
+        { id: "a", media: "clip", start: 0, duration: 30, in: 0 },
+        { id: "b", media: "clip", start: 45, duration: 30, in: 90 },
+      ],
+      // One source, reordered.
+      [
+        { id: "a", media: "clip", start: 0, duration: 30, in: 90 },
+        { id: "b", media: "clip", start: 30, duration: 30, in: 0 },
+      ],
+    ];
+    for (const items of layouts) {
+      const view = playerViewOf(edit([{ kind: "video", id: "v1", items }] as never), media, EDIT);
+      expect(view._tag).toBe("play-timeline");
+    }
+    const view = playerViewOf(
+      edit([{ kind: "video", id: "v1", items: layouts[0]! }] as never),
+      library([asset({ proxy: { status: "ready" } })]),
+      EDIT,
+    );
+    expect(view).toMatchObject({
+      _tag: "play-timeline",
+      sources: [
+        { mediaId: "clip", asset: { id: "clip" }, variant: "proxy" },
+        { mediaId: "broll", asset: undefined, variant: "original" },
+      ],
+    });
+  });
 });
