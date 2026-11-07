@@ -283,6 +283,53 @@ describe("edit versions", () => {
     ),
   );
 
+  it.effect("make current refuses a clip clash and writes nothing", () =>
+    withProject(({ projectId, edits, root }) =>
+      Effect.gen(function* () {
+        yield* change(
+          edits,
+          projectId,
+          [
+            ...setup,
+            {
+              _tag: "insertItem",
+              trackId: "V1",
+              item: { id: "a", media: "cam", start: 0, duration: 30, in: 0 },
+            },
+          ],
+          { origin: "agent", reply: chatA },
+        );
+        yield* change(edits, projectId, [{ _tag: "deleteItem", itemIds: ["a"], ripple: false }], {
+          origin: "timeline",
+        });
+        // A clip in Assets now has the id v1's item uses: ids share one space.
+        const clashing = { ...media, id: "a", path: "assets/a.mp4" };
+        const current = yield* change(edits, projectId, [{ _tag: "putMedia", media: clashing }], {
+          origin: "import",
+        });
+        const editBefore = readEdit(root);
+        const logBefore = NodeFS.readFileSync(
+          NodePath.join(root, ".s7history", "log.json"),
+          "utf8",
+        );
+        const error = yield* edits
+          .restoreVersion(projectId, 1, { baseRevision: current.revision })
+          .pipe(Effect.flip);
+        assert.strictEqual(
+          error._tag === "EditUnavailableError" && error.reason,
+          "library-conflict",
+        );
+        assert.include(error.message, 'Making v1 current would clash with the clip "a"');
+        assert.strictEqual(readEdit(root), editBefore);
+        assert.strictEqual(
+          NodeFS.readFileSync(NodePath.join(root, ".s7history", "log.json"), "utf8"),
+          logBefore,
+        );
+        assert.strictEqual((yield* edits.versions(projectId)).length, 3);
+      }),
+    ),
+  );
+
   it.effect("tags are unique per project, can be changed and cleared", () =>
     withProject(({ projectId, edits }) =>
       Effect.gen(function* () {

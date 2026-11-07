@@ -71,11 +71,16 @@ reply or one Editor action, and stays listed when undo steps are capped or a red
   folds into it: its `files` move to the new edit and its `changes` gain a line (at most 10, each
   at most 200 characters). Anything else appends a version with the next number. A change that
   writes the same bytes makes none; an undo or redo that changes nothing visible makes none either.
+  Only the newest version folds, so a reply interrupted by another chat's or the Editor's change
+  carries on in a new version: one reply, two versions, and the newest is still the current edit.
 - **The newest version is the current edit.** Every committed change records one (author `you` for
   the Editor, `outside` for an outside edit that was kept), so the last entry always names it.
-- **Numbers are never reused.** `nextVersion` only goes up. Code that rebuilds a log from
-  `EMPTY_HISTORY_LOG` (cleanup, imports) must carry `nextVersion` and `versions` over, or numbers
-  restart and versions vanish.
+- **Numbers are never reused**, with one exception. `nextVersion` only goes up. Code that rebuilds
+  a log from `EMPTY_HISTORY_LOG` (cleanup, imports) must carry `nextVersion` and `versions` over, or
+  numbers restart and versions vanish. The exception: a damaged or inconsistent `log.json` reads as
+  empty (as undo already does since S7V-051), so the next change starts again at v1. Nothing
+  outside the log records the old numbers, so a `v12` named in an old chat can then mean another
+  edit.
 - **Each version names its own objects**, and `liveObjects` keeps them. Deleting a version removes
   its record and runs `collect`; objects an undo step still names stay.
 - **Tags** are 1-40 characters, unique per project ignoring case and spacing. S7V-050's cleanup
