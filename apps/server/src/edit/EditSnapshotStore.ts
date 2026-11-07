@@ -57,6 +57,11 @@ export const HistoryLog = Schema.Struct({
   entries: Schema.Array(HistoryEntry),
   /** sha256 of the edit.json the service last wrote; anything else on disk changed outside it. */
   knownEdit: Schema.optionalKey(Sha256Hex),
+  /**
+   * Whether the S7V-024 git history was looked for: "imported" or "none" once a probe-confirmed
+   * check ran; "unchecked" (or absent) until then, so it is still imported later.
+   */
+  legacy: Schema.optionalKey(Schema.Literals(["imported", "none", "unchecked"])),
 });
 export type HistoryLog = typeof HistoryLog.Type;
 
@@ -78,7 +83,12 @@ const isConsistent = (log: HistoryLog) =>
 
 export class EditHistoryError extends Schema.TaggedError<EditHistoryError>()("EditHistoryError", {
   cwd: Schema.String,
-  reason: Schema.Literals(["media-in-tracked-folder", "checkpoint-failed", "state-write-failed"]),
+  reason: Schema.Literals([
+    "media-in-tracked-folder",
+    "checkpoint-failed",
+    "state-read-failed",
+    "state-write-failed",
+  ]),
   explanation: Schema.String,
   cause: Schema.optional(Schema.Defect()),
 }) {
@@ -97,13 +107,17 @@ export class EditSnapshotStore extends Context.Service<
     ) => Effect.Effect<HistoryFiles, EditHistoryError>;
     /** The saved text of one object. */
     readonly read: (cwd: string, objectId: string) => Effect.Effect<string, EditHistoryError>;
-    /** The log; a missing or damaged log is an empty one. */
-    readonly readLog: (cwd: string) => Effect.Effect<HistoryLog>;
-    /** Whether `log.json` exists at all (a damaged one counts), so a missing one can be imported. */
-    readonly hasLog: (cwd: string) => Effect.Effect<boolean>;
+    /**
+     * The log. A missing or unparseable log is an empty one; any other read error (permissions,
+     * I/O) fails with `state-read-failed`, so the history is never overwritten by mistake.
+     */
+    readonly readLog: (cwd: string) => Effect.Effect<HistoryLog, EditHistoryError>;
     /** Temp file, fsync, rename, fsync folder. */
     readonly writeLog: (cwd: string, log: HistoryLog) => Effect.Effect<void, EditHistoryError>;
-    /** Deletes objects that `log` does not name; never touches anything outside .s7history/objects/. */
+    /**
+     * Deletes objects that `log` does not name, temp files in objects/ and stale `.log.json.*.tmp`
+     * files; never touches anything else.
+     */
     readonly collect: (
       cwd: string,
       log: HistoryLog,
@@ -231,11 +245,20 @@ const make = Effect.gen(function* () {
           Option.getOrElse(() => EMPTY_HISTORY_LOG),
         ),
       ),
-      Effect.orElseSucceed(() => EMPTY_HISTORY_LOG),
+      Effect.catchIf(
+        (error) => error.reason._tag === "NotFound",
+        () => Effect.succeed(EMPTY_HISTORY_LOG),
+      ),
+      Effect.mapError(
+        (cause) =>
+          new EditHistoryError({
+            cwd,
+            reason: "state-read-failed",
+            explanation: "Could not read the undo history.",
+            cause,
+          }),
+      ),
     );
-
-  const hasLog: EditSnapshotStore["Service"]["hasLog"] = (cwd) =>
-    fileSystem.exists(logPath(cwd)).pipe(Effect.orElseSucceed(() => false));
 
   const writeLog: EditSnapshotStore["Service"]["writeLog"] = Effect.fn(
     "EditSnapshotStore.writeLog",
@@ -282,6 +305,18 @@ const make = Effect.gen(function* () {
         freedBytes += object.bytes;
       }
       if (freedBytes > 0) yield* syncFolder(objectsDir(cwd));
+      // A crash before the log rename leaves its temp file next to log.json.
+      const names = yield* fileSystem
+        .readDirectory(historyDir(cwd))
+        .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
+      for (const name of names) {
+        if (!name.startsWith(`.${LOG_FILE}.`) || !name.endsWith(".tmp")) continue;
+        const file = path.join(historyDir(cwd), name);
+        const info = yield* fileSystem.stat(file).pipe(Effect.option);
+        if (Option.isNone(info) || info.value.type !== "File") continue;
+        yield* fileSystem.remove(file);
+        freedBytes += Number(info.value.size);
+      }
       return { removedObjects, freedBytes };
     },
     (effect, cwd) => effect.pipe(Effect.mapError(failed(cwd, "state-write-failed"))),
@@ -299,7 +334,7 @@ const make = Effect.gen(function* () {
       Effect.orElseSucceed(() => ({ objects: 0, bytes: 0 })),
     );
 
-  return EditSnapshotStore.of({ put, read, readLog, hasLog, writeLog, collect, usage });
+  return EditSnapshotStore.of({ put, read, readLog, writeLog, collect, usage });
 });
 
 export const layer = Layer.effect(EditSnapshotStore, make);

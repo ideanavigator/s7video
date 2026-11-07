@@ -30,7 +30,7 @@ import {
   type HistoryLog,
   Sha256Hex,
 } from "./EditSnapshotStore.ts";
-import { LegacyEditHistory } from "./LegacyEditHistory.ts";
+import { LegacyEditHistory, type LegacyHistory } from "./LegacyEditHistory.ts";
 
 export { EditHistoryError } from "./EditSnapshotStore.ts";
 
@@ -117,44 +117,84 @@ const make = Effect.gen(function* () {
       .digest("SHA-256", new TextEncoder().encode(text))
       .pipe(Effect.map(Hex.encode), Effect.orDie);
 
-  /** Saves an old project's git history as objects and a log, once. The old file and refs stay. */
-  const importLegacy = Effect.fnUntraced(function* (cwd: string) {
-    const old = yield* legacy.read(cwd);
-    if (Option.isNone(old)) return EMPTY_HISTORY_LOG;
+  /**
+   * Puts the old git history in front of what the log already holds (S7V-051 AC-7). With an empty
+   * log the old cursor and redo steps come along; otherwise only the old steps up to its cursor, and
+   * one equal to the log's first step is dropped. The old file and refs stay as they are.
+   */
+  const mergeLegacy = Effect.fnUntraced(function* (
+    cwd: string,
+    log: HistoryLog,
+    history: LegacyHistory,
+  ) {
     const at = yield* Clock.currentTimeMillis;
-    const entries: HistoryEntry[] = [];
-    for (const step of old.value.steps) {
+    const fresh = log.entries.length === 0;
+    const imported: HistoryEntry[] = [];
+    for (const step of fresh ? history.steps : history.steps.slice(0, history.cursor + 1)) {
       const files = yield* store.put(cwd, {
         editJson: step.editJson,
         projectJson: step.projectJson,
       });
-      entries.push({ seq: step.seq, revision: step.revision, files, at });
+      imported.push({ seq: step.seq, revision: step.revision, files, at });
     }
-    const { knownEdit } = old.value;
-    const log: HistoryLog = {
+    const first = log.entries[0];
+    if (first !== undefined && imported.at(-1)?.files[EDIT_FILE] === first.files[EDIT_FILE]) {
+      imported.pop();
+    }
+    const offset = Math.max(history.nextSeq, ...imported.map((entry) => entry.seq + 1)) - 1;
+    let entries = [
+      ...imported,
+      ...log.entries.map((entry) => ({ ...entry, seq: entry.seq + offset })),
+    ];
+    let cursor = fresh ? history.cursor : imported.length + log.cursor;
+    if (entries.length > MAX_HISTORY_ENTRIES) {
+      const dropped = entries.length - MAX_HISTORY_ENTRIES;
+      entries = entries.slice(dropped);
+      cursor = Math.max(cursor - dropped, 0);
+    }
+    const knownEdit = fresh ? history.knownEdit : log.knownEdit;
+    return {
       ...EMPTY_HISTORY_LOG,
-      nextSeq: Math.max(old.value.nextSeq, ...entries.map((entry) => entry.seq + 1)),
-      highestRevision: Math.max(old.value.highestRevision, ...entries.map((e) => e.revision)),
-      cursor: old.value.cursor,
+      nextSeq: fresh ? offset + 1 : log.nextSeq + offset,
+      highestRevision: Math.max(
+        log.highestRevision,
+        history.highestRevision,
+        ...entries.map((entry) => entry.revision),
+      ),
+      cursor,
       entries,
       ...(knownEdit !== undefined && isSha256Hex(knownEdit) ? { knownEdit } : {}),
-    };
-    yield* store.writeLog(cwd, log);
-    return log;
+      legacy: "imported",
+    } satisfies HistoryLog;
   });
 
-  // A missing log may be an old project's first open: its git history is imported then. A damaged
-  // log reads as an empty one, so the next change starts a fresh history from the current edit.
-  const readState = (cwd: string) =>
-    store
-      .hasLog(cwd)
-      .pipe(
-        Effect.flatMap((exists) =>
-          exists
-            ? store.readLog(cwd)
-            : importLegacy(cwd).pipe(Effect.orElseSucceed(() => EMPTY_HISTORY_LOG)),
-        ),
-      );
+  /**
+   * The log, with the old git history looked for until a probe-confirmed check has run. A missing
+   * or unparseable log is empty, so the next change starts a fresh history from the current edit.
+   * Only "none" or "imported" is written; "unchecked" is asked again on the next read.
+   */
+  const readState = Effect.fnUntraced(function* (cwd: string) {
+    const log = yield* store.readLog(cwd);
+    if (log.legacy === "imported" || log.legacy === "none") return log;
+    const outcome = yield* legacy.read(cwd);
+    if (outcome._tag === "unchecked") return log;
+    return yield* Effect.gen(function* () {
+      const next: HistoryLog =
+        outcome._tag === "none"
+          ? { ...log, legacy: "none" }
+          : yield* mergeLegacy(cwd, log, outcome.history);
+      yield* store.writeLog(cwd, next);
+      if (outcome._tag === "found") yield* store.collect(cwd, next).pipe(Effect.ignore);
+      return next;
+    }).pipe(
+      // A failed save is tried again on the next read; nothing was recorded yet.
+      Effect.orElseSucceed(() => log),
+    );
+  });
+
+  /** For status and isKnown, which cannot fail: an unreadable log reads as empty there. */
+  const readStateOrEmpty = (cwd: string) =>
+    readState(cwd).pipe(Effect.orElseSucceed(() => EMPTY_HISTORY_LOG));
 
   const trackedFiles = Effect.fnUntraced(function* (cwd: string) {
     const files: string[] = [];
@@ -221,6 +261,7 @@ const make = Effect.gen(function* () {
       cursor: entries.length - 1,
       entries,
       knownEdit: yield* hashOf(editJson),
+      legacy: state.legacy ?? "unchecked",
     };
     yield* store.writeLog(cwd, next);
     const droppedRedo = state.cursor + 1 < state.entries.length;
@@ -243,7 +284,7 @@ const make = Effect.gen(function* () {
 
   const isKnown: EditHistoryService["Service"]["isKnown"] = Effect.fn("EditHistoryService.isKnown")(
     function* (cwd, editJson) {
-      const state = yield* readState(cwd);
+      const state = yield* readStateOrEmpty(cwd);
       if (state.knownEdit === undefined) return true;
       return state.knownEdit === (yield* hashOf(editJson));
     },
@@ -269,7 +310,7 @@ const make = Effect.gen(function* () {
   );
 
   const status: EditHistoryService["Service"]["status"] = (cwd) =>
-    readState(cwd).pipe(
+    readStateOrEmpty(cwd).pipe(
       Effect.map((state) => ({
         canUndo: state.cursor > 0,
         canRedo: state.cursor >= 0 && state.cursor < state.entries.length - 1,

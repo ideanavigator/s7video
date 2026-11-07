@@ -95,7 +95,6 @@ describe("EditSnapshotStore", () => {
     withStore(({ root, store, faults }) =>
       Effect.gen(function* () {
         assert.deepEqual(yield* store.readLog(root), EMPTY_HISTORY_LOG);
-        assert.isFalse(yield* store.hasLog(root));
         const files = yield* store.put(root, { editJson: "a\n", projectJson: "b\n" });
         const first = logOf([files]);
         yield* store.writeLog(root, first);
@@ -125,9 +124,24 @@ describe("EditSnapshotStore", () => {
         ];
         for (const text of damaged) {
           NodeFS.writeFileSync(historyPath(root, "log.json"), text);
-          assert.isTrue(yield* store.hasLog(root));
           assert.deepEqual(yield* store.readLog(root), EMPTY_HISTORY_LOG, text);
         }
+      }),
+    ),
+  );
+
+  it.effect("fails, rather than reading as empty, a log it cannot open", () =>
+    withStore(({ root, store }) =>
+      Effect.gen(function* () {
+        const files = yield* store.put(root, { editJson: "a\n", projectJson: "b\n" });
+        yield* store.writeLog(root, logOf([files]));
+        const log = historyPath(root, "log.json");
+        NodeFS.chmodSync(log, 0o000);
+        const error = yield* store
+          .readLog(root)
+          .pipe(Effect.flip, Effect.ensuring(Effect.sync(() => NodeFS.chmodSync(log, 0o644))));
+        assert.strictEqual(error.reason, "state-read-failed");
+        assert.deepEqual(yield* store.readLog(root), logOf([files]));
       }),
     ),
   );
@@ -144,6 +158,9 @@ describe("EditSnapshotStore", () => {
         // A crash left a temp object; a stranger's file sits next to the store.
         NodeFS.writeFileSync(historyPath(root, "objects", ".x.json.gz.1.tmp"), "half");
         NodeFS.writeFileSync(historyPath(root, "notes.txt"), "mine");
+        // A crash before a log rename left its temp file next to log.json.
+        NodeFS.writeFileSync(historyPath(root, ".log.json.dead-beef.tmp"), "stale");
+        NodeFS.writeFileSync(historyPath(root, ".other.tmp"), "not ours");
         NodeFS.writeFileSync(NodePath.join(root, "edit.json"), "{}");
         const dropped = steps[1]!;
         const droppedBytes = [dropped["edit.json"], dropped["project.json"]]
@@ -152,7 +169,9 @@ describe("EditSnapshotStore", () => {
 
         const kept = logOf([steps[0]!, steps[2]!]);
         const collected = yield* store.collect(root, kept);
-        assert.deepEqual(collected, { removedObjects: 2, freedBytes: droppedBytes + 4 });
+        assert.deepEqual(collected, { removedObjects: 2, freedBytes: droppedBytes + 4 + 5 });
+        assert.isFalse(NodeFS.existsSync(historyPath(root, ".log.json.dead-beef.tmp")));
+        assert.isTrue(NodeFS.existsSync(historyPath(root, ".other.tmp")));
         const live = [steps[0]!, steps[2]!].flatMap((files) => [
           `${files["edit.json"]}.json.gz`,
           `${files["project.json"]}.json.gz`,

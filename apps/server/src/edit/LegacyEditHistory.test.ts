@@ -88,8 +88,14 @@ const writeOldHistory = (
   );
 };
 
+/** Stands in for S7V-052's probe and git; tests flip it between reads. */
+interface FakeGit {
+  available: boolean;
+  showWorks: boolean;
+}
+
 const withOldProject = <A, E>(
-  gitWorks: boolean,
+  fake: FakeGit,
   body: (input: {
     readonly root: string;
     readonly edits: EditDocumentService.EditDocumentService["Service"];
@@ -104,10 +110,11 @@ const withOldProject = <A, E>(
   const legacy = Layer.effect(
     LegacyEditHistory.LegacyEditHistory,
     LegacyEditHistory.make({
-      available: Effect.succeed(gitWorks),
+      available: Effect.sync(() => fake.available),
       show: (cwd, ref, file) =>
         Effect.sync(() => {
           shows.count += 1;
+          if (!fake.showWorks) return Option.none();
           try {
             return Option.some(git(cwd, "show", `${ref}:${file}`));
           } catch {
@@ -145,47 +152,116 @@ const withOldProject = <A, E>(
 
 describe("LegacyEditHistory", () => {
   it.effect("imports an old git history once when git is present", () =>
-    withOldProject(true, ({ root, edits, projectId, steps, shows }) =>
-      Effect.gen(function* () {
-        const refs = git(root, "for-each-ref", "refs/t3/edit");
-        const oldFile = read(root, ".s7cache/edit-history.json");
+    withOldProject(
+      { available: true, showWorks: true },
+      ({ root, edits, projectId, steps, shows }) =>
+        Effect.gen(function* () {
+          const refs = git(root, "for-each-ref", "refs/t3/edit");
+          const oldFile = read(root, ".s7cache/edit-history.json");
 
-        const opened = yield* edits.read(projectId);
-        assert.isTrue(opened.canUndo && opened.canRedo);
-        assert.strictEqual(opened.revision, JSON.parse(steps[2]!.project).revision);
-        assert.strictEqual(shows.count, 8);
-        const log = historyLog(root)!;
-        assert.strictEqual(log.entries.length, 4);
-        assert.strictEqual(log.cursor, 2);
+          const opened = yield* edits.read(projectId);
+          assert.isTrue(opened.canUndo && opened.canRedo);
+          assert.strictEqual(opened.revision, JSON.parse(steps[2]!.project).revision);
+          assert.strictEqual(shows.count, 8);
+          const log = historyLog(root)!;
+          assert.strictEqual(log.entries.length, 4);
+          assert.strictEqual(log.cursor, 2);
+          assert.strictEqual(log.legacy, "imported");
 
-        yield* edits.undo(projectId);
-        assert.strictEqual(read(root, "edit.json"), steps[1]!.edit);
-        yield* edits.redo(projectId);
-        yield* edits.redo(projectId);
-        assert.strictEqual(read(root, "edit.json"), steps[3]!.edit);
-        assert.strictEqual(shows.count, 8, "imported once");
+          yield* edits.undo(projectId);
+          assert.strictEqual(read(root, "edit.json"), steps[1]!.edit);
+          yield* edits.redo(projectId);
+          yield* edits.redo(projectId);
+          assert.strictEqual(read(root, "edit.json"), steps[3]!.edit);
+          assert.strictEqual(shows.count, 8, "imported once");
 
-        assert.strictEqual(git(root, "for-each-ref", "refs/t3/edit"), refs);
-        assert.strictEqual(read(root, ".s7cache/edit-history.json"), oldFile);
-      }),
+          assert.strictEqual(git(root, "for-each-ref", "refs/t3/edit"), refs);
+          assert.strictEqual(read(root, ".s7cache/edit-history.json"), oldFile);
+        }),
     ),
   );
 
   it.effect("starts fresh when old history exists but no working git", () =>
-    withOldProject(false, ({ root, edits, projectId, shows, spawns }) =>
+    withOldProject(
+      { available: false, showWorks: true },
+      ({ root, edits, projectId, shows, spawns }) =>
+        Effect.gen(function* () {
+          const oldFile = read(root, ".s7cache/edit-history.json");
+          const opened = yield* edits.read(projectId);
+          assert.isFalse(opened.canUndo);
+          const changed = yield* edits.apply(projectId, [keep(60)], {
+            origin: "agent",
+            baseRevision: opened.revision,
+          });
+          assert.isTrue(changed.canUndo);
+          assert.strictEqual(historyLog(root)!.entries.length, 2);
+          // Not looked at yet, so a later build with a working git still imports it.
+          assert.strictEqual(historyLog(root)!.legacy, "unchecked");
+          assert.strictEqual(shows.count, 0);
+          assert.strictEqual(spawns.count, 0);
+          assert.strictEqual(read(root, ".s7cache/edit-history.json"), oldFile);
+        }),
+    ),
+  );
+
+  it.effect("imports an old history in front of changes made before git was found", () => {
+    const fake: FakeGit = { available: false, showWorks: true };
+    return withOldProject(fake, ({ root, edits, projectId, steps, shows }) =>
       Effect.gen(function* () {
-        const oldFile = read(root, ".s7cache/edit-history.json");
         const opened = yield* edits.read(projectId);
-        assert.isFalse(opened.canUndo);
         const changed = yield* edits.apply(projectId, [keep(60)], {
           origin: "agent",
           baseRevision: opened.revision,
         });
-        assert.isTrue(changed.canUndo);
-        assert.strictEqual(historyLog(root)!.entries.length, 2);
+        const afterChange = read(root, "edit.json");
+        assert.strictEqual(historyLog(root)!.legacy, "unchecked");
         assert.strictEqual(shows.count, 0);
-        assert.strictEqual(spawns.count, 0);
-        assert.strictEqual(read(root, ".s7cache/edit-history.json"), oldFile);
+
+        // A later build finds git (S7V-052): the old steps go in front of the new ones.
+        fake.available = true;
+        const reopened = yield* edits.read(projectId);
+        assert.strictEqual(reopened.revision, changed.revision);
+        const log = historyLog(root)!;
+        assert.strictEqual(log.legacy, "imported");
+        // Old steps 1-2 (the old redo step is dropped; old step 3 equals the new baseline), then
+        // the new baseline and the change.
+        assert.strictEqual(log.entries.length, 4);
+        assert.strictEqual(log.cursor, 3);
+        assert.deepEqual(
+          log.entries.map((entry) => entry.seq),
+          [1, 2, 5, 6],
+        );
+        assert.strictEqual(read(root, "edit.json"), afterChange);
+        yield* edits.undo(projectId);
+        assert.strictEqual(read(root, "edit.json"), steps[2]!.edit);
+        yield* edits.undo(projectId);
+        assert.strictEqual(read(root, "edit.json"), steps[1]!.edit);
+        const showsAfterImport = shows.count;
+        yield* edits.redo(projectId);
+        yield* edits.read(projectId);
+        assert.strictEqual(shows.count, showsAfterImport, "imported once");
+      }),
+    );
+  });
+
+  it.effect("records a failed import once instead of retrying it on every read", () =>
+    withOldProject({ available: true, showWorks: false }, ({ root, edits, projectId, shows }) =>
+      Effect.gen(function* () {
+        const opened = yield* edits.read(projectId);
+        assert.isFalse(opened.canUndo);
+        // One edit.json read per old step, all failing; project.json is never asked for.
+        assert.strictEqual(shows.count, 4);
+        assert.strictEqual(historyLog(root)!.legacy, "none");
+        yield* edits.read(projectId);
+        const changed = yield* edits.apply(projectId, [keep(60)], {
+          origin: "agent",
+          baseRevision: opened.revision,
+        });
+        yield* edits.undo(projectId);
+        yield* edits.redo(projectId);
+        assert.isTrue(changed.canUndo);
+        assert.strictEqual(shows.count, 4);
+        assert.strictEqual(historyLog(root)!.legacy, "none");
       }),
     ),
   );

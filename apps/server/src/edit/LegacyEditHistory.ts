@@ -45,6 +45,18 @@ export interface LegacyHistory {
   readonly knownEdit?: string;
 }
 
+/**
+ * What a look for the old history found. "none" and "found" are final and recorded in the log;
+ * "unchecked" means no probe-confirmed git was there to look with, so it is asked again later.
+ */
+export type LegacyOutcome =
+  | { readonly _tag: "unchecked" }
+  | { readonly _tag: "none" }
+  | { readonly _tag: "found"; readonly history: LegacyHistory };
+
+const UNCHECKED: LegacyOutcome = { _tag: "unchecked" };
+const NONE: LegacyOutcome = { _tag: "none" };
+
 /** Git access for the import; S7V-052 provides it from `SystemGit` and `GitVcsDriver`. */
 export interface LegacyGitAccess {
   /** Whether a working system git exists, decided without starting any process. */
@@ -56,8 +68,8 @@ export interface LegacyGitAccess {
 export class LegacyEditHistory extends Context.Service<
   LegacyEditHistory,
   {
-    /** The old history of `cwd`, or None when there is none, it is damaged or git is not usable. */
-    readonly read: (cwd: string) => Effect.Effect<Option.Option<LegacyHistory>>;
+    /** Looks for the old history of `cwd`; never fails. */
+    readonly read: (cwd: string) => Effect.Effect<LegacyOutcome>;
   }
 >()("t3/edit/LegacyEditHistory") {}
 
@@ -70,11 +82,13 @@ export const make = Effect.fn("LegacyEditHistory.make")(function* (git: LegacyGi
       // The file comes first: a project with no old history never asks about git.
       const text = yield* fileSystem
         .readFileString(path.join(cwd, CACHE_DIR, LEGACY_HISTORY_FILE))
-        .pipe(Effect.option);
-      if (Option.isNone(text)) return Option.none();
-      const state = decodeLegacyState(text.value);
-      if (Option.isNone(state) || state.value.entries.length === 0) return Option.none();
-      if (!(yield* git.available)) return Option.none();
+        .pipe(Effect.result);
+      if (text._tag === "Failure") {
+        return text.failure.reason._tag === "NotFound" ? NONE : UNCHECKED;
+      }
+      const state = decodeLegacyState(text.success);
+      if (Option.isNone(state) || state.value.entries.length === 0) return NONE;
+      if (!(yield* git.available)) return UNCHECKED;
 
       // A step whose edit.json cannot be read is skipped; the cursor moves to the nearest
       // earlier step that was kept.
@@ -94,26 +108,28 @@ export const make = Effect.fn("LegacyEditHistory.make")(function* (git: LegacyGi
         });
         if (index <= state.value.cursor) cursor = steps.length - 1;
       }
-      if (steps.length === 0) return Option.none();
-      return Option.some({
+      // Git works but could read no step: recorded as none, so it is not retried on every read.
+      if (steps.length === 0) return NONE;
+      const history: LegacyHistory = {
         steps,
         cursor: Math.max(cursor, 0),
         nextSeq: state.value.nextSeq,
         highestRevision: state.value.highestRevision,
         ...(state.value.knownEdit === undefined ? {} : { knownEdit: state.value.knownEdit }),
-      });
+      };
+      return { _tag: "found", history } satisfies LegacyOutcome;
     },
   );
 
   return LegacyEditHistory.of({ read });
 });
 
-/** No import: an old project starts a fresh history from its current edit. */
+/** No probe yet (until S7V-052): every project reports "unchecked" and is looked at later. */
 export const layerNone = Layer.succeed(
   LegacyEditHistory,
   LegacyEditHistory.of({
     read: Effect.fn("LegacyEditHistory.readNone")(function* (_cwd: string) {
-      return yield* Effect.succeed(Option.none<LegacyHistory>());
+      return yield* Effect.succeed(UNCHECKED);
     }),
   }),
 );

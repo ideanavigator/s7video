@@ -516,6 +516,8 @@ describe("EditDocumentService", () => {
         assert.deepEqual(gitState(root), before);
         const log = historyLog(root)!;
         assert.strictEqual(log.format, "s7history");
+        // No probe until S7V-052: the old git history is still to be looked for later.
+        assert.strictEqual(log.legacy, "unchecked");
         assert.deepEqual(
           log.entries.map((entry) => entry.revision),
           [initial.revision, first.revision, first.revision + 1],
@@ -684,6 +686,31 @@ describe("EditDocumentService", () => {
         assert.isTrue(next.canUndo);
         const undone = yield* edits.undo(projectId);
         assert.strictEqual(readEdit(root), current);
+        assert.isFalse(undone.canUndo);
+      }),
+    ),
+  );
+
+  it.effect("refuses a change, and keeps the history, while the log cannot be read", () =>
+    withProject(({ projectId, edits, root }) =>
+      Effect.gen(function* () {
+        const initial = yield* edits.read(projectId);
+        const first = yield* edits.apply(projectId, setup, {
+          origin: "agent",
+          baseRevision: initial.revision,
+        });
+        const before = readEdit(root);
+        const log = historyLog(root);
+        const logFile = NodePath.join(root, ".s7history", "log.json");
+        NodeFS.chmodSync(logFile, 0o000);
+        const error = yield* edits
+          .apply(projectId, [keep([[0, 30]])], { origin: "agent", baseRevision: first.revision })
+          .pipe(Effect.flip, Effect.ensuring(Effect.sync(() => NodeFS.chmodSync(logFile, 0o644))));
+        assert.strictEqual(error._tag, "EditUnavailableError");
+        assert.include(error.message, "Could not read the undo history");
+        assert.strictEqual(readEdit(root), before);
+        assert.deepEqual(historyLog(root), log);
+        const undone = yield* edits.undo(projectId);
         assert.isFalse(undone.canUndo);
       }),
     ),
