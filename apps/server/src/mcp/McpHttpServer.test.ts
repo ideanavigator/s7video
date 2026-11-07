@@ -1574,15 +1574,25 @@ it.effect("lists only video tools to a video project and the usual tools to ever
           error: { code: -32602, message: "That isn't available in a video project." },
         });
       }
-      // Outside a video project the same call reaches its handler, and a code thread is still
-      // refused the video tools as unknown ones.
+      // A code thread is still refused the video tools as unknown ones.
       const codeRpc = yield* session("code");
       expect(yield* codeRpc("tools/call", { name: "video_undo", arguments: {} })).toMatchObject({
         error: { message: "Tool 'video_undo' not found" },
       });
+      // Outside a video project t3_project_list reaches its handler: the empty mock fails inside
+      // it, which is a tool result, not a JSON-RPC "not found" or video refusal.
       expect(
         yield* codeRpc("tools/call", { name: "t3_project_list", arguments: {} }),
-      ).not.toHaveProperty("error.message", "That isn't available in a video project.");
+      ).toStrictEqual({
+        jsonrpc: "2.0",
+        id: 2,
+        result: {
+          content: [
+            { type: "text", text: "Tool execution failed due to an internal server error." },
+          ],
+          isError: true,
+        },
+      });
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
