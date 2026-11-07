@@ -18,6 +18,7 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import {
   applyShellEnvironment,
   CommandAvailability,
+  GitUnavailableError,
   CommandResolutionCache,
   type CommandAvailabilityChecker,
   isCommandAvailable,
@@ -829,7 +830,11 @@ effectIt.layer(NodeServices.layer)("resolveSpawnCommand", (it) => {
         Effect.map((resolved) => resolved.command),
         Effect.provideService(HostProcess.Platform, options.platform ?? "darwin"),
         Effect.provideService(SpawnExecutableResolution, (command) =>
-          command === "git" ? options.gitOnPath : files.has(command) ? command : undefined,
+          command === "git"
+            ? options.gitOnPath || undefined
+            : files.has(command)
+              ? command
+              : undefined,
         ),
         Effect.provideService(XcodeGitLocation, () => {
           host.xcrunCalls += 1;
@@ -861,14 +866,45 @@ effectIt.layer(NodeServices.layer)("resolveSpawnCommand", (it) => {
       }).pipe(Effect.provideService(CommandResolutionCache, new Map())),
     );
 
-    it.effect("keeps git when xcrun fails or names a missing file", () =>
+    // S7V-052: Apple's stub opens the "install developer tools" dialog, so it is never the fallback.
+    it.effect("refuses git when no developer folder has one or it names a missing file", () =>
       Effect.gen(function* () {
         const failed = setup({ gitOnPath: "/usr/bin/git", xcrunGit: undefined });
-        expect(yield* failed.resolve).toBe("git");
+        const refused = yield* Effect.flip(failed.resolve);
+        expect(refused).toBeInstanceOf(GitUnavailableError);
+        expect(refused.message).toBe("Git is not installed on this Mac.");
 
         const missing = setup({ gitOnPath: "/usr/bin/git", xcrunGit: XCODE_GIT });
         missing.files.delete(XCODE_GIT);
-        expect(yield* missing.resolve).toBe("git");
+        expect(yield* Effect.flip(missing.resolve)).toBeInstanceOf(GitUnavailableError);
+
+        // A miss is not cached: the developer folder appearing later is used at once.
+        missing.files.add(XCODE_GIT);
+        expect(yield* missing.resolve).toBe(XCODE_GIT);
+      }).pipe(Effect.provideService(CommandResolutionCache, new Map())),
+    );
+
+    it.effect("refuses git with PATH empty and no developer folder", () =>
+      Effect.gen(function* () {
+        const { resolve } = setup({ gitOnPath: "", xcrunGit: undefined });
+        expect(yield* Effect.flip(resolve)).toBeInstanceOf(GitUnavailableError);
+      }).pipe(Effect.provideService(CommandResolutionCache, new Map())),
+    );
+
+    it.effect("stops using a cached PATH git once PATH only gives the stub", () =>
+      Effect.gen(function* () {
+        let gitOnPath = "/opt/homebrew/bin/git";
+        const resolve = resolveSpawnCommand("git", ["status"], { env: { PATH: "/fake/bin" } }).pipe(
+          Effect.map((resolved) => resolved.command),
+          Effect.provideService(HostProcess.Platform, "darwin"),
+          Effect.provideService(SpawnExecutableResolution, (command) =>
+            command === "git" ? gitOnPath : undefined,
+          ),
+          Effect.provideService(XcodeGitLocation, () => undefined),
+        );
+        expect(yield* resolve).toBe("git");
+        gitOnPath = "/usr/bin/git";
+        expect(yield* Effect.flip(resolve)).toBeInstanceOf(GitUnavailableError);
       }).pipe(Effect.provideService(CommandResolutionCache, new Map())),
     );
 

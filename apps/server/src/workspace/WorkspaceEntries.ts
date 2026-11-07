@@ -26,6 +26,7 @@ import { isExplicitRelativePath, isWindowsAbsolutePath } from "@t3tools/shared/p
 import { normalizeSearchQuery } from "@t3tools/shared/searchRanking";
 
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
+import { SystemGit } from "../vcs/SystemGit.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as WorkspacePaths from "./WorkspacePaths.ts";
 import * as WorkspaceSearchIndex from "./WorkspaceSearchIndex.ts";
@@ -154,6 +155,13 @@ export const make = Effect.gen(function* () {
   const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
   const workspaceSearchIndexes = yield* WorkspaceSearchIndex.WorkspaceSearchIndexMap;
   const vcsProcess = yield* VcsProcess.VcsProcess;
+  const systemGit = yield* SystemGit;
+  // Ignore classification is optional: without git (or on failure) it is skipped.
+  const whenGit = <A, E>(run: Effect.Effect<A, E>) =>
+    systemGit.status.pipe(
+      Effect.flatMap((status) => (status.available ? run : Effect.fail(undefined))),
+      Effect.orElseSucceed(() => undefined),
+    );
 
   const normalizeWorkspaceRoot = Effect.fn("WorkspaceEntries.normalizeWorkspaceRoot")(function* (
     cwd: string,
@@ -397,8 +405,8 @@ export const make = Effect.gen(function* () {
         });
         // stdin avoids argument limits; ignore classification is optional without git/repositories.
         const checkIgnore = (paths: ReadonlyArray<string>) =>
-          vcsProcess
-            .run({
+          whenGit(
+            vcsProcess.run({
               operation: "WorkspaceEntries.list",
               command: "git",
               args: ["-c", "core.fsmonitor=false", "check-ignore", "-z", "--stdin"],
@@ -407,8 +415,8 @@ export const make = Effect.gen(function* () {
               allowNonZeroExit: true,
               timeoutMs: 10_000,
               maxOutputBytes: 16 * 1024 * 1024,
-            })
-            .pipe(Effect.orElseSucceed(() => undefined));
+            }),
+          );
         // Check ignored folders once to avoid child index lookups; exit 0 guarantees no tracked descendants.
         // Symlinks and pathspec magic still need per-child checks.
         if (
@@ -457,8 +465,8 @@ export const make = Effect.gen(function* () {
     const normalizedCwd = yield* normalizeWorkspaceRoot(input.cwd);
     // `--directory` reports a folder holding nothing but ignored files as one
     // `name/` entry, which is how `node_modules` and build output drop out.
-    const result = yield* vcsProcess
-      .run({
+    const result = yield* whenGit(
+      vcsProcess.run({
         operation: "WorkspaceEntries.listIgnoredFiles",
         command: "git",
         args: [
@@ -476,8 +484,8 @@ export const make = Effect.gen(function* () {
         allowNonZeroExit: true,
         timeoutMs: 10_000,
         maxOutputBytes: 4 * 1024 * 1024,
-      })
-      .pipe(Effect.orElseSucceed(() => undefined));
+      }),
+    );
     if (!result || result.exitCode !== 0) return { files: [], truncated: false };
     const paths = result.stdout
       .split("\0")

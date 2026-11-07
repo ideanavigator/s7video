@@ -656,6 +656,11 @@ export const ServerConfig = Schema.Struct({
   /** Secret settings may point at a secret provider; older servers drop the reference. */
   secretReferences: Schema.optionalKey(Schema.Boolean),
   scratchWorkspaceRoot: Schema.optionalKey(TrimmedNonEmptyString),
+  /**
+   * Whether the host has a real git (S7V-052). `false` hides the git UI. Absent from older servers;
+   * clients then assume `true`.
+   */
+  systemGit: Schema.optionalKey(Schema.Boolean),
   newProjectsRoot: Schema.optionalKey(TrimmedNonEmptyString),
   /**
    * The latest stall long enough to notice, sent only for a few minutes after

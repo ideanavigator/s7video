@@ -1449,7 +1449,8 @@ export const makeCodexAppServerSpawnCommand = Effect.fn(
   const spawnCommand = yield* resolveSpawnCommand(launch.command, launch.args, {
     ...(input.env === undefined ? {} : { env: input.env }),
     ...(input.extendEnv === undefined ? {} : { extendEnv: input.extendEnv }),
-  });
+    // Only a Codex binary configured as `git` on a Mac without git can fail here.
+  }).pipe(Effect.orDie);
   return ChildProcess.make(spawnCommand.command, spawnCommand.args, {
     ...(input.cwd === undefined ? {} : { cwd: input.cwd }),
     ...(input.env === undefined ? {} : { env: input.env }),

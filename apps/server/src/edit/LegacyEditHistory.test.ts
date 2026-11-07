@@ -19,6 +19,9 @@ import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
+import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
+import * as SystemGit from "../vcs/SystemGit.ts";
+import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as EditDocumentService from "./EditDocumentService.ts";
 import { git, historyLog, layerEditTest, type SpawnCounter } from "./editHarness.testkit.ts";
 import * as LegacyEditHistory from "./LegacyEditHistory.ts";
@@ -95,7 +98,7 @@ interface FakeGit {
 }
 
 const withOldProject = <A, E>(
-  fake: FakeGit,
+  fake: FakeGit | { readonly server: SystemGit.SystemGitStatus },
   body: (input: {
     readonly root: string;
     readonly edits: EditDocumentService.EditDocumentService["Service"];
@@ -107,22 +110,29 @@ const withOldProject = <A, E>(
 ) => {
   const shows = { count: 0 };
   const spawns: SpawnCounter = { count: 0 };
-  const legacy = Layer.effect(
-    LegacyEditHistory.LegacyEditHistory,
-    LegacyEditHistory.make({
-      available: Effect.sync(() => fake.available),
-      show: (cwd, ref, file) =>
-        Effect.sync(() => {
-          shows.count += 1;
-          if (!fake.showWorks) return Option.none();
-          try {
-            return Option.some(git(cwd, "show", `${ref}:${file}`));
-          } catch {
-            return Option.none();
-          }
-        }),
-    }),
-  );
+  const legacy =
+    "server" in fake
+      ? // The server's wiring: SystemGit decides, the real git driver runs `git show`.
+        LegacyEditHistory.layer.pipe(
+          Layer.provide(GitVcsDriver.layer.pipe(Layer.provide(VcsProcess.layer))),
+          Layer.provide(SystemGit.layerFixed(fake.server)),
+        )
+      : Layer.effect(
+          LegacyEditHistory.LegacyEditHistory,
+          LegacyEditHistory.make({
+            available: Effect.sync(() => fake.available),
+            show: (cwd, ref, file) =>
+              Effect.sync(() => {
+                shows.count += 1;
+                if (!fake.showWorks) return Option.none();
+                try {
+                  return Option.some(git(cwd, "show", `${ref}:${file}`));
+                } catch {
+                  return Option.none();
+                }
+              }),
+          }),
+        );
   return Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
     const baseDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "s7v-legacy-" });
@@ -265,4 +275,41 @@ describe("LegacyEditHistory", () => {
       }),
     ),
   );
+
+  // S7V-052 wires the import into the server: SystemGit's probe and a real `git show`.
+  describe("as the server wires it", () => {
+    it.effect("imports once with a real git found by SystemGit", () =>
+      withOldProject(
+        { server: { available: true, path: "git" } },
+        ({ root, edits, projectId, steps }) =>
+          Effect.gen(function* () {
+            const refs = git(root, "for-each-ref", "refs/t3/edit");
+            const opened = yield* edits.read(projectId);
+            assert.isTrue(opened.canUndo && opened.canRedo);
+            assert.strictEqual(historyLog(root)!.legacy, "imported");
+            assert.strictEqual(historyLog(root)!.entries.length, 4);
+            yield* edits.undo(projectId);
+            assert.strictEqual(read(root, "edit.json"), steps[1]!.edit);
+            assert.strictEqual(git(root, "for-each-ref", "refs/t3/edit"), refs);
+          }),
+      ),
+    );
+
+    it.effect("starts fresh and spawns nothing when SystemGit finds no git", () =>
+      withOldProject(
+        { server: { available: false, path: null } },
+        ({ root, edits, projectId, spawns }) =>
+          Effect.gen(function* () {
+            const opened = yield* edits.read(projectId);
+            assert.isFalse(opened.canUndo);
+            yield* edits.apply(projectId, [keep(60)], {
+              origin: "agent",
+              baseRevision: opened.revision,
+            });
+            assert.strictEqual(historyLog(root)!.legacy, "unchecked");
+            assert.strictEqual(spawns.count, 0);
+          }),
+      ),
+    );
+  });
 });

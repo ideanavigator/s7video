@@ -57,6 +57,7 @@ import * as EditHistoryService from "./edit/EditHistoryService.ts";
 import * as EditProjectLayout from "./edit/EditProjectLayout.ts";
 import * as EditSnapshotStore from "./edit/EditSnapshotStore.ts";
 import * as LegacyEditHistory from "./edit/LegacyEditHistory.ts";
+import * as SystemGit from "./vcs/SystemGit.ts";
 import * as SourceControlBuiltInDrivers from "./sourceControl/builtInDrivers.ts";
 import * as SourceControlSignIn from "./sourceControl/SourceControlSignIn.ts";
 import { BUILT_IN_SOURCE_CONTROL_DRIVER_LIST } from "./sourceControl/sourceControlDefinitions.ts";
@@ -407,11 +408,14 @@ const layerVcs = Layer.empty.pipe(
 const layerCheckpointStore = CheckpointStore.layer.pipe(Layer.provide(layerVcsDriverRegistry));
 
 // The one writer of edit.json; WebSocket handlers and agent tools share it (S7V-024). Its history
-// needs no git (S7V-051); importing an old git history waits on S7V-052's no-spawn probe.
+// needs no git (S7V-051); an old git history is imported only once SystemGit finds git (S7V-052).
 const layerEditDocument = EditDocumentService.layer.pipe(
   Layer.provide(
     EditHistoryService.layer.pipe(
-      Layer.provide([EditSnapshotStore.layer, LegacyEditHistory.layerNone]),
+      Layer.provide([
+        EditSnapshotStore.layer,
+        LegacyEditHistory.layer.pipe(Layer.provide(GitVcsDriver.layer)),
+      ]),
     ),
   ),
   Layer.provide(EditProjectLayout.layer),
@@ -768,6 +772,8 @@ const layerMakeServer = Layer.unwrap(
       Layer.provideMerge(FetchHttpClient.layer),
       Layer.provide(VcsProcess.layer),
       Layer.provideMerge(AgentScopeLive.layer),
+      // One cached git answer for every service, probed after fixPath (S7V-052).
+      Layer.provideMerge(SystemGit.layer),
       Layer.provideMerge(layerPlatformServices),
     );
   }),

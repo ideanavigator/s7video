@@ -765,7 +765,15 @@ const launchEditorProcess = Effect.fn("externalLauncher.launchEditorProcess")(fu
     });
   }
 
-  const spawnCommand = yield* resolveSpawnCommand(launch.command, launch.args, { env });
+  const spawnCommand = yield* resolveSpawnCommand(launch.command, launch.args, { env }).pipe(
+    Effect.mapError(
+      () =>
+        new ExternalLauncherCommandNotFoundError({
+          editor: launch.editor,
+          command: launch.command,
+        }),
+    ),
+  );
   if (spawnCommand.shell && launch.args.some((arg) => WINDOWS_SHIM_UNSAFE_ARG_PATTERN.test(arg))) {
     return yield* new ExternalLauncherUnsupportedTargetError({ editor: launch.editor });
   }

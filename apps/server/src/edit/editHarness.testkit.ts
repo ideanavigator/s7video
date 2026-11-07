@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 // @effect-diagnostics nodeBuiltinImport:off -- Test helpers inspect the repo with plain git and fs calls.
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -85,11 +86,15 @@ const layerCountingSpawner = (counter: SpawnCounter) =>
   );
 
 export interface EditTestOptions {
-  /** How an old git history is read; defaults to none, as in the server until S7V-052. */
+  /** How an old git history is read; defaults to never looking. */
   readonly legacy?: Layer.Layer<
     LegacyEditHistory.LegacyEditHistory,
     never,
-    FileSystem.FileSystem | Path.Path
+    | FileSystem.FileSystem
+    | Path.Path
+    | ChildProcessSpawner.ChildProcessSpawner
+    | Crypto.Crypto
+    | ServerConfig.ServerConfig
   >;
   readonly spawns?: SpawnCounter;
 }

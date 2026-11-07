@@ -46,6 +46,14 @@ import {
 import * as VcsDriver from "./VcsDriver.ts";
 import * as VcsProcess from "./VcsProcess.ts";
 
+/** Author and committer for commits the app makes itself (checkpoints, a project's first commit). */
+export const BRAND_COMMIT_IDENTITY = {
+  GIT_AUTHOR_NAME: BRAND.app.productName,
+  GIT_AUTHOR_EMAIL: `${BRAND.app.id}@users.noreply.github.com`,
+  GIT_COMMITTER_NAME: BRAND.app.productName,
+  GIT_COMMITTER_EMAIL: `${BRAND.app.id}@users.noreply.github.com`,
+} as const;
+
 export interface ExecuteGitInput {
   readonly operation: string;
   readonly cwd: string;
@@ -916,10 +924,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       const commitEnv: NodeJS.ProcessEnv = {
         ...process.env,
         GIT_INDEX_FILE: tempIndexPath,
-        GIT_AUTHOR_NAME: BRAND.app.productName,
-        GIT_AUTHOR_EMAIL: `${BRAND.app.id}@users.noreply.github.com`,
-        GIT_COMMITTER_NAME: BRAND.app.productName,
-        GIT_COMMITTER_EMAIL: `${BRAND.app.id}@users.noreply.github.com`,
+        ...BRAND_COMMIT_IDENTITY,
       };
 
       const cleanupTempIndex = Effect.forEach(

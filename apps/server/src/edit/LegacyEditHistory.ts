@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: MIT
 /**
  * Reads the S7V-024 git edit history once for import into `.s7history/` (S7V-051 AC-7); it never
- * writes the old file or refs. Git access comes in as parameters so it is only used when S7V-052's
- * no-spawn probe finds a real git; until then the server uses `layerNone`.
+ * writes the old file or refs. Git is only used when S7V-052's no-spawn `SystemGit` probe finds a
+ * real one, because Apple's `/usr/bin/git` stub opens the "install developer tools" dialog.
  */
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -13,6 +13,8 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
+import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
+import { SystemGit } from "../vcs/SystemGit.ts";
 import { CACHE_DIR, EDIT_FILE, PROJECT_FILE, projectFileContents } from "./EditProjectLayout.ts";
 
 const LEGACY_HISTORY_FILE = "edit-history.json";
@@ -57,7 +59,7 @@ export type LegacyOutcome =
 const UNCHECKED: LegacyOutcome = { _tag: "unchecked" };
 const NONE: LegacyOutcome = { _tag: "none" };
 
-/** Git access for the import; S7V-052 provides it from `SystemGit` and `GitVcsDriver`. */
+/** Git access for the import; `layer` provides it from `SystemGit` and `GitVcsDriver`. */
 export interface LegacyGitAccess {
   /** Whether a working system git exists, decided without starting any process. */
   readonly available: Effect.Effect<boolean>;
@@ -124,7 +126,36 @@ export const make = Effect.fn("LegacyEditHistory.make")(function* (git: LegacyGi
   return LegacyEditHistory.of({ read });
 });
 
-/** No probe yet (until S7V-052): every project reports "unchecked" and is looked at later. */
+/** The server's import: `SystemGit` decides, `git show <ref>:<file>` reads. */
+export const layer = Layer.effect(
+  LegacyEditHistory,
+  Effect.gen(function* () {
+    const systemGit = yield* SystemGit;
+    const git = yield* GitVcsDriver.GitVcsDriver;
+    return yield* make({
+      available: systemGit.status.pipe(Effect.map((status) => status.available)),
+      show: (cwd, ref, file) =>
+        git
+          .execute({
+            operation: "LegacyEditHistory.show",
+            cwd,
+            args: ["show", `${ref}:${file}`],
+            allowNonZeroExit: true,
+            timeoutMs: 10_000,
+          })
+          .pipe(
+            Effect.map((result) =>
+              result.exitCode === 0 && !result.stdoutTruncated
+                ? Option.some(result.stdout)
+                : Option.none<string>(),
+            ),
+            Effect.orElseSucceed(() => Option.none<string>()),
+          ),
+    });
+  }),
+);
+
+/** Never looks: every project reports "unchecked" and is looked at later (tests). */
 export const layerNone = Layer.succeed(
   LegacyEditHistory,
   LegacyEditHistory.of({

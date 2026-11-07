@@ -84,6 +84,9 @@ from; the per-ticket entries and how this file is compiled are in
   its words are found, and reused every time you cut. (S7V-055)
 - Undo works on any Mac: the edit's undo history is kept by s7video itself in the project, so undo
   and redo need no extra tools, and saving each step is faster. (S7V-051)
+- No install prompts on a fresh Mac: s7video works without Apple's coding tools and never asks to
+  install them. Coder features that need git appear only when git is installed, and new projects no
+  longer record your name and computer name. (S7V-052)
 
 ### Removed
 
