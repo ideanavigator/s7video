@@ -6,6 +6,9 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import { ChildProcessSpawner } from "effect/process";
 
+import * as Stream from "effect/Stream";
+
+import { SystemGit } from "./SystemGit.ts";
 import * as VcsProcess from "./VcsProcess.ts";
 import * as VcsProjectConfig from "./VcsProjectConfig.ts";
 import * as VcsDriverRegistry from "./VcsDriverRegistry.ts";
@@ -61,6 +64,37 @@ describe("VcsDriverRegistry", () => {
         }),
       ),
     );
+
+  // S7V-052: worktrees, checkpoints and status all resolve through here, so none starts git.
+  it.effect("detects no repository and runs no git while the Mac has no git", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const repoDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-vcs-registry-" });
+      yield* fs.makeDirectory(path.join(repoDir, ".git"));
+      const calls: string[] = [];
+      const git = { available: false };
+      const systemGit = Effect.sync(() => ({ available: git.available, path: null }));
+
+      yield* Effect.gen(function* () {
+        const registry = yield* VcsDriverRegistry.VcsDriverRegistry;
+        assert.equal(yield* registry.detect({ cwd: repoDir }), null);
+        const refused = yield* Effect.flip(registry.resolve({ cwd: repoDir }));
+        assert.include(refused.message, "Git is not installed on this Mac.");
+        assert.deepEqual(calls, []);
+
+        git.available = true;
+        assert.equal((yield* registry.detect({ cwd: repoDir }))?.repository.rootPath, repoDir);
+      }).pipe(
+        Effect.provide(makeDiskBackedLayer(repoDir, calls)),
+        Effect.provideService(SystemGit, {
+          status: systemGit,
+          refresh: systemGit,
+          subscribeChanges: Effect.succeed(Stream.empty),
+        }),
+      );
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
 
   it.effect("detects again when a cached repository is removed from disk", () =>
     Effect.gen(function* () {
