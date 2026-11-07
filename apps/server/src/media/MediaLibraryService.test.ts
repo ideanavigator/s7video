@@ -15,6 +15,7 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -89,26 +90,40 @@ interface FakeEngine {
   proxyOutcome: Deferred.Deferred<"succeed" | "cancelled" | "failed">;
   readonly proxies: Array<MediaProxyInput>;
   readonly probed: Array<string>;
+  /** When set, probing `path` settles `seen`. */
+  probeWatch?: { readonly path: string; readonly seen: Deferred.Deferred<void> };
+  /** When set, a thumbnail signals `started`, then waits for `release` (or fails when told). */
+  thumbnailHold?: {
+    readonly started: Deferred.Deferred<void>;
+    readonly release: Deferred.Deferred<"write" | "fail">;
+  };
 }
 
 const layerFakeEngine = (fake: FakeEngine) =>
   Layer.mock(EngineService.EngineService)({
     probe: ({ path }) =>
-      Effect.suspend(() => {
+      Effect.gen(function* () {
         fake.probed.push(path);
+        if (fake.probeWatch?.path === path)
+          yield* Deferred.succeed(fake.probeWatch.seen, undefined);
         if (NodeFS.statSync(path).size === 0) {
-          return Effect.fail(
-            new EngineError({
-              reason: "rpc_error",
-              method: "media.probe",
-              rpcMessage: "ffprobe could not read the media",
-            }),
-          );
+          return yield* new EngineError({
+            reason: "rpc_error",
+            method: "media.probe",
+            rpcMessage: "ffprobe could not read the media",
+          });
         }
-        return Effect.succeed(path.endsWith(".wav") ? audioProbe(path) : videoProbe(path));
+        return path.endsWith(".wav") ? audioProbe(path) : videoProbe(path);
       }),
     thumbnail: ({ outputPath }) =>
-      Effect.sync(() => {
+      Effect.gen(function* () {
+        const hold = fake.thumbnailHold;
+        if (hold !== undefined) {
+          yield* Deferred.succeed(hold.started, undefined);
+          if ((yield* Deferred.await(hold.release)) === "fail") {
+            return yield* new EngineError({ reason: "rpc_error", method: "media.thumbnail" });
+          }
+        }
         NodeFS.mkdirSync(NodePath.dirname(outputPath), { recursive: true });
         NodeFS.writeFileSync(outputPath, Buffer.from([0xff, 0xd8, 0xff]));
         return { path: outputPath };
@@ -340,6 +355,163 @@ describe("MediaLibraryService", () => {
           [],
         );
         assert.deepEqual(fileState(clip), before);
+      }),
+    ),
+  );
+
+  it.effect("shows the row before the thumbnail is made", () =>
+    withLibrary(({ projectId, desktop, library, fake }) =>
+      Effect.gen(function* () {
+        const hold = {
+          started: yield* Deferred.make<void>(),
+          release: yield* Deferred.make<"write" | "fail">(),
+        };
+        fake.thumbnailHold = hold;
+        const clip = writeClip(desktop, "big.mp4", 21);
+        const importing = yield* library
+          .import({ projectId, sourcePath: clip, mode: "reference" })
+          .pipe(Effect.forkChild);
+        yield* Deferred.await(hold.started);
+        // While the thumbnail is still being made, the row is already in the live list.
+        const shown = yield* library.subscribe(projectId).pipe(Stream.runHead);
+        assert.deepInclude(Option.getOrUndefined(shown)?.items[0], {
+          id: "big",
+          state: "ready",
+          sizeBytes: 3 * MIB,
+          durationFrames: 300,
+          width: 1920,
+          height: 1080,
+          hasThumbnail: false,
+        });
+
+        // A subscriber that has seen the placeholder gets the thumbnail without asking again.
+        const listening = yield* Deferred.make<void>();
+        const withThumbnail = yield* library.subscribe(projectId).pipe(
+          Stream.tap(() => Deferred.succeed(listening, undefined)),
+          Stream.filter((snapshot) => snapshot.items[0]?.hasThumbnail === true),
+          Stream.runHead,
+          Effect.forkChild,
+        );
+        yield* Deferred.await(listening);
+        yield* Deferred.succeed(hold.release, "write");
+        assert.isTrue(Option.isSome(yield* Fiber.join(withThumbnail)));
+        assert.deepEqual(yield* Fiber.join(importing), { mediaId: "big" });
+      }),
+    ),
+  );
+
+  it.effect("a failed thumbnail leaves a usable row", () =>
+    withLibrary(({ projectId, desktop, library, fake }) =>
+      Effect.gen(function* () {
+        fake.thumbnailHold = {
+          started: yield* Deferred.make<void>(),
+          release: yield* Deferred.make<"write" | "fail">(),
+        };
+        yield* Deferred.succeed(fake.thumbnailHold.release, "fail");
+        const clip = writeClip(desktop, "broken.mp4", 22);
+        const result = yield* library.import({ projectId, sourcePath: clip, mode: "reference" });
+        assert.deepEqual(result, { mediaId: "broken" });
+        assert.deepInclude((yield* library.list(projectId)).items[0], {
+          id: "broken",
+          state: "ready",
+          hasThumbnail: false,
+        });
+      }),
+    ),
+  );
+
+  it.effect("probes a new import once", () =>
+    withLibrary(({ projectId, desktop, library, edits, fake }) =>
+      Effect.gen(function* () {
+        const hold = {
+          started: yield* Deferred.make<void>(),
+          release: yield* Deferred.make<"write" | "fail">(),
+        };
+        fake.thumbnailHold = hold;
+        const clip = writeClip(desktop, "once.mp4", 23);
+        const importing = yield* library
+          .import({ projectId, sourcePath: clip, mode: "reference" })
+          .pipe(Effect.forkChild);
+        yield* Deferred.await(hold.started);
+        // A clip this run never checked, after the import's: the first list checks proxies one
+        // clip at a time, so its probe means the imported clip's check has finished.
+        const other = writeClip(desktop, "later.mp4", 24);
+        const { sha256, size } = yield* MediaFiles.fingerprint(other);
+        const current = yield* edits.read(projectId);
+        yield* edits.apply(
+          projectId,
+          [
+            {
+              _tag: "putMedia",
+              media: {
+                id: "z-later",
+                kind: "video",
+                reference: other,
+                fingerprint: { sha256, size },
+                probe: toEditProbe(videoProbe(other), { num: 30, den: 1 }),
+              },
+            },
+          ],
+          { origin: "import", baseRevision: current.revision },
+        );
+        fake.probeWatch = { path: other, seen: yield* Deferred.make<void>() };
+        yield* library.list(projectId);
+        yield* Deferred.await(fake.probeWatch.seen);
+        assert.deepEqual(fake.probed, [clip, other]);
+        yield* Deferred.succeed(hold.release, "write");
+        yield* Fiber.join(importing);
+      }),
+    ),
+  );
+
+  it.effect("an import cut short after its edit lands still gets its thumbnail", () =>
+    withLibrary(({ projectId, desktop, library, fake }) =>
+      Effect.gen(function* () {
+        const hold = {
+          started: yield* Deferred.make<void>(),
+          release: yield* Deferred.make<"write" | "fail">(),
+        };
+        fake.thumbnailHold = hold;
+        const clip = writeClip(desktop, "quit.mp4", 25);
+        const importing = yield* library
+          .import({ projectId, sourcePath: clip, mode: "reference" })
+          .pipe(Effect.forkChild);
+        yield* Deferred.await(hold.started);
+        yield* Fiber.interrupt(importing);
+        const listening = yield* Deferred.make<void>();
+        const withThumbnail = yield* library.subscribe(projectId).pipe(
+          Stream.tap(() => Deferred.succeed(listening, undefined)),
+          Stream.filter((snapshot) => snapshot.items[0]?.hasThumbnail === true),
+          Stream.runHead,
+          Effect.forkChild,
+        );
+        yield* Deferred.await(listening);
+        yield* Deferred.succeed(hold.release, "write");
+        assert.deepInclude(Option.getOrUndefined(yield* Fiber.join(withThumbnail))?.items[0], {
+          id: "quit",
+          hasThumbnail: true,
+        });
+      }),
+    ),
+  );
+
+  it.effect("re-importing a clip makes its missing thumbnail", () =>
+    withLibrary(({ projectId, desktop, library, fake }) =>
+      Effect.gen(function* () {
+        fake.thumbnailHold = {
+          started: yield* Deferred.make<void>(),
+          release: yield* Deferred.make<"write" | "fail">(),
+        };
+        yield* Deferred.succeed(fake.thumbnailHold.release, "fail");
+        const clip = writeClip(desktop, "retry.mp4", 26);
+        yield* library.import({ projectId, sourcePath: clip, mode: "reference" });
+        assert.isFalse((yield* library.list(projectId)).items[0]!.hasThumbnail);
+        delete fake.thumbnailHold;
+        assert.deepEqual(
+          yield* library.import({ projectId, sourcePath: clip, mode: "reference" }),
+          { mediaId: "retry" },
+        );
+        assert.isTrue((yield* library.list(projectId)).items[0]!.hasThumbnail);
       }),
     ),
   );

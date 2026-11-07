@@ -1,19 +1,24 @@
 // SPDX-FileCopyrightText: 2026 s7video contributors
 // SPDX-License-Identifier: MIT
-// Silence removal (S7V-027): reads a clip's cached transcript and its per-frame sound levels
-// (`silence.detect`), plans keep ranges (`silencePlan.ts`) and writes them as one `setKeepRanges`
-// through EditDocumentService, so the cut is one checkpoint and a repeat changes nothing.
+// Silence removal (S7V-027): reads a clip's cached transcript and its per-frame sound levels,
+// plans keep ranges (`silencePlan.ts`) and writes them as one `setKeepRanges` through
+// EditDocumentService, so the cut is one checkpoint and a repeat changes nothing. The levels come
+// from the file the transcribe job writes beside the transcript; when it is missing, a `silence`
+// engine job measures them once and writes it (S7V-055).
 import {
   type EditDocument,
   type EditMedia,
   type EditOp,
   type EngineError,
+  type EngineJobId,
   type ProjectId,
   SilenceCutError,
   SilenceDetectResult,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
@@ -22,6 +27,7 @@ import * as EngineService from "../engine/EngineService.ts";
 import { projectFor, resolveMedia } from "../mcp/VideoProjectScope.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as TranscriptService from "../transcript/TranscriptService.ts";
+import { canvasForClip } from "./canvasForClip.ts";
 import * as EditDocumentService from "./EditDocumentService.ts";
 import { DEFAULT_MIN_GAP_SECONDS, type FrameRange, planSilenceCuts } from "./silencePlan.ts";
 
@@ -46,6 +52,18 @@ export interface RemoveSilencesResult {
   readonly revision: number;
   /** False when the edit already had exactly these cuts, or there was nothing to cut. */
   readonly changed: boolean;
+}
+
+/**
+ * How long one call waits for a `silence` job before handing its id back: under Codex's 60 s tool
+ * limit. A 30-minute clip measures in about 1 s on an M-series Mac (S7V-055).
+ */
+const MEASURE_WAIT = "20 seconds";
+
+/** A running `silence` job: its id once the engine has it, and its outcome. */
+interface Measuring {
+  readonly started: Deferred.Deferred<EngineJobId, EngineError>;
+  readonly result: Deferred.Deferred<SilenceDetectResult, EngineError>;
 }
 
 export class SilenceCutService extends Context.Service<
@@ -144,12 +162,68 @@ const make = Effect.gen(function* () {
   const edits = yield* EditDocumentService.EditDocumentService;
   const engine = yield* EngineService.EngineService;
   const transcripts = yield* TranscriptService.TranscriptService;
+  const serviceScope = yield* Effect.scope;
+  // One `silence` job per clip at a time: a call made while it runs waits on the same job.
+  const measuring = new Map<string, Measuring>();
   const context = yield* Effect.context<
     | ProjectService.ProjectService
     | EditDocumentService.EditDocumentService
     | FileSystem.FileSystem
     | Path.Path
   >();
+
+  /** Measures the clip's levels as a job (it writes the levels file); waits `MEASURE_WAIT` for it. */
+  const measure = Effect.fnUntraced(function* (
+    mediaId: string,
+    source: TranscriptService.TranscriptLevels["measure"],
+  ) {
+    const key = `${source.cacheDir}\0${source.fingerprint.sha256}`;
+    let entry = measuring.get(key);
+    if (entry === undefined) {
+      // In the map before the job has its id, so a call arriving meanwhile joins this one.
+      const own: Measuring = { started: Deferred.makeUnsafe(), result: Deferred.makeUnsafe() };
+      entry = own;
+      const job = engine
+        .runJob({
+          kind: "silence",
+          method: "silence.detect",
+          params: { path: source.path, cacheDir: source.cacheDir, fingerprint: source.fingerprint },
+          success: SilenceDetectResult,
+          projectId: source.projectId,
+          onStart: (id) => Deferred.succeed(own.started, id).pipe(Effect.asVoid),
+        })
+        .pipe(
+          Effect.onExit((exit) =>
+            Effect.suspend(() => {
+              if (measuring.get(key) === own) measuring.delete(key);
+              return Deferred.done(own.result, exit).pipe(
+                Effect.andThen(
+                  Exit.isFailure(exit) ? Deferred.failCause(own.started, exit.cause) : Effect.void,
+                ),
+              );
+            }),
+          ),
+          // The job itself stays interruptible (the service's scope ends it on shutdown).
+          Effect.interruptible,
+        );
+      // Set and fork as one step: a caller cut off between them would leave an entry with no
+      // job, and every later call for the clip would wait on it forever. In the service's scope,
+      // so the job keeps going when this call stops waiting or is cut off.
+      yield* Effect.uninterruptible(
+        Effect.suspend(() => {
+          measuring.set(key, own);
+          return Effect.forkIn(job, serviceScope);
+        }),
+      );
+    }
+    const done = yield* Deferred.await(entry.result).pipe(Effect.timeoutOption(MEASURE_WAIT));
+    if (done._tag === "Some") return done.value;
+    const jobId = yield* Deferred.await(entry.started);
+    return yield* refuse(
+      "measuring",
+      `Measuring the sound of ${mediaId} first (video job ${jobId}). Wait for it with video_job_status, then call video_remove_silences again.`,
+    );
+  });
 
   const removeSilences = Effect.fn("SilenceCutService.removeSilences")(function* (
     input: RemoveSilencesInput,
@@ -172,27 +246,27 @@ const make = Effect.gen(function* () {
         `${media.id} has linked sound on another track; silence removal cannot cut it yet.`,
       );
     }
-    const scoped = yield* resolveMedia(project, media.id).pipe(
+    yield* resolveMedia(project, media.id).pipe(
       Effect.mapError(scopeFailure),
       Effect.provideContext(context),
     );
-    const transcript = yield* transcripts
-      .get({ projectId: input.projectId, media: media.id })
+    const found = yield* transcripts
+      .levels({ projectId: input.projectId, media: media.id })
       .pipe(Effect.mapError((error) => refuse("no-transcript", error.message)));
+    const { transcript } = found;
     if (transcript === null) {
       return yield* refuse(
         "no-transcript",
         `${media.id} has no transcript yet. Run video_transcribe first.`,
       );
     }
-    const detected = yield* engine.call(
-      "silence.detect",
-      { path: scoped.path },
-      SilenceDetectResult,
-    );
-    const sameRate =
-      detected.rate.num * transcript.fps.den === transcript.fps.num * detected.rate.den;
-    if (!sameRate) {
+    // The cached file was already checked against the transcript (file, rate and frame count).
+    const detected = found.cached ?? (yield* measure(media.id, found.measure));
+    const detectedRate = "fps" in detected ? detected.fps : detected.rate;
+    const sameClock =
+      detectedRate.num * transcript.fps.den === transcript.fps.num * detectedRate.den &&
+      detected.durationFrames === transcript.durationFrames;
+    if (!sameClock) {
       return yield* refuse(
         "no-transcript",
         `${media.id} changed since it was transcribed. Run video_transcribe again.`,
@@ -238,17 +312,32 @@ const make = Effect.gen(function* () {
       keptSegments: plan.ranges.length,
       shortestSegmentFrames: plan.shortestFrames,
       keptRequests: plan.keptRequests,
-      message:
+      message: [
         plan.cuts === 0
           ? "No more pauses to cut; the edit is unchanged."
           : `Removed ${seconds(plan.removedFrames)} s in ${plan.cuts} cuts${plan.keptRequests > 0 ? `, keeping ${plan.keptRequests} pause(s) as asked` : ""}. This only cuts more; it never restores earlier cuts.`,
+        ...alreadyCutSentence(plan.alreadyCut),
+      ].join(" "),
     };
     // Nothing new to remove: the edit stays exactly as it is.
     if (plan.cuts === 0) return { ...summary, revision, changed: false };
+    // The first clip on an empty timeline gives the edit its shape, in the same checkpoint, unless
+    // the user already chose one (S7V-061).
+    const empty = document.tracks.every(
+      (track) => track.kind !== "video" || track.items.length === 0,
+    );
+    const chosen = document.metadata.canvasChosen === true;
+    const canvas = empty && !chosen ? canvasForClip(media.probe) : undefined;
+    const reshape =
+      canvas === undefined ||
+      (canvas.width === document.canvas.width && canvas.height === document.canvas.height)
+        ? []
+        : [{ _tag: "setCanvas", canvas, fromClip: true } as const];
     const after = yield* edits.apply(
       input.projectId,
       [
         ...target.addTrack,
+        ...reshape,
         {
           _tag: "setKeepRanges",
           trackId: target.trackId,
@@ -264,5 +353,21 @@ const make = Effect.gen(function* () {
 
   return SilenceCutService.of({ removeSilences });
 });
+
+/** One sentence naming requested keeps that lie in an earlier cut, or none. */
+function alreadyCutSentence(ranges: ReadonlyArray<FrameRange>): string[] {
+  if (ranges.length === 0) return [];
+  const names = ranges.map((range) => `${range.fromFrame}-${range.toFrame}`);
+  const list =
+    names.length === 1 ? names[0] : `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`;
+  // One undo may only take back this call's cuts, so the hint never promises that.
+  return ranges.length === 1
+    ? [
+        `The pause you asked to keep at clip frames ${list} was cut by an earlier edit, so it stays cut. To get it back, undo until that pause plays again, then ask to keep it.`,
+      ]
+    : [
+        `The pauses you asked to keep at clip frames ${list} were cut by an earlier edit, so they stay cut. To get them back, undo until those pauses play again, then ask to keep them.`,
+      ];
+}
 
 export const layer = Layer.effect(SilenceCutService, make);

@@ -6,6 +6,8 @@
  * README.md for how to run it and add cases.
  */
 import * as NodeChildProcess from "node:child_process";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
 import * as NodeUtil from "node:util";
 import * as NodeVM from "node:vm";
 import * as NodeZlib from "node:zlib";
@@ -59,6 +61,7 @@ import {
   PullRequestsToolkit,
 } from "../../apps/server/src/mcp/toolkits/pullRequests/tools.ts";
 import { ThreadToolkit } from "../../apps/server/src/mcp/toolkits/thread/tools.ts";
+import { VideoToolkit } from "../../apps/server/src/mcp/toolkits/video/tools.ts";
 import { WorktreeToolkit } from "../../apps/server/src/mcp/toolkits/worktree/tools.ts";
 import {
   CLAUDE_PROVIDER,
@@ -76,6 +79,7 @@ import {
 } from "./devices.ts";
 /** Agent models by id, with the display name a harness gives them. */
 const MODELS = {
+  "claude-haiku-5-5": "Haiku 5.5",
   "claude-sonnet-5-5": "Sonnet 5.5",
   "claude-opus-5-5": "Opus 5.5",
   "gpt-6.1-sol": "GPT-6.1 Sol",
@@ -241,6 +245,8 @@ export const McpToolUseCase = Schema.Struct({
     harness: Schema.optional(Schema.Literals(["claude", "codex"])),
     /** The Linked environments beta is on, so T3 lists its link tools. */
     linkedEnvironments: Schema.optional(Schema.Boolean),
+    /** A video project (s7video): T3 lists its video tools and text, and its built-in skills. */
+    video: Schema.optional(Schema.Boolean),
     /** delegate_task `role` for a delegated child. T3 builds the child's first message from it. */
     delegateRole: Schema.optional(OrchestratorMcpTaskRole),
     context: Schema.optional(Schema.String),
@@ -385,6 +391,7 @@ const t3SourceTools: ReadonlyArray<Tool.Any> = [
   PreviewToolkit,
   DeviceToolkit,
   HtmlToolkit,
+  VideoToolkit,
 ].flatMap((toolkit): ReadonlyArray<Tool.Any> => Object.values(toolkit.tools));
 // McpHttpServer decodes arguments with each tool's JSON codec, which drops undeclared keys.
 const t3InputDecoders = new Map(
@@ -412,10 +419,17 @@ const enabledWhen = (predicate: () => boolean) =>
 const hiddenFromSubagents = enabledWhen(McpInvocationContext.hiddenFromSubagents);
 // The Linked environments beta starts off, and T3 lists its tools only while it is on.
 const hiddenWhileLinksOff = enabledWhen(McpInvocationContext.hiddenWhileLinksOff);
-const visibleT3Tools = (options: { readonly subagent?: boolean; readonly links?: boolean }) =>
+// T3 lists the video tools only to a thread in a video project.
+const hiddenWithoutVideo = enabledWhen(McpInvocationContext.hiddenWithoutVideo);
+const visibleT3Tools = (options: {
+  readonly subagent?: boolean;
+  readonly links?: boolean;
+  readonly video?: boolean;
+}) =>
   t3Tools.filter(
     (tool) =>
       (options.links === true || !hiddenWhileLinksOff.has(tool.name)) &&
+      (options.video === true || !hiddenWithoutVideo.has(tool.name)) &&
       !(options.subagent === true && hiddenFromSubagents.has(tool.name)),
   );
 
@@ -423,7 +437,7 @@ const visibleT3Tools = (options: { readonly subagent?: boolean; readonly links?:
  * T3's Claude Code options for an eval thread: its system prompt append and its hooks. `device` says
  * whether the thread holds the `device` capability, as agent device access decides.
  */
-const claudeQueryOptions = (model: Model, device = true) => {
+const claudeQueryOptions = (model: Model, device = true, video = false) => {
   // Refs whose device text follows the capability read deviceToolsAvailable; older ones ignore it.
   const input: Parameters<typeof makeClaudeQueryOptions>[0] & {
     readonly deviceToolsAvailable?: boolean;
@@ -434,13 +448,14 @@ const claudeQueryOptions = (model: Model, device = true) => {
     cwd: null,
     mcpServers: { "t3-code": { type: "http", url: "http://127.0.0.1/mcp" } },
     deviceToolsAvailable: device,
+    videoToolsAvailable: video,
   };
   return makeClaudeQueryOptions(input);
 };
 
 /** Text T3 appends to Claude Code's system prompt. Delegated children get the same text. */
-export const t3SystemAppend = (model: Model, device = true) => {
-  const { systemPrompt } = claudeQueryOptions(model, device);
+export const t3SystemAppend = (model: Model, device = true, video = false) => {
+  const { systemPrompt } = claudeQueryOptions(model, device, video);
   if (isRecord(systemPrompt) && systemPrompt.type === "preset" && systemPrompt.append) {
     return systemPrompt.append;
   }
@@ -527,6 +542,8 @@ export const buildBase = (
     readonly nativeSubagent?: boolean;
     /** false: the thread has no agent device access, so T3's text leaves devices out. */
     readonly deviceAccess?: boolean;
+    /** A video project: T3 adds its video tools and text. */
+    readonly video?: boolean;
   },
 ) => {
   const t3 = visibleT3Tools(options);
@@ -545,7 +562,9 @@ export const buildBase = (
   const nativeDeferred = deferredList.split("\n").filter((name) => name && !isT3Name(name));
   const names = [...nativeDeferred, ...t3.map((tool) => tool.name)].toSorted().join("\n");
   const { model } = options;
-  const append = options.nativeSubagent ? "" : t3SystemAppend(model, options.deviceAccess);
+  const append = options.nativeSubagent
+    ? ""
+    : t3SystemAppend(model, options.deviceAccess, options.video);
   const modelLine = `You are powered by the model named ${MODELS[model]}. The exact model ID is ${model}.`;
   const joined = systemTexts.join("\n");
   // The capture's home directory names its user. Cases use `/home/user` paths instead.
@@ -873,7 +892,10 @@ export const buildMessages = (sample: Sample) => {
       : undefined,
     context,
   ];
-  const reminders = base.reminders.toSpliced(base.gitStatusAt, 0, reminder(gitStatus(testCase)));
+  const reminders = [
+    ...base.reminders.toSpliced(base.gitStatusAt, 0, reminder(gitStatus(testCase))),
+    ...(testCase.setup.video === true ? [reminder(builtInSkillListing())] : []),
+  ];
   push("user", ...reminders, ...notes.flatMap((note) => (note ? [reminder(note)] : [])));
   const toolSearch = findTool(base, "ToolSearch")?.name ?? "ToolSearch";
   let nextId = 0;
@@ -1207,12 +1229,45 @@ const searchTools = (base: Base, query: string, max: number) => {
   return found.toSorted((a, b) => hits(b).length - hits(a).length).slice(0, max);
 };
 
+/**
+ * s7video's built-in skills, read from this checkout: Claude Code lists them as
+ * `- plugin:name: description` in video projects and loads a body when the agent calls Skill.
+ */
+const BUILT_IN_SKILLS_DIR = NodePath.join(import.meta.dirname, "../../apps/server/skills");
+const builtInSkills = (() => {
+  const plugin = JSON.parse(
+    NodeFS.readFileSync(NodePath.join(BUILT_IN_SKILLS_DIR, ".claude-plugin/plugin.json"), "utf8"),
+  ) as { readonly name: string };
+  const root = NodePath.join(BUILT_IN_SKILLS_DIR, "skills");
+  return NodeFS.readdirSync(root).flatMap((folder) => {
+    const file = NodePath.join(root, folder, "SKILL.md");
+    if (!NodeFS.existsSync(file)) return [];
+    const [, front = "", body = ""] = NodeFS.readFileSync(file, "utf8").split(/^---$/mu);
+    const field = (key: string) => new RegExp(`^${key}: (.+)$`, "mu").exec(front)?.[1] ?? "";
+    return [
+      {
+        name: `${plugin.name}:${field("name")}`,
+        description: field("description"),
+        body: body.trim(),
+      },
+    ];
+  });
+})();
+export const builtInSkillListing = () =>
+  `The following skills are available for use with the Skill tool:\n\n${builtInSkills.map((skill) => `- ${skill.name}: ${skill.description}`).join("\n")}`;
+
 const SUBAGENT_WATCH_ERROR =
   "This thread is a subagent, so it cannot watch pull requests. Its parent thread owns the pull request: finish your task and report back instead.";
 
 /** Result for a native tool the case does not mock, other than shell, file, and web tools. */
 const nativeResult = (name: string, input: Readonly<Record<string, unknown>>) => {
-  const skill = valueText(input.skill);
+  const skill = valueText(input.skill).replace(/^\//u, "");
+  const builtIn = builtInSkills.find(
+    (entry) => entry.name === skill || entry.name.endsWith(`:${skill}`),
+  );
+  if (name === "Skill" && builtIn !== undefined) {
+    return `Launching skill: ${builtIn.name}\n\n${builtIn.body}`;
+  }
   const results: Readonly<Record<string, string>> = {
     Agent: "The agent finished. Summary: the task is done and nothing else needs attention.",
     Skill: `Launching skill: ${skill}\n\nBase directory for this skill: ~/.claude/skills/${skill}\n\nThis skill adds no steps for this task. Do it with your usual tools.`,
@@ -2049,6 +2104,7 @@ const main = Effect.gen(function* () {
     role: McpToolUseCase["setup"]["role"],
     deviceAccess: boolean,
     links: boolean,
+    video = false,
   ): Effect.Effect<Base, Schema.SchemaError> =>
     codex
       ? decodeCodexCapture(template).pipe(
@@ -2072,6 +2128,7 @@ const main = Effect.gen(function* () {
               nativeSubagent: role === "native-subagent",
               links,
               deviceAccess,
+              video,
             });
             return role === "native-subagent"
               ? Effect.promise(() => t3SubagentContext(flags.model, deviceAccess)).pipe(
@@ -2082,18 +2139,19 @@ const main = Effect.gen(function* () {
         );
   // Codex has no native subagents; its cases with that role run as top-level threads.
   const baseKey = ({ setup }: McpToolUseCase) =>
-    `${codex && setup.role === "native-subagent" ? "top" : setup.role}:${setup.world?.deviceAgentAccess !== false}:${setup.linkedEnvironments === true}`;
+    `${codex && setup.role === "native-subagent" ? "top" : setup.role}:${setup.world?.deviceAgentAccess !== false}:${setup.linkedEnvironments === true}:${setup.video === true}`;
   const base = yield* buildFor("top", true, false);
-  const bases = new Map<string, Base>([["top:true:false", base]]);
+  const bases = new Map<string, Base>([["top:true:false:false", base]]);
   for (const testCase of selected) {
     const key = baseKey(testCase);
     if (bases.has(key)) continue;
-    const [role = "top", access, links] = key.split(":") as [
+    const [role = "top", access, links, video] = key.split(":") as [
       McpToolUseCase["setup"]["role"],
       string,
       string,
+      string,
     ];
-    bases.set(key, yield* buildFor(role, access === "true", links === "true"));
+    bases.set(key, yield* buildFor(role, access === "true", links === "true", video === "true"));
   }
   const baseFor = (testCase: McpToolUseCase) => bases.get(baseKey(testCase)) ?? base;
   const effort = flags.effort ?? base.codex?.reasoning.effort ?? "high";

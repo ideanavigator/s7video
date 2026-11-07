@@ -85,17 +85,83 @@ const client = McpSchema.McpServerClient.of({
   getClient: Effect.die("unused"),
 });
 
+/** Runs once, right after the next `read` returns: a write landing between a tool's read and its step. */
+interface ReadHook {
+  afterRead: Effect.Effect<void> | undefined;
+}
+
+/** A wide 300-frame clip with three spoken phrases and room tone between them (S7V-061). */
+const wideClip = {
+  ...media,
+  probe: { durationFrames: 300, hasVideo: true, hasAudio: true, width: 1894, height: 1080 },
+} as const;
+const PHRASES = [
+  [30, 90],
+  [120, 180],
+  [210, 270],
+] as const;
+const LEVELS = Array.from({ length: 300 }, (_, frame) =>
+  PHRASES.some(([from, to]) => from <= frame && frame < to) ? -18 : -50,
+);
+// One `levels` read gives the transcript and its cached levels, as S7V-055 reads them, so no
+// measuring job runs; any engine call would be a regression.
+const spokenClip = Layer.mergeAll(
+  Layer.mock(EngineService.EngineService)({
+    subscribeJobs: Stream.make({ type: "snapshot" as const, jobs: [] }),
+    recentJobs: Effect.succeed([]),
+    call: (method) => Effect.die(`unexpected quick call ${method}`),
+    runJob: (input) => Effect.die(`unexpected job ${input.method}`),
+  }),
+  Layer.mock(TranscriptService.TranscriptService)({
+    levels: () =>
+      Effect.succeed({
+        transcript: {
+          transcriptVersion: 1,
+          mediaFingerprint: wideClip.fingerprint,
+          model: "test",
+          revision: "test",
+          fps: { num: 30, den: 1 },
+          durationFrames: 300,
+          words: PHRASES.map(([startFrame, endFrame], index) => ({
+            text: `w${index}`,
+            startFrame,
+            endFrame,
+            confidence: null,
+            speaker: "S1",
+          })),
+          createdAt: "2026-11-07T00:00:00.000Z",
+        },
+        cached: {
+          levelsVersion: 1 as const,
+          mediaFingerprint: wideClip.fingerprint,
+          fps: { num: 30, den: 1 },
+          durationFrames: 300,
+          levels: LEVELS,
+        },
+        measure: {
+          projectId: "project" as ProjectId,
+          path: "/project/assets/cam.mp4",
+          cacheDir: "/project/.s7cache/transcripts",
+          fingerprint: wideClip.fingerprint,
+        },
+      }),
+  }),
+);
+
 /** The real edit services over git in a temp home, behind the video toolkit. */
 const withProject = <A, E>(
   body: (input: {
     readonly root: string;
     readonly thread: Thread;
+    readonly hook: ReadHook;
     readonly edits: EditDocumentService.EditDocumentService["Service"];
     readonly call: (
       name: string,
       args?: Record<string, unknown>,
     ) => Effect.Effect<McpSchema.CallToolResult, McpSchema.InternalError | McpSchema.InvalidParams>;
   }) => Effect.Effect<A, E, never>,
+  /** "real": the real SilenceCutService over a scripted transcript and sound levels. */
+  silences: "mock" | "real" = "mock",
 ) =>
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
@@ -105,6 +171,23 @@ const withProject = <A, E>(
       interactionMode: "default",
       capabilities: ["orchestration", "video"],
     };
+    const hook: ReadHook = { afterRead: undefined };
+    const editLayer = Layer.effect(
+      EditDocumentService.EditDocumentService,
+      Effect.map(EditDocumentService.EditDocumentService, (real) =>
+        EditDocumentService.EditDocumentService.of({
+          ...real,
+          read: (projectId) =>
+            real.read(projectId).pipe(
+              Effect.tap(() => {
+                const after = hook.afterRead;
+                hook.afterRead = undefined;
+                return after ?? Effect.void;
+              }),
+            ),
+        }),
+      ),
+    ).pipe(Layer.provideMerge(layerEditTest(baseDir)));
     const services = Layer.mergeAll(
       Layer.mock(ThreadManagementService.ThreadManagementService)({
         getThreadShell: (id) =>
@@ -115,15 +198,19 @@ const withProject = <A, E>(
             projectId: thread.projectId,
           })),
       }),
-      Layer.mock(EngineService.EngineService)({
-        subscribeJobs: Stream.make({ type: "snapshot" as const, jobs: [] }),
-        recentJobs: Effect.succeed([]),
-      }),
       Layer.mock(ExportService.ExportService)({}),
       Layer.mock(MediaLibraryService.MediaLibraryService)({}),
-      Layer.mock(TranscriptService.TranscriptService)({}),
-      Layer.mock(SilenceCutService.SilenceCutService)({}),
-    ).pipe(Layer.provideMerge(layerEditTest(baseDir)));
+      silences === "real"
+        ? SilenceCutService.layer.pipe(Layer.provideMerge(spokenClip))
+        : Layer.mergeAll(
+            Layer.mock(EngineService.EngineService)({
+              subscribeJobs: Stream.make({ type: "snapshot" as const, jobs: [] }),
+              recentJobs: Effect.succeed([]),
+            }),
+            Layer.mock(TranscriptService.TranscriptService)({}),
+            Layer.mock(SilenceCutService.SilenceCutService)({}),
+          ),
+    ).pipe(Layer.provideMerge(editLayer));
     return yield* Effect.gen(function* () {
       const folders = yield* ManagedProjectFolders.ManagedProjectFolders;
       const edits = yield* EditDocumentService.EditDocumentService;
@@ -137,7 +224,7 @@ const withProject = <A, E>(
             Effect.provideService(McpInvocationContext.McpInvocationContext, scopeFor(thread)),
             Effect.provideService(McpSchema.McpServerClient, client),
           );
-      return yield* body({ root: created.workspaceRoot, thread, edits, call });
+      return yield* body({ root: created.workspaceRoot, thread, hook, edits, call });
     }).pipe(
       Effect.provide(
         McpHttpServer.layerVideoToolkit.pipe(
@@ -192,6 +279,153 @@ describe("video_undo and video_redo", () => {
     ),
   );
 
+  // S7V-063: undo keeps clips in Assets (S7V-059), so stepping back past an import changes nothing.
+  it.effect("video_undo says when a step changes nothing on the timeline", () =>
+    withProject(({ root, thread, edits, call }) =>
+      Effect.gen(function* () {
+        const initial = yield* edits.read(thread.projectId);
+        const imported = yield* edits.apply(thread.projectId, [{ _tag: "putMedia", media }], {
+          origin: "agent",
+          baseRevision: initial.revision,
+        });
+        const before = readFile(root, "edit.json");
+
+        const undo = yield* call("video_undo");
+        expect(undo.isError).toBe(false);
+        expect(readFile(root, "edit.json")).toBe(before);
+        const revision = (yield* edits.read(thread.projectId)).revision;
+        expect(revision).not.toBe(imported.revision);
+        expect(undo.structuredContent).toEqual({
+          revision,
+          message:
+            "Nothing on the timeline changed: that step only added or removed a clip in Assets, and clips stay in Assets when you undo or redo. There is nothing more to undo.",
+        });
+        const restored = JSON.parse(readFile(root, "edit.json"));
+        expect(restored.media.map((entry: { id: string }) => entry.id)).toEqual(["cam"]);
+      }),
+    ),
+  );
+
+  it.effect("video_redo says when a step changes nothing on the timeline", () =>
+    withProject(({ root, thread, edits, call }) =>
+      Effect.gen(function* () {
+        const initial = yield* edits.read(thread.projectId);
+        yield* edits.apply(thread.projectId, [{ _tag: "putMedia", media }], {
+          origin: "agent",
+          baseRevision: initial.revision,
+        });
+        yield* call("video_undo");
+        const before = readFile(root, "edit.json");
+
+        const redo = yield* call("video_redo");
+        expect(redo.isError).toBe(false);
+        expect(readFile(root, "edit.json")).toBe(before);
+        const revision = (yield* edits.read(thread.projectId)).revision;
+        expect(redo.structuredContent).toEqual({
+          revision,
+          message:
+            "Nothing on the timeline changed: that step only added or removed a clip in Assets, and clips stay in Assets when you undo or redo. There is nothing more to redo.",
+        });
+      }),
+    ),
+  );
+
+  it.effect("a no-op undo with more history left says undo again", () =>
+    withProject(({ root, thread, edits, call }) =>
+      Effect.gen(function* () {
+        const initial = yield* edits.read(thread.projectId);
+        const first = yield* edits.apply(thread.projectId, [...setup, keep([[0, 300]])], {
+          origin: "agent",
+          baseRevision: initial.revision,
+        });
+        yield* edits.apply(
+          thread.projectId,
+          [{ _tag: "putMedia", media: { ...media, id: "mic", path: "assets/mic.mp4" } }],
+          { origin: "agent", baseRevision: first.revision },
+        );
+
+        const noop = yield* call("video_undo");
+        expect(textOf(noop).join("")).toContain(
+          "Nothing on the timeline changed: that step only added or removed a clip in Assets, and clips stay in Assets when you undo or redo. Say undo again to go back further.",
+        );
+        const real = yield* call("video_undo");
+        expect(textOf(real).join("")).toContain("Undone. The edit is now revision");
+        const restored = JSON.parse(readFile(root, "edit.json"));
+        expect(restored.tracks).toEqual([]);
+        expect(restored.media.map((entry: { id: string }) => entry.id)).toEqual(["cam", "mic"]);
+
+        // One redo per undo: the first comes back to the edit, the second over the no-op import.
+        const redone = yield* call("video_redo");
+        expect(textOf(redone).join("")).toContain("Redone. The edit is now revision");
+        const again = yield* call("video_redo");
+        expect(textOf(again).join("")).toContain(
+          "Nothing on the timeline changed: that step only added or removed a clip in Assets, and clips stay in Assets when you undo or redo. There is nothing more to redo.",
+        );
+      }),
+    ),
+  );
+
+  // S7V-063 review: undo and redo put kept clips at the end, so order alone is not a change.
+  it.effect("a redo of an Assets removal that only reorders clips says nothing changed", () =>
+    withProject(({ root, thread, edits, call }) =>
+      Effect.gen(function* () {
+        const initial = yield* edits.read(thread.projectId);
+        const both = yield* edits.apply(
+          thread.projectId,
+          [
+            { _tag: "putMedia", media },
+            { _tag: "putMedia", media: { ...media, id: "mic", path: "assets/mic.mp4" } },
+          ],
+          { origin: "agent", baseRevision: initial.revision },
+        );
+        yield* edits.apply(thread.projectId, [{ _tag: "removeMedia", mediaId: "cam" }], {
+          origin: "agent",
+          baseRevision: both.revision,
+        });
+
+        const undo = yield* call("video_undo");
+        expect(textOf(undo).join("")).toContain("Undone. The edit is now revision");
+        const redo = yield* call("video_redo");
+        const ids = JSON.parse(readFile(root, "edit.json")).media.map(
+          (entry: { id: string }) => entry.id,
+        );
+        expect(ids).toEqual(["mic", "cam"]);
+        expect(textOf(redo).join("")).toContain(
+          "Nothing on the timeline changed: that step only added or removed a clip in Assets, and clips stay in Assets when you undo or redo. There is nothing more to redo.",
+        );
+      }),
+    ),
+  );
+
+  // S7V-063 review: "changed" is decided inside the service's lock, not from the tool's earlier read.
+  it.effect("an undo of a write that landed after the tool read the edit says Undone", () =>
+    withProject(({ thread, hook, edits, call }) =>
+      Effect.gen(function* () {
+        const initial = yield* edits.read(thread.projectId);
+        const first = yield* edits.apply(thread.projectId, [...setup, keep([[0, 300]])], {
+          origin: "agent",
+          baseRevision: initial.revision,
+        });
+        let landed = false;
+        hook.afterRead = edits
+          .apply(thread.projectId, [keep([[0, 90]])], {
+            origin: "timeline",
+            baseRevision: first.revision,
+          })
+          .pipe(
+            Effect.tap(() => Effect.sync(() => (landed = true))),
+            Effect.orDie,
+          );
+
+        // The tool saw the 300-frame edit; the timeline write makes it 90; the undo restores 300.
+        const undo = yield* call("video_undo");
+        expect(landed).toBe(true);
+        expect(textOf(undo).join("")).toContain("Undone. The edit is now revision");
+        expect(textOf(undo).join("")).toContain("1 item on 1 track, 300 frames");
+      }),
+    ),
+  );
+
   it.effect("should report nothing to undo or redo and change nothing", () =>
     withProject(({ root, call }) =>
       Effect.gen(function* () {
@@ -225,6 +459,7 @@ describe("video_undo and video_redo", () => {
           ["video_redo", {}],
           ["video_remove_silences", {}],
           ["video_export", {}],
+          ["video_canvas", { ratio: "1:1" }],
           ["video_import", { path: NodePath.join(root, "clip.mp4") }],
           ["video_transcribe", { media: "cam" }],
         ];
@@ -240,6 +475,69 @@ describe("video_undo and video_redo", () => {
           expect((yield* call(tool)).isError, tool).toBe(false);
         }
       }),
+    ),
+  );
+
+  // S7V-061: the user can change the video's shape on request, as one undoable step.
+  it.effect("video_canvas sets the shape as one undoable step, and a repeat changes nothing", () =>
+    withProject(({ root, thread, edits, call }) =>
+      Effect.gen(function* () {
+        const before = readFile(root, "edit.json");
+        const start = yield* edits.read(thread.projectId);
+        expect(start.document.canvas).toEqual({ width: 1080, height: 1920 });
+
+        const wide = yield* call("video_canvas", { ratio: "16:9" });
+        expect(wide.isError).toBe(false);
+        const after = yield* edits.read(thread.projectId);
+        expect(after.document.canvas).toEqual({ width: 1920, height: 1080 });
+        expect(wide.structuredContent).toEqual({
+          revision: after.revision,
+          message: "The video is now 16:9 (1920×1080). Say undo to put it back.",
+        });
+
+        const again = yield* call("video_canvas", { ratio: "16:9" });
+        expect(again.structuredContent).toEqual({
+          revision: after.revision,
+          message: "The video is already 16:9 (1920×1080).",
+        });
+
+        yield* call("video_undo");
+        expect(readFile(root, "edit.json")).toBe(before);
+        const refused = yield* call("video_canvas", { ratio: "21:9" }).pipe(Effect.flip);
+        expect(String(refused)).toMatch(/ratio/u);
+      }),
+    ),
+  );
+
+  // Round-2 review: "make it a reel and remove the silences" on a wide clip stays a reel.
+  it.effect("video_canvas on the default shape still keeps the first cut from reshaping", () =>
+    withProject(
+      ({ root, thread, edits, call }) =>
+        Effect.gen(function* () {
+          NodeFS.mkdirSync(NodePath.join(root, "assets"), { recursive: true });
+          NodeFS.writeFileSync(NodePath.join(root, "assets", "cam.mp4"), "original media");
+          const initial = yield* edits.read(thread.projectId);
+          yield* edits.apply(thread.projectId, [{ _tag: "putMedia", media: wideClip }], {
+            origin: "import",
+            baseRevision: initial.revision,
+          });
+          const start = yield* edits.read(thread.projectId);
+          expect(start.document.canvas).toEqual({ width: 1080, height: 1920 });
+
+          const reel = yield* call("video_canvas", { ratio: "9:16" });
+          expect(reel.isError).toBe(false);
+          expect(reel.structuredContent).toMatchObject({
+            revision: start.revision + 1,
+            message: "The video is now 9:16 (1080×1920). Say undo to put it back.",
+          });
+
+          const cut = yield* call("video_remove_silences", {});
+          expect(cut.isError, textOf(cut).join("")).toBe(false);
+          const after = yield* edits.read(thread.projectId);
+          expect(after.document.tracks[0]?.items.length).toBe(3);
+          expect(after.document.canvas).toEqual({ width: 1080, height: 1920 });
+        }),
+      "real",
     ),
   );
 

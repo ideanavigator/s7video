@@ -18,6 +18,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 
+import { CANVAS_FOR_RATIO } from "../../../edit/canvasForClip.ts";
 import * as EditDocumentService from "../../../edit/EditDocumentService.ts";
 import * as SilenceCutService from "../../../edit/SilenceCutService.ts";
 import * as EngineService from "../../../engine/EngineService.ts";
@@ -138,6 +139,23 @@ const refusePlanMode = Effect.fn("VideoHandlers.refusePlanMode")(function* (acti
   }
 });
 
+/**
+ * S7V-063: undo keeps clips in Assets (S7V-059), so a step over an import can leave the edit as
+ * it was. The step is still taken (one undo, one redo); the reply says nothing visible changed.
+ */
+const unchangedStep = (direction: "undo" | "redo", snapshot: EditSnapshot) => {
+  const more = direction === "undo" ? snapshot.canUndo : snapshot.canRedo;
+  const next =
+    direction === "undo"
+      ? more
+        ? "Say undo again to go back further."
+        : "There is nothing more to undo."
+      : more
+        ? "Say redo again to go forward."
+        : "There is nothing more to redo.";
+  return `Nothing on the timeline changed: that step only added or removed a clip in Assets, and clips stay in Assets when you undo or redo. ${next}`;
+};
+
 /** Undo and redo through the same service method as the edit.undo / edit.redo RPCs. */
 const stepEdit = (direction: "undo" | "redo") =>
   McpToolAccess.actsAsCaller(() =>
@@ -145,10 +163,12 @@ const stepEdit = (direction: "undo" | "redo") =>
       yield* refusePlanMode(direction);
       const project = yield* callerProject();
       const edits = yield* EditDocumentService.EditDocumentService;
-      return yield* edits[direction](project.projectId).pipe(
-        Effect.map((snapshot) => ({
+      return yield* edits.step(project.projectId, direction).pipe(
+        Effect.map(({ snapshot, changed }) => ({
           revision: snapshot.revision,
-          message: `${direction === "undo" ? "Undone" : "Redone"}. The edit is now ${editSummary(snapshot)}.`,
+          message: changed
+            ? `${direction === "undo" ? "Undone" : "Redone"}. The edit is now ${editSummary(snapshot)}.`
+            : unchangedStep(direction, snapshot),
         })),
         Effect.catchTags({
           EditUnavailableError: (error) =>
@@ -366,7 +386,7 @@ const handlers = {
     }),
   ),
   // Writes a file into the project, so plan-mode and read-only callers are refused.
-  video_export: McpToolAccess.actsAsCaller(({ preset, captions }) =>
+  video_export: McpToolAccess.actsAsCaller(({ captions }) =>
     Effect.gen(function* () {
       yield* refusePlanMode("export");
       const project = yield* callerProject();
@@ -374,7 +394,6 @@ const handlers = {
       return yield* exports
         .start({
           projectId: project.projectId,
-          ...(preset === undefined ? {} : { preset }),
           ...(captions === undefined ? {} : { captions }),
         })
         .pipe(
@@ -412,6 +431,41 @@ const handlers = {
         });
       }
       return { text };
+    }),
+  ),
+  // Writes the edit (one checkpoint), so plan-mode and read-only callers are refused.
+  video_canvas: McpToolAccess.actsAsCaller(({ ratio }) =>
+    Effect.gen(function* () {
+      yield* refusePlanMode("change the video's shape");
+      const project = yield* callerProject();
+      const canvas = CANVAS_FOR_RATIO[ratio];
+      const shape = `${ratio} (${canvas.width}×${canvas.height})`;
+      const { revision, document } = project.snapshot;
+      const same =
+        document.canvas.width === canvas.width && document.canvas.height === canvas.height;
+      // A shape equal to the default must still be recorded as chosen, or the first cut resets it.
+      if (same && document.metadata.canvasChosen === true) {
+        return { revision, message: `The video is already ${shape}.` };
+      }
+      const edits = yield* EditDocumentService.EditDocumentService;
+      return yield* edits
+        .apply(project.projectId, [{ _tag: "setCanvas", canvas }], {
+          origin: "agent",
+          baseRevision: revision,
+        })
+        .pipe(
+          Effect.map((after) => ({
+            revision: after.revision,
+            message: `The video is now ${shape}. Say undo to put it back.`,
+          })),
+          Effect.mapError(
+            (error) =>
+              new OrchestratorMcpFailure({
+                code: error._tag === "EditConflict" ? "invalid_request" : "orchestration_error",
+                message: error._tag === "EditUnavailableError" ? error.explanation : error.message,
+              }),
+          ),
+        );
     }),
   ),
   video_undo: stepEdit("undo"),
@@ -473,6 +527,7 @@ export const layerStandard = McpToolAccess.toLayer(VideoStandardToolkit, {
   video_undo: handlers.video_undo,
   video_redo: handlers.video_redo,
   video_remove_silences: handlers.video_remove_silences,
+  video_canvas: handlers.video_canvas,
 });
 
 export const layerFrame = McpToolAccess.toLayer(VideoFrameToolkit, {

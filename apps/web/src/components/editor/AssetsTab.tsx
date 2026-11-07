@@ -6,7 +6,6 @@
  * S7V-029 mounts it in the Editor panel; nothing here knows about the panel.
  */
 import { LegendList } from "@legendapp/list/react";
-import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type {
   MediaAsset,
   MediaImporting,
@@ -15,7 +14,7 @@ import type {
   ScopedProjectRef,
 } from "@t3tools/contracts";
 import { AudioLinesIcon, FilmIcon, PlusIcon, TriangleAlertIcon } from "lucide-react";
-import { useState, type DragEvent, type KeyboardEvent, type ReactNode } from "react";
+import { useId, useState, type DragEvent, type KeyboardEvent, type ReactNode } from "react";
 
 import { useAssetUrlState } from "../../assets/assetUrls";
 import { requestConfirmDialog } from "../../confirmDialog";
@@ -26,7 +25,9 @@ import { Button } from "../ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "../ui/empty";
 import { Spinner } from "../ui/spinner";
 import { toastManager } from "../ui/toast";
+import { BROWSER_ADD_MEDIA_HINT } from "./addMediaHint";
 import { formatBytes, ImportDialog, type ImportRequest } from "./ImportDialog";
+import { explanationOf } from "./mediaErrorExplanation";
 import { formatMediaLength, spokenMediaLength } from "./mediaTimecode";
 
 const ROW_HEIGHT = 60;
@@ -153,6 +154,7 @@ function ImportingRow({ entry }: { readonly entry: MediaImporting }) {
 
 export function AssetsList(props: AssetsListProps) {
   const [dragging, setDragging] = useState(false);
+  const hintId = useId();
   const acceptsDrop = (event: DragEvent<HTMLDivElement>) =>
     props.canAddFiles && event.dataTransfer.types.includes("Files");
   const onDragOver = (event: DragEvent<HTMLDivElement>) => {
@@ -166,6 +168,10 @@ export function AssetsList(props: AssetsListProps) {
     event.preventDefault();
     props.onDropFiles([...event.dataTransfer.files]);
   };
+  const isEmpty =
+    props.state._tag === "ready" &&
+    props.state.snapshot.items.length === 0 &&
+    props.state.snapshot.importing.length === 0;
 
   const body = (() => {
     if (props.state._tag === "loading") {
@@ -188,7 +194,7 @@ export function AssetsList(props: AssetsListProps) {
       );
     }
     const { snapshot } = props.state;
-    if (snapshot.items.length === 0 && snapshot.importing.length === 0) {
+    if (isEmpty) {
       return (
         <Empty>
           <EmptyHeader>
@@ -196,7 +202,12 @@ export function AssetsList(props: AssetsListProps) {
               <FilmIcon />
             </EmptyMedia>
             <EmptyTitle>No clips yet</EmptyTitle>
-            <EmptyDescription>Drop clips here or Add media. Nothing is uploaded.</EmptyDescription>
+            {/* In the browser this text is the hint Add media points at; the header line hides. */}
+            <EmptyDescription id={props.canAddFiles ? undefined : hintId}>
+              {props.canAddFiles
+                ? "Drop clips here or Add media. Nothing is uploaded."
+                : BROWSER_ADD_MEDIA_HINT}
+            </EmptyDescription>
           </EmptyHeader>
         </Empty>
       );
@@ -241,12 +252,18 @@ export function AssetsList(props: AssetsListProps) {
           size="xs"
           variant="outline"
           disabled={!props.canAddFiles}
+          aria-describedby={props.canAddFiles ? undefined : hintId}
           onClick={props.onAddMedia}
         >
           <PlusIcon aria-hidden />
           Add media
         </Button>
       </div>
+      {props.canAddFiles || isEmpty ? null : (
+        <p id={hintId} className="text-xs text-muted-foreground">
+          {BROWSER_ADD_MEDIA_HINT}
+        </p>
+      )}
       {body}
     </div>
   );
@@ -273,15 +290,6 @@ function AssetThumbnail(props: {
   }
   return item.hasVideo ? <FilmIcon aria-hidden /> : <AudioLinesIcon aria-hidden />;
 }
-
-const explanationOf = (result: {
-  readonly cause: Parameters<typeof squashAtomCommandFailure>[0]["cause"];
-}) => {
-  const error = squashAtomCommandFailure(result);
-  return typeof error === "object" && error !== null && "explanation" in error
-    ? String(error.explanation)
-    : "Check that the project's server is running, then try again.";
-};
 
 /** Import, relink and remove for one project; the dialog state lives here. */
 export function useAssetsActions(projectRef: ScopedProjectRef) {

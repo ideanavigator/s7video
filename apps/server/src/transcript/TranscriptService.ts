@@ -5,11 +5,14 @@
 // read the cached transcript, and the speech model's status, download and the one-time question.
 // The agent tools (`video_transcribe`, `video_transcript_read`) and the Editor panel call these
 // methods; the agent never starts the model download, only the user's answer in the panel does.
+// The clip's sound levels for silence removal sit beside its transcript (S7V-055).
 import * as NodeOS from "node:os";
 
 import {
   EngineError,
   type EngineJobId,
+  type MediaFingerprint,
+  SilenceLevels,
   type ProjectId,
   TranscribeConsent,
   TranscribeEngineModelsStatus,
@@ -42,6 +45,7 @@ const LIGHT_MODEL_MEMORY_BYTES = 8 * 1024 ** 3;
 const CONSENT_FILE = "s7video-consent.json";
 
 const decodeTranscript = Schema.decodeUnknownEffect(Schema.fromJsonString(Transcript));
+const decodeLevels = Schema.decodeUnknownOption(Schema.fromJsonString(SilenceLevels));
 const ConsentFile = Schema.Struct({ consent: TranscribeConsent });
 const decodeConsent = Schema.decodeUnknownOption(Schema.fromJsonString(ConsentFile));
 
@@ -59,6 +63,22 @@ export interface TranscriptTextInput extends TranscriptMediaInput {
 export type TranscribeStartResult =
   | { readonly jobId: EngineJobId }
   | { readonly cached: true; readonly wordCount: number; readonly durationFrames: number };
+
+/**
+ * A clip's cached transcript (null if none) and its per-frame sound levels: `cached` when
+ * `<sha256>.levels.json` matches that transcript (same file, frame rate and frame count), else
+ * null; `measure` is what a `silence.detect` job needs to measure them and write that file.
+ */
+export interface TranscriptLevels {
+  readonly transcript: Transcript | null;
+  readonly cached: SilenceLevels | null;
+  readonly measure: {
+    readonly projectId: ProjectId;
+    readonly path: string;
+    readonly cacheDir: string;
+    readonly fingerprint: MediaFingerprint;
+  };
+}
 
 export class TranscriptService extends Context.Service<
   TranscriptService,
@@ -78,6 +98,10 @@ export class TranscriptService extends Context.Service<
     readonly get: (
       input: TranscriptMediaInput,
     ) => Effect.Effect<Transcript | null, TranscriptError>;
+    /** The cached transcript with its sound levels, checked against it (S7V-055). */
+    readonly levels: (
+      input: TranscriptMediaInput,
+    ) => Effect.Effect<TranscriptLevels, TranscriptError>;
     /** The cached words as short lines stamped with frames, for agent context; null if none. */
     readonly readText: (
       input: TranscriptTextInput,
@@ -231,6 +255,31 @@ const make = Effect.fn("TranscriptService.make")(function* (options: TranscriptS
     return yield* readCache(yield* media(input));
   });
 
+  const levels = Effect.fn("TranscriptService.levels")(function* (input: TranscriptMediaInput) {
+    const resolved = yield* media(input);
+    const measure = {
+      projectId: resolved.projectId,
+      path: resolved.mediaPath,
+      cacheDir: resolved.cacheDir,
+      fingerprint: resolved.fingerprint,
+    };
+    const transcript = yield* readCache(resolved);
+    if (transcript === null) return { transcript, cached: null, measure };
+    const file = path.join(resolved.cacheDir, `${resolved.fingerprint.sha256}.levels.json`);
+    const text = yield* fileSystem.readFileString(file).pipe(Effect.option);
+    // Missing, half-written or another file's levels are measured again, never used.
+    const decoded = text._tag === "Some" ? decodeLevels(text.value) : undefined;
+    const found = decoded?._tag === "Some" ? decoded.value : null;
+    const matches =
+      found !== null &&
+      found.mediaFingerprint.sha256 === resolved.fingerprint.sha256 &&
+      found.mediaFingerprint.size === resolved.fingerprint.size &&
+      found.fps.num * transcript.fps.den === transcript.fps.num * found.fps.den &&
+      found.durationFrames === transcript.durationFrames &&
+      found.levels.length === found.durationFrames;
+    return { transcript, cached: matches ? found : null, measure };
+  });
+
   const readText = Effect.fn("TranscriptService.readText")(function* (input: TranscriptTextInput) {
     const transcript = yield* get(input);
     if (transcript === null) return null;
@@ -330,6 +379,7 @@ const make = Effect.fn("TranscriptService.make")(function* (options: TranscriptS
     transcribe,
     start,
     get,
+    levels,
     readText,
     modelsStatus,
     downloadModels,

@@ -26,6 +26,7 @@ from engine_support import Wire
 
 from s7engine import models, rpc
 from s7engine.jobs import Cancelled, JobContext
+from s7engine.methods import silence as silence_method
 from s7engine.methods import transcribe
 from s7engine.methods.transcribe import Chunk, FrameClock, Word
 
@@ -439,6 +440,34 @@ def test_transcribe_writes_frames_and_returns_a_path(
     assert "start\"" not in Path(result["path"]).read_text()
 
 
+def test_transcribe_writes_levels_equal_to_silence_detect(
+    hub: FakeHub, fake_models: Loads, tools: None, wire: Wire, talk: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """S7V-055: the transcribe job measures the levels from its own audio, before the transcript."""
+    _download()
+    cache = tmp_path / "cache"
+    levels_file = cache / f"{_fingerprint(talk)['sha256']}.levels.json"
+    real_write = transcribe._write_cache
+    written: list[str] = []
+
+    def write_cache(target: str, document: dict[str, Any], job: JobContext) -> None:
+        written.append(Path(target).name)
+        real_write(target, document, job)
+
+    monkeypatch.setattr(transcribe, "_write_cache", write_cache)
+    result = _run(wire, talk, cache)["result"]
+    # Levels first: a transcript on disk never lacks its levels.
+    assert written == [levels_file.name, Path(result["path"]).name]
+    transcript = json.loads(Path(result["path"]).read_text())
+    levels = json.loads(levels_file.read_text())
+    detected = wire.call("silence.detect", {"jobId": "d", "path": str(talk)})["result"]
+    assert levels["levels"] == detected["levels"]
+    assert levels["fps"] == transcript["fps"] == detected["rate"]
+    assert levels["durationFrames"] == transcript["durationFrames"] == detected["durationFrames"]
+    assert levels["mediaFingerprint"] == transcript["mediaFingerprint"]
+    assert levels["levelsVersion"] == silence_method.LEVELS_VERSION
+
+
 def test_progress_moves_through_model_load_and_word_timing(
     hub: FakeHub, fake_models: Loads, tools: None, wire: Wire, talk: Path, tmp_path: Path
 ) -> None:
@@ -806,6 +835,205 @@ def test_a_partial_copy_or_another_revision_is_not_offered(cache: Path, tmp_path
     assert caught.value.code == models.CACHE_MISMATCH
 
 
+def _relink(cache: Path, repo: str, name: str, target: Path) -> None:
+    """Point one snapshot entry at `target`, a file with the right bytes (so size and sha256 match)."""
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(FILES[name])
+    entry = cache / f"models--{repo.replace('/', '--')}" / "snapshots" / ("0" * 40) / name
+    entry.unlink()
+    entry.symlink_to(target)
+
+
+def test_a_link_outside_blobs_is_not_offered(cache: Path, tmp_path: Path) -> None:
+    """S7V-068: only the model's own `blobs/` folder counts, even for a file of the right size and hash."""
+    _fake_cache(cache)
+    _relink(cache, "test/aligner", "aligner.bin", tmp_path / "elsewhere" / "aligner.bin")
+    profiles = models.status()["profiles"]
+    assert profiles["default"]["found"] is None and profiles["light"]["found"] is None
+
+
+def test_reuse_refuses_a_link_outside_blobs_and_leaves_nothing(
+    cache: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _fake_cache(cache)
+    _relink(cache, "test/aligner", "aligner.bin", tmp_path / "elsewhere" / "aligner.bin")
+    read: list[Path] = []
+    monkeypatch.setattr(models, "_clonefile", lambda source, _target: read.append(source) or False)
+    for mode in ("clone", "copy"):
+        with pytest.raises(rpc.RpcError) as caught:
+            models.download("light", JobContext("r", None), mode)
+        assert caught.value.code == models.CACHE_MISMATCH
+    assert read == []  # refused before any file is read
+    lock = models.load_lock()
+    for key in ("asr-0.6b", "aligner-0.6b"):
+        folder = models.snapshot_dir(lock[key])
+        assert not folder.exists() or list(folder.rglob("*")) == []
+    assert models.status()["profiles"]["light"]["ready"] is False
+
+
+def test_a_link_into_another_models_blobs_is_not_offered(cache: Path) -> None:
+    _fake_cache(cache)
+    other = cache / "models--test--asr-small" / "blobs" / hashlib.sha256(FILES["aligner.bin"]).hexdigest()
+    _relink(cache, "test/aligner", "aligner.bin", other)
+    assert models.status()["profiles"]["light"]["found"] is None
+    with pytest.raises(rpc.RpcError) as caught:
+        models.download("light", JobContext("r", None), "clone")
+    assert caught.value.code == models.CACHE_MISMATCH
+
+
+def _assert_refused_unread(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Not offered, and reuse in either mode is refused before any file is read."""
+    assert models.status()["profiles"]["light"]["found"] is None
+    read: list[Path] = []
+
+    def opened(source: Path, _size: int) -> Any:
+        read.append(source)
+        raise AssertionError("a refused copy was opened")
+
+    monkeypatch.setattr(models, "_open_blob", opened)
+    for mode in ("clone", "copy"):
+        with pytest.raises(rpc.RpcError) as caught:
+            models.download("light", JobContext("r", None), mode)
+        assert caught.value.code == models.CACHE_MISMATCH
+    assert read == []
+    folder = models.snapshot_dir(models.load_lock()["aligner-0.6b"])
+    assert not folder.exists() or list(folder.rglob("*")) == []
+
+
+def test_a_blobs_folder_linked_outside_the_cache_is_not_offered(
+    cache: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review of S7V-068: `blobs/` itself is a link, so its entries resolve outside the cache."""
+    _fake_cache(cache)
+    blobs = cache / "models--test--aligner" / "blobs"
+    outside = tmp_path / "outside" / "blobs"
+    outside.parent.mkdir(parents=True)
+    blobs.rename(outside)
+    blobs.symlink_to(outside, target_is_directory=True)
+    _assert_refused_unread(monkeypatch)
+
+
+def test_a_blobs_folder_linked_into_another_model_is_not_offered(cache: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _fake_cache(cache)
+    blobs = cache / "models--test--aligner" / "blobs"
+    other = cache / "models--test--asr-small" / "blobs"
+    for blob in blobs.iterdir():
+        blob.rename(other / blob.name)
+    blobs.rmdir()
+    blobs.symlink_to(other, target_is_directory=True)
+    _assert_refused_unread(monkeypatch)
+
+
+def test_a_linked_model_folder_is_not_offered(cache: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _fake_cache(cache)
+    base = cache / "models--test--aligner"
+    outside = tmp_path / "outside" / base.name
+    outside.parent.mkdir(parents=True)
+    base.rename(outside)
+    base.symlink_to(outside, target_is_directory=True)
+    _assert_refused_unread(monkeypatch)
+
+
+@pytest.mark.parametrize("swap", ["link", "directory", "fifo", "linked-folder"])
+def test_a_blob_swapped_after_the_check_is_refused_when_opened(cache: Path, tmp_path: Path, swap: str) -> None:
+    """Review of S7V-068: clone and copy both read one open of the checked blob, which follows no
+    link in any part of the path, never waits on a FIFO and must be a regular file."""
+    _fake_cache(cache)
+    blob = models.cached_snapshot(models.load_lock()["aligner-0.6b"])["aligner.bin"]  # type: ignore[index]
+    planted = tmp_path / "outside" / blob.name
+    planted.parent.mkdir()
+    planted.write_bytes(FILES["aligner.bin"])
+    if swap == "linked-folder":
+        blob.parent.rename(tmp_path / "moved-blobs")
+        blob.parent.symlink_to(planted.parent, target_is_directory=True)
+    else:
+        blob.unlink()
+        if swap == "link":
+            blob.symlink_to(planted)
+        elif swap == "directory":
+            blob.mkdir()
+            (blob / "inner.bin").write_bytes(FILES["aligner.bin"])
+        else:
+            os.mkfifo(blob)
+    with pytest.raises(rpc.RpcError) as caught:
+        models._open_blob(blob, len(FILES["aligner.bin"]))
+    assert caught.value.code == models.CACHE_MISMATCH
+
+
+def _shared_store_cache(root: Path) -> Path:
+    """huggingface_hub 2.x with the shared Xet store: snapshot entry -> `../../blobs/<etag>` (the
+    model's own blobs) -> `../../blobs/<2 hex>/<hash>` (the cache-wide store), all relative links."""
+    repos = {"test/asr-big": ["big.bin", "config.json"], "test/asr-small": ["small.bin"], "test/aligner": ["aligner.bin"]}
+    store = root / "blobs"
+    store.mkdir(parents=True, exist_ok=True)
+    (store / ".huggingface-shared-blobs").write_text("", encoding="utf-8")
+    for repo, names in repos.items():
+        base = root / f"models--{repo.replace('/', '--')}"
+        (base / "blobs").mkdir(parents=True, exist_ok=True)
+        snapshot = base / "snapshots" / ("0" * 40)
+        snapshot.mkdir(parents=True, exist_ok=True)
+        for name in names:
+            digest = hashlib.sha256(FILES[name]).hexdigest()
+            (store / digest[:2]).mkdir(exist_ok=True)
+            (store / digest[:2] / digest).write_bytes(FILES[name])
+            etag = hashlib.sha1(FILES[name]).hexdigest()
+            (base / "blobs" / etag).symlink_to(f"../../blobs/{digest[:2]}/{digest}")
+            (snapshot / name).symlink_to(f"../../blobs/{etag}")
+    return root
+
+
+@pytest.mark.parametrize("mode", ["clone", "copy"])
+def test_a_shared_store_cache_is_found_and_reused(cache: Path, hub: FakeHub, monkeypatch: pytest.MonkeyPatch, mode: str) -> None:
+    """Review of S7V-068 round 2: the PO's real cache uses this layout for every pinned model."""
+    _shared_store_cache(cache)
+    assert models.status()["profiles"]["default"]["found"] == {"copyBytes": 0}
+    if mode == "copy":
+        monkeypatch.setattr(models, "_clonefile", lambda _source, _target: False)
+    models.download("default", JobContext("r", None), mode)
+    assert models.status()["profiles"]["default"]["ready"] is True
+    folder = models.snapshot_dir(models.load_lock()["asr-1.7b"])
+    assert (folder / "big.bin").read_bytes() == FILES["big.bin"] and not (folder / "big.bin").is_symlink()
+    assert hub.requests == []
+
+
+def test_a_shared_store_linked_outside_the_cache_is_not_offered(
+    cache: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _shared_store_cache(cache)
+    store = cache / "blobs"
+    outside = tmp_path / "outside" / "blobs"
+    outside.parent.mkdir(parents=True)
+    store.rename(outside)
+    store.symlink_to(outside, target_is_directory=True)
+    _assert_refused_unread(monkeypatch)
+
+
+def test_a_store_entry_linked_out_of_the_store_is_not_offered(
+    cache: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The model's blob links into the store, but that store entry links out of the cache."""
+    _shared_store_cache(cache)
+    digest = hashlib.sha256(FILES["aligner.bin"]).hexdigest()
+    entry = cache / "blobs" / digest[:2] / digest
+    planted = tmp_path / "outside" / "aligner.bin"
+    planted.parent.mkdir(parents=True)
+    planted.write_bytes(FILES["aligner.bin"])
+    entry.unlink()
+    entry.symlink_to(planted)
+    _assert_refused_unread(monkeypatch)
+
+
+def test_a_snapshot_entry_straight_into_the_store_is_not_offered(cache: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A store file is accepted only when reached through the model's own `blobs/` entry."""
+    _shared_store_cache(cache)
+    digest = hashlib.sha256(FILES["aligner.bin"]).hexdigest()
+    entry = cache / "models--test--aligner" / "snapshots" / ("0" * 40) / "aligner.bin"
+    entry.unlink()
+    entry.symlink_to(f"../../../blobs/{digest[:2]}/{digest}")
+    assert entry.read_bytes() == FILES["aligner.bin"]
+    _assert_refused_unread(monkeypatch)
+
+
 def _blobs_on_another_disk(monkeypatch: pytest.MonkeyPatch, cache: Path) -> None:
     """The blobs the cache's symlinks point to look like another volume (an external disk)."""
     real = models._file_device
@@ -847,7 +1075,7 @@ def test_a_refused_clone_never_turns_into_a_silent_copy(cache: Path, monkeypatch
 
     class Refusing:
         @staticmethod
-        def clonefile(_source: bytes, _target: bytes, _flags: int) -> int:
+        def fclonefileat(_source: int, _dirfd: int, _target: bytes, _flags: int) -> int:
             return -1
 
     monkeypatch.setattr(models, "_LIBSYSTEM", Refusing())
@@ -859,11 +1087,19 @@ def test_a_refused_clone_never_turns_into_a_silent_copy(cache: Path, monkeypatch
 
 
 def test_the_real_clonefile_clones_a_blob_through_its_symlink(cache: Path) -> None:
+    """The snapshot entry's link is resolved and checked first; the open, checked blob is cloned
+    (`fclonefileat`). The link itself is never opened."""
     _fake_cache(cache)
     entry = cache / "models--test--asr-small" / "snapshots" / ("0" * 40) / "small.bin"
+    blob = models.cached_snapshot(models.load_lock()["asr-0.6b"])["small.bin"]  # type: ignore[index]
+    assert blob == Path(os.path.realpath(entry))
     target = cache.parent / "clone.bin"
-    assert models._clonefile(entry, target) is True
+    with models._open_blob(blob, len(FILES["small.bin"])) as reader:
+        assert models._clonefile(reader.fileno(), target) is True
     assert target.read_bytes() == FILES["small.bin"] and not target.is_symlink()
+    with pytest.raises(rpc.RpcError) as caught:
+        models._open_blob(entry, len(FILES["small.bin"]))
+    assert caught.value.code == models.CACHE_MISMATCH
 
 
 def test_cancel_during_a_copy_leaves_nothing_behind(cache: Path, monkeypatch: pytest.MonkeyPatch) -> None:

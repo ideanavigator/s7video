@@ -9,6 +9,7 @@ import {
   EngineProgressParams,
   MediaProbeResult,
 } from "./engine.ts";
+import { SilenceLevels } from "./transcript.ts";
 
 /** Every path in a JSON Schema whose type is a non-integer number. */
 function floatPaths(node: unknown, path = "$"): string[] {
@@ -82,5 +83,24 @@ describe("engine contracts", () => {
       "The video engine did not answer media.frame in time. Try again; a stuck engine restarts on its own.",
     );
     expect(message("start_failed")).toContain("Try again");
+  });
+
+  it("the levels cache file holds integer levels on {num, den} frames (S7V-055)", () => {
+    const decode = Schema.decodeUnknownSync(SilenceLevels);
+    const file = {
+      levelsVersion: 1,
+      mediaFingerprint: { sha256: "a".repeat(64), size: 10 },
+      fps: { num: 30000, den: 1001 },
+      durationFrames: 3,
+      levels: [-20, -100, -35],
+    };
+    expect(decode(file).levels).toEqual([-20, -100, -35]);
+    // The version is the literal 1, which JSON Schema spells as a number.
+    expect(floatPaths(Schema.toJsonSchemaDocument(SilenceLevels))).toEqual([
+      "$.schema.properties.levelsVersion",
+    ]);
+    expect(() => decode({ ...file, levels: [-20.5] })).toThrow();
+    expect(() => decode({ ...file, levelsVersion: 2 })).toThrow();
+    expect(() => decode({ ...file, fps: "30" })).toThrow();
   });
 });

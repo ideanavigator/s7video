@@ -11,6 +11,7 @@
   so this catches regressions rather than measuring accuracy).
 - The cache file has integer frames only; a second request is answered from it in under 1 s
   without loading the model.
+- The levels file beside it equals ``silence.detect`` on the same clip, value for value (S7V-055).
 
 Needs the models: point ``S7VIDEO_TEST_MODELS_DIR`` at a folder (an ``HF_HOME``) where the engine's
 download has run. It skips otherwise, so it is a developer-run golden, not a CI gate. Never point
@@ -33,7 +34,7 @@ import pytest
 import harness
 from s7engine import models
 from s7engine.jobs import JobContext
-from s7engine.methods import transcribe
+from s7engine.methods import silence, transcribe
 
 REFERENCE = Path(__file__).parent / "references" / "transcribe-talking-head.json"
 WORDS = harness.REPO_ROOT / "fixtures" / "media" / "talking-head-01.words.json"
@@ -46,11 +47,13 @@ def models_dir(monkeypatch: pytest.MonkeyPatch) -> Path:
     folder = os.environ.get("S7VIDEO_TEST_MODELS_DIR", "")
     if not folder:
         pytest.skip(SKIP_REASON)
-    monkeypatch.setenv("HF_HOME", folder)
+    # The engine refuses a relative HF_HOME, so a relative folder is resolved from the working folder.
+    home = Path(folder).resolve()
+    monkeypatch.setenv("HF_HOME", str(home))
     monkeypatch.delenv("S7_MODELS_LOCK", raising=False)
     if not models.status()["profiles"]["default"]["ready"]:
         pytest.skip(SKIP_REASON)
-    return Path(folder)
+    return home
 
 
 @pytest.fixture
@@ -144,6 +147,16 @@ def test_transcribe_talking_head(media: Any, models_dir: Path, offline: None, tm
         )
     reference = json.loads(REFERENCE.read_text(encoding="utf-8"))["words"]
     assert _word_error_rate(reference, words) <= 0.02
+
+    # S7V-055 AC-1: the job wrote the clip's levels beside the transcript, equal to silence.detect's.
+    levels_file = Path(params["cacheDir"]) / f"{params['fingerprint']['sha256']}.levels.json"
+    levels = json.loads(levels_file.read_text(encoding="utf-8"))
+    detected = silence._detect({"path": str(clip)}, JobContext("golden-levels", None))
+    assert levels["levels"] == detected["levels"]
+    assert levels["fps"] == fps == detected["rate"]
+    assert levels["durationFrames"] == transcript["durationFrames"] == detected["durationFrames"]
+    assert levels["mediaFingerprint"] == transcript["mediaFingerprint"]
+    print(f"levels: {len(levels['levels'])} frames, equal to silence.detect")
 
     # AC-8: the same media again comes from the cache, without loading the model.
     transcribe.holder().unload()

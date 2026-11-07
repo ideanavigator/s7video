@@ -120,7 +120,30 @@ it.layer(NodeServices.layer)("built-in skills", (it) => {
         assert.include(text, state);
       }
       assert.include(text, "Never start a\n     transcription the user cancelled again.");
-      assert.include(text, "Say undo to put it back.");
+      // Whitespace collapsed, so re-wrapping the skill text does not break these checks.
+      const flat = text.replace(/\s+/g, " ");
+      // S7V-056 round 2: the undo offer only follows a call that cut something.
+      assert.include(
+        flat,
+        'When the result says `changed: true`, end with: "Say undo to put it back."',
+      );
+      assert.include(
+        flat,
+        "(`changed: false`), say the edit is unchanged and do not offer that undo.",
+      );
+      // S7V-056: an already-cut keep is passed on with an offer to undo back to before that cut.
+      assert.include(flat, "was cut by an earlier edit");
+      assert.include(flat, "offer to undo back to before that cut, then ask again");
+      assert.include(flat, "never by frame numbers");
+      // S7V-061: editing never exports; captions come with the export the user asks for.
+      assert.include(flat, "Do not export.");
+      assert.include(flat, "Call `video_export` only when this message asks for a video file");
+      assert.include(flat, "Call `video_canvas` only when the user names a shape");
+      // S7V-055: a still-measuring silence job is waited out; the cut is retried only on success.
+      assert.include(
+        flat,
+        "If it says the sound is still being measured, call `video_job_status` with that `jobId` and `waitSeconds: 30` until the job ends. If it `succeeded`, call `video_remove_silences` again; if it `failed` or was `cancelled`, tell the user and stop.",
+      );
       assert.include(text, "Never edit `edit.json` yourself and never use git on it.");
     }),
   );

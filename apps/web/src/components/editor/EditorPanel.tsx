@@ -16,7 +16,7 @@ import {
 } from "@t3tools/contracts";
 import { ClapperboardIcon, FilmIcon, PlusIcon, TriangleAlertIcon, UploadIcon } from "lucide-react";
 import * as Schema from "effect/Schema";
-import { useState, type DragEvent, type ReactNode } from "react";
+import { useId, useState, type DragEvent, type ReactNode } from "react";
 
 import { useAssetUrlState } from "../../assets/assetUrls";
 import {
@@ -37,6 +37,7 @@ import { Button } from "../ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "../ui/empty";
 import { Spinner } from "../ui/spinner";
 import { toastManager } from "../ui/toast";
+import { BROWSER_ADD_MEDIA_HINT } from "./addMediaHint";
 import { AssetsTab, useAssetsActions } from "./AssetsTab";
 import { EditPlayer } from "./EditPlayer";
 import { ImportDialog } from "./ImportDialog";
@@ -56,6 +57,8 @@ function PlayerMessage(props: {
   readonly icon: ReactNode;
   readonly title: string;
   readonly description: string;
+  /** Lets a control below point at the description (`aria-describedby`). */
+  readonly descriptionId?: string;
   readonly children?: ReactNode;
 }) {
   return (
@@ -64,7 +67,7 @@ function PlayerMessage(props: {
         <EmptyHeader>
           <EmptyMedia variant="icon">{props.icon}</EmptyMedia>
           <EmptyTitle>{props.title}</EmptyTitle>
-          <EmptyDescription>{props.description}</EmptyDescription>
+          <EmptyDescription id={props.descriptionId}>{props.description}</EmptyDescription>
         </EmptyHeader>
         {props.children}
       </Empty>
@@ -161,6 +164,7 @@ function PlayerArea(props: {
   const { view, actions } = props;
   const canAddFiles = window.desktopBridge !== undefined;
   const [dragging, setDragging] = useState(false);
+  const hintId = useId();
   const onDragOver = (event: DragEvent<HTMLDivElement>) => {
     if (!canAddFiles || !event.dataTransfer.types.includes("Files")) return;
     event.preventDefault();
@@ -203,12 +207,16 @@ function PlayerArea(props: {
           <PlayerMessage
             icon={<FilmIcon />}
             title="No clips yet"
-            description="Drop a clip here or into the chat."
+            description={
+              canAddFiles ? "Drop a clip here or into the chat." : BROWSER_ADD_MEDIA_HINT
+            }
+            descriptionId={hintId}
           >
             <Button
               size="sm"
               variant="outline"
               disabled={!canAddFiles}
+              aria-describedby={canAddFiles ? undefined : hintId}
               onClick={() => void actions.addMedia()}
             >
               <PlusIcon aria-hidden />

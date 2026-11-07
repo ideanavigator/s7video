@@ -45,6 +45,20 @@ export const Transcript = Schema.Struct({
 });
 export type Transcript = typeof Transcript.Type;
 
+/**
+ * `.s7cache/transcripts/<fingerprint sha256>.levels.json`: whole-decibel RMS dBFS of the sound
+ * under each frame, as `silence.detect` measures it. The transcribe job writes it beside the
+ * transcript; silence removal reads it instead of decoding the clip again (S7V-055).
+ */
+export const SilenceLevels = Schema.Struct({
+  levelsVersion: Schema.Literal(1),
+  mediaFingerprint: MediaFingerprint,
+  fps: EngineRational,
+  durationFrames: NonNegativeInt,
+  levels: Schema.Array(Schema.Int),
+});
+export type SilenceLevels = typeof SilenceLevels.Type;
+
 export const TranscribeRunResult = Schema.Struct({
   /** The cached transcript file. */
   path: Schema.String,

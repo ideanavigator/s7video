@@ -53,6 +53,9 @@ from; the per-ticket entries and how this file is compiled are in
   export without captions. (S7V-046)
 - Undo from chat: say "undo that" or "redo" and the assistant steps your edit back or forward. Your
   footage is never touched. (S7V-041)
+- Ask the assistant for a reel (9:16), wide (16:9), square (1:1), 4:5 or 4:3 video and it changes
+  the edit's shape in one step; undo takes it back, and the player and the export both follow it.
+  (S7V-061)
 - Pick "Remove silences" from the chat's / menu, or ask for it, and the assistant cuts the pauses and
   tells you how much it removed. It never does this unless you ask. (S7V-048)
 - Ask the assistant to remove the silences and it cuts the pauses between your sentences without
@@ -72,6 +75,8 @@ from; the per-ticket entries and how this file is compiled are in
 - No visible change: three automated checks lost while removing unused agents are restored (agent
   wake-ups, the Push and Create PR buttons after a commit, usage stats with one broken agent config).
   (S7V-017)
+- Removing silences from a long recording answers at once: the clip's sound is measured once while
+  its words are found, and reused every time you cut. (S7V-055)
 
 ### Removed
 
@@ -86,6 +91,21 @@ from; the per-ticket entries and how this file is compiled are in
 
 ### Fixed
 
+- Asking to keep a pause that was already cut now gets a plain answer and a hint to undo, and a
+  short pause you keep stays short (about a third of a second). (S7V-056)
+- In the browser, the greyed-out Add media button and the empty Assets list and player now explain
+  what to do instead: drop files into the chat, or use the desktop app for large files. (S7V-065)
+- When an undo or redo makes no visible difference, such as going back past adding a clip (which
+  stays in Assets), the assistant says so and tells you whether there is more to undo, instead of
+  saying "Undone". (S7V-063)
+- A large 4K clip now shows in Assets with its name, length and size in under two seconds; its
+  preview picture follows a moment later. (S7V-064)
+- The assistant makes a video only when you ask for one, and a video keeps the shape it was filmed
+  in: a wide clip exports wide unless you ask for another shape. (S7V-061)
+- A clip dropped into the chat that can't be added to Assets now says why, with Retry, instead of
+  being attached to the message silently; a sound that can't be added stays attached, and the
+  message says so. The video helper no longer writes Python bytecode into the app's folders.
+  (S7V-071)
 - The speech model can be downloaded from first-run setup, Settings → Providers or a prompt at the
   top of the Editor panel, which opens by itself when the assistant needs the model; before, only
   the Transcript tab asked. A copy already in a Hugging Face cache on your Mac can be used instead
@@ -101,5 +121,10 @@ from; the per-ticket entries and how this file is compiled are in
 - A second, tighter silence cut no longer fails with a duplicate id, and the agent waits for a
   first transcription to finish instead of stopping halfway, and says so if it failed or was
   stopped. (S7V-058)
+
+### Security
+
+- No visible change: reusing a speech model from another app's download folder now accepts only
+  files inside that model's own folder, never a file a stray link points to. (S7V-068)
 
 [Unreleased]: https://github.com/ideanavigator/s7video/commits/main

@@ -5,7 +5,7 @@
  * frame ranges at the document fps. The player plays a range and seeks over the gap to the next.
  * Frames are integers; times are seconds in the source file.
  */
-import type { EditDocument, EditRational } from "@t3tools/contracts";
+import type { EditCanvas, EditDocument, EditRational } from "@t3tools/contracts";
 
 /** Source frames `[sourceStart, sourceEnd)` that play from `timelineStart` in the edit. */
 export interface PlaybackSegment {
@@ -22,6 +22,8 @@ export interface PlaybackPlan {
   readonly durationFrames: number;
   /** Items on other clips, which this player leaves out until multi-clip playback (S7V-039). */
   readonly otherClipItems: number;
+  /** The edit's output frame, which export fills and crops to (S7V-061); none for a raw clip. */
+  readonly canvas?: EditCanvas;
 }
 
 /**
@@ -73,12 +75,15 @@ export function editPlaybackPlan(document: EditDocument): PlaybackPlan | null {
   const mediaId = items[0]?.media;
   if (mediaId === undefined) return null;
   const own = items.filter((item) => item.media === mediaId);
-  return plan(
-    mediaId,
-    document.fps,
-    own.map((item) => ({ start: item.in, end: item.in + item.duration })),
-    items.length - own.length,
-  );
+  return {
+    ...plan(
+      mediaId,
+      document.fps,
+      own.map((item) => ({ start: item.in, end: item.in + item.duration })),
+      items.length - own.length,
+    ),
+    canvas: document.canvas,
+  };
 }
 
 /** One clip played whole, for previewing a clip from the Assets tab. */

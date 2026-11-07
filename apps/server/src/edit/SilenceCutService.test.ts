@@ -3,10 +3,20 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Assertions read the project folder and git directly.
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
-import { type EditOp, type ProjectId, type Transcript } from "@t3tools/contracts";
+import {
+  EngineError,
+  EngineJobId,
+  type EditOp,
+  type ProjectId,
+  type Transcript,
+} from "@t3tools/contracts";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as TestClock from "effect/testing/TestClock";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
@@ -26,6 +36,12 @@ const camera = {
   probe: { durationFrames: FRAMES, hasVideo: true, hasAudio: true, fps: { num: 30, den: 1 } },
 } as const;
 
+/** A wide 1894×1080 recording, as the S7V-021 talking-head clip. */
+const wideCamera = {
+  ...camera,
+  probe: { ...camera.probe, width: 1894, height: 1080 },
+} as const;
+
 /** Three spoken phrases with a second of room tone between them, at 30 fps. */
 const PHRASES: ReadonlyArray<readonly [number, number]> = [
   [30, 90],
@@ -38,7 +54,18 @@ interface Scenario {
   transcribed: boolean;
   /** Runs between the service reading the edit and writing it. */
   between: Effect.Effect<void>;
-  detects: number;
+  /** Whether `<sha256>.levels.json` is there and matches the transcript (S7V-055). */
+  levelsCached: boolean;
+  /** `silence` jobs started, with what they were given. */
+  jobs: Array<{ kind: string; method: string; params: unknown; projectId: unknown }>;
+  /** Runs inside each `silence` job before it succeeds (a gate, or a failure). */
+  job: Effect.Effect<void, EngineError>;
+  /** What each `silence` job measures, when not the transcript's own clock. */
+  measured: { rate: { num: number; den: number }; durationFrames: number };
+  /** Runs in each `silence` job before it has its id. */
+  beforeStart: Effect.Effect<void>;
+  /** Runs on each `levels` read. */
+  asked: Effect.Effect<void>;
 }
 
 const transcriptOf = (words: Scenario["words"]): Transcript => ({
@@ -81,26 +108,61 @@ const withProject = <A, E>(
       words: PHRASES,
       transcribed: true,
       between: Effect.void,
-      detects: 0,
+      levelsCached: true,
+      jobs: [],
+      job: Effect.void,
+      beforeStart: Effect.void,
+      asked: Effect.void,
+      measured: { rate: { num: 30, den: 1 }, durationFrames: FRAMES },
     };
     const engine = Layer.mock(EngineService.EngineService)({
-      call: (method) =>
-        method === "silence.detect"
-          ? Effect.sync(() => {
-              scenario.detects++;
-              return {
-                rate: { num: 30, den: 1 },
-                durationFrames: FRAMES,
-                levels: levelsOf(scenario.words),
-              } as never;
-            })
-          : Effect.die(`unexpected ${method}`),
+      // No quick engine call at all: the levels come from the cache file or a job.
+      call: (method) => Effect.die(`unexpected quick call ${method}`),
+      runJob: (input) =>
+        Effect.gen(function* () {
+          scenario.jobs.push({
+            kind: input.kind,
+            method: input.method,
+            params: input.params,
+            projectId: input.projectId,
+          });
+          yield* scenario.beforeStart;
+          if (input.onStart) {
+            yield* input.onStart(EngineJobId.make(`engine-job-${scenario.jobs.length}`));
+          }
+          yield* scenario.job;
+          // The job wrote the levels file.
+          scenario.levelsCached = true;
+          return {
+            ...scenario.measured,
+            levels: levelsOf(scenario.words).slice(0, scenario.measured.durationFrames),
+          } as never;
+        }),
     });
     const transcripts = Layer.mock(TranscriptService.TranscriptService)({
-      get: () =>
+      // Only `levels`: one read gives the transcript and its levels (S7V-055 review).
+      levels: () =>
         scenario.between.pipe(
+          Effect.andThen(scenario.asked),
           Effect.andThen(
-            Effect.sync(() => (scenario.transcribed ? transcriptOf(scenario.words) : null)),
+            Effect.sync(() => ({
+              transcript: scenario.transcribed ? transcriptOf(scenario.words) : null,
+              cached: scenario.levelsCached
+                ? {
+                    levelsVersion: 1 as const,
+                    mediaFingerprint: camera.fingerprint,
+                    fps: { num: 30, den: 1 },
+                    durationFrames: FRAMES,
+                    levels: levelsOf(scenario.words),
+                  }
+                : null,
+              measure: {
+                projectId: "project" as ProjectId,
+                path: "/project/assets/cam.mp4",
+                cacheDir: "/project/.s7cache/transcripts",
+                fingerprint: camera.fingerprint,
+              },
+            })),
           ),
         ),
     });
@@ -149,6 +211,8 @@ describe("SilenceCutService", () => {
           changed: true,
         });
         const cut = yield* edits.read(projectId);
+        // A clip whose probe has no picture size leaves the canvas as it was.
+        assert.deepEqual(cut.document.canvas, start.document.canvas);
         const track = cut.document.tracks[0]!;
         assert.strictEqual(track.kind, "video");
         assert.deepEqual(
@@ -281,6 +345,127 @@ describe("SilenceCutService", () => {
     ),
   );
 
+  it.effect("message names already-cut keeps", () =>
+    withProject(
+      ({ projectId, root, silences }) =>
+        Effect.gen(function* () {
+          // 130-150 lies in the retake removed by hand: it stays cut, the other pauses go.
+          const first = yield* silences.removeSilences({
+            projectId,
+            keep: [{ fromFrame: 130, toFrame: 150 }],
+          });
+          assert.isTrue(first.changed);
+          assert.strictEqual(first.keptRequests, 0);
+          assert.match(
+            first.message,
+            /^Removed .* s in \d+ cuts\. This only cuts more; it never restores earlier cuts\. /,
+          );
+          assert.isTrue(
+            first.message.endsWith(
+              " The pause you asked to keep at clip frames 130-150 was cut by an earlier edit, so it stays cut. To get it back, undo until that pause plays again, then ask to keep it.",
+            ),
+          );
+          // One undo would only take back this call's cuts: the message must not promise it.
+          assert.notInclude(first.message, "say undo");
+          const afterFirst = readEdit(root);
+
+          // Nothing new to cut: the sentence follows the unchanged message.
+          const again = yield* silences.removeSilences({
+            projectId,
+            keep: [
+              { fromFrame: 130, toFrame: 150 },
+              { fromFrame: 160, toFrame: 170 },
+            ],
+          });
+          assert.isFalse(again.changed);
+          assert.strictEqual(again.keptRequests, 0);
+          assert.strictEqual(
+            again.message,
+            "No more pauses to cut; the edit is unchanged. The pauses you asked to keep at clip frames 130-150 and 160-170 were cut by an earlier edit, so they stay cut. To get them back, undo until those pauses play again, then ask to keep them.",
+          );
+          assert.strictEqual(readEdit(root), afterFirst);
+        }),
+      [
+        { _tag: "putMedia", media: camera },
+        { _tag: "addTrack", track: { kind: "video", id: "V1", items: [] } },
+        {
+          _tag: "setKeepRanges",
+          trackId: "V1",
+          mediaId: "cam",
+          ranges: [
+            { in: 0, duration: 115 },
+            { in: 185, duration: 115 },
+          ],
+        },
+      ],
+    ),
+  );
+
+  it.effect("first placement of a wide clip sets a wide canvas", () =>
+    withProject(
+      ({ projectId, root, edits, silences }) =>
+        Effect.gen(function* () {
+          const before = readEdit(root);
+          const start = yield* edits.read(projectId);
+          assert.deepEqual(start.document.canvas, { width: 1080, height: 1920 });
+
+          const first = yield* silences.removeSilences({ projectId });
+          assert.strictEqual(first.revision, start.revision + 1);
+          const cut = yield* edits.read(projectId);
+          assert.deepEqual(cut.document.canvas, { width: 1894, height: 1080 });
+          assert.strictEqual(cut.document.tracks[0]!.items.length, 3);
+
+          // The canvas and the cut are one checkpoint: one undo takes both back.
+          yield* edits.undo(projectId);
+          assert.strictEqual(readEdit(root), before);
+        }),
+      [{ _tag: "putMedia", media: wideCamera }],
+    ),
+  );
+
+  it.effect("keeps a canvas the user chose before the first cut", () =>
+    withProject(
+      ({ projectId, edits, silences }) =>
+        Effect.gen(function* () {
+          const first = yield* silences.removeSilences({ projectId });
+          assert.isTrue(first.changed);
+          // Chosen on an empty timeline, even though it equals the default: the wide cut keeps it.
+          const cut = yield* edits.read(projectId);
+          assert.deepEqual(cut.document.canvas, { width: 1080, height: 1920 });
+          assert.strictEqual(cut.document.tracks[0]!.items.length, 3);
+        }),
+      [
+        { _tag: "putMedia", media: wideCamera },
+        { _tag: "setCanvas", canvas: { width: 1080, height: 1920 } },
+      ],
+    ),
+  );
+
+  it.effect("keeps the canvas when the timeline already has a clip", () =>
+    withProject(
+      ({ projectId, edits, silences }) =>
+        Effect.gen(function* () {
+          const first = yield* silences.removeSilences({ projectId });
+          assert.isTrue(first.changed);
+          const cut = yield* edits.read(projectId);
+          // The user chose this shape after placing the clip; a later cut never resets it.
+          assert.deepEqual(cut.document.canvas, { width: 1080, height: 1080 });
+        }),
+      [
+        { _tag: "putMedia", media: wideCamera },
+        { _tag: "addTrack", track: { kind: "video", id: "V1", items: [] } },
+        {
+          _tag: "setKeepRanges",
+          trackId: "V1",
+          mediaId: "cam",
+          ranges: [{ in: 0, duration: FRAMES }],
+        },
+        // Not marked chosen, so only the placed clip keeps the first cut from reshaping.
+        { _tag: "setCanvas", canvas: { width: 1080, height: 1080 }, fromClip: true },
+      ],
+    ),
+  );
+
   it.effect("refuses a keep that starts after the clip ends", () =>
     withProject(({ projectId, root, silences }) =>
       Effect.gen(function* () {
@@ -297,6 +482,188 @@ describe("SilenceCutService", () => {
     ),
   );
 
+  it.effect("reads cached levels and calls no engine method (S7V-055)", () =>
+    withProject(({ projectId, scenario, silences }) =>
+      Effect.gen(function* () {
+        const result = yield* silences.removeSilences({ projectId });
+        assert.strictEqual(result.cuts, 4);
+        yield* silences.removeSilences({ projectId, minGapSeconds: 0.25 });
+        // The fake engine dies on any quick call, and no job ran.
+        assert.deepEqual(scenario.jobs, []);
+      }),
+    ),
+  );
+
+  it.effect("runs a silence job when levels are missing, and the next run reads its file", () =>
+    withProject(({ projectId, scenario, silences }) =>
+      Effect.gen(function* () {
+        scenario.levelsCached = false;
+        const first = yield* silences.removeSilences({ projectId });
+        // The same cut as from cached levels.
+        assert.strictEqual(first.cuts, 4);
+        assert.strictEqual(first.removedSeconds, 3.4);
+        assert.deepEqual(scenario.jobs, [
+          {
+            kind: "silence",
+            method: "silence.detect",
+            params: {
+              path: "/project/assets/cam.mp4",
+              cacheDir: "/project/.s7cache/transcripts",
+              fingerprint: camera.fingerprint,
+            },
+            projectId: "project",
+          },
+        ]);
+        assert.isTrue(scenario.levelsCached);
+        const second = yield* silences.removeSilences({ projectId });
+        assert.isFalse(second.changed);
+        assert.strictEqual(scenario.jobs.length, 1);
+      }),
+    ),
+  );
+
+  it.effect("hands the job back when measuring outlasts the wait, and reuses it", () =>
+    withProject(({ projectId, root, scenario, silences }) =>
+      Effect.gen(function* () {
+        const running = yield* Deferred.make<void>();
+        const gate = yield* Deferred.make<void>();
+        scenario.levelsCached = false;
+        scenario.job = Deferred.succeed(running, undefined).pipe(
+          Effect.andThen(Deferred.await(gate)),
+        );
+        const before = readEdit(root);
+        const waitedOut = Effect.gen(function* () {
+          const call = yield* silences
+            .removeSilences({ projectId })
+            .pipe(Effect.flip, Effect.forkChild);
+          yield* Deferred.await(running);
+          // Moves the clock past the 20 s wait however far the call has got.
+          while (call.pollUnsafe() === undefined) yield* TestClock.adjust("5 seconds");
+          return yield* Fiber.join(call);
+        });
+        const waiting = yield* waitedOut;
+        assert.strictEqual(waiting._tag === "SilenceCutError" && waiting.reason, "measuring");
+        assert.strictEqual(
+          waiting.message,
+          "Measuring the sound of cam first (video job engine-job-1). Wait for it with video_job_status, then call video_remove_silences again.",
+        );
+        assert.strictEqual(readEdit(root), before);
+        // Asked again while it runs: the same job, not a second one.
+        const again = yield* waitedOut;
+        assert.include(again.message, "engine-job-1");
+        assert.strictEqual(scenario.jobs.length, 1);
+        // The job goes on although no call waits for it; the next call gets its levels.
+        yield* Deferred.succeed(gate, undefined);
+        const done = yield* silences.removeSilences({ projectId });
+        assert.strictEqual(done.cuts, 4);
+        assert.strictEqual(scenario.jobs.length, 1);
+      }),
+    ),
+  );
+
+  it.effect("two calls at once share one silence job, even before it has its id", () =>
+    withProject(({ projectId, scenario, silences }) =>
+      Effect.gen(function* () {
+        const bothAsked = yield* Deferred.make<void>();
+        const gate = yield* Deferred.make<void>();
+        let asks = 0;
+        scenario.levelsCached = false;
+        scenario.asked = Effect.suspend(() =>
+          ++asks === 2 ? Deferred.succeed(bothAsked, undefined) : Effect.void,
+        ).pipe(Effect.asVoid);
+        // The job gets its id only once both calls have read the (missing) levels.
+        scenario.beforeStart = Deferred.await(bothAsked).pipe(Effect.andThen(Deferred.await(gate)));
+        const call = silences.removeSilences({ projectId }).pipe(Effect.exit);
+        const both = yield* Effect.all([call, call], { concurrency: "unbounded" }).pipe(
+          Effect.forkChild,
+        );
+        yield* Deferred.await(bothAsked);
+        yield* Deferred.succeed(gate, undefined);
+        const outcomes = yield* Fiber.join(both);
+        assert.strictEqual(scenario.jobs.length, 1);
+        // Both planned from the same edit: one cuts, the other finds it changed meanwhile.
+        const cut = outcomes.flatMap((exit) => (Exit.isSuccess(exit) ? [exit.value.cuts] : []));
+        assert.deepEqual(cut, [4]);
+      }),
+    ),
+  );
+
+  it.effect("a caller cut off while the job runs leaves it running for the next call", () =>
+    withProject(({ projectId, scenario, silences }) =>
+      Effect.gen(function* () {
+        const running = yield* Deferred.make<void>();
+        const gate = yield* Deferred.make<void>();
+        scenario.levelsCached = false;
+        scenario.job = Deferred.succeed(running, undefined).pipe(
+          Effect.andThen(Deferred.await(gate)),
+        );
+        const call = yield* silences.removeSilences({ projectId }).pipe(Effect.forkChild);
+        yield* Deferred.await(running);
+        yield* Fiber.interrupt(call);
+        yield* Deferred.succeed(gate, undefined);
+        const next = yield* silences.removeSilences({ projectId });
+        assert.strictEqual(next.cuts, 4);
+        assert.strictEqual(scenario.jobs.length, 1);
+      }),
+    ),
+  );
+
+  it.effect("refuses levels measured on another clock than the transcript's", () =>
+    withProject(({ projectId, root, scenario, silences }) =>
+      Effect.gen(function* () {
+        scenario.levelsCached = false;
+        const before = readEdit(root);
+        for (const measured of [
+          { rate: { num: 30, den: 1 }, durationFrames: FRAMES - 1 },
+          { rate: { num: 25, den: 1 }, durationFrames: FRAMES },
+        ]) {
+          scenario.measured = measured;
+          const error = yield* silences.removeSilences({ projectId }).pipe(Effect.flip);
+          assert.strictEqual(error._tag === "SilenceCutError" && error.reason, "no-transcript");
+          assert.strictEqual(
+            error.message,
+            "cam changed since it was transcribed. Run video_transcribe again.",
+          );
+          assert.strictEqual(readEdit(root), before);
+          scenario.levelsCached = false;
+        }
+        assert.strictEqual(scenario.jobs.length, 2);
+      }),
+    ),
+  );
+
+  it.effect("a cancelled silence job says so, and the next run measures again", () =>
+    withProject(({ projectId, root, scenario, silences }) =>
+      Effect.gen(function* () {
+        scenario.levelsCached = false;
+        scenario.job = Effect.fail(
+          new EngineError({ reason: "cancelled", method: "silence.detect" }),
+        );
+        const before = readEdit(root);
+        const error = yield* silences.removeSilences({ projectId }).pipe(Effect.flip);
+        assert.strictEqual(error._tag === "EngineError" && error.reason, "cancelled");
+        assert.include(error.message, "cancelled");
+        assert.strictEqual(readEdit(root), before);
+        scenario.job = Effect.void;
+        assert.strictEqual((yield* silences.removeSilences({ projectId })).cuts, 4);
+        assert.strictEqual(scenario.jobs.length, 2);
+      }),
+    ),
+  );
+
+  it.effect("refuses a clip without sound before any job", () =>
+    withProject(
+      ({ projectId, scenario, silences }) =>
+        Effect.gen(function* () {
+          scenario.levelsCached = false;
+          const error = yield* silences.removeSilences({ projectId }).pipe(Effect.flip);
+          assert.strictEqual(error.message, "cam has no sound to find pauses in.");
+          assert.deepEqual(scenario.jobs, []);
+        }),
+      [{ _tag: "putMedia", media: { ...camera, probe: { ...camera.probe, hasAudio: false } } }],
+    ),
+  );
+
   it.effect("should handle missing transcript", () =>
     withProject(({ projectId, root, scenario, silences }) =>
       Effect.gen(function* () {
@@ -305,7 +672,7 @@ describe("SilenceCutService", () => {
         const error = yield* silences.removeSilences({ projectId }).pipe(Effect.flip);
         assert.strictEqual(error._tag, "SilenceCutError");
         assert.include(error.message, "Run video_transcribe first");
-        assert.strictEqual(scenario.detects, 0);
+        assert.deepEqual(scenario.jobs, []);
         assert.strictEqual(readEdit(root), before);
       }),
     ),

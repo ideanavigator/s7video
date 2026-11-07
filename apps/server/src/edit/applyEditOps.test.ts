@@ -243,6 +243,26 @@ describe("applyEditOps", () => {
     expect(removed).toMatchObject({ _tag: "failed", error: { itemId: "cam" } });
   });
 
+  it("sets the canvas, and refuses an odd or zero size", () => {
+    const chosen = run([{ _tag: "setCanvas", canvas: { width: 1894, height: 1080 } }]);
+    expect(chosen.canvas).toEqual({ width: 1894, height: 1080 });
+    // A shape someone asked for is marked chosen; the first clip's own shape is not.
+    expect(chosen.metadata.canvasChosen).toBe(true);
+    const fromClip = run([
+      { _tag: "setCanvas", canvas: { width: 1894, height: 1080 }, fromClip: true },
+    ]);
+    expect(fromClip.metadata.canvasChosen).toBeUndefined();
+    for (const canvas of [
+      { width: 1895, height: 1080 },
+      { width: 1080, height: 0 },
+    ]) {
+      expect(applyEditOps(base, [{ _tag: "setCanvas", canvas }])).toMatchObject({
+        _tag: "failed",
+        error: { _tag: "EditOpError", op: "setCanvas" },
+      });
+    }
+  });
+
   it("never changes the document it was given", () => {
     const frozen = structuredClone(base);
     run([keep([[0, 10]]), { _tag: "setCaptionStyle", trackId: "C1", style: "s7-box" }], frozen);
