@@ -223,6 +223,11 @@ const goldenBrowserProject = {
           const path = `${goldenMediaDir}/${file.replaceAll("/", "")}`;
           return (await NodeFSP.stat(path).catch(() => null))?.isFile() ? path : null;
         },
+        // A synthetic clip (S7V-031 synth.ts) in the test-media cache, generated on first use.
+        synthMediaPath: async (_context, spec: string) => {
+          const { synthesize } = await import("../../fixtures/media/synth.ts");
+          return synthesize(JSON.parse(spec));
+        },
       },
     },
   },

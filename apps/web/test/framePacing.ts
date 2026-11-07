@@ -69,3 +69,29 @@ export const idleFor = (ms: number) => new Promise<void>((resolve) => setTimeout
 /** The next painted frame, for settling layout between perf runs. */
 export const nextPaint = () =>
   new Promise<void>((resolve) => requestAnimationFrame(() => setTimeout(resolve, 0)));
+
+/** Calls `sample` every `everyMs` for `forMs` of real time, from a timer (not animation frames). */
+export function sampleFor(forMs: number, everyMs: number, sample: () => void): Promise<void> {
+  return new Promise((resolve) => {
+    const timer = setInterval(sample, everyMs);
+    setTimeout(() => {
+      clearInterval(timer);
+      resolve();
+    }, forMs);
+  });
+}
+
+/** The frame `video` last presented (from `requestVideoFrameCallback`), until `stop`. */
+export function trackPresentedFrame(
+  video: HTMLVideoElement,
+  framesPerSecond: number,
+): { readonly frame: () => number | null; readonly stop: () => void } {
+  let frame: number | null = null;
+  let handle = 0;
+  const onFrame: VideoFrameRequestCallback = (_now, metadata) => {
+    frame = Math.floor(metadata.mediaTime * framesPerSecond + 0.001);
+    handle = video.requestVideoFrameCallback(onFrame);
+  };
+  handle = video.requestVideoFrameCallback(onFrame);
+  return { frame: () => frame, stop: () => video.cancelVideoFrameCallback(handle) };
+}
