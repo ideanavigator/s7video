@@ -257,6 +257,26 @@ describe("EditorPanel", () => {
     await expect.element(screen.getByRole("button", { name: "Find file…" })).toBeVisible();
   });
 
+  // S7V-054: an outside change that was not kept says why, once, over the restored edit.
+  it("shows the refusal notice once, then plays the restored edit", async () => {
+    setState([asset("clip-0")], true);
+    const ready = state.edit as Extract<ProjectEditState, { _tag: "ready" }>;
+    const notice = "That change was not kept; the edit is back to its last saved version.";
+    state.edit = { _tag: "ready", snapshot: { ...ready.snapshot, notice } };
+    await using screen = await renderPanel();
+    await expect.element(screen.getByRole("status").filter({ hasText: notice })).toBeVisible();
+    await expect.element(screen.getByRole("group", { name: "Player: clip-0.mov" })).toBeVisible();
+    await userEvent.click(screen.getByRole("button", { name: "Dismiss" }));
+    expect(screen.getByText(notice).query()).toBeNull();
+    // The next change brings no notice; a later refusal shows its own.
+    state.edit = { _tag: "ready", snapshot: { ...ready.snapshot, revision: 2 } };
+    await screen.rerender(panel());
+    expect(screen.getByText(notice).query()).toBeNull();
+    state.edit = { _tag: "ready", snapshot: { ...ready.snapshot, revision: 2, notice } };
+    await screen.rerender(panel());
+    await expect.element(screen.getByText(notice)).toBeVisible();
+  });
+
   it("plays the edit with Export in the header", async () => {
     setState([asset("clip-0")], true);
     await using screen = await renderPanel();

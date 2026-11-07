@@ -17,6 +17,7 @@ Undo and redo for `edit.json` keep their history in the project's `.s7history/` 
   objects/<sha256>.json.gz   gzip of one edit.json or project.json text; the name is the sha256 of
                              the uncompressed text, so equal texts share one object
   log.json                   format "s7history", version 1: entries, cursor, knownEdit, legacy
+  refused/<epoch-ms>-edit.json   outside edits that were not kept (S7V-054); never read back
 ```
 
 - One history step is one log entry naming two objects (`files["edit.json"]`, `files["project.json"]`).
@@ -56,6 +57,25 @@ Undo and redo for `edit.json` keep their history in the project's `.s7history/` 
 | `writeLog(cwd, log)`                  | Atomic replace of `log.json`.                                                                                                                                         |
 | `collect(cwd, log)`                   | Deletes unnamed objects, temp files in `objects/` and stale `.log.json.*.tmp` files; returns `{ removedObjects, freedBytes }`. Temp files count in `freedBytes` only. |
 | `usage(cwd)`                          | `{ objects, bytes }` of the objects on disk.                                                                                                                          |
+
+## Outside changes (S7V-054)
+
+An `edit.json` the service did not write is checked when it is next read or changed
+(`EditHistoryService.standing`). It is recorded as a new step only if it is valid and every media
+`path` or `reference` was already in the last accepted edit (compared after resolving against the
+project), or if it is the exact text of an earlier step, as a T3 turn revert writes. Anything else
+is refused: the text is kept in `refused/`, the last accepted edit is written back, nothing is
+recorded, subscribers get one snapshot with `notice`, and the call fails with
+`outside-change-refused`.
+
+- **The last accepted edit is `knownEdit`'s object**, not the cursor entry's: an undo that kept
+  library clips writes text no entry names, so `step` saves that text as an object too and
+  `liveObjects` keeps `knownEdit`. Logs from before S7V-054 fall back to the cursor entry.
+- **No history yet:** a project at revision 0 is checked against the starting edit and put back to
+  it. A project above revision 0 with an empty log (damaged log, old project not yet imported) is
+  read as it is, unchecked: there is nothing to compare with, and putting back the starting edit
+  would throw the user's work away.
+- `collect` never touches `refused/`.
 
 ## Media guard
 

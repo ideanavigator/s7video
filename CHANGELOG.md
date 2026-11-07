@@ -136,5 +136,8 @@ from; the per-ticket entries and how this file is compiled are in
 
 - No visible change: reusing a speech model from another app's download folder now accepts only
   files inside that model's own folder, never a file a stray link points to. (S7V-068)
+- If an assistant changes your edit without the app's video tools, the change is kept only if it
+  is valid and adds no file from outside your project; otherwise your edit goes back to its last
+  saved version and you see why. (S7V-054)
 
 [Unreleased]: https://github.com/ideanavigator/s7video/commits/main

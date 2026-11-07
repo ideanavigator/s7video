@@ -244,6 +244,7 @@ New: `docs/engineering/` (standards), `docs/changelog/` (per-ticket entries), `d
 - **Every new named project is an edit project.** `ManagedProjectFolders.createNamedProject` adds `edit.json`, `project.json`, `styles/`, `assets/`, `.s7cache/` and `exports/`. It also adds a whitelist `.gitignore`, and commits those files with T3's starter `README.md` and `assets/icon.svg`. It only adds files: nothing of T3's scaffold is removed. Scratch projects and existing projects are not converted.
 - **What is tracked.** The whitelist ignores everything except `edit.json`, `project.json`, `.gitignore`, `styles/`, `README.md` and `assets/icon.svg`. As a result, T3's per-turn checkpoints, turn diffs and turn reverts in an edit project only see those files. Media, cache, exports and anything else an agent writes outside them never show in a diff and are never reverted.
 - **Edit undo is separate from turn reverts and needs no git (S7V-051).** Edit undo (`edit.undo`) restores only `edit.json` (and bumps `project.json`) from s7video's own store in `.s7history/` ([edit history](internals/edit-history.md)); T3's turn checkpoints, turn diffs and reverts still use git where it exists. Projects from before S7V-051 kept edit history in `.s7cache/edit-history.json` and refs under `refs/t3/edit/checkpoints/`; those are left in place and only read once for import. It restores the edit, not the library: a clip in the media list now stays there even when the restored edit is from before its import (S7V-059); with no such clip, the saved bytes are written unchanged. Media, track, item and marker ids share one namespace, so a kept clip whose id the restored edit uses for something else refuses that step (`library-conflict`) and history stays where it was; new clip ids are picked against every id in the edit. If a turn revert changes `edit.json`, the edit service records it as a new revision the next time the edit is read or changed.
+- **Outside changes are checked (S7V-054).** An `edit.json` written outside the edit service (an agent's shell, a turn revert, `projects.writeFile`) is recorded only if it is valid and names no media file the last accepted edit did not, or is the exact text of an earlier step. Otherwise the last accepted edit is put back from `.s7history/`, the refused file is kept in `.s7history/refused/`, and the read fails with `outside-change-refused`; the Editor panel shows the reason once. ACP agents with video tools get the same "edit only with video_ tools" line as Claude and Codex.
 
 ## Git is optional (S7V-052)
 
@@ -341,7 +342,11 @@ undo history. These upstream files have small, additive edits:
 - `provider/AgentContextBudget.test.ts` and `agentContextBudget.json` measure the video-on context
   as `claudeSystemAppendVideoBytes` and `codexAdditionalContextVideoBytes`.
 
-ACP agents do not get the line yet.
+- ACP agents (S7V-054): `T3AcpInstructionState` gains `hasVideoTools`, and
+  `t3AcpPromptWithInstructions` adds the line to the first prompt and again when the capability
+  changes; `packages/provider-acp/src/server/adapter.ts` sets it from the session's `video`
+  capability. ACP prompt text is not measured in `agentContextBudget.json`; the line adds 172 bytes
+  to a video session's first prompt.
 
 ## Built-in skills (S7V-048)
 

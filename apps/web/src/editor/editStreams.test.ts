@@ -32,6 +32,12 @@ describe("editStore applies subscribed revisions in order", () => {
     expect(passed).toEqual([0, 2, 3]);
     expect(shown).toBe(3);
   });
+
+  it("passes a refusal notice at the shown revision, but not an older one", () => {
+    const notice = (revision: number) => ({ ...snapshot(revision), notice: "Not kept." });
+    expect(acceptNewerSnapshot(3, notice(3))).toEqual([3, [notice(3)]]);
+    expect(acceptNewerSnapshot(3, notice(2))).toEqual([3, []]);
+  });
 });
 
 describe("applyJobsEvent", () => {
