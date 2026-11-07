@@ -53,6 +53,9 @@ from; the per-ticket entries and how this file is compiled are in
   export without captions. (S7V-046)
 - Undo from chat: say "undo that" or "redo" and the assistant steps your edit back or forward. Your
   footage is never touched. (S7V-041)
+- Ask the assistant for a reel (9:16), wide (16:9), square (1:1), 4:5 or 4:3 video and it changes
+  the edit's shape in one step; undo takes it back, and the player and the export both follow it.
+  (S7V-061)
 - Pick "Remove silences" from the chat's / menu, or ask for it, and the assistant cuts the pauses and
   tells you how much it removed. It never does this unless you ask. (S7V-048)
 - Ask the assistant to remove the silences and it cuts the pauses between your sentences without

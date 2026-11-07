@@ -100,38 +100,50 @@ const PHRASES = [
   [120, 180],
   [210, 270],
 ] as const;
+const LEVELS = Array.from({ length: 300 }, (_, frame) =>
+  PHRASES.some(([from, to]) => from <= frame && frame < to) ? -18 : -50,
+);
+// One `levels` read gives the transcript and its cached levels, as S7V-055 reads them, so no
+// measuring job runs; any engine call would be a regression.
 const spokenClip = Layer.mergeAll(
   Layer.mock(EngineService.EngineService)({
     subscribeJobs: Stream.make({ type: "snapshot" as const, jobs: [] }),
     recentJobs: Effect.succeed([]),
-    call: (method) =>
-      method === "silence.detect"
-        ? Effect.succeed({
-            rate: { num: 30, den: 1 },
-            durationFrames: 300,
-            levels: Array.from({ length: 300 }, (_, frame) =>
-              PHRASES.some(([from, to]) => from <= frame && frame < to) ? -18 : -50,
-            ),
-          } as never)
-        : Effect.die(`unexpected ${method}`),
+    call: (method) => Effect.die(`unexpected quick call ${method}`),
+    runJob: (input) => Effect.die(`unexpected job ${input.method}`),
   }),
   Layer.mock(TranscriptService.TranscriptService)({
-    get: () =>
+    levels: () =>
       Effect.succeed({
-        transcriptVersion: 1,
-        mediaFingerprint: wideClip.fingerprint,
-        model: "test",
-        revision: "test",
-        fps: { num: 30, den: 1 },
-        durationFrames: 300,
-        words: PHRASES.map(([startFrame, endFrame], index) => ({
-          text: `w${index}`,
-          startFrame,
-          endFrame,
-          confidence: null,
-          speaker: "S1",
-        })),
-        createdAt: "2026-11-07T00:00:00.000Z",
+        transcript: {
+          transcriptVersion: 1,
+          mediaFingerprint: wideClip.fingerprint,
+          model: "test",
+          revision: "test",
+          fps: { num: 30, den: 1 },
+          durationFrames: 300,
+          words: PHRASES.map(([startFrame, endFrame], index) => ({
+            text: `w${index}`,
+            startFrame,
+            endFrame,
+            confidence: null,
+            speaker: "S1",
+          })),
+          createdAt: "2026-11-07T00:00:00.000Z",
+        },
+        cached: {
+          levelsVersion: 1 as const,
+          mediaFingerprint: wideClip.fingerprint,
+          fps: { num: 30, den: 1 },
+          durationFrames: 300,
+          levels: LEVELS,
+        },
+        measure: {
+          projectId: "project" as ProjectId,
+          path: "/project/assets/cam.mp4",
+          cacheDir: "/project/.s7cache/transcripts",
+          fingerprint: wideClip.fingerprint,
+        },
       }),
   }),
 );
