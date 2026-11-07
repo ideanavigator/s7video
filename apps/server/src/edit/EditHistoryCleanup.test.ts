@@ -281,6 +281,7 @@ describe("history cleanup", () => {
             EditHistoryService.layer.pipe(
               Layer.provide(LegacyEditHistory.layerNone),
               Layer.provide(EditSnapshotStore.layer),
+              Layer.provide(NodeServices.layer),
             ),
           ),
         );
