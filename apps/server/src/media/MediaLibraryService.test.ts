@@ -24,12 +24,19 @@ import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
+import * as NodeZlib from "node:zlib";
 
 import { ASSET_ROUTE_PREFIX, issueAssetUrl, resolveAsset } from "../assets/AssetAccess.ts";
 import * as NativeAppIconResolver from "../assets/NativeAppIconResolver.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as EditDocumentService from "../edit/EditDocumentService.ts";
-import { git, isIgnored, layerEditTest } from "../edit/editHarness.testkit.ts";
+import {
+  git,
+  historyLog,
+  historyObjects,
+  isIgnored,
+  layerEditTest,
+} from "../edit/editHarness.testkit.ts";
 import * as EngineService from "../engine/EngineService.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
@@ -1204,6 +1211,25 @@ describe("MediaLibraryService", () => {
         assert.notInclude(git(root, "ls-files"), ".s7cache");
         // Not in any commit of the edit history either.
         assert.notInclude(git(root, "log", "--all", "--name-only", "--format="), ".s7cache");
+        // The S7V-051 store: every step names only the edit and its project file, and every object
+        // is one of those texts, never cache bytes.
+        const history = NodePath.join(root, ".s7history");
+        assert.deepEqual(NodeFS.readdirSync(history).toSorted(), ["log.json", "objects"]);
+        const log = historyLog(root)!;
+        assert.isAtLeast(log.entries.length, 10);
+        for (const entry of log.entries) {
+          assert.deepEqual(Object.keys(entry.files).toSorted(), ["edit.json", "project.json"]);
+        }
+        const objects = historyObjects(root);
+        assert.isAbove(objects.length, 0);
+        for (const object of objects) {
+          const text = NodeZlib.gunzipSync(
+            NodeFS.readFileSync(NodePath.join(history, "objects", object)),
+          ).toString("utf8");
+          const parsed = JSON.parse(text) as Record<string, unknown>;
+          assert.isTrue("tracks" in parsed || "revision" in parsed, object);
+          assert.isBelow(text.length, 64 * 1024, object);
+        }
       }),
     ),
   );

@@ -69,6 +69,8 @@ export const drawWaveform = (
   const values = peakColumns(level, peakAt, firstSample, endSample, width);
   const middle = height / 2;
   context.fillStyle = view.color;
+  // One path and one fill for every column: a fill per column costs far more per frame.
+  context.beginPath();
   for (let column = 0; column < width; column += 1) {
     const low = values[column * 2]!;
     const high = values[column * 2 + 1]!;
@@ -76,8 +78,9 @@ export const drawWaveform = (
     const top = middle - Math.min(1, high) * middle;
     const bottom = middle - Math.max(-1, low) * middle;
     // A flat line where it is silent, never a gap.
-    context.fillRect(column, top, 1, Math.max(1, bottom - top));
+    context.rect(column, top, 1, Math.max(1, bottom - top));
   }
+  context.fill();
   return missing;
 };
 

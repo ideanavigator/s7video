@@ -45,5 +45,11 @@ export type FromWorker =
       /** Mint a new URL: the one minted before failed (expired, or the file was made again). */
       readonly refresh: boolean;
     }
-  /** `complete`: every tile the view needs was loaded; otherwise more draws follow. */
-  | { readonly type: "drawn"; readonly id: string; readonly complete: boolean };
+  /**
+   * The draws of one frame, batched so the page handles one message per frame, not one per clip.
+   * `complete`: every tile the view needs was loaded; otherwise more draws follow.
+   */
+  | {
+      readonly type: "drawn";
+      readonly draws: ReadonlyArray<{ readonly id: string; readonly complete: boolean }>;
+    };
