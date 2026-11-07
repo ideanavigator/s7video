@@ -1256,9 +1256,9 @@ it.effect("projects.writeFile with write-only scope cannot add outside media", (
         Layer.fresh(layerConfigSources),
         Layer.mock(PreviewAutomationBroker.PreviewAutomationBroker)({}),
         Layer.mock(ServerBrowser.ServerBrowser)({}),
+        NodeServices.layer,
       ),
     ),
-    Effect.provide(NodeServices.layer),
     Effect.scoped,
   ),
 );
