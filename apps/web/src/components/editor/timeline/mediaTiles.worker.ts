@@ -180,8 +180,22 @@ const draw = async (id: string) => {
     clip.variant === "peaks"
       ? drawWaveform(context, view, index as MediaPeaksIndex, peakTilesOf(view.source))
       : drawFilmstrip(context, view, index as MediaFilmstripIndex, sheetsOf(view.source));
-  post({ type: "drawn", id, complete: missing === 0 });
+  reportDrawn(id, missing === 0);
 };
+
+let drawnThisFrame: Array<{ id: string; complete: boolean }> = [];
+
+/** Collects the frame's draws and reports them in one message once the frame's draws are done. */
+function reportDrawn(id: string, complete: boolean) {
+  if (drawnThisFrame.length === 0) {
+    setTimeout(() => {
+      const draws = drawnThisFrame;
+      drawnThisFrame = [];
+      post({ type: "drawn", draws });
+    }, 0);
+  }
+  drawnThisFrame.push({ id, complete });
+}
 
 const nextFrame: (callback: () => void) => void =
   scope.requestAnimationFrame !== undefined

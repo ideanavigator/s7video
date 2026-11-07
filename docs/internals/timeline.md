@@ -47,17 +47,24 @@ and S7V-039 change the mapping there only.
 - **Where:** `ClipMediaSlot.tsx`. `TimelineClip` renders it inside every block that shows project
   media, with `environmentId`, `projectId`, the `TimelineItem` (`start`, `duration`, `in`,
   `mediaId`), the track kind, the edit fps, the block height and the media library's
-  `MediaAsset`. It renders `ClipMediaTiles` once `asset.mediaData` has that part `ready`. Video
+  `MediaAsset`. It renders `ClipMediaTilesLive` once `asset.mediaData` has that part `ready`. Video
   clips show the filmstrip edge to edge and their sound along the bottom 40 %; SFX and music clips
   show only the waveform; text items get no slot.
 - **Pixel span:** the visible width and frame range change on every scroll and zoom step, so they
   never come from React props. The slot reads `TimelineViewContext` (`getView()`, and
   `subscribeView(listener)`, coalesced to one update per animation frame) and
-  `clipSpanInView(item, view)`, keeps the span in state, and re-renders only when the span
-  changes. Only slots with ready media data subscribe, so a zoom step re-renders those, never
-  every clip. The canvas sits at `offsetPx` inside the block, and the worker gets source frames
-  at the edit's fps, with the item's `in` as `anchorFrame` ([media-data.md](media-data.md)).
-- **Stacking:** the layer has `z-index: -1` inside the block (its `contain: strict` makes it a
+  `clipSpanInView(item, view)` outside React. Only slots with ready media data subscribe. The slot moves its layer and posts each
+  view to `ClipMediaTilesLive` directly, so a scroll or zoom step re-renders no clip; canvases
+  mount the first time their clip is on screen, not for every clip in the overscan. The worker
+  gets source frames at the edit's fps, with the item's `in` as `anchorFrame`
+  ([media-data.md](media-data.md)).
+- **Cost:** a full zoom sweep of a 30-minute edit with 120 media canvases runs no main-thread task
+  over 50 ms and drops no frame, but React's clip window trails the view on 2 to 5 of about 520
+  frames, against 0 to 2 with no media data (same sweep, same machine). Posting fewer views or
+  redrawing at 30 Hz did not change it, but stopping the worker's draws did, so the cost follows
+  the number of worker canvases presented per frame. One canvas per row instead of per clip is
+  the next step if it ever shows.
+- **Stacking:** the layer has a negative `z-index` inside the block (its `contain: strict` makes it a
   stacking context), so it paints over the block's fill and under its label.
 - **Placeholders:** the block's flat fill shows until `ClipMediaTiles` draws; the timeline never
   waits for media data.

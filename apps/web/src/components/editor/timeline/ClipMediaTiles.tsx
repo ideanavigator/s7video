@@ -46,7 +46,9 @@ export function mediaTilesWorker(): TilesWorker | null {
   worker.addEventListener("message", (event: MessageEvent<FromWorker>) => {
     const message = event.data;
     if (message.type === "drawn") {
-      for (const listener of drawn) listener(message.id, message.complete);
+      for (const draw of message.draws) {
+        for (const listener of drawn) listener(draw.id, draw.complete);
+      }
       return;
     }
     const mint = minters.get(message.source)?.values().next().value;
@@ -191,14 +193,19 @@ function useTilesCanvas(props: {
     };
   }, [source, variant]);
 
-  /** Without a colour, the canvas's inherited text colour is used; the worker cannot read styles. */
+  const inherited = useRef<string | null>(null);
+  /**
+   * Without a colour, the canvas's inherited text colour is used, since the worker cannot read
+   * styles. It is read once per canvas: reading it per view would force a style pass every frame.
+   */
   const post = (view: ViewInput) => {
     const worker = mediaTilesWorker();
     const id = idRef.current;
     const canvas = canvasRef.current;
     if (worker === null || id === null || canvas === null) return;
     const pixelRatio = typeof window === "undefined" ? 1 : window.devicePixelRatio || 1;
-    const color = view.color ?? getComputedStyle(canvas).color;
+    if (inherited.current === null) inherited.current = getComputedStyle(canvas).color;
+    const color = view.color ?? inherited.current;
     worker.post({ type: "view", id, view: { ...view, source, pixelRatio, color } });
   };
   return { canvasRef, key: `${source}/${variant}`, post };

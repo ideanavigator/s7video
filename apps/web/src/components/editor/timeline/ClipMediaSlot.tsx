@@ -12,7 +12,7 @@ import type {
   MediaAsset,
   ProjectId,
 } from "@t3tools/contracts";
-import { use, useEffect, useRef, useState } from "react";
+import { use, useEffect, useEffectEvent, useRef, useState } from "react";
 
 import { ClipMediaTilesLive, type TilesSpanSource } from "./ClipMediaTiles";
 import type { MediaDataVariant } from "./mediaTilesProtocol";
@@ -70,8 +70,13 @@ export function ClipMediaSlot(props: ClipMediaSlotProps) {
  * The clip's visible span from the live view, updated at most once per animation frame. The
  * slot positions its layer and tells its canvases directly, so a zoom step re-renders nothing.
  */
-function useLiveSpan(item: TimelineItem, layer: { current: HTMLDivElement | null }) {
+function useLiveSpan(
+  item: TimelineItem,
+  layer: { current: HTMLDivElement | null },
+  onFirstVisible: () => void,
+) {
   const source = use(TimelineViewContext);
+  const firstVisible = useEffectEvent(onFirstVisible);
   const [live] = useState(() => {
     const listeners = new Set<() => void>();
     let span: ClipSpan | null = null;
@@ -86,11 +91,16 @@ function useLiveSpan(item: TimelineItem, layer: { current: HTMLDivElement | null
         return () => void listeners.delete(listener);
       },
     };
-    const set = (next: ClipSpan, element: HTMLDivElement | null) => {
+    let shown = false;
+    const set = (next: ClipSpan, element: HTMLDivElement | null, onShown: () => void) => {
       if (span !== null && sameSpan(span, next)) return;
       span = next;
+      const visible = next.widthPx >= 1 && next.sourceEndFrame > next.sourceFirstFrame;
+      if (visible && !shown) {
+        shown = true;
+        onShown();
+      }
       if (element !== null) {
-        const visible = next.widthPx >= 1 && next.sourceEndFrame > next.sourceFirstFrame;
         element.style.display = visible ? "" : "none";
         element.style.left = `${next.offsetPx}px`;
         element.dataset.clipMediaSpan = `${next.sourceFirstFrame}-${next.sourceEndFrame}`;
@@ -106,7 +116,7 @@ function useLiveSpan(item: TimelineItem, layer: { current: HTMLDivElement | null
     let frame: number | null = null;
     const update = () => {
       frame = null;
-      live.set(clipSpanInView(item, source.getView()), layer.current);
+      live.set(clipSpanInView(item, source.getView()), layer.current, firstVisible);
     };
     update();
     const unsubscribe = source.subscribeView(() => {
@@ -128,7 +138,9 @@ const sameSpan = (a: ClipSpan, b: ClipSpan) =>
 
 function ClipMediaLayers(props: ClipMediaSlotProps & { readonly layers: ReadonlyArray<Layer> }) {
   const layer = useRef<HTMLDivElement | null>(null);
-  const span = useLiveSpan(props.item, layer);
+  // Canvases mount the first time the clip is on screen, not for every clip in the overscan.
+  const [seen, setSeen] = useState(false);
+  const span = useLiveSpan(props.item, layer, () => setSeen(true));
   return (
     // Below the block's label (z-index -1 in the block's own stacking context), above its fill.
     <div
@@ -137,7 +149,7 @@ function ClipMediaLayers(props: ClipMediaSlotProps & { readonly layers: Readonly
       className="pointer-events-none absolute top-0 -z-10"
       style={{ color: TIMELINE_TRACK_COLOR[props.kind], display: "none" }}
     >
-      {props.layers.map((entry) => (
+      {(seen ? props.layers : []).map((entry) => (
         <div
           key={entry.variant}
           className={`absolute left-0 ${entry.className}`}
