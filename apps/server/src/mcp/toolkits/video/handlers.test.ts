@@ -509,6 +509,7 @@ describe("video toolkit", () => {
       Effect.sync(() => {
         const tools = server.tools.map(({ tool }) => tool);
         expect(tools.map((tool) => tool.name).toSorted()).toEqual([
+          "video_assemble",
           "video_canvas",
           "video_edit_read",
           "video_export",
@@ -545,6 +546,7 @@ describe("video toolkit", () => {
         expect(described.video_redo).toMatch(/\bredo\b.*\bedit\b/iu);
         // S7V-027: user-triggered only; the agent never cuts silences on its own.
         expect(described.video_remove_silences).toContain("only if user asks");
+        expect(described.video_assemble).toContain("only if user asks");
       }),
     ),
   );
@@ -919,6 +921,7 @@ describe("video toolkit", () => {
           ["video_undo", {}],
           ["video_redo", {}],
           ["video_remove_silences", {}],
+          ["video_assemble", { items: [] }],
         ] as const) {
           // A hidden tool is not callable at all: the server answers as for an unknown tool.
           const error = yield* call(threadA, tool, args, ["orchestration"]).pipe(Effect.flip);
@@ -1293,6 +1296,7 @@ it.effect("should hide tools without the video capability", () =>
         });
 
       expect(yield* listed("videoToken")).toEqual([
+        "video_assemble",
         "video_canvas",
         "video_edit_read",
         "video_export",

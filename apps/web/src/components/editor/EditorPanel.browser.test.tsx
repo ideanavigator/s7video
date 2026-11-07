@@ -284,6 +284,58 @@ describe("EditorPanel", () => {
     await expect.element(screen.getByRole("button", { name: "Export" })).toBeVisible();
   });
 
+  it("plays an edit from several clips on the player clock, each clip with its own state", async () => {
+    setState([asset("clip-0"), asset("clip-1", { state: "missing" })], true);
+    const edit = state.edit;
+    if (edit._tag !== "ready") throw new Error("edit not ready");
+    state.edit = {
+      ...edit,
+      snapshot: {
+        ...edit.snapshot,
+        document: {
+          ...edit.snapshot.document,
+          tracks: [
+            {
+              kind: "video",
+              id: "v1",
+              items: [
+                { id: "a", media: "clip-0", start: 0, duration: 30, in: 10 },
+                { id: "b", media: "clip-1", start: 45, duration: 30, in: 0 },
+              ],
+            },
+          ],
+        },
+      },
+    };
+    state.transcriptMedia = [];
+    const projectKey = scopedProjectKey({ environmentId: EnvironmentId.make("env-1"), projectId });
+    const seeks: number[] = [];
+    const stop = subscribePlayerSeek(projectKey, (frame) => seeks.push(frame));
+    try {
+      await using screen = await renderPanel();
+      await expect
+        .element(screen.getByRole("group", { name: "Player: clip-0.mov and 1 more" }))
+        .toBeVisible();
+      await expect.element(screen.getByTestId("multi-clip-stage")).toBeInTheDocument();
+      await expect.element(screen.getByRole("button", { name: "Export" })).toBeVisible();
+      expect(document.body.textContent).not.toContain("later version");
+      expect(state.transcriptMedia.at(-1)).toBe("clip-0");
+
+      // A click on the second clip seeks the player there; its clip is missing.
+      const ruler = document.querySelector<HTMLElement>("[data-timeline-ruler]")!;
+      const scroller = document.querySelector<HTMLElement>("[data-testid=timeline-scroller]")!;
+      const ppf = Number(scroller.dataset.pxPerFrame);
+      await userEvent.click(ruler, { position: { x: 60.5 * ppf, y: 10 } });
+      expect(seeks.at(-1)).toBe(60);
+      await expect.element(screen.getByText("Clip not found: clip-1.mov")).toBeVisible();
+      await expect.element(screen.getByRole("button", { name: "Find file…" })).toBeVisible();
+      // The Transcript tab follows the playhead into the other clip.
+      await expect.poll(() => state.transcriptMedia.at(-1)).toBe("clip-1");
+    } finally {
+      stop();
+    }
+  });
+
   it("keeps each tab's scroll position when switching tabs", async () => {
     setState(
       Array.from({ length: 40 }, (_, index) => asset(`clip-${index}`)),

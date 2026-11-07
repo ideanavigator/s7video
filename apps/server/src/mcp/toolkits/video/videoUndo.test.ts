@@ -460,6 +460,7 @@ describe("video_undo and video_redo", () => {
           ["video_remove_silences", {}],
           ["video_export", {}],
           ["video_canvas", { ratio: "1:1" }],
+          ["video_assemble", { items: [{ mediaId: "cam", in: 0, duration: 30 }] }],
           ["video_import", { path: NodePath.join(root, "clip.mp4") }],
           ["video_transcribe", { media: "cam" }],
         ];
@@ -505,6 +506,114 @@ describe("video_undo and video_redo", () => {
         expect(readFile(root, "edit.json")).toBe(before);
         const refused = yield* call("video_canvas", { ratio: "21:9" }).pipe(Effect.flip);
         expect(String(refused)).toMatch(/ratio/u);
+      }),
+    ),
+  );
+
+  // S7V-039: several clips in one edit, in order, as one undoable step.
+  it.effect("should insert items in order for video_assemble", () =>
+    withProject(({ root, thread, edits, call }) =>
+      Effect.gen(function* () {
+        NodeFS.mkdirSync(NodePath.join(root, "assets"), { recursive: true });
+        NodeFS.writeFileSync(NodePath.join(root, "assets", "cam.mp4"), "cam");
+        NodeFS.writeFileSync(NodePath.join(root, "assets", "broll.mp4"), "broll");
+        const initial = yield* edits.read(thread.projectId);
+        const ready = yield* edits.apply(
+          thread.projectId,
+          [
+            ...setup,
+            { _tag: "putMedia", media: { ...media, id: "broll", path: "assets/broll.mp4" } },
+            keep([[0, 30]]),
+          ],
+          { origin: "agent", baseRevision: initial.revision },
+        );
+        const before = readFile(root, "edit.json");
+
+        const result = yield* call("video_assemble", {
+          items: [
+            { mediaId: "broll", in: 100, duration: 20 },
+            { mediaId: "cam", in: 300, duration: 10 },
+            { mediaId: "broll", in: 0, duration: 15 },
+          ],
+        });
+        expect(result.isError, textOf(result).join("")).toBe(false);
+        const after = yield* edits.read(thread.projectId);
+        expect(after.revision).toBe(ready.revision + 1);
+        const { itemIds } = result.structuredContent as { itemIds: string[] };
+        expect(result.structuredContent).toEqual({ revision: after.revision, itemIds });
+        const track = after.document.tracks[0]!;
+        const placed =
+          track.kind === "video"
+            ? track.items.map((item) => [item.media, item.start, item.duration, item.in])
+            : [];
+        expect(placed).toEqual([
+          ["cam", 0, 30, 0],
+          ["broll", 30, 20, 100],
+          ["cam", 50, 10, 300],
+          ["broll", 60, 15, 0],
+        ]);
+        expect(after.document.tracks[0]!.items.slice(1).map((item) => item.id)).toEqual(itemIds);
+
+        // `at` inserts mid-track and pushes later items right.
+        const inserted = yield* call("video_assemble", {
+          items: [{ mediaId: "cam", in: 500, duration: 5 }],
+          at: 30,
+        });
+        expect(inserted.isError, textOf(inserted).join("")).toBe(false);
+        const moved = yield* edits.read(thread.projectId);
+        expect(moved.document.tracks[0]!.items.map((item) => item.start)).toEqual([
+          0, 30, 35, 55, 65,
+        ]);
+
+        // One undo per call.
+        yield* call("video_undo");
+        yield* call("video_undo");
+        expect(readFile(root, "edit.json")).toBe(before);
+
+        // `at` inside an item, or with a caption after it, is refused and changes nothing.
+        const inside = yield* call("video_assemble", {
+          items: [{ mediaId: "cam", in: 0, duration: 5 }],
+          at: 12,
+        });
+        expect(textOf(inside).join("")).toBe(
+          "at must be where a video item starts, or the end of the edit (frame 30).",
+        );
+        const captioned = yield* edits.read(thread.projectId);
+        yield* edits.apply(
+          thread.projectId,
+          [
+            {
+              _tag: "addTrack",
+              track: {
+                kind: "caption",
+                id: "C1",
+                items: [{ id: "cap", start: 20, duration: 10, text: "hi" }],
+              },
+            },
+          ],
+          { origin: "agent", baseRevision: captioned.revision },
+        );
+        const withCaption = readFile(root, "edit.json");
+        const blocked = yield* call("video_assemble", {
+          items: [{ mediaId: "cam", in: 0, duration: 5 }],
+          at: 0,
+        });
+        expect(textOf(blocked).join("")).toBe(
+          "Captions, sounds or overlays come after frame 0, so clips can only be added at the end (frame 30) for now.",
+        );
+        expect(readFile(root, "edit.json")).toBe(withCaption);
+        yield* call("video_undo");
+
+        for (const [items, message] of [
+          [[{ mediaId: "nope", in: 0, duration: 5 }], "There is no file at nope"],
+          [[{ mediaId: "cam", in: 890, duration: 30 }], ""],
+          [[], "at least one"],
+        ] as const) {
+          const refused = yield* call("video_assemble", { items });
+          expect(refused.isError, JSON.stringify(items)).toBe(true);
+          expect(textOf(refused).join("")).toContain(message);
+        }
+        expect(readFile(root, "edit.json")).toBe(before);
       }),
     ),
   );

@@ -66,6 +66,8 @@ from; the per-ticket entries and how this file is compiled are in
   stays smooth with a thousand cuts. (S7V-033)
 - Clips on the timeline show their sound as a waveform and their picture as a strip of frames. They
   are prepared in the background right after import, even for long recordings. (S7V-035)
+- One edit can now use several clips. The player plays straight across the joins, and the export
+  matches. (S7V-039)
 
 ### Changed
 

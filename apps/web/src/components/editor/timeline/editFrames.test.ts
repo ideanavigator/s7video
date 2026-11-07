@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 import { describe, expect, it } from "vite-plus/test";
 
-import type { PlaybackPlan } from "../../../editor/editPlayback";
+import { editTimelinePlan, type PlaybackPlan } from "../../../editor/editPlayback";
 import { editFrameToPlayerFrame, playerFrameToEditFrame } from "./editFrames";
 
 const plan: PlaybackPlan = {
@@ -21,8 +21,27 @@ describe("editFrames", () => {
   });
 
   it("has no player frame past what the plan plays, or without a plan", () => {
-    // "Plays X only": a frame on a later clip must not snap the player to its last frame.
     expect(editFrameToPlayerFrame(30, plan)).toBeNull();
     expect(editFrameToPlayerFrame(5, null)).toBeNull();
+  });
+
+  it("maps multi-clip edits one to one, gaps and reordered clips included", () => {
+    const timeline = editTimelinePlan({
+      fps: { num: 30, den: 1 },
+      tracks: [
+        {
+          kind: "video",
+          id: "v1",
+          items: [
+            { id: "i1", media: "b", start: 0, duration: 30, in: 300 },
+            { id: "i2", media: "a", start: 60, duration: 30, in: 0 },
+          ],
+        },
+      ],
+    } as never);
+    expect(playerFrameToEditFrame(45, timeline)).toBe(45);
+    expect(editFrameToPlayerFrame(45, timeline)).toBe(45);
+    expect(editFrameToPlayerFrame(89, timeline)).toBe(89);
+    expect(editFrameToPlayerFrame(90, timeline)).toBeNull();
   });
 });
