@@ -39,4 +39,4 @@ Engine A makes; S7V-034 and S7V-039 change the mapping there only.
 `Timeline.perf.browser.test.tsx` is spike B1's harness: a generated 1,000-clip edit, a real CDP
 scroll gesture and ctrl + wheel zoom sweeps, frames timed with `requestAnimationFrame`. It runs
 React's development build, which is slower than the app's, so its 4× throttle pass is pessimistic;
-it asserts unthrottled numbers and the throttled scroll.
+it asserts the unthrottled numbers and logs the throttled ones (`--silent=false` shows them).

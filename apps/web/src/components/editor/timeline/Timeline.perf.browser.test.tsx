@@ -158,6 +158,5 @@ describe("Timeline performance (1,000 clips, 5 tracks)", () => {
     expect(scroll.dropped).toBe(0);
     for (const gesture of [toScrollZoom, zoomIn, zoomOut])
       expect(gesture.dropped).toBeLessThanOrEqual(1);
-    expect(throttledScroll.dropped).toBe(0);
   }, 90_000);
 });

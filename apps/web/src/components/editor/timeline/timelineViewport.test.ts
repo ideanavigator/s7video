@@ -60,17 +60,20 @@ describe("timelineViewport", () => {
     }
   });
 
-  it("mounts the screen plus one bucket either side", () => {
+  it("mounts the screen plus two buckets either side", () => {
     const lane = 1_000;
     const bucketPx = bucketWidthPx(lane);
-    expect(bucketPx).toBe(500);
+    expect(bucketPx).toBe(250);
     const scrollLeft = 2_600;
     const bucket = bucketOf(scrollLeft, bucketPx);
-    expect(bucket).toBe(5);
+    expect(bucket).toBe(10);
     const window = visibleWindow(bucket, bucketPx, lane, 2);
     expect(window.startPx).toBe(2_000);
-    expect(window.startPx).toBeLessThanOrEqual(scrollLeft - (scrollLeft % bucketPx) - bucketPx);
-    expect(window.endPx).toBeGreaterThanOrEqual(scrollLeft + lane + bucketPx);
+    // Anywhere inside the bucket, at least two buckets stay mounted beyond each screen edge.
+    for (const left of [2_500, 2_749]) {
+      expect(window.startPx).toBeLessThanOrEqual(left - 2 * bucketPx);
+      expect(window.endPx).toBeGreaterThanOrEqual(left + lane + 2 * bucketPx);
+    }
     expect(window.startFrame).toBe(1_000);
     expect(visibleWindow(0, bucketPx, lane, 2).startPx).toBe(0);
   });

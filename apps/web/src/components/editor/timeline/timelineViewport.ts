@@ -10,7 +10,9 @@
 const MAX_CONTENT_PX = 16_000_000;
 /** Fully zoomed in shows this many frames across the lanes. */
 const FRAMES_PER_SCREEN_AT_MAX_ZOOM = 8;
-const MIN_BUCKET_PX = 256;
+const MIN_BUCKET_PX = 128;
+/** Buckets mounted beyond the screen on each side. */
+const MARGIN_BUCKETS = 2;
 /** Room after the last frame, so the end of the edit is not pinned to the right edge. */
 const TAIL_SCREEN_FRACTION = 0.25;
 /** An empty edit still gets a ruler: one minute at 30 fps. */
@@ -74,7 +76,7 @@ export function zoomAround(
 export const zoomFactorOfWheel = (deltaY: number): number => Math.exp(-deltaY * 0.003);
 
 export const bucketWidthPx = (laneWidthPx: number): number =>
-  Math.max(MIN_BUCKET_PX, Math.floor(laneWidthPx / 2));
+  Math.max(MIN_BUCKET_PX, Math.floor(laneWidthPx / 4));
 
 export const bucketOf = (scrollLeft: number, bucketPx: number): number =>
   Math.max(0, Math.floor(scrollLeft / bucketPx));
@@ -88,7 +90,8 @@ export interface VisibleWindow {
 
 /**
  * The lane pixels whose clips are mounted while the scroll position is inside `bucket`: the
- * screen plus one bucket on either side, so React renders only when scrolling crosses a bucket.
+ * screen plus two quarter-screen buckets on either side. React renders only when scrolling
+ * crosses a bucket, and each crossing mounts a quarter screen of clips, which keeps commits short.
  */
 export function visibleWindow(
   bucket: number,
@@ -96,8 +99,8 @@ export function visibleWindow(
   laneWidthPx: number,
   pxPerFrame: number,
 ): VisibleWindow {
-  const startPx = Math.max(0, (bucket - 1) * bucketPx);
-  const endPx = (bucket + 2) * bucketPx + laneWidthPx;
+  const startPx = Math.max(0, (bucket - MARGIN_BUCKETS) * bucketPx);
+  const endPx = (bucket + 1 + MARGIN_BUCKETS) * bucketPx + laneWidthPx;
   return {
     startPx,
     endPx,
