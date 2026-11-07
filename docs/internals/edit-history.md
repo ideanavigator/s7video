@@ -49,15 +49,39 @@ Undo and redo for `edit.json` keep their history in the project's `.s7history/` 
 
 ## API (`EditSnapshotStore`)
 
-| Method                                | Does                                                                                                                                                                  |
-| ------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `put(cwd, { editJson, projectJson })` | Saves both texts as objects (skips existing ones); returns `HistoryFiles`.                                                                                            |
-| `read(cwd, objectId)`                 | The saved text; fails with `checkpoint-failed` if missing or damaged.                                                                                                 |
-| `readLog(cwd)`                        | The log: empty when missing or unparseable; fails with `state-read-failed` on any other read error.                                                                   |
-| `writeLog(cwd, log)`                  | Atomic replace of `log.json`.                                                                                                                                         |
-| `collect(cwd, log)`                   | Deletes unnamed objects, temp files in `objects/` and stale `.log.json.*.tmp` files; returns `{ removedObjects, freedBytes }`. Temp files count in `freedBytes` only. |
-| `keepRefused(cwd, editJson)`          | Saves a refused outside edit under `refused/` (newest 20, no repeat of the newest).                                                                                   |
-| `usage(cwd)`                          | `{ objects, bytes }` of the objects on disk, plus `refusedEdits`, `refusedBytes`.                                                                                     |
+| Method                                | Does                                                                                                                                                                                            |
+| ------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `put(cwd, { editJson, projectJson })` | Saves both texts as objects (skips existing ones); returns `HistoryFiles`.                                                                                                                      |
+| `read(cwd, objectId)`                 | The saved text; fails with `checkpoint-failed` if missing or damaged.                                                                                                                           |
+| `readLog(cwd)`                        | The log: empty when missing or unparseable; fails with `state-read-failed` on any other read error.                                                                                             |
+| `writeLog(cwd, log)`                  | Atomic replace of `log.json`.                                                                                                                                                                   |
+| `collect(cwd, log, { dryRun? })`      | Deletes unnamed objects, temp files in `objects/` and stale `.log.json.*.tmp` files; returns `{ removedObjects, freedBytes }`. Temp files count in `freedBytes` only. `dryRun` deletes nothing. |
+| `keepRefused(cwd, editJson)`          | Saves a refused outside edit under `refused/` (newest 20, no repeat of the newest).                                                                                                             |
+| `usage(cwd)`                          | `{ objects, bytes }` of the objects on disk, plus `refusedEdits`, `refusedBytes`.                                                                                                               |
+
+## Cleanup (S7V-050)
+
+Nothing prunes the history on its own. Past 50 steps or 200 MB of objects, `EditSnapshot.cleanup`
+carries `{ versions, bytes }`, the Editor panel shows a banner, and the video tools that change the
+edit add a one-line `cleanup` hint so the agent asks. There is no agent tool: the user answers in the
+banner (PO 2026-11-07).
+
+- **Keep recent** keeps the steps `CLEANUP_KEEP_RULES` name: the last 20, the current one, and any
+  marked `exported` (set when an export of that step finishes). S7V-069 adds tagged versions as one
+  more rule there, and their objects to `liveObjects`.
+- **Remove all** keeps only the current step. Where a working git exists it also deletes the
+  S7V-024 `refs/t3/edit/*` refs and `.s7cache/edit-history.json`, then runs
+  `git gc --prune=now --quiet`. T3's own turn refs are left alone: deleting them would break turn
+  diffs and reverts in the thread.
+- Both rewrite the log first, then `collect`, so a crash leaves the old history whole or orphans.
+  Both set `legacy` to `"none"` when it was not `"imported"`, so an old git history found later is not
+  imported back after the user removed old versions.
+- **Not now** stores the size in `cleanup.dismissedAt`; the question comes back after 50 more steps
+  or twice the bytes. A clean removes the key.
+- The size is measured by listing `objects/` once per log change (cached by `nextSeq`, entry count
+  and `knownEdit`), since every snapshot carries it.
+- With the 200-step cap and gzip (about 5.5× on real edits), 200 MB needs edits of about 5 MB each;
+  most projects reach the 50-step trigger first.
 
 ## Versions (S7V-069)
 
@@ -144,7 +168,7 @@ project without one never asks about git. `EditHistoryService` writes only the f
   dropped, and the new steps get seq numbers after the old ones;
 - the 200-step cap still applies.
 
-The old file and refs are never changed. A failed save of the outcome is retried on the next read.
+The old file and refs are changed only by "Remove all old versions" ([Cleanup](#cleanup-s7v-050)). A failed save of the outcome is retried on the next read.
 
 The server provides `LegacyEditHistory.layer`: S7V-052's no-spawn `SystemGit` probe is
 `available`, and `git show <ref>:<file>` through `GitVcsDriver` is `show`. Only a non-zero git exit
