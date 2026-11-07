@@ -145,13 +145,13 @@ export class EditSnapshotStore extends Context.Service<
   }
 >()("t3/edit/EditSnapshotStore") {}
 
-/** Every object `log` names. Later cards add their own references here (S7V-069's versions). */
 /** `<epoch-ms>[-n]-edit.json` as [time, n]. */
 const refusedOrder = (name: string) => {
   const [at = "0", counter] = name.slice(0, -REFUSED_SUFFIX.length).split("-");
   return [Number(at), counter === undefined ? 0 : Number(counter)] as const;
 };
 
+/** Every object `log` names. Later cards add their own references here (S7V-069's versions). */
 const liveObjects = (log: HistoryLog): ReadonlySet<string> => {
   const live = new Set<string>();
   for (const entry of log.entries) {
