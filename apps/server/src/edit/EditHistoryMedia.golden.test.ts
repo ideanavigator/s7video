@@ -1,24 +1,25 @@
 // SPDX-FileCopyrightText: 2026 s7video contributors
 // SPDX-License-Identifier: MIT
-// @effect-diagnostics nodeBuiltinImport:off -- The clip is made with ffmpeg and checked with git and fs, outside the code under test.
+// @effect-diagnostics nodeBuiltinImport:off -- The clip is made with ffmpeg and checked with fs, outside the code under test.
 /**
- * Undo never touches media (S7V-024 AC-5, AC-7). The clip is synthetic, made by ffmpeg at test
- * time in a temp folder and deleted afterwards. `pnpm test` uses a 24 MiB clip; the full check is
- * `S7V_EDIT_MEDIA_MIB=500 S7V_EDIT_BENCH=1 pnpm test:golden -- EditHistoryMedia`.
+ * Undo never touches media (S7V-024 AC-5, AC-7; S7V-051 AC-5). The clip is synthetic, made by
+ * ffmpeg at test time in a temp folder and deleted afterwards. `pnpm test` uses a 24 MiB clip; the
+ * full check is `S7V_EDIT_MEDIA_MIB=500 S7V_EDIT_BENCH=1 pnpm test:golden -- EditHistoryMedia`.
  */
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { CheckpointRef, type EditOp } from "@t3tools/contracts";
+import type { EditOp } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
-import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as EditDocumentService from "./EditDocumentService.ts";
-import { git, layerEditTest } from "./editHarness.testkit.ts";
+import * as EditHistoryService from "./EditHistoryService.ts";
+import { HISTORY_DIR, projectFileContents } from "./EditProjectLayout.ts";
+import { layerEditTest } from "./editHarness.testkit.ts";
 
 const CLIP_MIB = Number(process.env.S7V_EDIT_MEDIA_MIB ?? "24");
 const BENCH = process.env.S7V_EDIT_BENCH === "1";
@@ -48,8 +49,6 @@ const makeClip = (file: string, mib: number, size = "1920x1080") => {
   ]);
 };
 
-const duBytes = (dir: string) =>
-  Number(NodeChildProcess.execFileSync("du", ["-sk", dir]).toString().split(/\s+/)[0]) * 1024;
 const median = (values: ReadonlyArray<number>) => {
   const sorted = [...values].sort((a, b) => a - b);
   const middle = Math.floor(sorted.length / 2);
@@ -77,81 +76,128 @@ const keep = (duration: number): EditOp => ({
   mediaId: "clip",
   ranges: [{ in: 0, duration }],
 });
+/** About 20 KiB of edit.json: many short kept ranges, as after a silence cut. */
+const keepMany = (length: number): EditOp => ({
+  _tag: "setKeepRanges",
+  trackId: "V1",
+  mediaId: "clip",
+  ranges: Array.from({ length: 150 }, (_, index) => ({ in: index * 40, duration: length })),
+});
+
+/** Every file under `.s7history/`, with its size. */
+const historyFiles = (root: string) =>
+  NodeFS.readdirSync(NodePath.join(root, HISTORY_DIR), { recursive: true, withFileTypes: true })
+    .filter((entry) => entry.isFile())
+    .map((entry) => NodeFS.statSync(NodePath.join(entry.parentPath, entry.name)).size);
 
 describe.skipIf(FFMPEG === undefined)("edit history with media in the project", () => {
-  it.live("keeps the clip and proxy untouched and out of git across capture and restore", () =>
-    Effect.gen(function* () {
-      const fileSystem = yield* FileSystem.FileSystem;
-      const baseDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "s7v-edit-media-" });
-      yield* Effect.gen(function* () {
-        const folders = yield* ManagedProjectFolders.ManagedProjectFolders;
-        const edits = yield* EditDocumentService.EditDocumentService;
-        const store = yield* CheckpointStore.CheckpointStore;
-        const { projectId, workspaceRoot: root } = yield* folders.createNamedProject({
-          name: "Media test",
-        });
-        const clip = NodePath.join(root, "assets", "clip.mov");
-        const proxy = NodePath.join(root, ".s7cache", "proxies", "clip.540p.mov");
-        makeClip(clip, CLIP_MIB);
-        NodeFS.mkdirSync(NodePath.dirname(proxy), { recursive: true });
-        makeClip(proxy, Math.max(1, Math.round(CLIP_MIB / 8)), "960x540");
-        const files = [clip, proxy].map((file) => ({ file, before: NodeFS.statSync(file) }));
-        assert.isAtLeast(files[0]!.before.size, CLIP_MIB * 1024 * 1024);
-        const gitBefore = duBytes(NodePath.join(root, ".git"));
-
-        let snapshot = yield* edits.read(projectId);
-        for (const ops of [setup, [keep(300)], [keep(150)]]) {
-          snapshot = yield* edits.apply(projectId, ops, {
-            origin: "agent",
-            baseRevision: snapshot.revision,
+  it.live(
+    "keeps the clip and proxy untouched and out of the history across capture and restore",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const baseDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "s7v-edit-media-" });
+        yield* Effect.gen(function* () {
+          const folders = yield* ManagedProjectFolders.ManagedProjectFolders;
+          const edits = yield* EditDocumentService.EditDocumentService;
+          const history = yield* EditHistoryService.EditHistoryService;
+          const { projectId, workspaceRoot: root } = yield* folders.createNamedProject({
+            name: "Media test",
           });
-        }
-        yield* edits.undo(projectId);
-        yield* edits.undo(projectId);
-        yield* edits.redo(projectId);
+          const clip = NodePath.join(root, "assets", "clip.mov");
+          const proxy = NodePath.join(root, ".s7cache", "proxies", "clip.540p.mov");
+          makeClip(clip, CLIP_MIB);
+          NodeFS.mkdirSync(NodePath.dirname(proxy), { recursive: true });
+          makeClip(proxy, Math.max(1, Math.round(CLIP_MIB / 8)), "960x540");
+          const files = [clip, proxy].map((file) => ({ file, before: NodeFS.statSync(file) }));
+          assert.isAtLeast(files[0]!.before.size, CLIP_MIB * 1024 * 1024);
 
-        for (const { file, before } of files) {
-          const after = NodeFS.statSync(file);
-          assert.strictEqual(after.ino, before.ino, file);
-          assert.strictEqual(after.mtimeMs, before.mtimeMs, file);
-          assert.strictEqual(after.size, before.size, file);
-        }
-        const growth = duBytes(NodePath.join(root, ".git")) - gitBefore;
-        assert.isBelow(growth, 1024 * 1024, `.git grew ${growth} bytes`);
-        const objects = git(root, "rev-list", "--objects", "--all");
-        for (const { file } of files) {
-          const blob = git(root, "hash-object", "--", file).trim();
-          assert.notInclude(objects, blob, file);
-        }
+          let snapshot = yield* edits.read(projectId);
+          for (const ops of [setup, [keep(300)], [keepMany(20)], [keepMany(30)]]) {
+            snapshot = yield* edits.apply(projectId, ops, {
+              origin: "agent",
+              baseRevision: snapshot.revision,
+            });
+          }
+          const editBytes = NodeFS.statSync(NodePath.join(root, "edit.json")).size;
+          assert.isAtLeast(editBytes, 18 * 1024);
+          yield* edits.undo(projectId);
+          yield* edits.undo(projectId);
+          yield* edits.redo(projectId);
 
-        if (!BENCH) return;
-        const captureMs: number[] = [];
-        const restoreMs: number[] = [];
-        const refs = [0, 1].map((n) => CheckpointRef.make(`refs/t3/edit/bench/${n}`));
-        for (let run = 0; run < 10; run++) {
-          NodeFS.writeFileSync(NodePath.join(root, "styles", "bench.json"), `{"run":${run}}\n`);
-          const captureStart = now();
-          yield* store.captureCheckpoint({ cwd: root, checkpointRef: refs[run % 2]! });
-          captureMs.push(now() - captureStart);
-        }
-        // Restore as undo does it: edit.json from the checkpoint, written with a new revision.
-        for (let run = 0; run < 10; run++) {
-          const restoreStart = now();
-          yield* run % 2 === 0 ? edits.undo(projectId) : edits.redo(projectId);
-          restoreMs.push(now() - restoreStart);
-        }
-        const result = {
-          clipMiB: CLIP_MIB,
-          gitGrowthBytes: growth,
-          captureMedianMs: Math.round(median(captureMs)),
-          restoreMedianMs: Math.round(median(restoreMs)),
-          captureMs: captureMs.map(Math.round),
-          restoreMs: restoreMs.map(Math.round),
-        };
-        process.stdout.write(`[S7V-024 bench] ${JSON.stringify(result)}\n`);
-        assert.isAtMost(result.captureMedianMs, 200);
-        assert.isAtMost(result.restoreMedianMs, 150);
-      }).pipe(Effect.provide(layerEditTest(baseDir)));
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+          const checkUntouched = () => {
+            for (const { file, before } of files) {
+              const after = NodeFS.statSync(file);
+              assert.strictEqual(after.ino, before.ino, file);
+              assert.strictEqual(after.mtimeMs, before.mtimeMs, file);
+              assert.strictEqual(after.size, before.size, file);
+            }
+            // Only compressed copies of edit.json and project.json: no file near a clip's size.
+            const sizes = historyFiles(root);
+            const total = sizes.reduce((sum, size) => sum + size, 0);
+            assert.isBelow(Math.max(...sizes), 64 * 1024);
+            assert.isBelow(total, 1024 * 1024, `.s7history holds ${total} bytes`);
+            return total;
+          };
+          checkUntouched();
+
+          if (!BENCH) return;
+          const editFile = NodePath.join(root, "edit.json");
+          // Restore as undo does it, through the whole edit service (validation, library rule, writes).
+          const undoMs: number[] = [];
+          for (let run = 0; run < 20; run++) {
+            const start = now();
+            yield* run % 2 === 0 ? edits.undo(projectId) : edits.redo(projectId);
+            undoMs.push(now() - start);
+          }
+          // Restore in the history layer: read the saved edit.json and write it back atomically.
+          const restoreMs: number[] = [];
+          for (let run = 0; run < 20; run++) {
+            const start = now();
+            yield* history.step(root, run % 2 === 0 ? "undo" : "redo", (text) =>
+              Effect.sync(() => {
+                const temp = `${editFile}.bench.tmp`;
+                const handle = NodeFS.openSync(temp, "w");
+                NodeFS.writeSync(handle, text);
+                NodeFS.fsyncSync(handle);
+                NodeFS.closeSync(handle);
+                NodeFS.renameSync(temp, editFile);
+                return text;
+              }),
+            );
+            restoreMs.push(now() - start);
+          }
+          // Capture as a change records it: a new edit.json and project.json, saved with the log.
+          const captureMs: number[] = [];
+          const base = NodeFS.readFileSync(editFile, "utf8");
+          for (let run = 0; run < 20; run++) {
+            const revision = 1000 + run;
+            const text = base.replace(/\n\}\n$/u, `,\n  "bench": ${run}\n}\n`);
+            NodeFS.writeFileSync(
+              NodePath.join(root, "project.json"),
+              projectFileContents(revision),
+            );
+            const start = now();
+            yield* history.record(root, revision, text);
+            captureMs.push(now() - start);
+          }
+          const historyBytes = checkUntouched();
+          const result = {
+            clipMiB: CLIP_MIB,
+            editKiB: Math.round(editBytes / 1024),
+            historyBytes,
+            captureMedianMs: Math.round(median(captureMs) * 10) / 10,
+            restoreMedianMs: Math.round(median(restoreMs) * 10) / 10,
+            undoMedianMs: Math.round(median(undoMs) * 10) / 10,
+            captureMs: captureMs.map(Math.round),
+            restoreMs: restoreMs.map(Math.round),
+            undoMs: undoMs.map(Math.round),
+          };
+          process.stdout.write(`[S7V-051 bench] ${JSON.stringify(result)}\n`);
+          assert.isAtMost(result.captureMedianMs, 30);
+          assert.isAtMost(result.restoreMedianMs, 30);
+          assert.isAtMost(result.undoMedianMs, 150);
+        }).pipe(Effect.provide(layerEditTest(baseDir)));
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 });

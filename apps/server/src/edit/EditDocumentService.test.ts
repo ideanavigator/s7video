@@ -15,7 +15,17 @@ import * as NodePath from "node:path";
 
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as EditDocumentService from "./EditDocumentService.ts";
-import { type EditFaults, git, isIgnored, layerEditTest } from "./editHarness.testkit.ts";
+import * as EditHistoryService from "./EditHistoryService.ts";
+import {
+  type EditFaults,
+  type EditTestOptions,
+  git,
+  historyLog,
+  historyObjects,
+  isIgnored,
+  layerEditTest,
+} from "./editHarness.testkit.ts";
+import * as EditSnapshotStore from "./EditSnapshotStore.ts";
 
 const media = {
   id: "cam",
@@ -41,8 +51,11 @@ const withProject = <A, E>(
     readonly projectId: ProjectId;
     readonly root: string;
     readonly edits: EditDocumentService.EditDocumentService["Service"];
+    readonly store: EditSnapshotStore.EditSnapshotStore["Service"];
+    readonly history: EditHistoryService.EditHistoryService["Service"];
   }) => Effect.Effect<A, E>,
   faults?: EditFaults,
+  options?: EditTestOptions,
 ) =>
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
@@ -50,12 +63,41 @@ const withProject = <A, E>(
     return yield* Effect.gen(function* () {
       const folders = yield* ManagedProjectFolders.ManagedProjectFolders;
       const edits = yield* EditDocumentService.EditDocumentService;
+      const store = yield* EditSnapshotStore.EditSnapshotStore;
+      const history = yield* EditHistoryService.EditHistoryService;
       const created = yield* folders.createNamedProject({ name: "Edit test" });
-      return yield* body({ projectId: created.projectId, root: created.workspaceRoot, edits });
-    }).pipe(Effect.provide(layerEditTest(baseDir, faults)));
+      return yield* body({
+        projectId: created.projectId,
+        root: created.workspaceRoot,
+        edits,
+        store,
+        history,
+      });
+    }).pipe(Effect.provide(layerEditTest(baseDir, faults, options)));
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer));
 
 const readEdit = (root: string) => NodeFS.readFileSync(NodePath.join(root, "edit.json"), "utf8");
+
+/** Every object the log names, as file names under `.s7history/objects/`. */
+const namedObjects = (root: string) =>
+  [
+    ...new Set(
+      (historyLog(root)?.entries ?? []).flatMap((entry) => [
+        `${entry.files["edit.json"]}.json.gz`,
+        `${entry.files["project.json"]}.json.gz`,
+      ]),
+    ),
+  ].toSorted();
+
+/** Ref names, commit count and index file of the project's git repo. */
+const gitState = (root: string) => ({
+  refs: git(root, "for-each-ref", "--format=%(refname) %(objectname)").trim(),
+  commits: git(root, "rev-list", "--all", "--count").trim(),
+  index: NodeFS.statSync(NodePath.join(root, ".git", "index")).mtimeMs,
+  indexFiles: NodeFS.readdirSync(NodePath.join(root, ".git")).filter((name) =>
+    name.includes("index"),
+  ),
+});
 
 describe("EditDocumentService", () => {
   it.effect("creates a managed edit project with the whitelist layout", () =>
@@ -134,14 +176,16 @@ describe("EditDocumentService", () => {
           baseRevision: initial.revision,
         });
         const before = readEdit(root);
-        const checkpoints = git(root, "for-each-ref").trim();
+        const log = historyLog(root);
+        const objects = historyObjects(root);
         const again = yield* edits.apply(projectId, [keep([[0, 300]])], {
           origin: "agent",
           baseRevision: first.revision,
         });
         assert.strictEqual(again.revision, first.revision);
         assert.strictEqual(readEdit(root), before);
-        assert.strictEqual(git(root, "for-each-ref").trim(), checkpoints);
+        assert.deepEqual(historyLog(root), log);
+        assert.deepEqual(historyObjects(root), objects);
 
         // One undo still goes back past the first apply.
         yield* edits.undo(projectId);
@@ -332,10 +376,9 @@ describe("EditDocumentService", () => {
           .apply(projectId, [keep([[0, 30]])], { origin: "agent", baseRevision: first.revision })
           .pipe(Effect.flip);
         assert.include(tooBig.message, "too big");
-        const objects = git(root, "rev-list", "--objects", "--all");
-        assert.notInclude(objects, "stray-clip.mp4");
-        assert.notInclude(objects, "huge.json");
-        assert.notInclude(objects, "intro.mov");
+        // Refused changes leave the history as it was: the baseline and the first change.
+        assert.strictEqual(historyLog(root)!.entries.length, 2);
+        assert.deepEqual(historyObjects(root), namedObjects(root));
       }),
     ),
   );
@@ -454,6 +497,252 @@ describe("EditDocumentService", () => {
           [applied.revision - 1, applied.revision],
         );
       }).pipe(Effect.scoped),
+    ),
+  );
+
+  it.effect("saves each change in .s7history and touches no git ref, commit or index", () =>
+    withProject(({ projectId, edits, root }) =>
+      Effect.gen(function* () {
+        const before = gitState(root);
+        const initial = yield* edits.read(projectId);
+        const first = yield* edits.apply(projectId, [...setup, keep([[0, 300]])], {
+          origin: "agent",
+          baseRevision: initial.revision,
+        });
+        yield* edits.apply(projectId, [keep([[0, 90]])], {
+          origin: "agent",
+          baseRevision: first.revision,
+        });
+        assert.deepEqual(gitState(root), before);
+        const log = historyLog(root)!;
+        assert.strictEqual(log.format, "s7history");
+        assert.deepEqual(
+          log.entries.map((entry) => entry.revision),
+          [initial.revision, first.revision, first.revision + 1],
+        );
+        assert.strictEqual(log.cursor, 2);
+        // Three edits and three project.json revisions: one object each, nothing else.
+        assert.strictEqual(historyObjects(root).length, 6);
+        assert.deepEqual(historyObjects(root), namedObjects(root));
+      }),
+    ),
+  );
+
+  it.effect("records, undoes and redoes with PATH empty and no .git", () => {
+    const spawns = { count: 0 };
+    return withProject(
+      ({ projectId, edits, root }) =>
+        Effect.gen(function* () {
+          NodeFS.rmSync(NodePath.join(root, ".git"), { recursive: true, force: true });
+          const path = process.env.PATH;
+          yield* Effect.acquireRelease(
+            Effect.sync(() => {
+              process.env.PATH = "";
+              spawns.count = 0;
+            }),
+            () =>
+              Effect.sync(() => {
+                process.env.PATH = path;
+              }),
+          );
+          let snapshot = yield* edits.read(projectId);
+          const texts: string[] = [];
+          for (const ops of [[...setup, keep([[0, 300]])], [keep([[0, 90]])], [keep([[0, 30]])]]) {
+            snapshot = yield* edits.apply(projectId, ops, {
+              origin: "agent",
+              baseRevision: snapshot.revision,
+            });
+            texts.push(readEdit(root));
+          }
+          yield* edits.undo(projectId);
+          yield* edits.undo(projectId);
+          assert.strictEqual(readEdit(root), texts[0]);
+          const redone = yield* edits.redo(projectId);
+          assert.strictEqual(readEdit(root), texts[1]);
+          assert.isTrue(redone.canUndo && redone.canRedo);
+          assert.strictEqual(spawns.count, 0);
+          assert.isFalse(NodeFS.existsSync(NodePath.join(root, ".git")));
+        }).pipe(Effect.scoped),
+      undefined,
+      { spawns },
+    );
+  });
+
+  it.effect("guards the tracked folders without git", () =>
+    withProject(({ projectId, edits, root }) =>
+      Effect.gen(function* () {
+        NodeFS.rmSync(NodePath.join(root, ".git"), { recursive: true, force: true });
+        const initial = yield* edits.read(projectId);
+        // Untracked folders are never checked, however large or media-like their files are.
+        NodeFS.writeFileSync(NodePath.join(root, "assets", "clip.mov"), Buffer.alloc(11 << 20));
+        NodeFS.mkdirSync(NodePath.join(root, ".s7cache", "proxies"), { recursive: true });
+        NodeFS.writeFileSync(NodePath.join(root, ".s7cache", "proxies", "clip.mp4"), "proxy");
+        NodeFS.writeFileSync(NodePath.join(root, "stray.wav"), "not tracked");
+        const first = yield* edits.apply(projectId, setup, {
+          origin: "agent",
+          baseRevision: initial.revision,
+        });
+        const log = historyLog(root);
+        const refuse = Effect.fnUntraced(function* (file: string, contents: string | Buffer) {
+          NodeFS.mkdirSync(NodePath.dirname(NodePath.join(root, file)), { recursive: true });
+          NodeFS.writeFileSync(NodePath.join(root, file), contents);
+          const before = readEdit(root);
+          const error = yield* edits
+            .apply(projectId, [keep([[0, 30]])], { origin: "agent", baseRevision: first.revision })
+            .pipe(Effect.flip);
+          assert.strictEqual(error._tag, "EditUnavailableError");
+          if (error._tag === "EditUnavailableError") {
+            assert.strictEqual(error.reason, "media-in-tracked-folder");
+          }
+          assert.include(error.message, file);
+          assert.strictEqual(readEdit(root), before);
+          assert.deepEqual(historyLog(root), log);
+          NodeFS.rmSync(NodePath.join(root, file));
+        });
+        yield* refuse("styles/intro.MOV", "not really a movie");
+        yield* refuse("styles/deep/fonts/theme.m4a", "sound");
+        const readme = NodeFS.readFileSync(NodePath.join(root, "README.md"));
+        yield* refuse("README.md", Buffer.alloc(11 << 20));
+        NodeFS.writeFileSync(NodePath.join(root, "README.md"), readme);
+        const allowed = yield* edits.apply(projectId, [keep([[0, 30]])], {
+          origin: "agent",
+          baseRevision: first.revision,
+        });
+        assert.isAbove(allowed.revision, first.revision);
+      }),
+    ),
+  );
+
+  it.effect("keeps undo usable after a crash between objects and log", () => {
+    const faults: EditFaults = { failTempRename: false };
+    return withProject(
+      ({ projectId, edits, root, store }) =>
+        Effect.gen(function* () {
+          const initial = yield* edits.read(projectId);
+          const setupDone = yield* edits.apply(projectId, setup, {
+            origin: "agent",
+            baseRevision: initial.revision,
+          });
+          const start = readEdit(root);
+          const first = yield* edits.apply(projectId, [keep([[0, 300]])], {
+            origin: "agent",
+            baseRevision: setupDone.revision,
+          });
+          const afterFirst = readEdit(root);
+          const log = historyLog(root);
+          faults.failTempRenameOf = "log.json";
+          const error = yield* edits
+            .apply(projectId, [keep([[0, 30]])], { origin: "agent", baseRevision: first.revision })
+            .pipe(Effect.flip);
+          delete faults.failTempRenameOf;
+          assert.strictEqual(error._tag, "EditUnavailableError");
+          // The previous log is in place, the edit went back, and the new objects are orphans.
+          assert.deepEqual(historyLog(root), log);
+          assert.strictEqual(readEdit(root), afterFirst);
+          const orphans = historyObjects(root).filter((name) => !namedObjects(root).includes(name));
+          assert.strictEqual(orphans.length, 2);
+
+          const read = yield* edits.read(projectId);
+          assert.strictEqual(read.revision, first.revision);
+          yield* edits.undo(projectId);
+          assert.strictEqual(readEdit(root), start);
+          yield* edits.redo(projectId);
+          assert.strictEqual(readEdit(root), afterFirst);
+          const next = yield* edits.apply(projectId, [keep([[0, 60]])], {
+            origin: "agent",
+            baseRevision: (yield* edits.read(projectId)).revision,
+          });
+          assert.isTrue(next.canUndo);
+
+          const collected = yield* store.collect(root, yield* store.readLog(root));
+          assert.strictEqual(collected.removedObjects, 2);
+          assert.deepEqual(historyObjects(root), namedObjects(root));
+        }),
+      faults,
+    );
+  });
+
+  it.effect("starts a fresh history from a damaged log", () =>
+    withProject(({ projectId, edits, root }) =>
+      Effect.gen(function* () {
+        const initial = yield* edits.read(projectId);
+        const first = yield* edits.apply(projectId, setup, {
+          origin: "agent",
+          baseRevision: initial.revision,
+        });
+        const current = readEdit(root);
+        NodeFS.writeFileSync(NodePath.join(root, ".s7history", "log.json"), "{ garbage");
+        const read = yield* edits.read(projectId);
+        assert.isFalse(read.canUndo);
+        assert.strictEqual(read.revision, first.revision);
+        const next = yield* edits.apply(projectId, [keep([[0, 30]])], {
+          origin: "agent",
+          baseRevision: read.revision,
+        });
+        const log = historyLog(root)!;
+        assert.strictEqual(log.entries.length, 2);
+        assert.isTrue(next.canUndo);
+        const undone = yield* edits.undo(projectId);
+        assert.strictEqual(readEdit(root), current);
+        assert.isFalse(undone.canUndo);
+      }),
+    ),
+  );
+
+  it.effect("keeps 200 steps and removes the objects of dropped ones", () =>
+    withProject(({ projectId, edits, root, history }) =>
+      Effect.gen(function* () {
+        const initial = yield* edits.read(projectId);
+        const first = yield* edits.apply(projectId, setup, {
+          origin: "agent",
+          baseRevision: initial.revision,
+        });
+        const base = readEdit(root);
+        // 204 more steps recorded straight into the history: 206 in all, 6 past the cap.
+        for (let n = 1; n <= 204; n++) {
+          yield* history.record(root, first.revision + n, base.replace(/\n\}\n$/u, `,"n":${n}}\n`));
+        }
+        const log = historyLog(root)!;
+        assert.strictEqual(log.entries.length, 200);
+        assert.strictEqual(log.cursor, 199);
+        assert.strictEqual(log.entries[0]!.seq, 7);
+        assert.strictEqual(log.entries.at(-1)!.seq, 206);
+        assert.deepEqual(historyObjects(root), namedObjects(root));
+      }),
+    ),
+  );
+
+  it.effect("drops the redo branch and its objects on a new change", () =>
+    withProject(({ projectId, edits, root }) =>
+      Effect.gen(function* () {
+        let snapshot = yield* edits.read(projectId);
+        for (const ops of [[...setup, keep([[0, 300]])], [keep([[0, 90]])], [keep([[0, 30]])]]) {
+          snapshot = yield* edits.apply(projectId, ops, {
+            origin: "agent",
+            baseRevision: snapshot.revision,
+          });
+        }
+        const stale = historyLog(root)!.entries.slice(2);
+        yield* edits.undo(projectId);
+        const undone = yield* edits.undo(projectId);
+        assert.isTrue(undone.canRedo);
+        const changed = yield* edits.apply(projectId, [keep([[0, 120]])], {
+          origin: "agent",
+          baseRevision: undone.revision,
+        });
+        assert.isFalse(changed.canRedo);
+        const log = historyLog(root)!;
+        assert.strictEqual(log.entries.length, 3);
+        assert.notInclude(
+          log.entries.map((entry) => entry.seq),
+          stale[0]!.seq,
+        );
+        for (const entry of stale) {
+          const id = `${entry.files["edit.json"]}.json.gz`;
+          assert.notInclude(historyObjects(root), id);
+        }
+        assert.deepEqual(historyObjects(root), namedObjects(root));
+      }),
     ),
   );
 

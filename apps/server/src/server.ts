@@ -55,6 +55,8 @@ import * as CheckpointStore from "./checkpointing/CheckpointStore.ts";
 import * as EditDocumentService from "./edit/EditDocumentService.ts";
 import * as EditHistoryService from "./edit/EditHistoryService.ts";
 import * as EditProjectLayout from "./edit/EditProjectLayout.ts";
+import * as EditSnapshotStore from "./edit/EditSnapshotStore.ts";
+import * as LegacyEditHistory from "./edit/LegacyEditHistory.ts";
 import * as SourceControlBuiltInDrivers from "./sourceControl/builtInDrivers.ts";
 import * as SourceControlSignIn from "./sourceControl/SourceControlSignIn.ts";
 import { BUILT_IN_SOURCE_CONTROL_DRIVER_LIST } from "./sourceControl/sourceControlDefinitions.ts";
@@ -404,9 +406,14 @@ const layerVcs = Layer.empty.pipe(
 
 const layerCheckpointStore = CheckpointStore.layer.pipe(Layer.provide(layerVcsDriverRegistry));
 
-// The one writer of edit.json; WebSocket handlers and agent tools share it (S7V-024).
+// The one writer of edit.json; WebSocket handlers and agent tools share it (S7V-024). Its history
+// needs no git (S7V-051); importing an old git history waits on S7V-052's no-spawn probe.
 const layerEditDocument = EditDocumentService.layer.pipe(
-  Layer.provide(EditHistoryService.layer.pipe(Layer.provide(layerCheckpointStore))),
+  Layer.provide(
+    EditHistoryService.layer.pipe(
+      Layer.provide([EditSnapshotStore.layer, LegacyEditHistory.layerNone]),
+    ),
+  ),
   Layer.provide(EditProjectLayout.layer),
 );
 

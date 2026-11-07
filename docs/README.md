@@ -56,6 +56,7 @@ source alone does not explain. Most code changes do not need an internal documen
 - [Devices](./internals/devices.md)
 - [Voice input](./internals/voice-input.md)
 - [Media import](./internals/media-import.md)
+- [Edit history](./internals/edit-history.md)
 
 ### Runbooks
 
