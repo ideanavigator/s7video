@@ -61,6 +61,9 @@ from; the per-ticket entries and how this file is compiled are in
 - Ask the assistant to remove the silences and it cuts the pauses between your sentences without
   clipping words. It leaves in pauses with laughter or music, keeps any pause you ask for, and says
   how much it removed. Undo brings the previous edit back. (S7V-027)
+- The Editor panel now shows a CapCut-style timeline with video, caption, sound effect, music and
+  overlay rows. It follows playback, jumps where you click, and zooms around the pointer, and it
+  stays smooth with a thousand cuts. (S7V-033)
 - Clips on the timeline show their sound as a waveform and their picture as a strip of frames. They
   are prepared in the background right after import, even for long recordings. (S7V-035)
 
