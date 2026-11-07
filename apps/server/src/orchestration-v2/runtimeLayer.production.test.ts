@@ -52,6 +52,7 @@ import * as Orchestrator from "./Orchestrator.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import * as RuntimeLayer from "./runtimeLayer.ts";
+import { projectFileContents } from "../edit/EditProjectLayout.ts";
 
 const modelSelection = {
   instanceId: ProviderInstanceId.make("codex"),
@@ -166,7 +167,7 @@ it.effect("the production runtime gives the session manager the project lookup",
     const fileSystem = yield* FileSystem.FileSystem;
     const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: "s7v-runtime-video-" });
     yield* fileSystem.writeFileString(`${root}/edit.json`, "{}");
-    yield* fileSystem.writeFileString(`${root}/project.json`, "{}");
+    yield* fileSystem.writeFileString(`${root}/project.json`, projectFileContents(0));
     const issued: Array<McpSessionRegistry.McpCredentialRequest> = [];
 
     yield* Effect.gen(function* () {
