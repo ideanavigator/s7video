@@ -6,7 +6,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 
-import { EDIT_FILE, PROJECT_FILE } from "../edit/EditProjectLayout.ts";
+import { EDIT_FILE, PROJECT_FILE, projectFileContents } from "../edit/EditProjectLayout.ts";
 import { planClaudeSkillDispatch } from "../provider/Drivers/ClaudeSkillDispatch.ts";
 import { discoverClaudeSkills } from "../provider/Drivers/ClaudeSkills.ts";
 import {
@@ -23,7 +23,7 @@ const makeEditProject = Effect.fn(function* (cwd: string) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   yield* fs.writeFileString(path.join(cwd, EDIT_FILE), "{}\n");
-  yield* fs.writeFileString(path.join(cwd, PROJECT_FILE), "{}\n");
+  yield* fs.writeFileString(path.join(cwd, PROJECT_FILE), projectFileContents(0));
 });
 
 it.layer(NodeServices.layer)("built-in skills", (it) => {

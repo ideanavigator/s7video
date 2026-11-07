@@ -7,7 +7,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 
-import { isEditProjectFolder } from "../edit/EditProjectLayout.ts";
+import { isVideoProjectFolder } from "../edit/EditProjectLayout.ts";
 
 /** Set by the desktop app to its packaged `Resources/skills`. */
 const BUILT_IN_SKILLS_DIR_ENV_VAR = "S7VIDEO_SKILLS_DIR";
@@ -47,7 +47,7 @@ export const builtInSkillPluginDirsForCwd = Effect.fn("BuiltInSkills.pluginDirsF
 ) {
   if (cwd === undefined) return [];
   const fileSystem = yield* FileSystem.FileSystem;
-  if (!(yield* isEditProjectFolder(fileSystem)(cwd))) return [];
+  if (!(yield* isVideoProjectFolder(fileSystem)(cwd))) return [];
   const pluginDir = yield* resolveBuiltInSkillsPluginDir(env);
   return pluginDir === undefined ? [] : [pluginDir];
 });
