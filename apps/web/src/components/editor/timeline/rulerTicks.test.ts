@@ -16,9 +16,9 @@ describe("rulerTicks", () => {
     // 60 px per frame: a label every 2 frames, a tick on every frame.
     const close = rulerTicks({ startPx: 0, endPx: 600, pxPerFrame: 60, fps: FPS, endFrame: 1e9 });
     expect(close.slice(0, 3)).toEqual([
-      { x: 0, label: "00:00" },
-      { x: 60 },
-      { x: 120, label: "2f" },
+      { frame: 0, label: "00:00" },
+      { frame: 1 },
+      { frame: 2, label: "2f" },
     ]);
     // 2 px per frame (60 px/s): labels every 2 s, ticks every second.
     expect(
@@ -38,7 +38,9 @@ describe("rulerTicks", () => {
     for (const pxPerFrame of [0.05, 0.3, 1, 4, 13, 40, 125]) {
       const labels = labelsOf(pxPerFrame);
       for (let index = 1; index < labels.length; index++) {
-        expect(labels[index]!.x - labels[index - 1]!.x).toBeGreaterThanOrEqual(119.99);
+        expect(
+          (labels[index]!.frame - labels[index - 1]!.frame) * pxPerFrame,
+        ).toBeGreaterThanOrEqual(119.99);
       }
     }
   });
@@ -53,7 +55,7 @@ describe("rulerTicks", () => {
       endFrame: 1e9,
     }).filter((tick) => tick.label !== undefined);
     // Frame 1,800 is 00:01:00;02: frame numbers 0 and 1 are dropped at the minute.
-    expect(labels.map((tick) => [tick.x / 60, tick.label])).toEqual([
+    expect(labels.map((tick) => [tick.frame, tick.label])).toEqual([
       [1_800, "2f"],
       [1_802, "4f"],
       [1_804, "6f"],

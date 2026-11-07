@@ -9,6 +9,7 @@ import { useLayoutEffect, useRef } from "react";
 
 import { formatPlaybackClock } from "../../../editor/editPlayback";
 import { drawClipStrip } from "./ClipCanvasStrip";
+import { SPAN_ATTRIBUTE, spanX } from "./laneGeometry";
 import { splitByDetail } from "./lod";
 import { firstItemEndingAfter, type TimelineRow } from "./timelineModel";
 import type { VisibleWindow } from "./timelineViewport";
@@ -21,15 +22,18 @@ export function TimelineTrack(props: {
   readonly pxPerFrame: number;
   readonly detailScale: number;
   readonly window: VisibleWindow;
-  /** The lanes' full width, so the strip never runs past the content. */
-  readonly contentWidthPx: number;
+  readonly durationFrames: number;
 }) {
   const { row, pxPerFrame, window } = props;
   const height = TIMELINE_TRACK_HEIGHTS_PX[row.kind];
   const from = firstItemEndingAfter(row.items, window.startFrame);
   const split = splitByDetail(row.items, from, window.endFrame, props.detailScale);
-  const stripStart = window.startPx;
-  const stripWidth = Math.max(1, Math.min(window.endPx, props.contentWidthPx) - stripStart);
+  // The strip covers the window's frames, drawn at the zoom React rendered; between renders the
+  // span stretches it with the zoom, which is exact for flat blocks.
+  const stripStartFrame = window.startFrame;
+  const stripFrames = Math.max(1, window.endFrame - window.startFrame);
+  const stripStart = stripStartFrame * pxPerFrame;
+  const stripWidth = stripFrames * pxPerFrame;
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const colorVariable = TIMELINE_TRACK_COLOR_VARIABLE[row.kind];
   const strip = split.strip;
@@ -55,6 +59,7 @@ export function TimelineTrack(props: {
       aria-label={`${row.label} track, ${row.items.length} ${row.items.length === 1 ? "clip" : "clips"}`}
       data-timeline-row={row.kind}
       data-track-id={row.id}
+      {...{ [SPAN_ATTRIBUTE]: "" }}
       className="relative [contain:layout_style]"
       style={{ height }}
     >
@@ -64,7 +69,11 @@ export function TimelineTrack(props: {
           aria-hidden
           data-lod-clips={strip.length}
           className="pointer-events-none absolute top-0"
-          style={{ left: stripStart, width: stripWidth, height }}
+          style={{
+            left: spanX(stripStartFrame, props.durationFrames),
+            width: spanX(stripFrames, props.durationFrames),
+            height,
+          }}
         />
       ) : null}
       {split.mounted.map((index) => {
@@ -74,7 +83,7 @@ export function TimelineTrack(props: {
             key={item.id}
             item={item}
             kind={row.kind}
-            pxPerFrame={pxPerFrame}
+            durationFrames={props.durationFrames}
             heightPx={height}
             spokenStart={formatPlaybackClock(item.start, props.fps)}
           />

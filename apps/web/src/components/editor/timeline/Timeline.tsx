@@ -7,13 +7,12 @@
  * this component only renders its snapshot. Read only: editing comes in S7V-034.
  */
 import type { EditDocument } from "@t3tools/contracts";
-import { useEffect, useLayoutEffect, useState, useSyncExternalStore } from "react";
+import { startTransition, useEffect, useLayoutEffect, useState } from "react";
 
 import { useStableCallback } from "../../../hooks/useStableCallback";
 import { formatTimecode, framesPerSecondRounded } from "./mediaTime";
 import { createTimelineController } from "./timelineController";
 import { timelineModelOf } from "./timelineModel";
-import { visibleWindow } from "./timelineViewport";
 import { TimelineRuler } from "./TimelineRuler";
 import { TimelineTrack } from "./TimelineTrack";
 import {
@@ -57,13 +56,21 @@ export function Timeline(props: {
   );
   const { subscribe, getSnapshot, attachScroller, attachContent, attachPlayhead, attachSlider } =
     controller;
-  const snapshot = useSyncExternalStore(subscribe, getSnapshot);
+  const [snapshot, setSnapshot] = useState(getSnapshot);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- follows the controller's snapshot; scroll and zoom steps render as transitions, so React never blocks a frame while CSS already shows the new geometry
+  useLayoutEffect(() => {
+    return subscribe((urgent) => {
+      if (urgent) setSnapshot(getSnapshot());
+      else startTransition(() => setSnapshot(getSnapshot()));
+    });
+  }, [subscribe, getSnapshot]);
   const onSeek = useStableCallback(props.onSeek);
 
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- tells the controller (outside React) the edit's length before paint, so an agent edit re-fits the zoom without a flash
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- tells the controller (outside React) the edit's length before paint, and lets it size spans React just mounted
   useLayoutEffect(() => {
     controller.setDuration(model.durationFrames);
-  }, [controller, model.durationFrames]);
+    controller.sizeSpans();
+  });
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- hands the controller's DOM listeners the seek path and timecode format
   useEffect(() => {
     controller.setSeekHandler(onSeek);
@@ -75,18 +82,12 @@ export function Timeline(props: {
     controller.setPlayheadVisible(playheadVisible, initialFrame);
   }, [controller, playheadVisible, initialFrame]);
 
-  const visible = visibleWindow(
-    snapshot.bucket,
-    snapshot.bucketPx,
-    snapshot.laneWidthPx,
-    snapshot.pxPerFrame,
-  );
+  const visible = snapshot.window;
   const lanesHeight = model.rows.reduce(
     (total, row) => total + TIMELINE_TRACK_HEIGHTS_PX[row.kind] + TIMELINE_TRACK_GAP_PX,
     TIMELINE_TRACK_GAP_PX,
   );
   const totalHeight = TIMELINE_RULER_HEIGHT_PX + lanesHeight;
-  const endFrame = Math.ceil(snapshot.contentWidthPx / snapshot.pxPerFrame);
 
   if (model.itemCount === 0) {
     return (
@@ -105,11 +106,7 @@ export function Timeline(props: {
       data-px-per-frame={snapshot.pxPerFrame}
       className="relative h-full min-h-0 overflow-auto overscroll-contain bg-background select-none [contain:strict]"
     >
-      <div
-        ref={attachContent}
-        className="relative"
-        style={{ width: LABELS_PX + snapshot.contentWidthPx, height: totalHeight }}
-      >
+      <div ref={attachContent} className="relative overflow-clip" style={{ height: totalHeight }}>
         <div className="sticky top-0 z-20 flex bg-background">
           <div
             className="sticky left-0 z-30 shrink-0 border-r border-b bg-background"
@@ -119,8 +116,7 @@ export function Timeline(props: {
             fps={fps}
             pxPerFrame={snapshot.pxPerFrame}
             window={visible}
-            endFrame={endFrame}
-            widthPx={snapshot.contentWidthPx}
+            durationFrames={model.durationFrames}
             attachSlider={attachSlider}
           />
         </div>
@@ -149,9 +145,8 @@ export function Timeline(props: {
             ))}
           </div>
           <div
-            className="relative flex flex-col"
+            className="relative flex flex-1 flex-col"
             style={{
-              width: snapshot.contentWidthPx,
               gap: TIMELINE_TRACK_GAP_PX,
               paddingTop: TIMELINE_TRACK_GAP_PX,
             }}
@@ -164,7 +159,7 @@ export function Timeline(props: {
                 pxPerFrame={snapshot.pxPerFrame}
                 detailScale={snapshot.detailScale}
                 window={visible}
-                contentWidthPx={snapshot.contentWidthPx}
+                durationFrames={model.durationFrames}
               />
             ))}
           </div>

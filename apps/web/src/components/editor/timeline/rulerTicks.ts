@@ -12,8 +12,8 @@ import { fpsValue, framesPerSecondRounded, timecodeOf } from "./mediaTime";
 import { formatRulerLabel, getRulerConfig, shouldShowLabel } from "./vendor/opencut/ruler-utils";
 
 export interface RulerTick {
-  /** Lane pixel. */
-  readonly x: number;
+  /** Position in frames (fractional on whole seconds at 29.97); also the tick's stable key. */
+  readonly frame: number;
   /** Present on labelled ticks. */
   readonly label?: string;
 }
@@ -46,11 +46,10 @@ export function rulerTicks(input: {
         labelFrames >= base
           ? field === 0 && second % labelSeconds === 0
           : field % labelFrames === 0;
-      const x = frame * pxPerFrame;
-      if (!labelled) ticks.push({ x });
+      if (!labelled) ticks.push({ frame });
       else if (field === 0) {
-        ticks.push({ x, label: formatRulerLabel({ timeInSeconds: second, fps }) });
-      } else ticks.push({ x, label: `${field}f` });
+        ticks.push({ frame, label: formatRulerLabel({ timeInSeconds: second, fps }) });
+      } else ticks.push({ frame, label: `${field}f` });
     }
     return ticks;
   }
@@ -59,11 +58,11 @@ export function rulerTicks(input: {
   for (let index = Math.max(0, Math.floor(startPx / pixelsPerSecond / step)); ; index++) {
     const seconds = index * step;
     if (seconds > lastSecond) break;
-    const x = seconds * pixelsPerSecond;
+    const frame = seconds * rate;
     ticks.push(
       shouldShowLabel({ time: seconds, labelIntervalSeconds: config.labelIntervalSeconds })
-        ? { x, label: formatRulerLabel({ timeInSeconds: seconds, fps }) }
-        : { x },
+        ? { frame, label: formatRulerLabel({ timeInSeconds: seconds, fps }) }
+        : { frame },
     );
   }
   return ticks;

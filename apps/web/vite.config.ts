@@ -5,6 +5,7 @@ import * as NodeZlib from "node:zlib";
 import react from "@vitejs/plugin-react";
 import { tanstackRouter } from "@tanstack/router-plugin/vite";
 import compression from "compression";
+import type { CDPSession } from "playwright";
 import { playwright } from "vite-plus/test/browser-playwright";
 import { defineProject, type TestProjectInlineConfiguration } from "vite-plus/test/config";
 import "vite-plus/test/config";
@@ -74,6 +75,26 @@ const buildSourcemap: boolean | "hidden" =
       ? "hidden"
       : true;
 
+type CdpInput =
+  | { readonly kind: "throttle"; readonly rate: number }
+  | {
+      readonly kind: "scroll";
+      readonly x: number;
+      readonly y: number;
+      readonly xDistance: number;
+      readonly speed: number;
+    }
+  | {
+      readonly kind: "ctrlWheel";
+      readonly x: number;
+      readonly y: number;
+      readonly deltaY: number;
+      readonly count: number;
+      readonly intervalMs: number;
+    };
+
+const cdpSessions = new WeakMap<object, CDPSession>();
+
 const unitTestProject = {
   extends: true,
   test: {
@@ -135,6 +156,44 @@ const browserTestProject = {
         // position starts hovered. test/browserSetup.ts parks it off the page before each test.
         resetPointer: async ({ page }) => {
           await page.mouse.move(-1, -1);
+        },
+        // Timeline perf tests (S7V-033): real compositor input through CDP, at test-frame coordinates.
+        cdpInput: async (context, input: CdpInput) => {
+          const { page } = context;
+          const box = await (await context.frame()).frameElement().then((el) => el.boundingBox());
+          // One session per page: CPU throttling lasts only as long as the session that set it.
+          let session = cdpSessions.get(page);
+          if (session === undefined) {
+            session = await page.context().newCDPSession(page);
+            cdpSessions.set(page, session);
+          }
+          {
+            const x = (box?.x ?? 0) + ("x" in input ? input.x : 0);
+            const y = (box?.y ?? 0) + ("y" in input ? input.y : 0);
+            if (input.kind === "throttle") {
+              await session.send("Emulation.setCPUThrottlingRate", { rate: input.rate });
+            } else if (input.kind === "scroll") {
+              await session.send("Input.synthesizeScrollGesture", {
+                x,
+                y,
+                xDistance: input.xDistance,
+                speed: input.speed,
+                gestureSourceType: "mouse",
+              });
+            } else {
+              for (let index = 0; index < input.count; index++) {
+                await session.send("Input.dispatchMouseEvent", {
+                  type: "mouseWheel",
+                  x,
+                  y,
+                  deltaX: 0,
+                  deltaY: input.deltaY,
+                  modifiers: 2,
+                });
+                await new Promise((resolve) => setTimeout(resolve, input.intervalMs));
+              }
+            }
+          }
         },
       },
     },

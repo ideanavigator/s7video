@@ -3,11 +3,14 @@
 /**
  * The timeline's interaction logic (S7V-033), outside React so React Compiler compiles the
  * components (spike B1 bailed out on a component holding it): native scroll, zoom, click to seek,
- * keys and the playhead. React renders its snapshot only on a zoom or a bucket crossing.
+ * keys and the playhead. Clips are percentages of span boxes this sizes, so a zoom step writes a
+ * few widths here and React catches up the mounted window in a transition.
  */
 import { observeResize } from "../../../lib/observeResize";
 import { createPlayheadDriver, type PlayheadDriver } from "./playheadDriver";
 import {
+  type VisibleWindow,
+  visibleWindow,
   bucketOf,
   bucketWidthPx,
   clampZoom,
@@ -18,22 +21,24 @@ import {
   zoomLimits,
 } from "./timelineViewport";
 import { nextDetailScale } from "./lod";
+import { SPAN_ATTRIBUTE } from "./laneGeometry";
 import { TIMELINE_TRACK_LABELS_COLUMN_WIDTH_PX } from "./vendor/opencut/theme";
 
 export interface TimelineSnapshot {
+  /** The zoom React last laid out at; clips follow a zoom at once through the span boxes. */
   readonly pxPerFrame: number;
   /** The scale LOD decides at (`lod.ts`); lags `pxPerFrame` inside the hysteresis band. */
   readonly detailScale: number;
-  readonly bucket: number;
-  readonly bucketPx: number;
+  /** Frames whose clips are mounted: the screen plus one bucket either side. */
+  readonly window: VisibleWindow;
   /** Visible lane width: the scroll container minus the sticky track labels. */
   readonly laneWidthPx: number;
-  readonly contentWidthPx: number;
   readonly durationFrames: number;
 }
 
 export interface TimelineController {
-  readonly subscribe: (listener: () => void) => () => void;
+  /** Calls the listener once at once, then on every change; see `emit` for `urgent`. */
+  readonly subscribe: (listener: (urgent: boolean) => void) => () => void;
   readonly getSnapshot: () => TimelineSnapshot;
   /** Ref callbacks; each returns its cleanup. */
   readonly attachScroller: (element: HTMLDivElement | null) => (() => void) | undefined;
@@ -41,6 +46,8 @@ export interface TimelineController {
   readonly attachPlayhead: (element: HTMLDivElement | null) => void;
   readonly attachSlider: (element: HTMLDivElement | null) => void;
   readonly setDuration: (durationFrames: number) => void;
+  /** Sizes span boxes React mounted since the last zoom (`laneGeometry.ts`). */
+  readonly sizeSpans: () => void;
   readonly setPlayheadVisible: (visible: boolean, frame: number) => void;
   readonly setSeekHandler: (seek: (editFrame: number) => void) => void;
   readonly setFrameFormatter: (format: (editFrame: number) => string) => void;
@@ -62,11 +69,15 @@ const DEFAULT_LANE_WIDTH_PX = 800;
 const KEY_ZOOM_FACTOR = 1.5;
 /** A wheel in lines or pages (Firefox, some mice) as pixels. */
 const WHEEL_LINE_PX = 16;
+/** Mid-gesture, React re-lays the ruler once the zoom moved this far from what it rendered. */
+const ZOOM_RENDER_RATIO_MIN = 0.7;
+const ZOOM_RENDER_RATIO_MAX = 1.6;
+const ZOOM_SETTLE_MS = 120;
 /** Where the playhead lands after following playback off the right edge. */
 const FOLLOW_MARGIN_FRACTION = 0.1;
 
 export function createTimelineController(options: TimelineControllerOptions): TimelineController {
-  const listeners = new Set<() => void>();
+  const listeners = new Set<(urgent: boolean) => void>();
   let scroller: HTMLDivElement | null = null;
   let content: HTMLDivElement | null = null;
   let slider: HTMLDivElement | null = null;
@@ -84,33 +95,54 @@ export function createTimelineController(options: TimelineControllerOptions): Ti
   let snapshot = makeSnapshot();
   let lastPlayheadInView = true;
 
+  /** Nothing is mounted past the content's end, so it never widens the scroll range. */
+  function clampWindow(window: VisibleWindow): VisibleWindow {
+    const lanes = contentWidthPx(durationFrames, pxPerFrame, laneWidth);
+    const endPx = Math.min(window.endPx, lanes);
+    return {
+      ...window,
+      endPx,
+      endFrame: Math.min(window.endFrame, Math.floor(lanes / pxPerFrame)),
+    };
+  }
+
   function makeSnapshot(): TimelineSnapshot {
     return {
       pxPerFrame,
       detailScale,
-      bucket,
-      bucketPx,
+      window: clampWindow(visibleWindow(bucket, bucketPx, laneWidth, pxPerFrame)),
       laneWidthPx: laneWidth,
-      contentWidthPx: contentWidthPx(durationFrames, pxPerFrame, laneWidth),
       durationFrames,
     };
   }
 
-  const emit = () => {
+  /** `urgent` is false for scroll and zoom steps, which React may render a few frames late. */
+  const emit = (urgent: boolean) => {
     const next = makeSnapshot();
     if (
       next.pxPerFrame === snapshot.pxPerFrame &&
       next.detailScale === snapshot.detailScale &&
-      next.bucket === snapshot.bucket &&
-      next.bucketPx === snapshot.bucketPx &&
+      next.window.startFrame === snapshot.window.startFrame &&
+      next.window.endFrame === snapshot.window.endFrame &&
       next.laneWidthPx === snapshot.laneWidthPx &&
-      next.contentWidthPx === snapshot.contentWidthPx &&
       next.durationFrames === snapshot.durationFrames
     ) {
       return;
     }
     snapshot = next;
-    for (const listener of listeners) listener();
+    for (const listener of listeners) listener(urgent);
+  };
+
+  /** The content's size and the zoom variable, owned here so a late React commit cannot undo them. */
+  /** Clips are percentages of the span boxes (`laneGeometry.ts`), so this is all a zoom writes. */
+  const writeGeometry = () => {
+    if (content === null) return;
+    const lanes = contentWidthPx(durationFrames, pxPerFrame, laneWidth);
+    content.style.width = `${lanes + TIMELINE_TRACK_LABELS_COLUMN_WIDTH_PX}px`;
+    const span = `${Math.max(1, durationFrames) * pxPerFrame}px`;
+    for (const element of content.querySelectorAll<HTMLElement>(`[${SPAN_ATTRIBUTE}]`)) {
+      if (element.style.width !== span) element.style.width = span;
+    }
   };
 
   const lastFrame = () => Math.max(0, durationFrames - 1);
@@ -155,13 +187,42 @@ export function createTimelineController(options: TimelineControllerOptions): Ti
     pxPerFrame = result.pxPerFrame;
     detailScale = nextDetailScale(detailScale, pxPerFrame);
     // Widen the content before scrolling, so the browser does not clamp the anchored position.
-    if (content !== null) {
-      content.style.width = `${contentWidthPx(durationFrames, pxPerFrame, laneWidth) + TIMELINE_TRACK_LABELS_COLUMN_WIDTH_PX}px`;
-    }
-    if (scroller !== null) scroller.scrollLeft = result.scrollLeft;
-    bucket = bucketOf(scroller?.scrollLeft ?? result.scrollLeft, bucketPx);
+    writeGeometry();
+    const maxScroll = Math.max(
+      0,
+      contentWidthPx(durationFrames, pxPerFrame, laneWidth) - laneWidth,
+    );
+    const scrollLeft = Math.min(result.scrollLeft, maxScroll);
+    if (scroller !== null) scroller.scrollLeft = scrollLeft;
+    bucket = bucketOf(scrollLeft, bucketPx);
     playhead.setPxPerFrame(pxPerFrame);
-    emit();
+    zoomRender(scrollLeft);
+  };
+
+  /**
+   * While a zoom gesture runs, CSS already moves every mounted clip, so React renders only when
+   * the mounted window stops covering the screen or the ruler's spacing drifts too far; the
+   * gesture settles with one render once it pauses.
+   */
+  let settleTimer: ReturnType<typeof setTimeout> | null = null;
+  const settle = () => {
+    settleTimer = null;
+    emit(false);
+  };
+  const zoomRender = (scrollLeft: number) => {
+    const rendered = snapshot;
+    const ratio = pxPerFrame / rendered.pxPerFrame;
+    const lanes = contentWidthPx(durationFrames, pxPerFrame, laneWidth);
+    const first = scrollLeft / pxPerFrame;
+    const last = Math.min(scrollLeft + laneWidth, lanes) / pxPerFrame;
+    const covered = rendered.window.startFrame <= first && rendered.window.endFrame >= last;
+    if (settleTimer !== null) clearTimeout(settleTimer);
+    settleTimer = null;
+    if (!covered || ratio < ZOOM_RENDER_RATIO_MIN || ratio > ZOOM_RENDER_RATIO_MAX) {
+      emit(false);
+      return;
+    }
+    settleTimer = setTimeout(settle, ZOOM_SETTLE_MS);
   };
 
   const relimit = () => {
@@ -174,12 +235,17 @@ export function createTimelineController(options: TimelineControllerOptions): Ti
     }
     bucketPx = bucketWidthPx(laneWidth);
     bucket = bucketOf(scroller?.scrollLeft ?? 0, bucketPx);
+    writeGeometry();
   };
 
+  /** The scroller's viewport left, cached for wheel events: a read there would force a restyle. */
+  let scrollerLeft = 0;
+  const measureScroller = () => {
+    scrollerLeft = scroller?.getBoundingClientRect().left ?? 0;
+  };
   const laneXOfClient = (clientX: number): number | null => {
     if (scroller === null) return null;
-    const x =
-      clientX - scroller.getBoundingClientRect().left - TIMELINE_TRACK_LABELS_COLUMN_WIDTH_PX;
+    const x = clientX - scrollerLeft - TIMELINE_TRACK_LABELS_COLUMN_WIDTH_PX;
     return x < 0 ? null : x;
   };
 
@@ -194,7 +260,8 @@ export function createTimelineController(options: TimelineControllerOptions): Ti
     const next = bucketOf(scroller.scrollLeft, bucketPx);
     if (next === bucket) return;
     bucket = next;
-    emit();
+    if (settleTimer !== null) zoomRender(scroller.scrollLeft);
+    else emit(false);
   };
 
   let pendingWheel = 0;
@@ -205,7 +272,8 @@ export function createTimelineController(options: TimelineControllerOptions): Ti
     const scale = event.deltaMode === 0 ? 1 : WHEEL_LINE_PX;
     if (!(event.ctrlKey || event.metaKey)) {
       const vertical = Math.abs(event.deltaY) > Math.abs(event.deltaX);
-      const tracksOverflow = scroller.scrollHeight > scroller.clientHeight + 1;
+      // Read only for a vertical wheel: a layout read on every horizontal one would force a restyle.
+      const tracksOverflow = vertical && scroller.scrollHeight > scroller.clientHeight + 1;
       // A mouse wheel scrolls the edit sideways, as in CapCut, unless the tracks need it.
       if (vertical && !event.shiftKey && !tracksOverflow) {
         event.preventDefault();
@@ -215,6 +283,7 @@ export function createTimelineController(options: TimelineControllerOptions): Ti
     }
     // Trackpad pinch arrives as ctrl + wheel. One zoom step per frame however many events come.
     event.preventDefault();
+    if (wheelFrame === 0 && settleTimer === null) measureScroller();
     pendingWheel += event.deltaY * scale;
     wheelAnchor = laneXOfClient(event.clientX) ?? 0;
     if (wheelFrame !== 0) return;
@@ -229,6 +298,7 @@ export function createTimelineController(options: TimelineControllerOptions): Ti
   let scrubbing: number | null = null;
   const onPointerDown = (event: PointerEvent) => {
     if (event.button !== 0 || scroller === null) return;
+    measureScroller();
     const x = laneXOfClient(event.clientX);
     if (x === null) return;
     seekToFrame(frameAtPx(scroller.scrollLeft + x, pxPerFrame, lastFrame()));
@@ -274,6 +344,7 @@ export function createTimelineController(options: TimelineControllerOptions): Ti
   return {
     subscribe: (listener) => {
       listeners.add(listener);
+      listener(true);
       return () => listeners.delete(listener);
     },
     getSnapshot: () => snapshot,
@@ -281,8 +352,9 @@ export function createTimelineController(options: TimelineControllerOptions): Ti
       scroller = element;
       if (element === null) return undefined;
       laneWidth = Math.max(1, element.clientWidth - TIMELINE_TRACK_LABELS_COLUMN_WIDTH_PX);
+      measureScroller();
       relimit();
-      emit();
+      emit(true);
       const disconnect = playhead.connect();
       element.addEventListener("scroll", onScroll, { passive: true });
       element.addEventListener("wheel", onWheel, { passive: false });
@@ -292,13 +364,16 @@ export function createTimelineController(options: TimelineControllerOptions): Ti
       element.addEventListener("pointercancel", onPointerUp);
       element.addEventListener("keydown", onKeyDown);
       const stopResize = observeResize(element, () => {
+        measureScroller();
         const next = Math.max(1, element.clientWidth - TIMELINE_TRACK_LABELS_COLUMN_WIDTH_PX);
         if (next === laneWidth) return;
         laneWidth = next;
         relimit();
-        emit();
+        emit(true);
       });
       return () => {
+        if (settleTimer !== null) clearTimeout(settleTimer);
+        settleTimer = null;
         disconnect();
         stopResize();
         cancelAnimationFrame(wheelFrame);
@@ -315,6 +390,7 @@ export function createTimelineController(options: TimelineControllerOptions): Ti
     },
     attachContent: (element) => {
       content = element;
+      writeGeometry();
     },
     attachPlayhead: (element) => playhead.attach(element),
     attachSlider: (element) => {
@@ -326,8 +402,9 @@ export function createTimelineController(options: TimelineControllerOptions): Ti
       durationFrames = next;
       relimit();
       writeSlider(playhead.frame());
-      emit();
+      emit(true);
     },
+    sizeSpans: writeGeometry,
     setPlayheadVisible: (visible, frame) => {
       playhead.setVisible(visible);
       if (visible) playhead.place(frame);

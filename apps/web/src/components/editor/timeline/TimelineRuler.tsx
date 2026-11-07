@@ -7,6 +7,7 @@
  */
 import type { EditRational } from "@t3tools/contracts";
 
+import { SPAN_ATTRIBUTE, spanX } from "./laneGeometry";
 import { rulerTicks } from "./rulerTicks";
 import type { VisibleWindow } from "./timelineViewport";
 import { TIMELINE_RULER_HEIGHT_PX } from "./vendor/opencut/theme";
@@ -15,17 +16,16 @@ export function TimelineRuler(props: {
   readonly fps: EditRational;
   readonly pxPerFrame: number;
   readonly window: VisibleWindow;
-  readonly endFrame: number;
-  readonly widthPx: number;
+  readonly durationFrames: number;
   readonly attachSlider: (element: HTMLDivElement | null) => void;
 }) {
-  const { fps, pxPerFrame, window: visible, endFrame, widthPx, attachSlider } = props;
+  const { fps, pxPerFrame, window: visible, durationFrames, attachSlider } = props;
   const ticks = rulerTicks({
     startPx: visible.startPx,
     endPx: visible.endPx,
     pxPerFrame,
     fps,
-    endFrame,
+    endFrame: visible.endFrame,
   });
   return (
     <div
@@ -36,23 +36,26 @@ export function TimelineRuler(props: {
       aria-valuemin={0}
       aria-orientation="horizontal"
       data-timeline-ruler
+      {...{ [SPAN_ATTRIBUTE]: "" }}
       className="relative shrink-0 cursor-pointer border-b outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
-      style={{ width: widthPx, height: TIMELINE_RULER_HEIGHT_PX }}
+      style={{ height: TIMELINE_RULER_HEIGHT_PX }}
     >
       {ticks.map((tick) =>
         tick.label === undefined ? (
           <div
-            key={tick.x}
+            key={tick.frame}
             aria-hidden
             className="absolute top-[14px] h-1.5 border-l border-muted-foreground/50"
-            style={{ left: tick.x }}
+            style={{ left: spanX(tick.frame, durationFrames) }}
           />
         ) : (
-          <div key={tick.x} aria-hidden className="absolute top-0 h-full" style={{ left: tick.x }}>
-            <div className="absolute top-[12px] h-2.5 border-l border-muted-foreground/80" />
-            <span className="absolute top-0.5 left-1 text-3xs leading-3 whitespace-nowrap text-muted-foreground tabular-nums">
-              {tick.label}
-            </span>
+          <div
+            key={tick.frame}
+            aria-hidden
+            className="absolute top-0 h-full border-l border-muted-foreground/60 pl-1 text-3xs leading-4 whitespace-nowrap text-muted-foreground tabular-nums"
+            style={{ left: spanX(tick.frame, durationFrames) }}
+          >
+            {tick.label}
           </div>
         ),
       )}
