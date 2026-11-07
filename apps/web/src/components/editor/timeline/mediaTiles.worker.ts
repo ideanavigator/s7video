@@ -40,14 +40,15 @@ const queue: Array<() => Promise<void>> = [];
 // oxlint-disable-next-line unicorn/require-post-message-target-origin -- a worker posts to its page, with no origin.
 const post = (message: FromWorker) => scope.postMessage(message);
 
-const urlFor = (source: string, variant: MediaDataVariant, part: string) => {
+/** The part's signed URL; `refresh` mints a new one, replacing a URL that stopped working. */
+const urlFor = (source: string, variant: MediaDataVariant, part: string, refresh = false) => {
   const key = `${source}|${variant}|${part}`;
-  let url = urls.get(key);
+  let url = refresh ? undefined : urls.get(key);
   if (url === undefined) {
     url = new Promise((resolve) => {
       nextRequest += 1;
       urlRequests.set(nextRequest, resolve);
-      post({ type: "need-url", requestId: nextRequest, source, variant, part });
+      post({ type: "need-url", requestId: nextRequest, source, variant, part, refresh });
     });
     urls.set(key, url);
     // A failed mint is asked for again next time instead of being remembered.
@@ -72,26 +73,42 @@ const limited = (work: () => Promise<void>) => {
   next();
 };
 
-const fetchOk = async (url: string, init?: RequestInit) => {
-  const response = await fetch(url, init);
-  if (!response.ok) throw new Error(`media data ${response.status}`);
-  return response;
+/**
+ * Fetches one part. Signed URLs expire after an hour and stop working when the file is made again,
+ * so a failed fetch mints a fresh URL once and tries again.
+ */
+const fetchPart = async (
+  source: string,
+  variant: MediaDataVariant,
+  part: string,
+  init?: RequestInit,
+) => {
+  for (const refresh of [false, true]) {
+    const url = await urlFor(source, variant, part, refresh);
+    if (url === null) continue;
+    try {
+      const response = await fetch(url, init);
+      if (response.ok) return response;
+    } catch {
+      // A revoked or expired URL fails as a network error; mint again below.
+    }
+  }
+  urls.delete(`${source}|${variant}|${part}`);
+  throw new Error("media data unavailable");
 };
 
 const loadIndex = (source: string, variant: MediaDataVariant) => {
   const key = `${source}|${variant}`;
   let index = indexes.get(key);
   if (index === undefined) {
-    index = urlFor(source, variant, "index").then(async (url) => {
-      if (url === null) return null;
-      try {
-        return (await (await fetchOk(url)).json()) as MediaPeaksIndex | MediaFilmstripIndex;
-      } catch {
+    index = fetchPart(source, variant, "index").then(
+      async (response) => (await response.json()) as MediaPeaksIndex | MediaFilmstripIndex,
+      () => {
+        // Asked for again on the next draw.
         indexes.delete(key);
-        urls.delete(`${source}|${variant}|index`);
         return null;
-      }
-    });
+      },
+    );
     indexes.set(key, index);
   }
   return index;
@@ -107,10 +124,10 @@ const loadPeakTile = (source: string, level: MediaPeaksIndex["levels"][number], 
   pending.add(key);
   limited(async () => {
     try {
-      const url = await urlFor(source, "peaks", peaksPart(level));
-      if (url === null) return;
       const range = peakTileRange(level, tile);
-      const response = await fetchOk(url, { headers: { Range: range.header } });
+      const response = await fetchPart(source, "peaks", peaksPart(level), {
+        headers: { Range: range.header },
+      });
       const bytes = await response.arrayBuffer();
       // A server that ignores Range sends the whole level: take this tile's slice of it.
       const body = response.status === 206 ? bytes : bytes.slice(range.start);
@@ -130,9 +147,8 @@ const loadSheet = (source: string, part: string) => {
   pending.add(key);
   limited(async () => {
     try {
-      const url = await urlFor(source, "filmstrip", part);
-      if (url === null) return;
-      sheets.set(key, await createImageBitmap(await (await fetchOk(url)).blob()));
+      const response = await fetchPart(source, "filmstrip", part);
+      sheets.set(key, await createImageBitmap(await response.blob()));
       redrawAll(source);
     } catch {
       // As above.

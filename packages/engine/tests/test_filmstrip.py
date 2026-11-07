@@ -9,6 +9,7 @@ sheet says which frame it shows.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 from pathlib import Path
 
@@ -17,6 +18,7 @@ import pytest
 from engine_support import FFMPEG, Wire, make_clip
 
 from s7engine import rpc
+from s7engine.jobs import JobContext
 from s7engine.methods import filmstrip
 
 LUMA_STEP = 2
@@ -152,3 +154,75 @@ def test_cancel_stops_ffmpeg_and_leaves_no_final_file(wire: Wire, tmp_path: Path
     assert wire.call("job.cancel", {"jobId": "f6"})["result"] == {"cancelled": True}
     assert wire.reply(request, timeout=1)["error"]["code"] == rpc.CANCELLED
     assert list(out.iterdir()) == []
+
+
+@pytest.mark.usefixtures("tools")
+def test_metadata_that_is_not_utf8_does_not_break_the_log(wire: Wire, tmp_path: Path) -> None:
+    # FFmpeg prints tags as the file stores them: here a Latin-1 "café", which is not UTF-8.
+    assert FFMPEG is not None
+    source = tmp_path / "latin1.mkv"
+    subprocess.run(
+        [FFMPEG, "-v", "error", "-f", "lavfi", "-i", "testsrc2=s=160x90:r=10:d=3", "-c:v", "mpeg4", "-metadata", b"title=caf\xe9", str(source)],
+        check=True,
+    )
+    result = _run(wire, source, tmp_path / "filmstrip" / "latin1", "f7", {"num": 10, "den": 1}, levels=[1])
+    assert result["levels"][0]["count"] == 3
+
+
+def _fake_ffmpeg(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, script: str) -> None:
+    fake = tmp_path / "fake-ffmpeg"
+    fake.write_text(f"#!/bin/sh\n{script}\n")
+    fake.chmod(0o755)
+    monkeypatch.setenv("S7_FFMPEG", str(fake))
+
+
+@pytest.mark.usefixtures("tools")
+def test_a_full_disk_mid_write_is_an_output_error_and_leaves_no_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = _counter_clip(tmp_path / "clip.mp4", "10", 2)
+    out = tmp_path / "filmstrip" / "full"
+    out.mkdir(parents=True)
+    (out / "index.json").write_text("old")
+    # Writes part of a sheet into its output folder, then fails the way FFmpeg does on ENOSPC.
+    _fake_ffmpeg(
+        tmp_path,
+        monkeypatch,
+        'for last; do :; done; dir=$(dirname "$last"); printf x > "$dir/16s-1.jpg"\n'
+        'echo "[image2 @ 0x1] Error writing: No space left on device" >&2; exit 1',
+    )
+    with pytest.raises(rpc.RpcError) as raised:
+        filmstrip.METHOD.handler(
+            {"path": str(source), "outputDir": str(out), "rate": {"num": 10, "den": 1}}, JobContext.detached()
+        )
+    assert raised.value.code == rpc.OUTPUT_ERROR
+    assert "disk space" in raised.value.message
+    # The old index is untouched and no staging folder or final-named sheet is left behind.
+    assert sorted(path.name for path in out.iterdir()) == ["index.json"]
+
+
+@pytest.mark.usefixtures("tools")
+def test_ffmpeg_is_stopped_when_reading_its_log_fails(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    source = _counter_clip(tmp_path / "clip.mp4", "10", 2)
+    pid_file = tmp_path / "ffmpeg.pid"
+    _fake_ffmpeg(
+        tmp_path,
+        monkeypatch,
+        f'echo $$ > "{pid_file}"; echo "[showinfo@l1 @ 0x1] n: 0 pts: 1000000" >&2; exec sleep 30',
+    )
+    reported = JobContext.progress
+
+    def broken(job: JobContext, value: float, stage: str | None = None) -> None:
+        # The first report from FFmpeg's log fails, as any bug in the read loop could.
+        if value > 0:
+            raise RuntimeError("progress went wrong")
+        reported(job, value, stage)
+
+    monkeypatch.setattr(JobContext, "progress", broken)
+    with pytest.raises(RuntimeError):
+        filmstrip.METHOD.handler(
+            {"path": str(source), "outputDir": str(tmp_path / "fs"), "rate": {"num": 10, "den": 1}}, JobContext.detached()
+        )
+    pid = int(pid_file.read_text())
+    with pytest.raises(ProcessLookupError):
+        os.kill(pid, 0)

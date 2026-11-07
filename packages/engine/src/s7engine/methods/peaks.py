@@ -13,16 +13,18 @@ frame. The server chooses `outputDir`; the files appear complete or not at all (
 from __future__ import annotations
 
 import contextlib
+import errno
 import json
 import os
 import shutil
 import subprocess
+import time
 import uuid
 from fractions import Fraction
 from typing import TYPE_CHECKING, Any
 
 from ..ffmpeg import _tool_env, tool_path
-from ..jobs import Cancelled, JobContext
+from ..jobs import JobContext
 from ..rpc import INVALID_PARAMS, MEDIA_ERROR, OUTPUT_ERROR, Method, RpcError
 from ._media import PATH_SCHEMA, media_file
 from .transcribe import NO_AUDIO, _media_clock
@@ -119,14 +121,37 @@ def publish(output_dir: str, staging: str, names: list[str], index: dict[str, An
     shutil.rmtree(staging, ignore_errors=True)
 
 
+DISK_FULL_MESSAGE = "there is not enough free disk space for the media data"
+#: A staging folder this old belongs to a run that crashed or was killed; no job runs that long.
+STALE_STAGING_SECONDS = 6 * 3600
+
+
+def output_error(error: OSError, message: str) -> RpcError:
+    return RpcError(OUTPUT_ERROR, DISK_FULL_MESSAGE if error.errno == errno.ENOSPC else message)
+
+
+def _sweep_stale(output_dir: str) -> None:
+    """Removes `.tmp-*` staging folders left by runs that never finished."""
+    try:
+        entries = list(os.scandir(output_dir))
+    except OSError:
+        return
+    cutoff = time.time() - STALE_STAGING_SECONDS
+    for entry in entries:
+        with contextlib.suppress(OSError):
+            if entry.name.startswith(".tmp-") and entry.is_dir(follow_symlinks=False) and entry.stat().st_mtime < cutoff:
+                shutil.rmtree(entry.path, ignore_errors=True)
+
+
 def staging_dir(output_dir: str) -> str:
     if not os.path.isabs(output_dir):
         raise RpcError(INVALID_PARAMS, "invalid params at outputDir: must be absolute")
+    _sweep_stale(output_dir)
     staging = os.path.join(output_dir, f".tmp-{uuid.uuid4().hex}")
     try:
         os.makedirs(staging)
-    except OSError:
-        raise RpcError(OUTPUT_ERROR, "the media data folder cannot be created") from None
+    except OSError as error:
+        raise output_error(error, "the media data folder cannot be created") from None
     return staging
 
 
@@ -183,7 +208,8 @@ def _peaks(params: dict[str, Any], job: JobContext) -> dict[str, Any]:
         try:
             total, mip = peaks_mip(_blocks(process, job, total_estimate), levels)
             process.wait()
-        except Cancelled:
+        except BaseException:
+            # FFmpeg must not outlive the job, whatever stopped the read.
             process.kill()
             process.wait()
             raise
@@ -209,9 +235,9 @@ def _peaks(params: dict[str, Any], job: JobContext) -> dict[str, Any]:
             "levels": entries,
         }
         publish(output_dir, staging, [entry["file"] for entry in entries], index)
-    except OSError:
+    except OSError as error:
         shutil.rmtree(staging, ignore_errors=True)
-        raise RpcError(OUTPUT_ERROR, "the waveform could not be written") from None
+        raise output_error(error, "the waveform could not be written") from None
     except BaseException:
         shutil.rmtree(staging, ignore_errors=True)
         raise

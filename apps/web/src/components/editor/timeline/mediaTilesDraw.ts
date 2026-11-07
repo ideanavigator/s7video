@@ -89,13 +89,23 @@ export const drawFilmstrip = (
 ) => {
   const { height } = prepare(context, view);
   if (!index.video || view.endFrame <= view.firstFrame) return 0;
-  const slotWidth = (index.tileWidth * view.height) / index.tileHeight;
-  const pixelsPerFrame = view.width / (view.endFrame - view.firstFrame);
-  const level = chooseFilmstripLevel(index, pixelsPerFrame, slotWidth);
+  // Tile frames are at the media's own rate; the view's may be the edit's (25 fps media in a 30 fps edit).
+  const toMediaFrame = (frame: number) =>
+    (frame * index.rate.num * view.fps.den) / (index.rate.den * view.fps.num);
+  const window = {
+    firstFrame: toMediaFrame(view.firstFrame),
+    endFrame: toMediaFrame(view.endFrame),
+    anchorFrame: toMediaFrame(view.anchorFrame),
+    width: view.width,
+    slotWidth: (index.tileWidth * view.height) / index.tileHeight,
+  };
+  const pixelsPerFrame = window.width / (window.endFrame - window.firstFrame);
+  const level = chooseFilmstripLevel(index, pixelsPerFrame, window.slotWidth);
   if (level === undefined) return 0;
   const ratio = view.pixelRatio;
+  const slotWidth = window.slotWidth;
   let missing = 0;
-  for (const slot of filmstripSlots(index, level, { ...view, slotWidth })) {
+  for (const slot of filmstripSlots(index, level, window)) {
     const sheet = sheets.get(slot.part);
     if (sheet === undefined) {
       missing += 1;

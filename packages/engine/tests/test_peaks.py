@@ -4,8 +4,11 @@
 
 from __future__ import annotations
 
+import errno
 import json
+import os
 import subprocess
+import time
 from pathlib import Path
 
 import numpy as np
@@ -13,6 +16,7 @@ import pytest
 from engine_support import FFMPEG, Wire
 
 from s7engine import rpc
+from s7engine.jobs import JobContext
 from s7engine.methods import peaks
 
 LEVELS = [256, 1024, 4096, 16384]
@@ -121,3 +125,44 @@ def test_unwritable_output_fails_with_a_clear_error(wire: Wire, clips: dict[str,
     error = wire.call("media.peaks", {"jobId": "p5", "path": str(clips["mp4_30"]), "outputDir": str(blocker / "x")})["error"]
     assert error["code"] == rpc.OUTPUT_ERROR
     assert str(tmp_path) not in error["message"]
+
+
+@pytest.mark.usefixtures("tools")
+def test_a_full_disk_partway_through_publishing_is_an_output_error(
+    clips: dict[str, Path], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    out = tmp_path / "peaks" / "full"
+    first = peaks.METHOD.handler({"path": str(clips["mp4_30"]), "outputDir": str(out)}, JobContext.detached())
+    assert first["audio"] is True
+    real_replace = os.replace
+    calls = {"n": 0}
+
+    def replace(source: str, target: str) -> None:
+        calls["n"] += 1
+        if calls["n"] == 3:
+            raise OSError(errno.ENOSPC, "No space left on device")
+        real_replace(source, target)
+
+    monkeypatch.setattr(peaks.os, "replace", replace)
+    with pytest.raises(rpc.RpcError) as raised:
+        peaks.METHOD.handler({"path": str(clips["mp4_30"]), "outputDir": str(out)}, JobContext.detached())
+    assert raised.value.code == rpc.OUTPUT_ERROR
+    assert "disk space" in raised.value.message
+    # Some levels were replaced, but the index went first: the cache reads as not ready, never as
+    # an index naming files of two runs. No staging folder is left.
+    names = sorted(path.name for path in out.iterdir())
+    assert "index.json" not in names
+    assert not [name for name in names if name.startswith(".tmp-")]
+
+
+def test_stale_staging_folders_are_swept(tmp_path: Path) -> None:
+    stale = tmp_path / ".tmp-old"
+    fresh = tmp_path / ".tmp-running"
+    stale.mkdir()
+    fresh.mkdir()
+    (stale / "256.f32").write_bytes(b"x")
+    old = time.time() - peaks.STALE_STAGING_SECONDS - 60
+    os.utime(stale, (old, old))
+    staging = peaks.staging_dir(str(tmp_path))
+    assert not stale.exists()
+    assert fresh.exists() and Path(staging).exists()

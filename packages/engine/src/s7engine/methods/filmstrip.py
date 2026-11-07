@@ -22,10 +22,10 @@ from typing import Any
 
 from .. import timebase
 from ..ffmpeg import _tool_env, ffprobe_json, tool_path
-from ..jobs import Cancelled, JobContext
+from ..jobs import JobContext
 from ..rpc import INVALID_PARAMS, MEDIA_ERROR, OUTPUT_ERROR, Method, RpcError
 from ._media import PATH_SCHEMA, RATE_SCHEMA, media_file
-from .peaks import INDEX_FILE, INDEX_VERSION, publish, staging_dir
+from .peaks import DISK_FULL_MESSAGE, INDEX_FILE, INDEX_VERSION, output_error, publish, staging_dir
 
 DEFAULT_LEVELS = (16, 4, 1)
 DEFAULT_TILE_HEIGHT = 90
@@ -34,6 +34,7 @@ ROWS = 10
 #: FFmpeg mjpeg `-q:v` (2 best, 31 worst). At 160x90 a tile scores SSIM ~0.987 against its
 #: frame at 2, ~0.983 at 3 and ~0.972 at 5 (testsrc2), against the 0.98 floor.
 JPEG_QUALITY = 2
+_DISK_FULL = "No space left on device"
 _SHOWINFO = re.compile(r"\[showinfo@l(\d+) @ [^\]]*\] n:\s*\d+ pts:\s*(-?\d+)")
 
 
@@ -127,8 +128,9 @@ def _run_ffmpeg(
     Progress follows the finest level's kept frames: FFmpeg's own `-progress` counts output
     frames, and a sheet is output only every 100 tiles.
     """
+    # Bytes, decoded leniently: FFmpeg prints metadata tags as the file stores them, not UTF-8.
     process = subprocess.Popen(
-        args, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, env=_tool_env(), text=True
+        args, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, env=_tool_env()
     )
     # Below the app and the engine's quick calls: a long decode must not make the UI stutter.
     with contextlib.suppress(OSError):
@@ -137,9 +139,12 @@ def _run_ffmpeg(
     job.on_cancel(stop)
     kept: dict[int, list[int]] = {}
     reported = Fraction(0)
+    disk_full = False
     try:
         assert process.stderr is not None
-        for line in process.stderr:
+        for raw in process.stderr:
+            line = raw.decode("utf-8", errors="replace")
+            disk_full = disk_full or _DISK_FULL in line
             match = _SHOWINFO.search(line)
             if not match:
                 continue
@@ -152,7 +157,8 @@ def _run_ffmpeg(
                     reported = done
                     job.progress(done, "picture strip")
         process.wait()
-    except Cancelled:
+    except BaseException:
+        # Whatever went wrong here, FFmpeg must not outlive the job.
         process.kill()
         process.wait()
         raise
@@ -160,6 +166,8 @@ def _run_ffmpeg(
         job.remove_on_cancel(stop)
     job.raise_if_cancelled()
     if process.returncode != 0:
+        if disk_full:
+            raise RpcError(OUTPUT_ERROR, DISK_FULL_MESSAGE)
         raise RpcError(MEDIA_ERROR, "the picture strip could not be made")
     return kept
 
@@ -231,9 +239,9 @@ def _filmstrip(params: dict[str, Any], job: JobContext) -> dict[str, Any]:
             "levels": entries,
         }
         publish(output_dir, staging, names, index)
-    except OSError:
+    except OSError as error:
         shutil.rmtree(staging, ignore_errors=True)
-        raise RpcError(OUTPUT_ERROR, "the picture strip could not be written") from None
+        raise output_error(error, "the picture strip could not be written") from None
     except BaseException:
         shutil.rmtree(staging, ignore_errors=True)
         raise

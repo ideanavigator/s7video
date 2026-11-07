@@ -80,6 +80,14 @@ const blobUrl = (blob: Blob) => URL.createObjectURL(blob);
 
 const served = new Map<string, Promise<string>>();
 const minted: AssetResource[] = [];
+const refreshed: AssetResource[] = [];
+/** Media whose first URL for each part is dead, as an expired token would be. */
+const STALE_MEDIA = "stale";
+const deadUrl = (() => {
+  const url = URL.createObjectURL(new Blob(["gone"]));
+  URL.revokeObjectURL(url);
+  return url;
+})();
 const serve = (resource: AssetResource) => {
   if (resource._tag !== "project-media" || resource.part === undefined) return null;
   const key = `${resource.variant}/${resource.part}`;
@@ -101,10 +109,14 @@ const serve = (resource: AssetResource) => {
 };
 
 vi.mock("~/assets/assetUrls", () => ({
-  useAssetUrlMinter: () => async (resource: AssetResource) => {
-    minted.push(resource);
-    return (await serve(resource)) ?? null;
-  },
+  useAssetUrlMinter:
+    () => async (resource: AssetResource, options?: { readonly refresh?: boolean }) => {
+      minted.push(resource);
+      if (options?.refresh === true) refreshed.push(resource);
+      const stale =
+        resource._tag === "project-media" && resource.mediaId === STALE_MEDIA && !options?.refresh;
+      return stale ? deadUrl : ((await serve(resource)) ?? null);
+    },
 }));
 
 const { ClipMediaTiles, mediaTilesWorker } = await import("./ClipMediaTiles");
@@ -203,6 +215,25 @@ describe("media tiles drawing", () => {
     expect(red(190)).toBe(50);
     expect(red(450)).toBe(150);
   });
+
+  it.each([25, 60])("shows the right tiles for %i fps media in a 30 fps edit", (mediaFps) => {
+    const canvas = new OffscreenCanvas(1, 1);
+    const context = canvas.getContext("2d")!;
+    const sheet = sheetCanvas();
+    const second = {
+      ...stripLevel(1),
+      framesPerTile: mediaFps,
+      frames: Array.from({ length: 1800 }, (_, tile) => tile * mediaFps),
+    };
+    const index = { ...filmstripIndex, rate: { num: mediaFps, den: 1 }, levels: [second] };
+    // The view is 10 s in edit frames at 30 fps; slot k is at 2k s, which is 1 s tile 2k.
+    drawFilmstrip(context, view({ width: 640, height: 72, endFrame: 300 }), index, {
+      get: () => sheet,
+      want: () => {},
+    });
+    const red = (x: number) => context.getImageData(x, 36, 1, 1).data[0]!;
+    expect([red(60), red(190), red(450)]).toEqual([0, 50, 150]);
+  });
 });
 
 describe("ClipMediaTiles", () => {
@@ -229,6 +260,44 @@ describe("ClipMediaTiles", () => {
         () => new Set(minted.map((resource) => resource._tag === "project-media" && resource.part)),
       )
       .toEqual(new Set(["index", "p16384", "f16s-1", "f16s-2"]));
+  });
+
+  it("mints a fresh URL when a signed one stops working", async () => {
+    const done = nextDraw(true);
+    await using _screen = await render(
+      <ClipMediaTiles
+        {...base}
+        mediaId={STALE_MEDIA}
+        variant="peaks"
+        width={300}
+        firstFrame={0}
+        endFrame={900}
+      />,
+    );
+    await done;
+    const parts = refreshed.map(
+      (resource) => resource._tag === "project-media" && `${resource.mediaId}/${resource.part}`,
+    );
+    expect(parts).toContain(`${STALE_MEDIA}/index`);
+    expect(parts.some((part) => part !== false && /^stale\/p\d+$/u.test(part))).toBe(true);
+  });
+
+  it("forgets a clip's URL minter when it unmounts", async () => {
+    const source = `${base.environmentId}/${base.projectId}/gone`;
+    const screen = await render(
+      <ClipMediaTiles
+        {...base}
+        mediaId="gone"
+        variant="peaks"
+        width={100}
+        firstFrame={0}
+        endFrame={30}
+      />,
+    );
+    expect(mediaTilesWorker()!.minters.get(source)?.size).toBe(1);
+    await screen.unmount();
+    expect(mediaTilesWorker()!.minters.has(source)).toBe(false);
+    await screen[Symbol.asyncDispose]();
   });
 
   it("renders nothing until its part is ready", async () => {

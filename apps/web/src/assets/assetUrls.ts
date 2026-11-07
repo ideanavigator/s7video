@@ -136,16 +136,22 @@ export function useAssetUrlRefresh(
 
 /**
  * Mints a URL for any resource on demand, for code outside React that needs many of them, such
- * as the timeline's media-tiles worker asking for a `project-media` `part` (S7V-035).
+ * as the timeline's media-tiles worker asking for a `project-media` `part` (S7V-035). `refresh`
+ * mints a new token instead of reusing the cached one, for a URL that expired or stopped working.
  */
 export function useAssetUrlMinter(
   environmentId: EnvironmentId | null,
-): (resource: AssetResource) => Promise<string | null> {
+): (resource: AssetResource, options?: { readonly refresh?: boolean }) => Promise<string | null> {
   const connection = usePreparedConnection(environmentId);
   const httpBaseUrl = connection._tag === "Some" ? connection.value.httpBaseUrl : null;
-  const run = useAtomQueryRunner(assetEnvironment.createUrl, { reportFailure: false });
-  return async (resource) => {
+  const cached = useAtomQueryRunner(assetEnvironment.createUrl, { reportFailure: false });
+  const fresh = useAtomQueryRunner(assetEnvironment.createUrl, {
+    reportFailure: false,
+    refresh: true,
+  });
+  return async (resource, options) => {
     if (environmentId === null || httpBaseUrl === null) return null;
+    const run = options?.refresh === true ? fresh : cached;
     const result = await run({ environmentId, input: { resource } });
     return result._tag === "Failure"
       ? null

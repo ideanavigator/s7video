@@ -5,7 +5,11 @@ import type { EditRational } from "@t3tools/contracts";
 
 export type MediaDataVariant = "peaks" | "filmstrip";
 
-/** What one clip's canvas shows: media frames `[firstFrame, endFrame)` at `fps` across `width`. */
+/**
+ * What one clip's canvas shows: frames `[firstFrame, endFrame)` across `width`, counted from the
+ * media's first frame at `fps`, which may be any rate (the edit's, usually); the worker converts
+ * them to each index's own rate.
+ */
 export interface ClipView {
   /** Names the media: tiles are cached per source and shared by clips of the same media. */
   readonly source: string;
@@ -38,6 +42,8 @@ export type FromWorker =
       readonly source: string;
       readonly variant: MediaDataVariant;
       readonly part: string;
+      /** Mint a new URL: the one minted before failed (expired, or the file was made again). */
+      readonly refresh: boolean;
     }
   /** `complete`: every tile the view needs was loaded; otherwise more draws follow. */
   | { readonly type: "drawn"; readonly id: string; readonly complete: boolean };

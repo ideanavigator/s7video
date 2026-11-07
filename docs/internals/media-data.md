@@ -52,7 +52,10 @@ filmstrip reads the proxy when there is one (its frame N is the original's frame
 Each file is written into a `.tmp-<uuid>/` folder beside it, moved into place, and the index
 written last, after the old index is removed. An index of the current `version` therefore means
 every file it names is complete; a cancel or a full disk deletes the temp folder and leaves no
-file with a final name. Bumping `version` makes the server recompute.
+file with a final name (a full disk is an output error saying so). A temp folder over 6 hours old
+was left by a crashed or killed run and is swept by the next run. Bumping `version` makes the
+server recompute. FFmpeg's log is read as bytes and decoded leniently, since it prints metadata
+tags as the file stores them, and FFmpeg is killed on any failure, not only a cancel.
 
 ## Why one decode for every filmstrip level
 
@@ -73,7 +76,12 @@ levels are fetched by HTTP range, 2,048 pairs (16 KiB) at a time.
 
 `ClipMediaTiles` renders a canvas only once its part is `ready`, and hands it to one shared worker
 with `transferControlToOffscreen` (checked in Electron 44.10.0, Chromium 152). The page posts the
-visible span; the worker asks the page to mint each part's URL, fetches only the tiles in view,
+visible span as `firstFrame`, `endFrame` and `anchorFrame` counted from the media's first frame
+(source time) at `fps`. Callers pass the edit's document frames and fps; the worker converts them
+to samples for the waveform and to the index's own `rate` for the filmstrip, so 25 or 60 fps
+media in a 30 fps edit shows the right tiles. The worker asks the page to mint each part's URL.
+Signed URLs expire after an hour and stop working when a file is made again, so a failed fetch
+mints a fresh URL once (`refresh`) and retries. It fetches only the tiles in view,
 keeps them in small LRU caches, and redraws at most once a frame. The waveform uses the coarsest
 level with at least one pair per pixel; the filmstrip uses the coarsest level whose tiles sit no
 further apart than one slot, and fills slots edge to edge from the clip's left edge. Work on
