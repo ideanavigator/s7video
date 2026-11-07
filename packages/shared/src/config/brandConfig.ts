@@ -47,7 +47,13 @@ export const BrandTheme = Schema.Struct({
   name: Schema.NonEmptyString,
   mode: Schema.Literals(["light", "dark"]),
   colors: BrandThemeColors,
-  track: Schema.Struct({ video: HexColor, text: HexColor, sfx: HexColor, music: HexColor }),
+  track: Schema.Struct({
+    video: HexColor,
+    text: HexColor,
+    sfx: HexColor,
+    music: HexColor,
+    overlay: HexColor,
+  }),
   diff: Schema.Struct({ add: HexColor, remove: HexColor }),
   radius: Schema.Number.check(Schema.isGreaterThanOrEqualTo(0), Schema.isLessThanOrEqualTo(32)),
 });

@@ -23,6 +23,7 @@ import {
   editEnvironment,
   rememberedPlayerFrame,
   rememberPlayerFrame,
+  requestPlayerSeek,
   selectPlayerSource,
   useEditPlayerStore,
   useProjectExport,
@@ -42,6 +43,8 @@ import { AssetsTab, useAssetsActions } from "./AssetsTab";
 import { EditPlayer } from "./EditPlayer";
 import { ImportDialog } from "./ImportDialog";
 import { SpeechModelPrompt } from "./SpeechModelPrompt";
+import { editFrameToPlayerFrame } from "./timeline/editFrames";
+import { TimelinePane } from "./timeline/TimelinePane";
 import { TranscriptTab } from "./TranscriptTab";
 
 type EditorTab = "transcript" | "assets";
@@ -425,6 +428,15 @@ export default function EditorPanel(props: {
     setSource(projectKey, { kind: "edit" });
   };
 
+  const previewingClip = view._tag === "play" && view.mode === "clip";
+  // A click on the timeline while a clip previews goes back to the edit, at the clicked frame.
+  const seekFromTimeline = (editFrame: number) => {
+    const frame = editFrameToPlayerFrame(editFrame);
+    rememberPlayerFrame(projectKey, frame);
+    if (source.kind === "clip") setSource(projectKey, { kind: "edit" });
+    else requestPlayerSeek(projectKey, frame);
+  };
+
   return (
     <div className="flex h-full min-h-0 flex-col gap-2 p-2" data-testid="editor-panel">
       <SpeechModelPrompt projectRef={projectRef} />
@@ -493,6 +505,15 @@ export default function EditorPanel(props: {
           }}
         />
       </div>
+      {edit._tag === "unavailable" ? null : (
+        <TimelinePane
+          projectKey={projectKey}
+          document={edit._tag === "ready" ? edit.snapshot.document : null}
+          playheadVisible={!previewingClip}
+          initialFrame={rememberedPlayerFrame(projectKey)}
+          onSeek={seekFromTimeline}
+        />
+      )}
       <ImportDialog
         request={actions.request}
         onConfirm={(mode) => void actions.confirmImport(mode)}

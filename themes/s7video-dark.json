@@ -68,7 +68,8 @@
     "video": "#4b7bec",
     "text": "#f7b731",
     "sfx": "#20bf6b",
-    "music": "#a55eea"
+    "music": "#a55eea",
+    "overlay": "#fd9644"
   },
   "diff": {
     "add": "#2ecc71",
