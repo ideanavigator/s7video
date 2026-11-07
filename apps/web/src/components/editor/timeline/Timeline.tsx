@@ -9,7 +9,7 @@
 import type { EditDocument, MediaAsset, ScopedProjectRef } from "@t3tools/contracts";
 import { startTransition, useEffect, useLayoutEffect, useState } from "react";
 
-import type { PlaybackPlan } from "../../../editor/editPlayback";
+import type { PlayerFramePlan } from "../../../editor/editPlayback";
 import { useStableCallback } from "../../../hooks/useStableCallback";
 import { formatTimecode, framesPerSecondRounded } from "./mediaTime";
 import { createTimelineController } from "./timelineController";
@@ -46,7 +46,7 @@ export function Timeline(props: {
   readonly initialFrame: number;
   readonly onSeek: (editFrame: number) => void;
   /** What the player plays, for mapping its frames (`editFrames.ts`); null when no edit plays. */
-  readonly plan?: PlaybackPlan | null;
+  readonly plan?: PlayerFramePlan | null;
   /** The project and its media library, for each clip's media slot (S7V-035). */
   readonly projectRef?: ScopedProjectRef;
   readonly mediaById?: ReadonlyMap<string, MediaAsset>;

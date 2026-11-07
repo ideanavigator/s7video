@@ -8,10 +8,13 @@
 import type { EditRational, Transcript } from "@t3tools/contracts";
 
 import {
+  nextTimelineSegmentFrom,
   type PlaybackSegment,
   segmentIndexAt,
   sourceFrameOf,
   timelineFrameOf,
+  timelineSegmentAt,
+  type TimelinePlan,
 } from "./editPlayback";
 
 /** A pause longer than this starts a new paragraph (PO default, S7V-030 open question). */
@@ -207,4 +210,45 @@ export function rowOfWord(model: TranscriptModel, index: number): number {
     else high = middle - 1;
   }
   return low;
+}
+
+/**
+ * The clip whose words the Transcript tab shows at edit frame `frame` of a multi-clip edit
+ * (S7V-039): the one on screen, or in a gap the next one (the last one after the end).
+ */
+export function timelineTranscriptSegment(plan: TimelinePlan, frame: number): number {
+  const at = timelineSegmentAt(plan.segments, frame);
+  if (at !== -1) return at;
+  const next = nextTimelineSegmentFrom(plan.segments, frame);
+  return next === -1 ? plan.segments.length - 1 : next;
+}
+
+/**
+ * The Transcript tab's source for segment `index` of a multi-clip edit: that clip's words, kept
+ * where the edit plays them, mapped through each item's `in` and `start`. Every item of the clip
+ * counts when the edit uses it in source order; otherwise (a clip reused out of order) only the
+ * item on screen does, so each word maps to one edit frame.
+ */
+export function timelineTranscriptPlayback(
+  plan: TimelinePlan,
+  index: number,
+): { readonly mediaId: string; readonly playback: TranscriptPlayback } {
+  const current = plan.segments[index]!;
+  const own = plan.segments.filter((segment) => segment.mediaId === current.mediaId);
+  const inOrder = own.every(
+    (segment, at) =>
+      at === 0 || segment.in >= own[at - 1]!.in + own[at - 1]!.end - own[at - 1]!.start,
+  );
+  const used = inOrder ? own : [current];
+  return {
+    mediaId: current.mediaId,
+    playback: {
+      fps: plan.fps,
+      segments: used.map((segment) => ({
+        sourceStart: segment.in,
+        sourceEnd: segment.in + segment.end - segment.start,
+        timelineStart: segment.start,
+      })),
+    },
+  };
 }

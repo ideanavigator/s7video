@@ -7,7 +7,7 @@ SPDX-License-Identifier: MIT
 
 The Editor panel's timeline (S7V-033, ADR-007): `apps/web/src/components/editor/timeline/`. It
 reads `edit.json` through `useProjectEdit` and never writes it. The rules below are what kept it at
-0 dropped frames with 1,000 clips; editing (S7V-034) and the player clock (S7V-039) build on them.
+0 dropped frames with 1,000 clips; editing (S7V-034) and the player clock (S7V-039, [player-clock.md](player-clock.md)) build on them.
 
 ## The controller owns geometry, React owns the mounted set
 
@@ -36,11 +36,11 @@ track row) itself. Clips, ruler ticks and canvas strips are **percentages of tha
 
 ## Frames
 
-Positions are integer frames at the document fps. The player publishes packed frames (kept-frame
-counts); `editFrames.ts` converts them with the player's plan. Today that is the identity, which
-holds for every edit Engine A makes; a frame the plan does not play (a later clip in a "Plays X
-only" edit) has no player frame, so a click there moves only the timeline's playhead. S7V-034
-and S7V-039 change the mapping there only.
+Positions are integer frames at the document fps, at the item `start`s in `edit.json`. Both
+players publish those frames ([player-clock.md](player-clock.md)): the multi-clip clock by
+construction, and the Engine A player because it only gets edits whose packed frames equal the
+starts. `editFrames.ts` is therefore the identity; a click past the edit's end moves only the
+timeline's playhead.
 
 ## Waveforms and filmstrips (S7V-035)
 
