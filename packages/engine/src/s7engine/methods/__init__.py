@@ -7,7 +7,7 @@ from __future__ import annotations
 import os
 
 from ..rpc import Method
-from . import export, frame, ping, probe, proxy, silence, thumbnail, transcribe
+from . import export, filmstrip, frame, peaks, ping, probe, proxy, silence, thumbnail, transcribe
 
 
 def all_methods() -> list[Method]:
@@ -21,6 +21,8 @@ def all_methods() -> list[Method]:
         proxy.KEYFRAMES,
         proxy.PROXY,
         silence.METHOD,
+        peaks.METHOD,
+        filmstrip.METHOD,
     ]
     # Crash, hang and slow-job hooks for the server's supervision tests; never set in the app.
     if os.environ.get("S7_ENGINE_TEST_METHODS") == "1":

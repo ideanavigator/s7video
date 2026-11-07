@@ -17,7 +17,7 @@ const SourcePath = TrimmedNonEmptyString.check(Schema.isMaxLength(4096));
 export const MediaImportMode = Schema.Literals(["copy", "reference"]);
 export type MediaImportMode = typeof MediaImportMode.Type;
 
-/** What `/api/assets` serves for one media; `peaks` and `filmstrip` are reserved for S7V-035. */
+/** What `/api/assets` serves for one media; `peaks` and `filmstrip` name one file each by `part`. */
 export const MediaVariant = Schema.Literals([
   "original",
   "proxy",
@@ -74,6 +74,78 @@ export const MediaProxyState = Schema.Struct({
 });
 export type MediaProxyState = typeof MediaProxyState.Type;
 
+/** One kind of media data: `none` means the media has nothing to show (no sound, no picture). */
+export const MediaDataPart = Schema.Literals(["ready", "pending", "none"]);
+export type MediaDataPart = typeof MediaDataPart.Type;
+
+/**
+ * The timeline's waveform and filmstrip (S7V-035), shaped like `proxy`. The waveform is ready
+ * before the filmstrip, so each part says on its own whether it can be fetched yet.
+ */
+export const MediaDataState = Schema.Struct({
+  status: Schema.Literals(["none", "preparing", "ready", "failed"]),
+  jobId: Schema.optional(EngineJobId),
+  /** 0..1 while preparing. */
+  progress: Schema.optional(Schema.Number.check(Schema.isBetween({ minimum: 0, maximum: 1 }))),
+  peaks: MediaDataPart,
+  filmstrip: MediaDataPart,
+});
+export type MediaDataState = typeof MediaDataState.Type;
+
+/**
+ * `part` names one file of a `peaks` or `filmstrip` variant: `index`, a peaks level (`p1024`) or a
+ * filmstrip sheet (`f16s-3`: the 16 s level's third sheet). Other variants take no `part`.
+ */
+export const MediaDataPartName = Schema.String.check(
+  Schema.isPattern(/^(?:index|p[1-9][0-9]{1,6}|f[1-9][0-9]{0,3}s-[1-9][0-9]{0,4})$/u),
+);
+export type MediaDataPartName = typeof MediaDataPartName.Type;
+
+const VersionOne = Schema.Literal(1);
+
+/**
+ * `peaks` part `index`. Level `p<samplesPerPeak>` holds `count` little-endian float32
+ * `[min, max]` pairs; pair `i` covers samples `[i, i + 1) * samplesPerPeak` from the first audio
+ * sample, which sits `offsetSamples` after the video's first frame. `audio: false`: no sound.
+ */
+export const MediaPeaksIndex = Schema.Struct({
+  version: VersionOne,
+  audio: Schema.Boolean,
+  sampleRate: PositiveInt,
+  channels: Schema.optional(PositiveInt),
+  durationSamples: Schema.optional(NonNegativeInt),
+  offsetSamples: Schema.optional(Schema.Int),
+  levels: Schema.Array(
+    Schema.Struct({ samplesPerPeak: PositiveInt, count: NonNegativeInt, file: Schema.String }),
+  ),
+});
+export type MediaPeaksIndex = typeof MediaPeaksIndex.Type;
+
+/**
+ * `filmstrip` part `index`. Tile `i` of a level is `frames[i]` (an integer frame at `rate`, the
+ * media's own rate, from its first frame) and sits on sheet `floor(i / (columns * rows)) + 1`, at
+ * row `floor(i / columns) % rows`, column `i % columns`, each tile `tileWidth` x `tileHeight` px.
+ */
+export const MediaFilmstripIndex = Schema.Struct({
+  version: VersionOne,
+  video: Schema.Boolean,
+  rate: EditRational,
+  tileWidth: PositiveInt,
+  tileHeight: PositiveInt,
+  columns: PositiveInt,
+  rows: PositiveInt,
+  levels: Schema.Array(
+    Schema.Struct({
+      level: Schema.String,
+      secondsPerTile: PositiveInt,
+      framesPerTile: PositiveInt,
+      sheets: Schema.Array(Schema.String),
+      frames: Schema.Array(NonNegativeInt),
+    }),
+  ),
+});
+export type MediaFilmstripIndex = typeof MediaFilmstripIndex.Type;
+
 export const MediaAsset = Schema.Struct({
   id: EditId,
   kind: EditMediaKind,
@@ -93,6 +165,8 @@ export const MediaAsset = Schema.Struct({
   hasAudio: Schema.Boolean,
   hasThumbnail: Schema.Boolean,
   proxy: MediaProxyState,
+  /** Always sent by the server; optional so lists built before S7V-035 still decode. */
+  mediaData: Schema.optional(MediaDataState),
 });
 export type MediaAsset = typeof MediaAsset.Type;
 
