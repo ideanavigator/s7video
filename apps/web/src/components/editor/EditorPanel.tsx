@@ -53,6 +53,7 @@ import { toastManager } from "../ui/toast";
 import { BROWSER_ADD_MEDIA_HINT } from "./addMediaHint";
 import { AssetsTab, useAssetsActions } from "./AssetsTab";
 import { EditPlayer } from "./EditPlayer";
+import { HistoryCleanupBanner } from "./HistoryCleanupBanner";
 import { ImportDialog } from "./ImportDialog";
 import { MultiClipPlayer, type MultiClipSource } from "./MultiClipPlayer";
 import { SpeechModelPrompt } from "./SpeechModelPrompt";
@@ -727,6 +728,10 @@ export default function EditorPanel(props: {
       </div>
       <RefusedChangeNotice snapshot={edit._tag === "ready" ? edit.snapshot : null} />
       <PlayerArea projectRef={projectRef} view={view} actions={actions} />
+      <HistoryCleanupBanner
+        projectRef={projectRef}
+        snapshot={edit._tag === "ready" ? edit.snapshot : null}
+      />
       <div role="tablist" aria-label="Editor views" className="flex shrink-0 gap-1 border-b">
         {TABS.map((entry) => (
           <button

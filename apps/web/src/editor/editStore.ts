@@ -101,6 +101,14 @@ export const editEnvironment = {
     label: "environment-data:edit:version-delete",
     tag: WS_METHODS.editVersionDelete,
   }),
+  historyClean: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "environment-data:edit:history-clean",
+    tag: WS_METHODS.editHistoryClean,
+  }),
+  historyDismiss: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "environment-data:edit:history-dismiss",
+    tag: WS_METHODS.editHistoryDismiss,
+  }),
 };
 
 export type ProjectEditState =
