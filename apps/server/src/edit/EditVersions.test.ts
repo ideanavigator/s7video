@@ -187,7 +187,12 @@ describe("edit versions", () => {
             .map(({ n, author, changes, runId }) => ({ n, author, changes, runId })),
           [
             { n: 4, author: "you", changes: ["Redid a change"], runId: undefined },
-            { n: 3, author: "assistant", changes: ["Undid the last change"], runId: "run-a3" },
+            {
+              n: 3,
+              author: "assistant",
+              changes: ["Undid the last change"],
+              runId: undoReply.runId,
+            },
           ],
         );
       }),
