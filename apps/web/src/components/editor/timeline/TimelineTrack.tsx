@@ -4,7 +4,7 @@
  * One track lane (S7V-033): the clips inside the visible window are mounted; clips under 4 px
  * (`lod.ts`) are drawn into one canvas strip for the lane instead.
  */
-import type { EditRational } from "@t3tools/contracts";
+import type { EditRational, EnvironmentId, MediaAsset, ProjectId } from "@t3tools/contracts";
 import { useLayoutEffect, useRef } from "react";
 
 import { formatPlaybackClock } from "../../../editor/editPlayback";
@@ -23,6 +23,10 @@ export function TimelineTrack(props: {
   readonly detailScale: number;
   readonly window: VisibleWindow;
   readonly durationFrames: number;
+  readonly environmentId?: EnvironmentId | undefined;
+  readonly projectId?: ProjectId | undefined;
+  /** The project's media library by id, for each clip's media slot. */
+  readonly mediaById?: ReadonlyMap<string, MediaAsset> | undefined;
 }) {
   const { row, pxPerFrame, window } = props;
   const height = TIMELINE_TRACK_HEIGHTS_PX[row.kind];
@@ -59,6 +63,8 @@ export function TimelineTrack(props: {
       aria-label={`${row.label} track, ${row.items.length} ${row.items.length === 1 ? "clip" : "clips"}`}
       data-timeline-row={row.kind}
       data-track-id={row.id}
+      data-window-start={window.startFrame}
+      data-window-end={window.endFrame}
       {...{ [SPAN_ATTRIBUTE]: "" }}
       className="relative [contain:layout_style]"
       style={{ height }}
@@ -86,6 +92,10 @@ export function TimelineTrack(props: {
             durationFrames={props.durationFrames}
             heightPx={height}
             spokenStart={formatPlaybackClock(item.start, props.fps)}
+            fps={props.fps}
+            environmentId={props.environmentId}
+            projectId={props.projectId}
+            asset={item.mediaId === null ? undefined : props.mediaById?.get(item.mediaId)}
           />
         );
       })}

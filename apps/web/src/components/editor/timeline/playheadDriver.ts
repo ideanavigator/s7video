@@ -6,6 +6,7 @@
  * `requestVideoFrameCallback` while playing, and once per seek), so nothing runs while paused.
  */
 import { subscribePlayerFrame } from "../../../editor/editStore";
+import type { PlaybackPlan } from "../../../editor/editPlayback";
 import { playerFrameToEditFrame } from "./editFrames";
 
 export interface PlayheadDriver {
@@ -17,6 +18,7 @@ export interface PlayheadDriver {
   /** Moves the playhead now, before the player confirms a seek. */
   readonly place: (editFrame: number) => void;
   readonly frame: () => number;
+  readonly setPlan: (plan: PlaybackPlan | null) => void;
   /** Starts hearing the player's frames; returns the stop. */
   readonly connect: () => () => void;
 }
@@ -34,6 +36,7 @@ export function createPlayheadDriver(options: PlayheadDriverOptions): PlayheadDr
   let frame = options.initialFrame;
   let pxPerFrame = options.pxPerFrame;
   let visible = true;
+  let plan: PlaybackPlan | null = null;
 
   const render = () => {
     if (element === null) return;
@@ -64,9 +67,12 @@ export function createPlayheadDriver(options: PlayheadDriverOptions): PlayheadDr
     },
     place,
     frame: () => frame,
+    setPlan: (next) => {
+      plan = next;
+    },
     connect: () =>
       subscribePlayerFrame(options.projectKey, (playerFrame) => {
-        if (visible) place(playerFrameToEditFrame(playerFrame));
+        if (visible) place(playerFrameToEditFrame(playerFrame, plan));
       }),
   };
 }

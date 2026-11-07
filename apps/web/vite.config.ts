@@ -167,31 +167,29 @@ const browserTestProject = {
             session = await page.context().newCDPSession(page);
             cdpSessions.set(page, session);
           }
-          {
-            const x = (box?.x ?? 0) + ("x" in input ? input.x : 0);
-            const y = (box?.y ?? 0) + ("y" in input ? input.y : 0);
-            if (input.kind === "throttle") {
-              await session.send("Emulation.setCPUThrottlingRate", { rate: input.rate });
-            } else if (input.kind === "scroll") {
-              await session.send("Input.synthesizeScrollGesture", {
+          const x = (box?.x ?? 0) + ("x" in input ? input.x : 0);
+          const y = (box?.y ?? 0) + ("y" in input ? input.y : 0);
+          if (input.kind === "throttle") {
+            await session.send("Emulation.setCPUThrottlingRate", { rate: input.rate });
+          } else if (input.kind === "scroll") {
+            await session.send("Input.synthesizeScrollGesture", {
+              x,
+              y,
+              xDistance: input.xDistance,
+              speed: input.speed,
+              gestureSourceType: "mouse",
+            });
+          } else {
+            for (let index = 0; index < input.count; index++) {
+              await session.send("Input.dispatchMouseEvent", {
+                type: "mouseWheel",
                 x,
                 y,
-                xDistance: input.xDistance,
-                speed: input.speed,
-                gestureSourceType: "mouse",
+                deltaX: 0,
+                deltaY: input.deltaY,
+                modifiers: 2,
               });
-            } else {
-              for (let index = 0; index < input.count; index++) {
-                await session.send("Input.dispatchMouseEvent", {
-                  type: "mouseWheel",
-                  x,
-                  y,
-                  deltaX: 0,
-                  deltaY: input.deltaY,
-                  modifiers: 2,
-                });
-                await new Promise((resolve) => setTimeout(resolve, input.intervalMs));
-              }
+              await new Promise((resolve) => setTimeout(resolve, input.intervalMs));
             }
           }
         },

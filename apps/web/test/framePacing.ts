@@ -95,3 +95,36 @@ export function trackPresentedFrame(
   handle = video.requestVideoFrameCallback(onFrame);
   return { frame: () => frame, stop: () => video.cancelVideoFrameCallback(handle) };
 }
+
+/**
+ * Frames, sampled once per animation frame, where the clips React has mounted do not cover the
+ * screen (the controller's `data-view-*` against the rows' `data-window-*`). A transition that
+ * lags too far would hide its cost as blank edges rather than as a dropped frame.
+ */
+export function recordCoverage(scroller: HTMLElement): {
+  readonly stop: () => { readonly frames: number; readonly uncovered: number };
+} {
+  let frames = 0;
+  let uncovered = 0;
+  let running = true;
+  const tick = () => {
+    if (!running) return;
+    const row = scroller.querySelector<HTMLElement>("[data-timeline-row]");
+    const viewStart = Number(scroller.dataset.viewStart);
+    const viewEnd = Number(scroller.dataset.viewEnd);
+    if (row !== null && Number.isFinite(viewStart) && Number.isFinite(viewEnd)) {
+      frames += 1;
+      const windowStart = Number(row.dataset.windowStart);
+      const windowEnd = Number(row.dataset.windowEnd);
+      if (windowStart > viewStart + 1e-6 || windowEnd < Math.floor(viewEnd)) uncovered += 1;
+    }
+    requestAnimationFrame(tick);
+  };
+  requestAnimationFrame(tick);
+  return {
+    stop: () => {
+      running = false;
+      return { frames, uncovered };
+    },
+  };
+}

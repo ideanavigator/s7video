@@ -132,6 +132,8 @@ describe("timeline-perf-1000", () => {
     expect(published).toBeLessThanOrEqual(305);
     expect(report.driftP95).toBeLessThan(1);
     expect(report.driftMax).toBeLessThan(1);
+    // Against the video's own clock as well, which the presented frame lags by up to one frame.
+    expect(report.currentTimeDriftMax).toBeLessThan(1);
   });
 
   it("reads the talking-head-01 silence cut back from the timeline to the frame", async () => {

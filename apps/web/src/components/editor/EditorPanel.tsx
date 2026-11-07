@@ -429,13 +429,23 @@ export default function EditorPanel(props: {
   };
 
   const previewingClip = view._tag === "play" && view.mode === "clip";
-  // A click on the timeline while a clip previews goes back to the edit, at the clicked frame.
+  const playingPlan = view._tag === "play" && view.mode === "edit" ? view.plan : null;
+  // A click while a clip previews goes back to the edit, at the clicked frame. A frame the player
+  // can't show (a later clip, "Plays X only") moves only the timeline's playhead.
   const seekFromTimeline = (editFrame: number) => {
-    const frame = editFrameToPlayerFrame(editFrame);
+    if (source.kind === "clip") {
+      rememberPlayerFrame(projectKey, editFrame);
+      setSource(projectKey, { kind: "edit" });
+      return;
+    }
+    const frame = editFrameToPlayerFrame(editFrame, playingPlan);
+    if (frame === null) return;
     rememberPlayerFrame(projectKey, frame);
-    if (source.kind === "clip") setSource(projectKey, { kind: "edit" });
-    else requestPlayerSeek(projectKey, frame);
+    requestPlayerSeek(projectKey, frame);
   };
+  const mediaById = new Map(
+    library._tag === "ready" ? library.snapshot.items.map((item) => [item.id, item] as const) : [],
+  );
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-2 p-2" data-testid="editor-panel">
@@ -512,6 +522,9 @@ export default function EditorPanel(props: {
           playheadVisible={!previewingClip}
           initialFrame={rememberedPlayerFrame(projectKey)}
           onSeek={seekFromTimeline}
+          plan={playingPlan}
+          projectRef={projectRef}
+          mediaById={mediaById}
         />
       )}
       <ImportDialog

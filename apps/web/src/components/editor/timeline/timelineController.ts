@@ -7,7 +7,9 @@
  * few widths here and React catches up the mounted window in a transition.
  */
 import { observeResize } from "../../../lib/observeResize";
+import type { PlaybackPlan } from "../../../editor/editPlayback";
 import { createPlayheadDriver, type PlayheadDriver } from "./playheadDriver";
+import type { TimelineView, TimelineViewSource } from "./timelineView";
 import {
   type VisibleWindow,
   visibleWindow,
@@ -29,14 +31,14 @@ export interface TimelineSnapshot {
   readonly pxPerFrame: number;
   /** The scale LOD decides at (`lod.ts`); lags `pxPerFrame` inside the hysteresis band. */
   readonly detailScale: number;
-  /** Frames whose clips are mounted: the screen plus one bucket either side. */
+  /** Frames whose clips are mounted: the screen plus two quarter-screen buckets either side. */
   readonly window: VisibleWindow;
   /** Visible lane width: the scroll container minus the sticky track labels. */
   readonly laneWidthPx: number;
   readonly durationFrames: number;
 }
 
-export interface TimelineController {
+export interface TimelineController extends TimelineViewSource {
   /** Calls the listener once at once, then on every change; see `emit` for `urgent`. */
   readonly subscribe: (listener: (urgent: boolean) => void) => () => void;
   readonly getSnapshot: () => TimelineSnapshot;
@@ -46,6 +48,10 @@ export interface TimelineController {
   readonly attachPlayhead: (element: HTMLDivElement | null) => void;
   readonly attachSlider: (element: HTMLDivElement | null) => void;
   readonly setDuration: (durationFrames: number) => void;
+  /** The rows' total height, which React knows; the wheel decides with it without a layout read. */
+  readonly setContentHeight: (heightPx: number) => void;
+  /** The player's plan, for mapping its frames (`editFrames.ts`). */
+  readonly setPlan: (plan: PlaybackPlan | null) => void;
   /** Sizes span boxes React mounted since the last zoom (`laneGeometry.ts`). */
   readonly sizeSpans: () => void;
   readonly setPlayheadVisible: (visible: boolean, frame: number) => void;
@@ -94,6 +100,17 @@ export function createTimelineController(options: TimelineControllerOptions): Ti
   let bucket = 0;
   let snapshot = makeSnapshot();
   let lastPlayheadInView = true;
+  /**
+   * Scroll offsets, sizes and the scroller's position, kept from scroll and resize events so the
+   * wheel, zoom and playback paths never read layout (a read after a commit forces a restyle).
+   */
+  let scrollLeftNow = 0;
+  let scrollTopNow = 0;
+  let viewportHeight = 0;
+  let contentHeight = 0;
+  let scrollerLeft = 0;
+  const viewListeners = new Set<(view: TimelineView) => void>();
+  let view: TimelineView = { pxPerFrame, startFrame: 0, endFrame: 0 };
 
   /** Nothing is mounted past the content's end, so it never widens the scroll range. */
   function clampWindow(window: VisibleWindow): VisibleWindow {
@@ -147,6 +164,28 @@ export function createTimelineController(options: TimelineControllerOptions): Ti
 
   const lastFrame = () => Math.max(0, durationFrames - 1);
 
+  /** Publishes what is on screen to `subscribeView`, and as attributes the perf test reads. */
+  const writeView = () => {
+    const startFrame = scrollLeftNow / pxPerFrame;
+    const endFrame = Math.min(
+      (scrollLeftNow + laneWidth) / pxPerFrame,
+      contentWidthPx(durationFrames, pxPerFrame, laneWidth) / pxPerFrame,
+    );
+    if (
+      view.pxPerFrame === pxPerFrame &&
+      view.startFrame === startFrame &&
+      view.endFrame === endFrame
+    ) {
+      return;
+    }
+    view = { pxPerFrame, startFrame, endFrame };
+    if (scroller !== null) {
+      scroller.dataset.viewStart = String(startFrame);
+      scroller.dataset.viewEnd = String(endFrame);
+    }
+    for (const listener of viewListeners) listener(view);
+  };
+
   const writeSlider = (frame: number) => {
     if (slider === null) return;
     slider.setAttribute("aria-valuenow", String(frame));
@@ -158,10 +197,11 @@ export function createTimelineController(options: TimelineControllerOptions): Ti
   const follow = (frame: number) => {
     if (scroller === null) return;
     const x = frame * pxPerFrame;
-    const left = scroller.scrollLeft;
+    const left = scrollLeftNow;
     const inView = x >= left && x <= left + laneWidth;
     if (!inView && lastPlayheadInView && x > left) {
-      scroller.scrollLeft = Math.max(0, x - laneWidth * FOLLOW_MARGIN_FRACTION);
+      scrollLeftNow = Math.max(0, x - laneWidth * FOLLOW_MARGIN_FRACTION);
+      scroller.scrollLeft = scrollLeftNow;
       lastPlayheadInView = true;
       return;
     }
@@ -182,8 +222,7 @@ export function createTimelineController(options: TimelineControllerOptions): Ti
     const clamped = clampZoom(next, limits);
     if (clamped === pxPerFrame) return;
     fitted = clamped === limits.min;
-    const left = scroller?.scrollLeft ?? 0;
-    const result = zoomAround(left, pxPerFrame, clamped, anchorX);
+    const result = zoomAround(scrollLeftNow, pxPerFrame, clamped, anchorX);
     pxPerFrame = result.pxPerFrame;
     detailScale = nextDetailScale(detailScale, pxPerFrame);
     // Widen the content before scrolling, so the browser does not clamp the anchored position.
@@ -194,8 +233,10 @@ export function createTimelineController(options: TimelineControllerOptions): Ti
     );
     const scrollLeft = Math.min(result.scrollLeft, maxScroll);
     if (scroller !== null) scroller.scrollLeft = scrollLeft;
+    scrollLeftNow = scrollLeft;
     bucket = bucketOf(scrollLeft, bucketPx);
     playhead.setPxPerFrame(pxPerFrame);
+    writeView();
     zoomRender(scrollLeft);
   };
 
@@ -234,14 +275,16 @@ export function createTimelineController(options: TimelineControllerOptions): Ti
       playhead.setPxPerFrame(pxPerFrame);
     }
     bucketPx = bucketWidthPx(laneWidth);
-    bucket = bucketOf(scroller?.scrollLeft ?? 0, bucketPx);
+    bucket = bucketOf(scrollLeftNow, bucketPx);
     writeGeometry();
+    writeView();
   };
 
-  /** The scroller's viewport left, cached for wheel events: a read there would force a restyle. */
-  let scrollerLeft = 0;
+  /** Layout reads, only from resize callbacks (after layout) and pointer down. */
   const measureScroller = () => {
-    scrollerLeft = scroller?.getBoundingClientRect().left ?? 0;
+    if (scroller === null) return;
+    scrollerLeft = scroller.getBoundingClientRect().left;
+    viewportHeight = scroller.clientHeight;
   };
   const laneXOfClient = (clientX: number): number | null => {
     if (scroller === null) return null;
@@ -257,11 +300,15 @@ export function createTimelineController(options: TimelineControllerOptions): Ti
 
   const onScroll = () => {
     if (scroller === null) return;
-    const next = bucketOf(scroller.scrollLeft, bucketPx);
+    // The scroll event is the one place offsets are read; it fires after the scroll happened.
+    scrollLeftNow = scroller.scrollLeft;
+    scrollTopNow = scroller.scrollTop;
+    writeView();
+    const next = bucketOf(scrollLeftNow, bucketPx);
     if (next === bucket) return;
     bucket = next;
-    if (settleTimer !== null) zoomRender(scroller.scrollLeft);
-    else emit(false);
+    // Always render a bucket crossing, even while a zoom gesture defers its own renders.
+    emit(false);
   };
 
   let pendingWheel = 0;
@@ -272,18 +319,18 @@ export function createTimelineController(options: TimelineControllerOptions): Ti
     const scale = event.deltaMode === 0 ? 1 : WHEEL_LINE_PX;
     if (!(event.ctrlKey || event.metaKey)) {
       const vertical = Math.abs(event.deltaY) > Math.abs(event.deltaX);
-      // Read only for a vertical wheel: a layout read on every horizontal one would force a restyle.
-      const tracksOverflow = vertical && scroller.scrollHeight > scroller.clientHeight + 1;
-      // A mouse wheel scrolls the edit sideways, as in CapCut, unless the tracks need it.
-      if (vertical && !event.shiftKey && !tracksOverflow) {
-        event.preventDefault();
-        scroller.scrollLeft += event.deltaY * scale;
-      }
+      if (!vertical || event.shiftKey) return;
+      // A mouse wheel scrolls the edit sideways, as in CapCut. When the rows are taller than the
+      // timeline it scrolls them first, and sideways again once they reach their top or bottom.
+      if (wheelScrollsRows(event.deltaY, scrollTopNow, contentHeight, viewportHeight)) return;
+      event.preventDefault();
+      const maxScroll = contentWidthPx(durationFrames, pxPerFrame, laneWidth) - laneWidth;
+      scrollLeftNow = Math.max(0, Math.min(maxScroll, scrollLeftNow + event.deltaY * scale));
+      scroller.scrollLeft = scrollLeftNow;
       return;
     }
     // Trackpad pinch arrives as ctrl + wheel. One zoom step per frame however many events come.
     event.preventDefault();
-    if (wheelFrame === 0 && settleTimer === null) measureScroller();
     pendingWheel += event.deltaY * scale;
     wheelAnchor = laneXOfClient(event.clientX) ?? 0;
     if (wheelFrame !== 0) return;
@@ -301,7 +348,7 @@ export function createTimelineController(options: TimelineControllerOptions): Ti
     measureScroller();
     const x = laneXOfClient(event.clientX);
     if (x === null) return;
-    seekToFrame(frameAtPx(scroller.scrollLeft + x, pxPerFrame, lastFrame()));
+    seekToFrame(frameAtPx(scrollLeftNow + x, pxPerFrame, lastFrame()));
     const onRuler =
       event.target instanceof Element && event.target.closest("[data-timeline-ruler]");
     if (onRuler) {
@@ -312,14 +359,14 @@ export function createTimelineController(options: TimelineControllerOptions): Ti
   const onPointerMove = (event: PointerEvent) => {
     if (scrubbing !== event.pointerId || scroller === null) return;
     const x = laneXOfClient(event.clientX) ?? 0;
-    seekToFrame(frameAtPx(scroller.scrollLeft + x, pxPerFrame, lastFrame()));
+    seekToFrame(frameAtPx(scrollLeftNow + x, pxPerFrame, lastFrame()));
   };
   const onPointerUp = (event: PointerEvent) => {
     if (scrubbing === event.pointerId) scrubbing = null;
   };
 
   const playheadAnchorX = () => {
-    const x = playhead.frame() * pxPerFrame - (scroller?.scrollLeft ?? 0);
+    const x = playhead.frame() * pxPerFrame - scrollLeftNow;
     return x >= 0 && x <= laneWidth ? x : laneWidth / 2;
   };
 
@@ -348,10 +395,17 @@ export function createTimelineController(options: TimelineControllerOptions): Ti
       return () => listeners.delete(listener);
     },
     getSnapshot: () => snapshot,
+    getView: () => view,
+    subscribeView: (listener) => {
+      viewListeners.add(listener);
+      return () => viewListeners.delete(listener);
+    },
     attachScroller: (element) => {
       scroller = element;
       if (element === null) return undefined;
       laneWidth = Math.max(1, element.clientWidth - TIMELINE_TRACK_LABELS_COLUMN_WIDTH_PX);
+      scrollLeftNow = element.scrollLeft;
+      scrollTopNow = element.scrollTop;
       measureScroller();
       relimit();
       emit(true);
@@ -363,6 +417,8 @@ export function createTimelineController(options: TimelineControllerOptions): Ti
       element.addEventListener("pointerup", onPointerUp);
       element.addEventListener("pointercancel", onPointerUp);
       element.addEventListener("keydown", onKeyDown);
+      // The panel can move without the timeline resizing (a window resize moves it sideways).
+      window.addEventListener("resize", measureScroller);
       const stopResize = observeResize(element, () => {
         measureScroller();
         const next = Math.max(1, element.clientWidth - TIMELINE_TRACK_LABELS_COLUMN_WIDTH_PX);
@@ -385,6 +441,7 @@ export function createTimelineController(options: TimelineControllerOptions): Ti
         element.removeEventListener("pointerup", onPointerUp);
         element.removeEventListener("pointercancel", onPointerUp);
         element.removeEventListener("keydown", onKeyDown);
+        window.removeEventListener("resize", measureScroller);
         if (scroller === element) scroller = null;
       };
     },
@@ -405,6 +462,10 @@ export function createTimelineController(options: TimelineControllerOptions): Ti
       emit(true);
     },
     sizeSpans: writeGeometry,
+    setContentHeight: (next) => {
+      contentHeight = next;
+    },
+    setPlan: (plan) => playhead.setPlan(plan),
     setPlayheadVisible: (visible, frame) => {
       playhead.setVisible(visible);
       if (visible) playhead.place(frame);
@@ -420,4 +481,16 @@ export function createTimelineController(options: TimelineControllerOptions): Ti
     seekToFrame,
     playheadFrame: () => playhead.frame(),
   };
+}
+
+/** Whether a vertical wheel of `deltaY` scrolls the rows, rather than the edit sideways. */
+export function wheelScrollsRows(
+  deltaY: number,
+  scrollTop: number,
+  contentHeight: number,
+  viewportHeight: number,
+): boolean {
+  const maxTop = contentHeight - viewportHeight;
+  if (maxTop <= 1) return false;
+  return deltaY < 0 ? scrollTop > 0.5 : scrollTop < maxTop - 0.5;
 }

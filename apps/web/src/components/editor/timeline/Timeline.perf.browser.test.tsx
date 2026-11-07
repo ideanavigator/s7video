@@ -9,7 +9,13 @@ import { describe, expect, it, onTestFinished } from "vite-plus/test";
 import { commands, page } from "vite-plus/test/browser";
 
 import { itemCountOf, makePerfEdit } from "../../../../test/fixtures/timeline/perfEdit";
-import { idleFor, nextPaint, recordFramePacing, timeToPaint } from "../../../../test/framePacing";
+import {
+  idleFor,
+  nextPaint,
+  recordCoverage,
+  recordFramePacing,
+  timeToPaint,
+} from "../../../../test/framePacing";
 import { render } from "../../../../test/render";
 
 import "../../../index.css";
@@ -79,12 +85,13 @@ async function scrollSweep(scroller: HTMLDivElement) {
   const { x, y } = centerOf(scroller);
   const distance = scroller.scrollWidth - scroller.clientWidth;
   const pacing = recordFramePacing();
+  const coverage = recordCoverage(scroller);
   // Synthesized gestures scroll content left for a negative distance: start to end, then back.
   await commands.cdpInput({ kind: "scroll", x, y, xDistance: -distance, speed: 4_000 });
   const reachedEnd = scroller.scrollLeft >= distance - 2;
   await commands.cdpInput({ kind: "scroll", x, y, xDistance: distance, speed: 4_000 });
   const result = pacing.stop();
-  return { ...result, reachedEnd, endScrollLeft: scroller.scrollLeft };
+  return { ...result, coverage: coverage.stop(), reachedEnd, endScrollLeft: scroller.scrollLeft };
 }
 
 async function zoomGesture(
@@ -97,6 +104,7 @@ async function zoomGesture(
   const x = rect.left + 112 + (rect.width - 112) * anchor;
   const y = rect.top + rect.height / 2;
   const pacing = recordFramePacing();
+  const coverage = recordCoverage(scroller);
   await commands.cdpInput({
     kind: "ctrlWheel",
     x,
@@ -106,7 +114,11 @@ async function zoomGesture(
     intervalMs: 16,
   });
   await nextPaint();
-  return { ...pacing.stop(), pxPerFrame: Number(scroller.dataset.pxPerFrame) };
+  return {
+    ...pacing.stop(),
+    coverage: coverage.stop(),
+    pxPerFrame: Number(scroller.dataset.pxPerFrame),
+  };
 }
 
 describe("Timeline performance (1,000 clips, 5 tracks)", () => {
@@ -163,5 +175,14 @@ describe("Timeline performance (1,000 clips, 5 tracks)", () => {
     expect(scroll.dropped).toBe(0);
     for (const gesture of [toScrollZoom, zoomIn, zoomOut])
       expect(gesture.dropped).toBeLessThanOrEqual(1);
+    // The mounted clips cover the screen on every frame of the scroll and the zoom sweeps.
+    expect(scroll.coverage.frames).toBeGreaterThan(100);
+    for (const run of [scroll, zoomIn, zoomOut]) expect(run.coverage.uncovered).toBe(0);
+    // 4x throttle stands in for the M1 Air floor, loosely: CPU throttling slows script, style and
+    // layout but not the GPU or a 60 Hz panel, and this runs React's development build, so the
+    // bound catches a regression, not the PO's on-device check (docs/internals/timeline.md).
+    expect(throttledScroll.dropped).toBeLessThanOrEqual(3);
+    for (const gesture of [throttledZoomIn, throttledZoomOut])
+      expect(gesture.dropped).toBeLessThanOrEqual(3);
   }, 90_000);
 });
