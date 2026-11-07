@@ -23,8 +23,18 @@ export const newOutsideMedia = (
   return next.media.filter((media) => !known.has(locate(media)));
 };
 
-export const OUTSIDE_MEDIA_REFUSED =
-  "The edit was changed outside the app and pointed at a file that was not added through Assets or chat. That change was not kept; the edit is back to its last saved version.";
+const OUTSIDE_PROBLEM = {
+  media: "pointed at a file that was not added through Assets or chat",
+  invalid: "could not be read",
+} as const;
 
-export const OUTSIDE_INVALID_REFUSED =
-  "The edit was changed outside the app and could not be read. That change was not kept; the edit is back to its last saved version.";
+/**
+ * The plain reason an outside change was refused. `start`: a project never changed through the
+ * app goes back to how it started, not to a saved version.
+ */
+export const outsideRefused = (problem: keyof typeof OUTSIDE_PROBLEM, backTo: "saved" | "start") =>
+  `The edit was changed outside the app and ${OUTSIDE_PROBLEM[problem]}. That change was not kept; ${
+    backTo === "saved"
+      ? "the edit is back to its last saved version."
+      : "the edit is back to how it started, with nothing in it yet."
+  }`;

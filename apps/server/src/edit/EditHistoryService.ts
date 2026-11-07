@@ -18,7 +18,6 @@ import * as Schema from "effect/Schema";
 
 import {
   EDIT_FILE,
-  HISTORY_DIR,
   PROJECT_FILE,
   TRACKED_PATHS,
   projectFileContents,
@@ -37,7 +36,6 @@ export { EditHistoryError } from "./EditSnapshotStore.ts";
 
 const MAX_TRACKED_FILE_BYTES = 10 * 1024 * 1024;
 const MAX_HISTORY_ENTRIES = 200;
-const REFUSED_DIR = "refused";
 
 const MEDIA_EXTENSIONS = new Set([
   "3gp",
@@ -98,8 +96,9 @@ export class EditHistoryService extends Context.Service<
       editJson: string,
     ) => Effect.Effect<void, EditHistoryError>;
     /**
-     * Whether edit.json is what the history last recorded or restored. Fails only when the log
-     * cannot be read, so an unreadable history never passes for an empty one.
+     * Whether edit.json is what the history last recorded or restored. A missing or unparseable
+     * log reads as `no-history`; a log that exists but cannot be read (permissions, I/O) fails, so
+     * every read fails until it can be read again rather than skip the check.
      */
     readonly standing: (
       cwd: string,
@@ -107,7 +106,7 @@ export class EditHistoryService extends Context.Service<
     ) => Effect.Effect<EditStanding, EditHistoryError>;
     /** The edit.json text the service last wrote, from `.s7history/`; None with no history. */
     readonly lastAccepted: (cwd: string) => Effect.Effect<Option.Option<string>, EditHistoryError>;
-    /** Keeps a refused outside edit.json as `.s7history/refused/<epoch-ms>-edit.json`. */
+    /** Keeps a refused outside edit.json under `.s7history/refused/` (see `EditSnapshotStore`). */
     readonly keepRefused: (cwd: string, editJson: string) => Effect.Effect<void, EditHistoryError>;
     /**
      * Steps back or forward. Only `edit.json` comes from the saved step: `write` saves it with the
@@ -306,9 +305,10 @@ const make = Effect.gen(function* () {
   )(function* (cwd, editJson) {
     const state = yield* readState(cwd);
     if (state.entries.length === 0) return "no-history";
-    if (state.knownEdit === undefined) return "known";
     const hash = yield* hashOf(editJson);
-    if (state.knownEdit === hash) return "known";
+    // A log imported from git may have no `knownEdit`: the cursor's step is then the last edit.
+    const known = state.knownEdit ?? state.entries[state.cursor]?.files[EDIT_FILE];
+    if (known === hash) return "known";
     return state.entries.some((entry) => entry.files[EDIT_FILE] === hash) ? "earlier" : "outside";
   });
 
@@ -327,39 +327,8 @@ const make = Effect.gen(function* () {
     );
   });
 
-  const keepRefused: EditHistoryService["Service"]["keepRefused"] = Effect.fn(
-    "EditHistoryService.keepRefused",
-  )(function* (cwd, editJson) {
-    const folder = path.join(cwd, HISTORY_DIR, REFUSED_DIR);
-    const at = yield* Clock.currentTimeMillis;
-    yield* Effect.gen(function* () {
-      yield* fileSystem.makeDirectory(folder, { recursive: true });
-      // `wx` never replaces an earlier refused file from the same millisecond.
-      for (let attempt = 0; ; attempt++) {
-        const name = attempt === 0 ? `${at}-${EDIT_FILE}` : `${at}-${attempt}-${EDIT_FILE}`;
-        const written = yield* fileSystem
-          .writeFileString(path.join(folder, name), editJson, { flag: "wx" })
-          .pipe(
-            Effect.as(true),
-            Effect.catchIf(
-              (error) => error.reason._tag === "AlreadyExists" && attempt < 100,
-              () => Effect.succeed(false),
-            ),
-          );
-        if (written) return;
-      }
-    }).pipe(
-      Effect.mapError(
-        (cause) =>
-          new EditHistoryError({
-            cwd,
-            reason: "state-write-failed",
-            explanation: "Could not keep the refused change to the edit.",
-            cause,
-          }),
-      ),
-    );
-  });
+  const keepRefused: EditHistoryService["Service"]["keepRefused"] = (cwd, editJson) =>
+    store.keepRefused(cwd, editJson);
 
   const step: EditHistoryService["Service"]["step"] = Effect.fn("EditHistoryService.step")(
     function* (cwd, direction, write) {

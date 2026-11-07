@@ -7,6 +7,7 @@
  * each file atomically with fsync, so a crash leaves the old log plus orphans for `collect`. Callers
  * hold `EditDocumentService`'s project lock; see docs/internals/edit-history.md.
  */
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as Hex from "effect/encoding/Hex";
@@ -23,6 +24,10 @@ import { HISTORY_DIR } from "./EditProjectLayout.ts";
 const OBJECTS_DIR = "objects";
 const LOG_FILE = "log.json";
 const OBJECT_SUFFIX = ".json.gz";
+const REFUSED_DIR = "refused";
+const REFUSED_SUFFIX = "-edit.json";
+/** Refused outside edits kept for the user to look at; older ones are removed (S7V-054). */
+export const MAX_REFUSED_EDITS = 20;
 
 export const Sha256Hex = Schema.String.check(Schema.isPattern(/^[0-9a-f]{64}$/u));
 
@@ -125,14 +130,28 @@ export class EditSnapshotStore extends Context.Service<
       { readonly removedObjects: number; readonly freedBytes: number },
       EditHistoryError
     >;
-    /** Objects on disk and their total size. */
-    readonly usage: (
-      cwd: string,
-    ) => Effect.Effect<{ readonly objects: number; readonly bytes: number }>;
+    /**
+     * Keeps a refused outside edit.json as `refused/<epoch-ms>[-n]-edit.json` (S7V-054): skips a
+     * copy equal to the newest one and keeps only the newest `MAX_REFUSED_EDITS`.
+     */
+    readonly keepRefused: (cwd: string, editJson: string) => Effect.Effect<void, EditHistoryError>;
+    /** Objects on disk and their total size, and the refused edits kept beside them. */
+    readonly usage: (cwd: string) => Effect.Effect<{
+      readonly objects: number;
+      readonly bytes: number;
+      readonly refusedEdits: number;
+      readonly refusedBytes: number;
+    }>;
   }
 >()("t3/edit/EditSnapshotStore") {}
 
 /** Every object `log` names. Later cards add their own references here (S7V-069's versions). */
+/** `<epoch-ms>[-n]-edit.json` as [time, n]. */
+const refusedOrder = (name: string) => {
+  const [at = "0", counter] = name.slice(0, -REFUSED_SUFFIX.length).split("-");
+  return [Number(at), counter === undefined ? 0 : Number(counter)] as const;
+};
+
 const liveObjects = (log: HistoryLog): ReadonlySet<string> => {
   const live = new Set<string>();
   for (const entry of log.entries) {
@@ -325,19 +344,91 @@ const make = Effect.gen(function* () {
     (effect, cwd) => effect.pipe(Effect.mapError(failed(cwd, "state-write-failed"))),
   );
 
-  const usage: EditSnapshotStore["Service"]["usage"] = (cwd) =>
-    listObjects(cwd).pipe(
-      Effect.map((found) => {
-        const objects = found.filter((object) => object.id !== null);
-        return {
-          objects: objects.length,
-          bytes: objects.reduce((sum, object) => sum + object.bytes, 0),
-        };
-      }),
-      Effect.orElseSucceed(() => ({ objects: 0, bytes: 0 })),
-    );
+  const refusedDir = (cwd: string) => path.join(historyDir(cwd), REFUSED_DIR);
 
-  return EditSnapshotStore.of({ put, read, readLog, writeLog, collect, usage });
+  /** Refused files, oldest first: by time, then by the same-millisecond counter. */
+  const listRefused = Effect.fnUntraced(function* (cwd: string) {
+    const names = yield* fileSystem
+      .readDirectory(refusedDir(cwd))
+      .pipe(Effect.orElseSucceed(() => [] as ReadonlyArray<string>));
+    return names
+      .filter((name) => /^\d+(-\d+)?-edit\.json$/u.test(name))
+      .toSorted((a, b) => {
+        const [atA, counterA] = refusedOrder(a);
+        const [atB, counterB] = refusedOrder(b);
+        return atA - atB || counterA - counterB;
+      });
+  });
+
+  const keepRefused: EditSnapshotStore["Service"]["keepRefused"] = Effect.fn(
+    "EditSnapshotStore.keepRefused",
+  )(function* (cwd, editJson) {
+    const folder = refusedDir(cwd);
+    yield* Effect.gen(function* () {
+      const kept = yield* listRefused(cwd);
+      const newest = kept.at(-1);
+      if (newest !== undefined) {
+        const text = yield* fileSystem
+          .readFileString(path.join(folder, newest))
+          .pipe(Effect.orElseSucceed(() => null));
+        if (text === editJson) return;
+      }
+      yield* fileSystem.makeDirectory(folder, { recursive: true });
+      const at = yield* Clock.currentTimeMillis;
+      // After the newest file from this millisecond, so the order stays right after pruning;
+      // `wx` never replaces a file written at the same moment.
+      const sameMoment = kept.map(refusedOrder).filter(([time]) => time === at);
+      const first = sameMoment.length === 0 ? 0 : Math.max(...sameMoment.map(([, n]) => n)) + 1;
+      for (let attempt = first; ; attempt++) {
+        const name = attempt === 0 ? `${at}${REFUSED_SUFFIX}` : `${at}-${attempt}${REFUSED_SUFFIX}`;
+        const written = yield* fileSystem
+          .writeFileString(path.join(folder, name), editJson, { flag: "wx" })
+          .pipe(
+            Effect.as(true),
+            Effect.catchIf(
+              (error) => error.reason._tag === "AlreadyExists" && attempt < first + 100,
+              () => Effect.succeed(false),
+            ),
+          );
+        if (written) break;
+      }
+      const all = yield* listRefused(cwd);
+      for (const name of all.slice(0, Math.max(all.length - MAX_REFUSED_EDITS, 0))) {
+        yield* fileSystem.remove(path.join(folder, name), { force: true });
+      }
+    }).pipe(
+      Effect.mapError(
+        (cause) =>
+          new EditHistoryError({
+            cwd,
+            reason: "state-write-failed",
+            explanation: "Could not keep the refused change to the edit.",
+            cause,
+          }),
+      ),
+    );
+  });
+
+  const usage: EditSnapshotStore["Service"]["usage"] = Effect.fn("EditSnapshotStore.usage")(
+    function* (cwd) {
+      const objects = (yield* listObjects(cwd)).filter((object) => object.id !== null);
+      let refusedBytes = 0;
+      const refused = yield* listRefused(cwd);
+      for (const name of refused) {
+        const info = yield* fileSystem.stat(path.join(refusedDir(cwd), name)).pipe(Effect.option);
+        if (Option.isSome(info)) refusedBytes += Number(info.value.size);
+      }
+      return {
+        objects: objects.length,
+        bytes: objects.reduce((sum, object) => sum + object.bytes, 0),
+        refusedEdits: refused.length,
+        refusedBytes,
+      };
+    },
+    Effect.orElseSucceed(() => ({ objects: 0, bytes: 0, refusedEdits: 0, refusedBytes: 0 })),
+  );
+
+  return EditSnapshotStore.of({ put, read, readLog, writeLog, collect, keepRefused, usage });
 });
 
 export const layer = Layer.effect(EditSnapshotStore, make);

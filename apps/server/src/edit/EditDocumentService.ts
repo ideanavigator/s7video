@@ -36,7 +36,7 @@ import { allIds, applyEditOps } from "./applyEditOps.ts";
 import * as EditHistoryService from "./EditHistoryService.ts";
 import * as EditProjectLayout from "./EditProjectLayout.ts";
 import { migrateEditDocument } from "./editMigrations.ts";
-import { newOutsideMedia, OUTSIDE_INVALID_REFUSED, OUTSIDE_MEDIA_REFUSED } from "./outsideEdit.ts";
+import { newOutsideMedia, outsideRefused } from "./outsideEdit.ts";
 
 export type EditApplyError =
   | EditUnavailableError
@@ -293,19 +293,31 @@ const make = Effect.gen(function* () {
             document: yield* parseEdit(projectId, accepted.value),
           }
         : { editText: startingEditText, document: startingEdit };
+      const backTo = Option.isSome(accepted) ? "saved" : "start";
       if (parsed._tag === "invalid") {
-        return yield* refuseOutside(projectId, root, files, restored, OUTSIDE_INVALID_REFUSED);
+        const explanation = outsideRefused("invalid", backTo);
+        return yield* refuseOutside(projectId, root, files, restored, explanation);
       }
       if (newOutsideMedia(restored.document, parsed.document, locateMedia(root)).length > 0) {
-        return yield* refuseOutside(projectId, root, files, restored, OUTSIDE_MEDIA_REFUSED);
+        const explanation = outsideRefused("media", backTo);
+        return yield* refuseOutside(projectId, root, files, restored, explanation);
       }
     } else if (parsed._tag === "invalid") {
       // An earlier step's own text cannot be invalid; this only guards the type.
       return yield* unavailable(projectId, "unreadable", "edit.json is not valid.");
     }
     const current = { ...files, document: parsed.document };
-    // A new project (AC-7): kept as it is; the first change records it as the baseline.
-    if (standing === "no-history") return current;
+    if (standing === "no-history") {
+      // A new project (AC-7). A kept outside change becomes the baseline, so a later refusal
+      // puts it back instead of the starting edit; a read still never fails on recording.
+      if (current.editText !== startingEditText) {
+        const baseline = history
+          .ensureBaseline(root, current.revision, current.editText)
+          .pipe(Effect.mapError(historyError(projectId)));
+        yield* mode === "read" ? baseline.pipe(Effect.ignore) : baseline;
+      }
+      return current;
+    }
     const record = Effect.gen(function* () {
       yield* history.guard(root).pipe(Effect.mapError(historyError(projectId)));
       const { highestRevision } = yield* history.status(root);

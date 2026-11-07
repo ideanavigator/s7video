@@ -17,7 +17,7 @@ Undo and redo for `edit.json` keep their history in the project's `.s7history/` 
   objects/<sha256>.json.gz   gzip of one edit.json or project.json text; the name is the sha256 of
                              the uncompressed text, so equal texts share one object
   log.json                   format "s7history", version 1: entries, cursor, knownEdit, legacy
-  refused/<epoch-ms>-edit.json   outside edits that were not kept (S7V-054); never read back
+  refused/<epoch-ms>[-n]-edit.json   outside edits that were not kept (S7V-054); the newest 20
 ```
 
 - One history step is one log entry naming two objects (`files["edit.json"]`, `files["project.json"]`).
@@ -38,7 +38,7 @@ Undo and redo for `edit.json` keep their history in the project's `.s7history/` 
   Cleanup (S7V-050), versions (S7V-069, S7V-070) and the outside-edit guard (S7V-054) add a method
   on `EditDocumentService`; they do not call `EditSnapshotStore` directly.
 - **Only `collect` deletes**, and only objects and temp files inside `.s7history/` (never
-  `log.json`). It keeps every object
+  `log.json`); `keepRefused` prunes old files in `refused/` and nothing else. It keeps every object
   that `liveObjects(log)` names. A card that adds references to the log (for example S7V-069's
   `versions[*].files`) adds them to `liveObjects` in the same file. Otherwise `collect` deletes them.
 - **Log format changes:** a new optional key keeps `version: 1`. A new required key needs
@@ -56,7 +56,8 @@ Undo and redo for `edit.json` keep their history in the project's `.s7history/` 
 | `readLog(cwd)`                        | The log: empty when missing or unparseable; fails with `state-read-failed` on any other read error.                                                                   |
 | `writeLog(cwd, log)`                  | Atomic replace of `log.json`.                                                                                                                                         |
 | `collect(cwd, log)`                   | Deletes unnamed objects, temp files in `objects/` and stale `.log.json.*.tmp` files; returns `{ removedObjects, freedBytes }`. Temp files count in `freedBytes` only. |
-| `usage(cwd)`                          | `{ objects, bytes }` of the objects on disk.                                                                                                                          |
+| `keepRefused(cwd, editJson)`          | Saves a refused outside edit under `refused/` (newest 20, no repeat of the newest).                                                                                   |
+| `usage(cwd)`                          | `{ objects, bytes }` of the objects on disk, plus `refusedEdits`, `refusedBytes`.                                                                                     |
 
 ## Outside changes (S7V-054)
 
@@ -71,11 +72,19 @@ recorded, subscribers get one snapshot with `notice`, and the call fails with
 - **The last accepted edit is `knownEdit`'s object**, not the cursor entry's: an undo that kept
   library clips writes text no entry names, so `step` saves that text as an object too and
   `liveObjects` keeps `knownEdit`. Logs from before S7V-054 fall back to the cursor entry.
-- **No history yet:** a project at revision 0 is checked against the starting edit and put back to
-  it. A project above revision 0 with an empty log (damaged log, old project not yet imported) is
-  read as it is, unchecked: there is nothing to compare with, and putting back the starting edit
-  would throw the user's work away.
-- `collect` never touches `refused/`.
+- **A log without `knownEdit`** (a git import) compares against the cursor entry's `edit.json`.
+- **No history yet:** a project at revision 0 is checked against the starting edit. A kept outside
+  change is saved as the baseline (`ensureBaseline`), so a later refusal puts it back; with none,
+  a refusal goes back to the starting edit and says so ("back to how it started"). A project above
+  revision 0 with an empty log (damaged or unparseable log, old project not yet imported) is read
+  as it is, unchecked: there is nothing to compare with, and putting back the starting edit would
+  throw the user's work away. Anything that can write `log.json` or `project.json` can therefore
+  get past the check.
+- **A `log.json` that exists but cannot be read** (permissions, I/O) fails every read and change
+  with the history error until it can be read again. Before S7V-054 a read treated it as empty.
+- `refused/` keeps the newest `MAX_REFUSED_EDITS` (20) files, skips a copy equal to the newest
+  one (a restore that keeps failing would otherwise write one per read), and counts in `usage`.
+  `collect` never touches it.
 
 ## Media guard
 

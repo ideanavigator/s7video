@@ -885,6 +885,7 @@ describe("EditDocumentService", () => {
           writeOutside(root, outside);
           const error = yield* edits.read(projectId).pipe(Effect.flip);
           assert.strictEqual(error.reason, "outside-change-refused");
+          assert.include(error.explanation, "back to how it started");
           assert.strictEqual(readEdit(root), starting);
           assert.deepEqual(
             refusedFiles(root).map((file) => file.text),
@@ -898,9 +899,45 @@ describe("EditDocumentService", () => {
           const read = yield* edits.read(projectId);
           assert.deepEqual(read.document, initial.document);
           assert.isFalse(read.canUndo);
-          // A valid change with no media is the user's own starting point, as before.
-          writeOutside(root, JSON.stringify({ ...initial.document, metadata: { note: "mine" } }));
+          // A valid change with no media is kept, and becomes what a later refusal puts back.
+          const mine = JSON.stringify({ ...initial.document, metadata: { note: "mine" } });
+          writeOutside(root, mine);
           assert.deepEqual((yield* edits.read(projectId)).document.metadata, { note: "mine" });
+          writeOutside(root, outside);
+          const again = yield* edits.read(projectId).pipe(Effect.flip);
+          assert.strictEqual(again.reason, "outside-change-refused");
+          assert.include(again.explanation, "last saved version");
+          assert.strictEqual(readEdit(root), mine);
+          assert.strictEqual((yield* edits.read(projectId)).revision, 0);
+        }),
+      ),
+    );
+
+    it.effect("checks a log from a git import, which has no knownEdit, against its cursor", () =>
+      withProject(({ projectId, edits, root }) =>
+        Effect.gen(function* () {
+          const initial = yield* edits.read(projectId);
+          const applied = yield* edits.apply(projectId, setup, {
+            origin: "agent",
+            baseRevision: initial.revision,
+          });
+          const accepted = readEdit(root);
+          const { knownEdit: _known, ...imported } = historyLog(root)!;
+          NodeFS.writeFileSync(
+            NodePath.join(root, ".s7history", "log.json"),
+            JSON.stringify(imported),
+          );
+          assert.deepEqual((yield* edits.read(projectId)).document, applied.document);
+          writeOutside(
+            root,
+            JSON.stringify({
+              ...applied.document,
+              media: [...applied.document.media, desktopReference],
+            }),
+          );
+          const error = yield* edits.read(projectId).pipe(Effect.flip);
+          assert.strictEqual(error.reason, "outside-change-refused");
+          assert.strictEqual(readEdit(root), accepted);
         }),
       ),
     );

@@ -1216,7 +1216,18 @@ it.effect("projects.writeFile with write-only scope cannot add outside media", (
         ),
       );
       const projectId = created.projectId;
+      // One change through the service first, so the refusal restores it from .s7history/.
+      const initial = yield* edits.read(projectId);
+      yield* edits.apply(
+        projectId,
+        [{ _tag: "setMarkers", markers: [{ id: "m1", start: 15, duration: 0, label: "Intro" }] }],
+        {
+          origin: "timeline",
+          baseRevision: initial.revision,
+        },
+      );
       const opened = yield* client[WS_METHODS.editGet]({ projectId });
+      assert.isAbove(opened.revision, 0);
       const secret = `${outsideDir}/voice-memo.m4a`;
       yield* fileSystem.writeFileString(secret, "private");
       const outside = {
@@ -1246,8 +1257,10 @@ it.effect("projects.writeFile with write-only scope cannot add outside media", (
         relativePath: "edit.json",
       }).pipe(Effect.flip);
       assert.strictEqual(read._tag, "EnvironmentAuthorizationError");
+      assert.include(refused.message, "last saved version");
       const next = yield* client[WS_METHODS.editGet]({ projectId });
       assert.deepEqual(next.document, opened.document);
+      assert.strictEqual(next.revision, opened.revision);
       assert.isEmpty(reads);
     }).pipe(Effect.provide(layerEditTest(baseDir)));
   }).pipe(
