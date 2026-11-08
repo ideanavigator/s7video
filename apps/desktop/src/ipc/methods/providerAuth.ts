@@ -32,7 +32,8 @@ export const receiveProviderAuthCallback = DesktopIpc.makeIpcMethod({
         }),
     });
     const window = yield* windows.currentMainOrFirst;
-    if (Option.isSome(window)) yield* windows.reveal(window.value);
+    // Returning from sign-in the user started brings s7video back (S7V-074).
+    if (Option.isSome(window)) yield* windows.reveal(window.value, { steal: true });
     return callbackUrl;
   }),
 });

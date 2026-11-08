@@ -104,7 +104,8 @@ function cleanupStaleDevApps() {
   );
 }
 
-function startApp() {
+// s7video (S7V-074): a watcher relaunch tells the app so it skips reopening DevTools.
+function startApp({ restart = false } = {}) {
   if (shuttingDown || currentApp !== null) {
     return;
   }
@@ -118,7 +119,7 @@ function startApp() {
   const electronCommand = resolveElectronLaunchCommand(launchArgs);
   const app = NodeChildProcess.spawn(electronCommand.electronPath, electronCommand.args, {
     cwd: desktopDir,
-    env: childEnv,
+    env: restart ? { ...childEnv, S7VIDEO_DESKTOP_DEV_RESTART: "1" } : childEnv,
     stdio: "inherit",
   });
 
@@ -201,7 +202,7 @@ function scheduleRestart() {
       .then(async () => {
         await stopApp();
         if (!shuttingDown) {
-          startApp();
+          startApp({ restart: true });
         }
       });
   }, restartDebounceMs);

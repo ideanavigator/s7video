@@ -312,8 +312,16 @@ export const make = Effect.gen(function* () {
   const runPromise = Effect.runPromiseWith(context);
   const mainWindowMutex = yield* Semaphore.make(1);
   const pendingMainReveals = new WeakMap<Electron.BrowserWindow, Effect.Effect<void>>();
-  const revealMain = Effect.fn("desktop.window.revealMain")((window: Electron.BrowserWindow) =>
-    Effect.suspend(() => pendingMainReveals.get(window) ?? electronWindow.reveal(window)),
+  // s7video (S7V-074): a user action that arrives before the first reveal makes that reveal take focus.
+  const userRevealsBeforeReady = new WeakSet<Electron.BrowserWindow>();
+  const revealMain = Effect.fn("desktop.window.revealMain")(
+    (window: Electron.BrowserWindow, options?: ElectronWindow.ElectronWindowRevealOptions) =>
+      Effect.suspend(() => {
+        const pending = pendingMainReveals.get(window);
+        if (pending === undefined) return electronWindow.reveal(window, options);
+        if (options?.steal === true) userRevealsBeforeReady.add(window);
+        return pending;
+      }),
   );
   let flushMainWindowBounds: Effect.Effect<void> = Effect.void;
 
@@ -836,7 +844,9 @@ export const make = Effect.gen(function* () {
       pendingMainReveals.delete(window);
       window.webContents.setBackgroundThrottling(true);
       if (persistedSettings.mainWindowMaximized) window.maximize();
-      yield* electronWindow.reveal(window);
+      // The automatic first reveal never steals focus (S7V-074), unless a user action asked for it.
+      const steal = userRevealsBeforeReady.delete(window);
+      yield* electronWindow.reveal(window, { steal });
       yield* dismissConnectingSplash;
     });
     pendingMainReveals.set(window, revealWhenReady);
@@ -846,8 +856,9 @@ export const make = Effect.gen(function* () {
     });
 
     loadApplication();
-    if (environment.isDevelopment) {
-      window.webContents.openDevTools({ mode: "detach" });
+    // s7video (S7V-074): DevTools open without taking focus, and not again on a dev watcher restart.
+    if (environment.isDevelopment && !environment.isDevelopmentRestart) {
+      window.webContents.openDevTools({ mode: "detach", activate: false });
     }
 
     window.on("closed", () => {
@@ -941,7 +952,7 @@ export const make = Effect.gen(function* () {
     });
     splash.once("ready-to-show", () => {
       if (!splash.isDestroyed()) {
-        splash.show();
+        void runPromise(electronWindow.reveal(splash));
       }
     });
     void splash.loadURL(buildConnectingSplashDataUrl(shouldUseDarkColors));
@@ -969,7 +980,9 @@ export const make = Effect.gen(function* () {
     });
     // Send before best-effort reveal; another process may refuse to yield foreground focus.
     const dispatch = reveal
-      ? send.pipe(Effect.andThen(revealMain(targetWindow).pipe(Effect.ignoreCause)))
+      ? send.pipe(
+          Effect.andThen(revealMain(targetWindow, { steal: true }).pipe(Effect.ignoreCause)),
+        )
       : send;
     if (targetWindow.webContents.isLoadingMainFrame()) {
       targetWindow.webContents.once("did-finish-load", () => void runPromise(dispatch));
@@ -991,8 +1004,9 @@ export const make = Effect.gen(function* () {
     activate: Effect.gen(function* () {
       if (yield* Ref.get(desktopState.quitting)) return;
       const existingWindow = yield* currentMainWindow;
+      // Every caller of activate is a user action: the Dock icon, the app menu, a link, a capture.
       if (Option.isSome(existingWindow)) {
-        yield* revealMain(existingWindow.value);
+        yield* revealMain(existingWindow.value, { steal: true });
         return;
       }
       if (mainClosedDuringStartup) {
@@ -1003,7 +1017,7 @@ export const make = Effect.gen(function* () {
       if (!backendReady) {
         const splash = yield* Ref.get(splashWindowRef);
         if (Option.isSome(splash)) {
-          yield* electronWindow.reveal(splash.value);
+          yield* electronWindow.reveal(splash.value, { steal: true });
           return;
         }
       }

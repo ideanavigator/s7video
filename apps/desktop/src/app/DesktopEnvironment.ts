@@ -40,6 +40,8 @@ export class DesktopEnvironment extends Context.Service<
     readonly processArch: string;
     readonly isPackaged: boolean;
     readonly isDevelopment: boolean;
+    /** True when the dev watcher relaunched the app after a rebuild (S7V-074). */
+    readonly isDevelopmentRestart: boolean;
     readonly appVersion: string;
     readonly appPath: string;
     readonly resourcesPath: string;
@@ -192,6 +194,7 @@ const make = Effect.fn("desktop.environment.make")(function* (
     processArch: input.processArch,
     isPackaged: input.isPackaged,
     isDevelopment,
+    isDevelopmentRestart: isDevelopment && config.devRestart,
     appVersion: input.appVersion,
     appPath: input.appPath,
     resourcesPath,

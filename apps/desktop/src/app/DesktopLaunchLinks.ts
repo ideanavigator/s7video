@@ -109,7 +109,7 @@ export const make = Effect.gen(function* () {
             const mainWindow = yield* electronWindow.currentMainOrFirst;
             if (Option.isNone(mainWindow)) return;
             yield* Effect.promise(() => mainWindow.value.loadURL(destination));
-            yield* electronWindow.reveal(mainWindow.value);
+            yield* electronWindow.reveal(mainWindow.value, { steal: true });
           }).pipe(
             Effect.catchCause((cause) =>
               Effect.logWarning("Could not return to provider setup", cause),
@@ -153,7 +153,8 @@ export const make = Effect.gen(function* () {
         void runPromise(
           Effect.gen(function* () {
             const mainWindow = yield* electronWindow.currentMainOrFirst;
-            if (Option.isSome(mainWindow)) yield* electronWindow.reveal(mainWindow.value);
+            if (Option.isSome(mainWindow))
+              yield* electronWindow.reveal(mainWindow.value, { steal: true });
           }),
         );
       };
