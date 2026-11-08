@@ -78,14 +78,16 @@ const withProject = <A, E>(
 
 const readEdit = (root: string) => NodeFS.readFileSync(NodePath.join(root, "edit.json"), "utf8");
 
-/** Every object the log names, as file names under `.s7history/objects/`. */
+/** Every object the log names (undo steps and versions), as file names under `.s7history/objects/`. */
 const namedObjects = (root: string) =>
   [
     ...new Set(
-      (historyLog(root)?.entries ?? []).flatMap((entry) => [
-        `${entry.files["edit.json"]}.json.gz`,
-        `${entry.files["project.json"]}.json.gz`,
-      ]),
+      [...(historyLog(root)?.entries ?? []), ...(historyLog(root)?.versions ?? [])].flatMap(
+        (entry) => [
+          `${entry.files["edit.json"]}.json.gz`,
+          `${entry.files["project.json"]}.json.gz`,
+        ],
+      ),
     ),
   ].toSorted();
 
@@ -739,7 +741,7 @@ describe("EditDocumentService", () => {
     ),
   );
 
-  it.effect("drops the redo branch and its objects on a new change", () =>
+  it.effect("drops the redo branch on a new change; its versions keep their objects", () =>
     withProject(({ projectId, edits, root }) =>
       Effect.gen(function* () {
         let snapshot = yield* edits.read(projectId);
@@ -764,9 +766,15 @@ describe("EditDocumentService", () => {
           log.entries.map((entry) => entry.seq),
           stale[0]!.seq,
         );
+        // S7V-069: the undone changes are still listed as versions, so their objects stay.
+        const versions = log.versions ?? [];
+        assert.deepEqual(
+          versions.map((version) => version.n),
+          [1, 2, 3, 4, 5, 6],
+        );
         for (const entry of stale) {
           const id = `${entry.files["edit.json"]}.json.gz`;
-          assert.notInclude(historyObjects(root), id);
+          assert.include(historyObjects(root), id);
         }
         assert.deepEqual(historyObjects(root), namedObjects(root));
       }),

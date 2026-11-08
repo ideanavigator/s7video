@@ -90,7 +90,7 @@ export function playerViewOf(
     if (view !== null) return view;
   }
 
-  const document = edit.snapshot.document;
+  const document = source.kind === "version" ? source.document : edit.snapshot.document;
   const timeline = editTimelinePlan(document);
   // One source laid end to end keeps Engine A's player; any other layout plays on the clock.
   const plan =
@@ -98,7 +98,9 @@ export function playerViewOf(
   if (plan !== null) {
     const asset = assetOf(plan.mediaId);
     if (asset !== undefined) return playAsset(asset, plan, "edit");
-  } else if (timeline !== null) {
+  }
+  // A version's clip may have left Assets since: the clock player shows it as missing.
+  if (timeline !== null && (plan === null || source.kind === "version")) {
     return {
       _tag: "play-timeline",
       plan: timeline,

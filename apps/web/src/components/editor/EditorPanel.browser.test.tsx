@@ -68,6 +68,8 @@ vi.mock(import("../../editor/editStore"), async (importOriginal) => ({
     return { _tag: "loading" };
   },
   useTranscriptionJobs: () => ({ transcribe: null, download: null }),
+  // The Versions tab (S7V-069) has its own tests; here it stays loading.
+  useProjectVersions: () => ({ _tag: "loading" }),
 }));
 vi.mock(import("../../state/media"), () => ({
   useMediaLibrary: () => state.library,
@@ -562,5 +564,34 @@ describe("EditorPanel", () => {
     await expect.element(screen.getByText("Clip: clip-0.mov")).not.toBeInTheDocument();
     expect(useEditPlayerStore.getState().sourceByProjectKey[projectKey]).toEqual({ kind: "edit" });
     await expect.poll(() => playhead.hidden).toBe(false);
+  });
+
+  it("previews a version read only, with a bar back to the current edit", async () => {
+    setState([asset("clip-0")], true);
+    const projectKey = scopedProjectKey({ environmentId: EnvironmentId.make("env-1"), projectId });
+    if (state.edit._tag !== "ready") throw new Error("edit not ready");
+    const older = {
+      ...state.edit.snapshot.document,
+      tracks: [
+        {
+          kind: "video" as const,
+          id: "v1",
+          items: [{ id: "a", media: "clip-0", start: 0, duration: 90, in: 0 }],
+        },
+      ],
+    };
+    useEditPlayerStore.getState().setSource(projectKey, { kind: "version", n: 2, document: older });
+    await using screen = await renderPanel();
+    await expect.element(screen.getByRole("status").getByText("Previewing v2")).toBeVisible();
+    await expect.element(await videoOf(screen)).toBeInTheDocument();
+    // Export would write the current edit, so it waits until the preview ends.
+    expect(screen.getByRole("button", { name: "Export" }).query()).toBeNull();
+    const playhead = document.querySelector<HTMLElement>("[data-testid=timeline-playhead]")!;
+    await expect.poll(() => playhead.hidden).toBe(true);
+    await screen.getByRole("button", { name: "Back to current" }).click();
+    expect(useEditPlayerStore.getState().sourceByProjectKey[projectKey]).toEqual({ kind: "edit" });
+    await expect.element(screen.getByText("Previewing v2")).not.toBeInTheDocument();
+    await expect.element(screen.getByRole("button", { name: "Export" })).toBeVisible();
+    expect(commands.start).not.toHaveBeenCalled();
   });
 });

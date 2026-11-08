@@ -6,7 +6,7 @@
  */
 import * as Schema from "effect/Schema";
 
-import { ProjectId } from "./baseSchemas.ts";
+import { ProjectId, RunId, ThreadId } from "./baseSchemas.ts";
 
 import {
   EditAudioItem,
@@ -206,8 +206,70 @@ export const EditSnapshot = Schema.Struct({
   canRedo: Schema.Boolean,
   /** Set only on the snapshot published when an outside change was refused (S7V-054). */
   notice: Schema.optionalKey(Schema.String),
+  /** The current (newest) version's number (S7V-069); absent before the first version. */
+  version: Schema.optionalKey(Schema.Int),
 });
 export type EditSnapshot = typeof EditSnapshot.Type;
+
+/** Who made a version: the assistant in a chat, the user in the Editor, or a change outside. */
+export const EditVersionAuthor = Schema.Literals(["assistant", "you", "outside"]);
+export type EditVersionAuthor = typeof EditVersionAuthor.Type;
+
+/** At most this many characters in a version's tag, which is unique in its project. */
+export const EDIT_VERSION_TAG_MAX = 40;
+
+/**
+ * One numbered version of a project's edit (S7V-069): the edit after one assistant reply that
+ * changed it, or after one Editor action. Numbers run v1, v2, … per project and are never reused.
+ */
+export const EditVersion = Schema.Struct({
+  n: Schema.Int,
+  /** The edit revision this version was saved at. */
+  revision: Schema.Int,
+  /** When it was saved (its last change, for a reply with several), epoch milliseconds. */
+  at: Schema.Int,
+  author: EditVersionAuthor,
+  /** The chat and reply that made it, for an assistant version. */
+  threadId: Schema.optionalKey(ThreadId),
+  runId: Schema.optionalKey(RunId),
+  /** One line per change, in order. */
+  changes: Schema.Array(Schema.String),
+  tag: Schema.optionalKey(Schema.String),
+  /** Set when "Make current" made this version from an older one. */
+  restoredFrom: Schema.optionalKey(Schema.Int),
+  /** The newest version: what the player shows and the next change builds on. */
+  current: Schema.Boolean,
+});
+export type EditVersion = typeof EditVersion.Type;
+
+export const EditVersionsResult = Schema.Struct({ versions: Schema.Array(EditVersion) });
+export type EditVersionsResult = typeof EditVersionsResult.Type;
+
+export const EditVersionInput = Schema.Struct({ projectId: ProjectId, n: Schema.Int });
+export type EditVersionInput = typeof EditVersionInput.Type;
+
+export const EditVersionGetResult = Schema.Struct({
+  version: EditVersion,
+  document: EditDocument,
+});
+export type EditVersionGetResult = typeof EditVersionGetResult.Type;
+
+export const EditVersionTagInput = Schema.Struct({
+  projectId: ProjectId,
+  n: Schema.Int,
+  /** Null clears the tag. */
+  tag: Schema.NullOr(
+    Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(EDIT_VERSION_TAG_MAX)),
+  ),
+});
+export type EditVersionTagInput = typeof EditVersionTagInput.Type;
+
+export const EditVersionRestoreInput = Schema.Struct({
+  projectId: ProjectId,
+  n: Schema.Int,
+  baseRevision: Schema.Int,
+});
+export type EditVersionRestoreInput = typeof EditVersionRestoreInput.Type;
 
 export const EditApplyInput = Schema.Struct({
   projectId: ProjectId,
@@ -234,6 +296,9 @@ export class EditUnavailableError extends Schema.TaggedError<EditUnavailableErro
       "checkpoint-failed",
       "library-conflict",
       "outside-change-refused",
+      "unknown-version",
+      "tag-taken",
+      "current-version",
     ]),
     explanation: Schema.String,
   },

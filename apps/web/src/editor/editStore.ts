@@ -14,7 +14,9 @@ import {
   createEnvironmentRpcSubscriptionAtomFamily,
 } from "@t3tools/client-runtime/state/runtime";
 import {
+  type EditDocument,
   type EditSnapshot,
+  type EditVersion,
   type EngineJob,
   type EnvironmentId,
   type ExportStatus,
@@ -83,6 +85,22 @@ export const editEnvironment = {
     label: "environment-data:transcribe:models-dismiss",
     tag: WS_METHODS.transcribeModelsDismiss,
   }),
+  versionGet: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "environment-data:edit:version-get",
+    tag: WS_METHODS.editVersionGet,
+  }),
+  versionTag: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "environment-data:edit:version-tag",
+    tag: WS_METHODS.editVersionTag,
+  }),
+  versionRestore: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "environment-data:edit:version-restore",
+    tag: WS_METHODS.editVersionRestore,
+  }),
+  versionDelete: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "environment-data:edit:version-delete",
+    tag: WS_METHODS.editVersionDelete,
+  }),
 };
 
 export type ProjectEditState =
@@ -126,6 +144,49 @@ const projectEditAtom = Atom.family((key: string) => {
 /** The project's edit, kept live by `edit.subscribe`. */
 export function useProjectEdit(ref: ScopedProjectRef): ProjectEditState {
   return useAtomValue(projectEditAtom(scopedProjectKey(ref)));
+}
+
+/** Bumped after a tag or delete here, which changes the list but not the edit. */
+const versionsBumpAtom = Atom.family((_key: string) => Atom.make(0).pipe(Atom.keepAlive));
+
+/** Any change to the edit, from any chat or the Editor, refetches the version list (S7V-069). */
+const versionsTriggerAtom = Atom.family((key: string) =>
+  Atom.make((get) => {
+    const edit = get(projectEditAtom(key));
+    const at = edit._tag === "ready" ? `${edit.snapshot.revision}:${edit.snapshot.version}` : "";
+    return `${at}:${get(versionsBumpAtom(key))}`;
+  }).pipe(Atom.withLabel(`web-edit-versions-trigger:${key}`)),
+);
+
+const versionsQuery = createEnvironmentRpcQueryAtomFamily(connectionAtomRuntime, {
+  label: "environment-data:edit:versions",
+  tag: WS_METHODS.editVersions,
+  refreshTrigger: ({ environmentId, input }) =>
+    versionsTriggerAtom(scopedProjectKey({ environmentId, projectId: input.projectId })),
+});
+
+export type ProjectVersionsState =
+  | { readonly _tag: "loading" }
+  | { readonly _tag: "ready"; readonly versions: ReadonlyArray<EditVersion> }
+  | { readonly _tag: "unavailable"; readonly message: string };
+
+const VERSIONS_LOADING: ProjectVersionsState = { _tag: "loading" };
+
+/** The project's versions, newest first, refetched whenever its edit changes. */
+export function useProjectVersions(ref: ScopedProjectRef): ProjectVersionsState {
+  const result = useAtomValue(
+    versionsQuery({ environmentId: ref.environmentId, input: { projectId: ref.projectId } }),
+  );
+  if (AsyncResult.isSuccess(result)) return { _tag: "ready", versions: result.value.versions };
+  if (AsyncResult.isFailure(result)) {
+    return { _tag: "unavailable", message: unavailableMessage(result.cause) };
+  }
+  return VERSIONS_LOADING;
+}
+
+export function refreshProjectVersions(ref: ScopedProjectRef): void {
+  const bump = versionsBumpAtom(scopedProjectKey(ref));
+  appAtomRegistry.set(bump, appAtomRegistry.get(bump) + 1);
 }
 
 const NO_JOBS: ReadonlyMap<string, EngineJob> = new Map();
@@ -332,7 +393,9 @@ export function useProjectExport(
 
 export type PlayerSource =
   | { readonly kind: "edit" }
-  | { readonly kind: "clip"; readonly mediaId: string };
+  | { readonly kind: "clip"; readonly mediaId: string }
+  /** A saved version, read only (S7V-069): nothing is written while it plays. */
+  | { readonly kind: "version"; readonly n: number; readonly document: EditDocument };
 
 const EDIT_SOURCE: PlayerSource = { kind: "edit" };
 

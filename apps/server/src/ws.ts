@@ -2757,6 +2757,20 @@ export const layerWsRpc = (
         [WS_METHODS.editSubscribe]: (input) => editDocuments.subscribe(input.projectId),
         [WS_METHODS.editUndo]: (input) => editDocuments.undo(input.projectId),
         [WS_METHODS.editRedo]: (input) => editDocuments.redo(input.projectId),
+        [WS_METHODS.editVersions]: (input) =>
+          editDocuments.versions(input.projectId).pipe(Effect.map((versions) => ({ versions }))),
+        [WS_METHODS.editVersionGet]: (input) =>
+          editDocuments.versionDocument(input.projectId, input.n),
+        [WS_METHODS.editVersionTag]: (input) =>
+          editDocuments.tagVersion(input.projectId, input.n, input.tag),
+        [WS_METHODS.editVersionRestore]: (input) =>
+          editDocuments.restoreVersion(input.projectId, input.n, {
+            baseRevision: input.baseRevision,
+          }),
+        [WS_METHODS.editVersionDelete]: (input) =>
+          editDocuments
+            .deleteVersion(input.projectId, input.n)
+            .pipe(Effect.map((versions) => ({ versions }))),
         [WS_METHODS.mediaImportPlan]: (input) => mediaLibrary.plan(input),
         [WS_METHODS.mediaImport]: (input) => mediaLibrary.import(input),
         [WS_METHODS.mediaList]: (input) => mediaLibrary.list(input.projectId),

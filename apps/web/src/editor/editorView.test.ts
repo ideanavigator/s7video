@@ -170,4 +170,27 @@ describe("playerViewOf", () => {
     const view = playerViewOf(withMedia, library([asset()]), EDIT);
     expect(view._tag === "play-timeline" && view.sources[1]!.label).toBe("Beach take 2.mov");
   });
+
+  // S7V-069: a previewed version plays its own document, read only.
+  it("plays a previewed version's document, and shows its removed clip as missing", () => {
+    if (cut._tag !== "ready") throw new Error("edit not ready");
+    const older: EditDocument = {
+      ...cut.snapshot.document,
+      tracks: [
+        {
+          kind: "video",
+          id: "v1",
+          items: [{ id: "a", media: "clip", start: 0, duration: 60, in: 30 }],
+        },
+      ],
+    };
+    const view = playerViewOf(cut, library([asset()]), { kind: "version", n: 2, document: older });
+    expect(view._tag === "play" && view.plan.segments).toEqual([
+      { sourceStart: 30, sourceEnd: 90, timelineStart: 0 },
+    ]);
+    const gone = playerViewOf(cut, library([]), { kind: "version", n: 2, document: older });
+    expect(gone._tag === "play-timeline" && gone.sources.map((source) => source.asset)).toEqual([
+      undefined,
+    ]);
+  });
 });

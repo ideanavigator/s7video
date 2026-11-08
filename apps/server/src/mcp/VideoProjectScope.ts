@@ -45,6 +45,8 @@ export interface VideoProject {
   /** The project folder's real path. */
   readonly root: string;
   readonly snapshot: EditSnapshot;
+  /** The chat reply calling the tool: its changes make one version (S7V-069). */
+  readonly reply?: EditDocumentService.EditReply;
 }
 
 export interface ScopedMedia {
@@ -71,7 +73,12 @@ export const callerProject = Effect.fn("VideoProjectScope.callerProject")(functi
     .getThreadShell(scope.thread.threadId)
     .pipe(Effect.mapError(unavailable));
   if (shell === null) return yield* failure("thread_not_found", "This thread no longer exists.");
-  return yield* projectFor(shell.projectId);
+  const project = yield* projectFor(shell.projectId);
+  // A run waiting on something drops out of `activeRunId`; it is still the latest run.
+  const runId = shell.activeRunId ?? shell.latestRunId;
+  const scoped: VideoProject =
+    runId === null ? project : { ...project, reply: { threadId: shell.id, runId } };
+  return scoped;
 });
 
 const unavailable = () => failure("orchestration_error", "Could not look up this project.");

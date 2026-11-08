@@ -381,6 +381,12 @@ import {
   EditProjectInput,
   EditSnapshot,
   EditUnavailableError,
+  EditVersion,
+  EditVersionGetResult,
+  EditVersionInput,
+  EditVersionRestoreInput,
+  EditVersionTagInput,
+  EditVersionsResult,
 } from "./editOps.ts";
 import {
   StorageCleanupReport,
@@ -648,6 +654,12 @@ export const WS_METHODS = {
   editSubscribe: "edit.subscribe",
   editUndo: "edit.undo",
   editRedo: "edit.redo",
+  // Edit versions (S7V-069)
+  editVersions: "edit.versions",
+  editVersionGet: "edit.versionGet",
+  editVersionTag: "edit.versionTag",
+  editVersionRestore: "edit.versionRestore",
+  editVersionDelete: "edit.versionDelete",
   transcriptGet: "transcript.get",
   transcribeRun: "transcribe.run",
   transcribeModelsStatus: "transcribe.models.status",
@@ -2067,6 +2079,31 @@ const WsEditRedoRpc = Rpc.make(WS_METHODS.editRedo, {
   success: EditSnapshot,
   error: EditRpcError,
 });
+const WsEditVersionsRpc = Rpc.make(WS_METHODS.editVersions, {
+  payload: EditProjectInput,
+  success: EditVersionsResult,
+  error: EditRpcError,
+});
+const WsEditVersionGetRpc = Rpc.make(WS_METHODS.editVersionGet, {
+  payload: EditVersionInput,
+  success: EditVersionGetResult,
+  error: EditRpcError,
+});
+const WsEditVersionTagRpc = Rpc.make(WS_METHODS.editVersionTag, {
+  payload: EditVersionTagInput,
+  success: EditVersion,
+  error: EditRpcError,
+});
+const WsEditVersionRestoreRpc = Rpc.make(WS_METHODS.editVersionRestore, {
+  payload: EditVersionRestoreInput,
+  success: EditSnapshot,
+  error: Schema.Union([EditUnavailableError, EditConflict, EnvironmentAuthorizationError]),
+});
+const WsEditVersionDeleteRpc = Rpc.make(WS_METHODS.editVersionDelete, {
+  payload: EditVersionInput,
+  success: EditVersionsResult,
+  error: EditRpcError,
+});
 
 const TranscriptRpcError = Schema.Union([
   EnvironmentAuthorizationError,
@@ -2349,6 +2386,11 @@ export const WsRpcGroup = RpcGroup.make(
   WsEditSubscribeRpc,
   WsEditUndoRpc,
   WsEditRedoRpc,
+  WsEditVersionsRpc,
+  WsEditVersionGetRpc,
+  WsEditVersionTagRpc,
+  WsEditVersionRestoreRpc,
+  WsEditVersionDeleteRpc,
   WsTranscriptGetRpc,
   WsTranscribeRunRpc,
   WsTranscribeModelsStatusRpc,

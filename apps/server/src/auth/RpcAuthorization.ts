@@ -154,6 +154,8 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.projectsCreateNew]: AuthOrchestrationOperateScope,
   [WS_METHODS.editGet]: AuthOrchestrationReadScope,
   [WS_METHODS.editSubscribe]: AuthOrchestrationReadScope,
+  [WS_METHODS.editVersions]: AuthOrchestrationReadScope,
+  [WS_METHODS.editVersionGet]: AuthOrchestrationReadScope,
   [WS_METHODS.mediaList]: AuthOrchestrationReadScope,
   [WS_METHODS.mediaSubscribe]: AuthOrchestrationReadScope,
   [WS_METHODS.shellOpenInEditor]: AuthOrchestrationOperateScope,

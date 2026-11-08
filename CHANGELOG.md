@@ -68,6 +68,9 @@ from; the per-ticket entries and how this file is compiled are in
   are prepared in the background right after import, even for long recordings. (S7V-035)
 - One edit can now use several clips. The player plays straight across the joins, and the export
   matches. (S7V-039)
+- Each change you or the assistant make becomes a numbered version in the Editor's Versions tab.
+  Name any version, watch it in the player, or make it current again without losing anything after
+  it. (S7V-069)
 
 ### Changed
 

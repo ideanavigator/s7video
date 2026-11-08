@@ -38,6 +38,8 @@ export interface RemoveSilencesInput {
   readonly minGapSeconds?: number;
   /** Clip-frame ranges (the transcript's frames) that must keep playing. */
   readonly keep?: ReadonlyArray<FrameRange>;
+  /** The chat reply asking, so its changes make one version (S7V-069). */
+  readonly reply?: EditDocumentService.EditReply | undefined;
 }
 
 export interface RemoveSilencesResult {
@@ -346,7 +348,12 @@ const make = Effect.gen(function* () {
           start: target.start,
         },
       ],
-      { origin: "agent", baseRevision: revision },
+      {
+        origin: "agent",
+        baseRevision: revision,
+        reply: input.reply,
+        summary: `Removed ${summary.removedSeconds} s of silence in ${plan.cuts} cuts`,
+      },
     );
     return { ...summary, revision: after.revision, changed: after.revision !== revision };
   });

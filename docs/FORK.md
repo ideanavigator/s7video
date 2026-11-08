@@ -459,6 +459,15 @@ wire them in:
   `packages/contracts/src/index.ts` (re-exports of the new contract modules) are the biggest
   upstream-file changes, and the likeliest merge-conflict spots in an upstream merge.
 
+## Edit versions (S7V-069)
+
+Numbered versions of the edit live in `.s7history/log.json` ([edit history](internals/edit-history.md#versions-s7v-069)).
+The Versions tab (`components/editor/VersionsTab.tsx`) is new code. Upstream files get the same
+small wiring as the other `edit.*` methods: `edit.versions`, `edit.versionGet`, `edit.versionTag`,
+`edit.versionRestore` and `edit.versionDelete` in `contracts/rpc.ts`, `ws.ts`,
+`observability/RpcInstrumentation.ts`, `auth/RpcAuthorization.ts` (reads: read scope) and
+`contracts/clientRpcPermissions.ts` (tag, restore, delete: operate scope). No agent tools change.
+
 ## Licensing (S7V-004)
 
 `LICENSE` is T3 Code's MIT licence with a second line, `Copyright (c) 2026 s7video contributors`.
