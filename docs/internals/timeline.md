@@ -89,12 +89,16 @@ outside React like the controller. What the code does not show:
   request is in flight, the next gesture waits for its reply and its new revision, so it never
   sends a stale base. Any other change of revision (the assistant, an outside edit) cancels an open
   gesture with a notice; a stale base that still reaches the server comes back as `EditConflict`.
+- **Versions (S7V-069).** Each batch is one version by "You", worded by `describeOps.ts`: one line
+  per kind of change, counted when it touches several items ("Moved 3 items"). An undo with a
+  nudge still pending drops only the nudge and sends nothing.
 - **The ghost stays until the edit arrives**, so a moved clip never flashes back to its old place.
 - **Linked items.** The server carries items that share a `linkId` (`applyEditOps.ts`), so the
   timeline names one item per link group; naming both would move them twice.
 - **No per-clip handles.** Trim handles are drawn on selected clips only; a press within 6 px of
-  any clip's edge trims it. Two handle elements on every mounted clip cost a dropped frame in the
-  1,000-clip scroll test.
+  any clip's edge trims it, and one delegated pointermove sets the resize cursor there. Two handle
+  elements on every mounted clip cost a dropped frame in the 1,000-clip scroll test. Clips under
+  18 px have no edge zones (handles hidden by a container query), so they can always be moved.
 - **Ripple stays on its track.** A ripple delete closes the gap on the deleted item's own track;
   captions and sounds on other tracks do not follow. `video_assemble`'s mid-edit `at` is the one
   place that moves every track in step.

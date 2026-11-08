@@ -96,10 +96,13 @@ const MOVE_REFUSED: Record<string, string> = {
 /** A press this close to a clip's edge trims it, handle or not. */
 const EDGE_GRAB_PX = 6;
 
+/** Clips narrower than this are only moved: edge zones would cover them. */
+const MIN_TRIM_WIDTH_PX = EDGE_GRAB_PX * 3;
+
 function edgeUnder(block: HTMLElement, clientX: number): "start" | "end" | undefined {
   const rect = block.getBoundingClientRect();
   // A clip too narrow for both edge zones and a middle is moved, not trimmed.
-  if (rect.width < EDGE_GRAB_PX * 3) return undefined;
+  if (rect.width < MIN_TRIM_WIDTH_PX) return undefined;
   if (clientX - rect.left <= EDGE_GRAB_PX) return "start";
   if (rect.right - clientX <= EDGE_GRAB_PX) return "end";
   return undefined;
@@ -351,7 +354,13 @@ export function createTimelineEditor(host: TimelineEditorHost): TimelineEditor {
   };
 
   const step = async (direction: "undo" | "redo") => {
+    // An unsent nudge is the newest change: undo drops only it, never the step before it.
+    const pendingNudge = nudge !== null;
     discardNudge();
+    if (pendingNudge && direction === "undo") {
+      announce("Undone");
+      return;
+    }
     element.cancel();
     resize.cancel();
     if (actions === null) return;
@@ -409,9 +418,8 @@ export function createTimelineEditor(host: TimelineEditorHost): TimelineEditor {
     flushNudge();
     lanesTop = lanes.getBoundingClientRect().top;
     const itemId = block.dataset.timelineItem!;
-    const side =
-      event.target.closest<HTMLElement>("[data-trim-handle]")?.dataset.trimHandle ??
-      edgeUnder(block, event.clientX);
+    // A clip too narrow for edge zones is moved even from a drawn handle (`edgeUnder`).
+    const side = edgeUnder(block, event.clientX);
     if (side === "start" || side === "end") {
       if (!state.selected.has(itemId)) setSelection(new Set([itemId]));
       resize.onResizeStart({
@@ -430,6 +438,24 @@ export function createTimelineEditor(host: TimelineEditorHost): TimelineEditor {
       shift: event.shiftKey,
     });
   };
+
+  /** The clip whose edge the pointer hovers, shown with a resize cursor (no element per clip). */
+  let hovered: HTMLElement | null = null;
+  const setHover = (block: HTMLElement | null) => {
+    if (hovered === block) return;
+    if (hovered !== null) delete hovered.dataset.edgeHover;
+    hovered = block;
+    if (block !== null) block.dataset.edgeHover = "true";
+  };
+  const onPointerMove = (event: PointerEvent) => {
+    if (actions === null || element.isDragging || resize.isResizing) return;
+    const block =
+      event.target instanceof Element
+        ? event.target.closest<HTMLElement>("[data-timeline-item]")
+        : null;
+    setHover(block !== null && edgeUnder(block, event.clientX) !== undefined ? block : null);
+  };
+  const onPointerLeave = () => setHover(null);
 
   return {
     subscribe: (listener) => {
@@ -475,8 +501,13 @@ export function createTimelineEditor(host: TimelineEditorHost): TimelineEditor {
       lanes = next;
       if (next === null) return undefined;
       next.addEventListener("pointerdown", onPointerDown);
+      next.addEventListener("pointermove", onPointerMove);
+      next.addEventListener("pointerleave", onPointerLeave);
       return () => {
         next.removeEventListener("pointerdown", onPointerDown);
+        next.removeEventListener("pointermove", onPointerMove);
+        next.removeEventListener("pointerleave", onPointerLeave);
+        setHover(null);
         if (lanes === next) lanes = null;
       };
     },

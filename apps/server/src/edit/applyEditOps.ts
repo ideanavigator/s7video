@@ -383,7 +383,12 @@ function applyOne(document: DraftDocument, op: EditOp): void {
           other.item.start < op.atFrame && op.atFrame < other.item.start + other.item.duration,
       );
       if (parts.length > 0) {
-        const rightLink = `${String(item.linkId)}.${id}`.slice(0, 64);
+        // A fresh id, never derived from the old one, so repeated splits stay unique and short.
+        const linkIds = new Set(allIds(document));
+        for (const entry of document.tracks.flatMap((each) => each.items)) {
+          if (typeof entry.linkId === "string") linkIds.add(entry.linkId);
+        }
+        const rightLink = allocateId(document, "link", linkIds);
         right.linkId = rightLink;
         for (const other of parts) {
           const otherId = allocateId(document, ITEM_PREFIX[other.track.kind], taken);

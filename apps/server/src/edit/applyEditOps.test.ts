@@ -330,11 +330,11 @@ describe("applyEditOps", () => {
       const [video, , audio] = result.document.tracks;
       expect(video!.items.slice(0, 2)).toMatchObject([
         { id: "v1", start: 0, duration: 40, in: 0, linkId: "L1" },
-        { id: "v1b", start: 40, duration: 60, in: 40, linkId: "L1.v1b" },
+        { id: "v1b", start: 40, duration: 60, in: 40, linkId: "link1" },
       ]);
       expect(audio!.items).toMatchObject([
         { start: 0, duration: 40, in: 0, linkId: "L1" },
-        { start: 40, duration: 60, in: 40, linkId: "L1.v1b" },
+        { start: 40, duration: 60, in: 40, linkId: "link1" },
       ]);
       expect(validateEditDocument(result.document).ok).toBe(true);
       // The new parts move together, apart from the left halves.
@@ -344,6 +344,44 @@ describe("applyEditOps", () => {
         { id: "a1", start: 0, duration: 40, in: 0 },
         { id: audioRight, start: 400, duration: 60, in: 40 },
       ]);
+    });
+
+    it("gives every split's right-hand parts their own short link id, 20 splits deep", () => {
+      let document = linked;
+      for (let index = 0; index < 20; index++) {
+        // Split the rightmost linked video part again, as split-split-delete does.
+        const video = document.tracks[0]!.items.filter((item) => "linkId" in item && item.linkId);
+        const last = video.at(-1)!;
+        document = run(
+          [
+            {
+              _tag: "splitItem",
+              itemId: last.id,
+              atFrame: last.start + 1,
+            },
+          ],
+          document,
+        );
+      }
+      const groups = new Map<string, string[]>();
+      for (const track of document.tracks) {
+        for (const item of track.items) {
+          if (!("linkId" in item) || item.linkId === undefined) continue;
+          expect(item.linkId.length).toBeLessThanOrEqual(64);
+          groups.set(item.linkId, [...(groups.get(item.linkId) ?? []), track.id]);
+        }
+      }
+      // 21 groups, each one video part and its audio part: none merged, none truncated.
+      expect(groups.size).toBe(21);
+      for (const tracks of groups.values()) expect(tracks.toSorted()).toEqual(["A1", "V1"]);
+      // Deleting one piece takes only its own linked part.
+      const someLink = [...groups.keys()][5]!;
+      const piece = document.tracks[0]!.items.find(
+        (item) => "linkId" in item && item.linkId === someLink,
+      )!;
+      const after = run([{ _tag: "deleteItem", itemIds: [piece.id], ripple: false }], document);
+      expect(after.tracks[0]!.items.length).toBe(document.tracks[0]!.items.length - 1);
+      expect(after.tracks[2]!.items.length).toBe(document.tracks[2]!.items.length - 1);
     });
 
     it("deletes linked items together, and ripple closes each track's gap", () => {

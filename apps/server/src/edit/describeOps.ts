@@ -25,9 +25,22 @@ const PHRASES: Record<EditOp["_tag"], string> = {
   setCanvas: "Changed the video's shape",
 };
 
+/** Item ops name how many items they changed, so a group move is one counted line (S7V-034). */
+const COUNTED: Partial<Record<EditOp["_tag"], (count: number) => string>> = {
+  moveItem: (count) => `Moved ${count} items`,
+  trimItem: (count) => `Trimmed ${count} items`,
+  splitItem: (count) => `Split ${count} items`,
+  deleteItem: (count) => `Deleted ${count} items from the timeline`,
+};
+
+const itemsOf = (op: EditOp) => (op._tag === "deleteItem" ? op.itemIds.length : 1);
+
 /** One line naming each kind of change once, in the order the ops make them. */
 export const describeOps = (ops: ReadonlyArray<EditOp>): string => {
-  const phrases = [...new Set(ops.map((op) => PHRASES[op._tag]))];
-  if (phrases.length === 0) return "Changed the edit";
-  return phrases.join("; ");
+  const counts = new Map<EditOp["_tag"], number>();
+  for (const op of ops) counts.set(op._tag, (counts.get(op._tag) ?? 0) + itemsOf(op));
+  if (counts.size === 0) return "Changed the edit";
+  return [...counts]
+    .map(([tag, count]) => (count > 1 ? (COUNTED[tag]?.(count) ?? PHRASES[tag]) : PHRASES[tag]))
+    .join("; ");
 };

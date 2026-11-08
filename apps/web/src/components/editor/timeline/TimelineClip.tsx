@@ -46,7 +46,7 @@ function TimelineClipBlock(props: {
       data-clip-media={item.mediaId ?? undefined}
       data-media-in={item.in}
       data-selected={props.selected === true}
-      className="absolute top-0 cursor-grab touch-none overflow-hidden rounded-sm border px-1 text-3xs leading-4 whitespace-nowrap text-foreground [contain:strict] data-[blocked=true]:outline-2 data-[blocked=true]:-outline-offset-2 data-[blocked=true]:outline-destructive data-[editing=true]:opacity-40 data-[selected=true]:ring-2 data-[selected=true]:ring-primary data-[selected=true]:ring-inset"
+      className="@container absolute top-0 cursor-grab data-[edge-hover=true]:cursor-ew-resize touch-none overflow-hidden rounded-sm border px-1 text-3xs leading-4 whitespace-nowrap text-foreground [contain:strict] data-[blocked=true]:outline-2 data-[blocked=true]:-outline-offset-2 data-[blocked=true]:outline-destructive data-[editing=true]:opacity-40 data-[selected=true]:ring-2 data-[selected=true]:ring-primary data-[selected=true]:ring-inset"
       style={{
         left: spanX(item.start, props.durationFrames),
         width: spanWidth(item.duration, props.durationFrames),
@@ -70,19 +70,20 @@ function TimelineClipBlock(props: {
           heightPx={props.heightPx}
         />
       ) : null}
-      {/* Trim handles on the selected clip only, so 1,000 clips add no elements (S7V-034). A
-          press near any clip's edge trims too (`timelineEditor.ts`). */}
+      {/* Trim handles on the selected clip only, so 1,000 clips add no elements (S7V-034), and
+          hidden under 18 px, where a press moves the clip. Any clip's edge trims and shows a
+          resize cursor (`timelineEditor.ts`). */}
       {props.selected === true ? (
         <>
           <span
             aria-hidden
             data-trim-handle="start"
-            className="absolute inset-y-0 left-0 z-10 w-1.5 cursor-ew-resize bg-foreground/40"
+            className="absolute inset-y-0 left-0 z-10 w-1.5 cursor-ew-resize bg-foreground/40 @max-[18px]:hidden"
           />
           <span
             aria-hidden
             data-trim-handle="end"
-            className="absolute inset-y-0 right-0 z-10 w-1.5 cursor-ew-resize bg-foreground/40"
+            className="absolute inset-y-0 right-0 z-10 w-1.5 cursor-ew-resize bg-foreground/40 @max-[18px]:hidden"
           />
         </>
       ) : null}

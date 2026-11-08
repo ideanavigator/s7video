@@ -334,4 +334,75 @@ describe("Timeline editing (S7V-034)", () => {
       8,
     );
   });
+
+  it("drops only a pending nudge on undo, from the keys or the toolbar; redo still redoes", async () => {
+    const view = await mount();
+    await using _screen = view.screen;
+    using _timers = fakeTimers();
+    const select = async (id: string, frame: number) => {
+      view.pointer("pointerdown", view.block(id), view.xOf(frame), view.yOf(id));
+      view.pointer("pointerup", window.document, view.xOf(frame), view.yOf(id));
+      await act(async () => {});
+    };
+    await select("v3", 350);
+    await view.key("ArrowRight");
+    await view.key("ArrowRight");
+    expect(view.container.querySelector('[data-timeline-ghost="v3"]')).not.toBeNull();
+    await view.key("z", { metaKey: true });
+    expect(view.harness.undo).not.toHaveBeenCalled();
+    expect(view.container.querySelector("[data-timeline-ghost]")).toBeNull();
+    await vi.advanceTimersByTimeAsync(NUDGE_SETTLE_MS);
+    expect(view.harness.apply).not.toHaveBeenCalled();
+
+    await view.key("ArrowLeft");
+    await view.screen.getByRole("button", { name: "Undo" }).click();
+    expect(view.harness.undo).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(NUDGE_SETTLE_MS);
+    expect(view.harness.apply).not.toHaveBeenCalled();
+
+    // With nothing pending, undo goes to the server.
+    await view.key("z", { metaKey: true });
+    expect(view.harness.undo).toHaveBeenCalledTimes(1);
+
+    await view.key("ArrowRight");
+    await view.key("z", { metaKey: true, shiftKey: true });
+    expect(view.harness.redo).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(NUDGE_SETTLE_MS);
+    expect(view.harness.apply).not.toHaveBeenCalled();
+  });
+
+  it("shows a resize cursor on a clip's edge zones only", async () => {
+    const view = await mount();
+    await using _screen = view.screen;
+    const y = view.yOf("v3");
+    view.pointer("pointermove", view.block("v3"), view.xOf(399.6), y);
+    expect(getComputedStyle(view.block("v3")).cursor).toBe("ew-resize");
+    view.pointer("pointermove", view.block("v3"), view.xOf(350), y);
+    expect(getComputedStyle(view.block("v3")).cursor).toBe("grab");
+  });
+
+  it("moves a clip too narrow for edge zones, even when pressed at its edge", async () => {
+    const narrow = structuredClone(edit) as unknown as {
+      tracks: Array<{ items: Array<{ id: string; start: number; duration: number }> }>;
+    };
+    // At this zoom 2 frames are well under 18 px.
+    narrow.tracks[0]!.items[2]!.duration = 2;
+    const view = await mount();
+    await using _screen = view.screen;
+    await view.screen.rerender(view.ui(narrow as unknown as EditDocument, 7));
+    expect(view.block("v3").getBoundingClientRect().width).toBeLessThan(18);
+    // Select it, so its drawn handles would exist, then drag from its right edge.
+    view.pointer("pointerdown", view.block("v3"), view.xOf(301.9), view.yOf("v3"));
+    view.pointer("pointerup", window.document, view.xOf(301.9), view.yOf("v3"));
+    await act(async () => {});
+    expect(view.block("v3").querySelector("[data-trim-handle]")).not.toBeNull();
+    for (const handle of view.block("v3").querySelectorAll("[data-trim-handle]")) {
+      expect(getComputedStyle(handle).display).toBe("none");
+    }
+    await view.drag("v3", 301.9, 351.9, 10, { metaKey: true });
+    expect(view.harness.apply).toHaveBeenLastCalledWith(
+      [{ _tag: "moveItem", itemId: "v3", start: 350 }],
+      7,
+    );
+  });
 });
