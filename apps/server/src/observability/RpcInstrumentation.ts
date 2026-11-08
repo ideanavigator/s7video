@@ -171,6 +171,8 @@ const RPC_AGGREGATES = {
   [WS_METHODS.editVersionTag]: "edit",
   [WS_METHODS.editVersionRestore]: "edit",
   [WS_METHODS.editVersionDelete]: "edit",
+  [WS_METHODS.editHistoryClean]: "edit",
+  [WS_METHODS.editHistoryDismiss]: "edit",
   [WS_METHODS.mediaImportPlan]: "media",
   [WS_METHODS.mediaImport]: "media",
   [WS_METHODS.mediaList]: "media",

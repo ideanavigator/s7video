@@ -125,6 +125,29 @@ const editSummary = ({ revision, document }: EditSnapshot) => {
 };
 
 /**
+ * S7V-050: one line on the result of a change that leaves the history past the cleanup size. No
+ * tool cleans it (PO 2026-11-07): the user chooses in the Editor panel's banner.
+ */
+export const cleanupHint = ({ versions, bytes }: { versions: number; bytes: number }) =>
+  `Cleanup due: ${versions} saved versions (${(bytes / (1024 * 1024)).toFixed(1)} MB). Once, end your reply asking if the user wants to keep only the last 20 or remove all old versions; they choose in the Editor panel.`;
+
+const cleanupOf = (snapshot: EditSnapshot) =>
+  snapshot.cleanup === undefined ? {} : { cleanup: cleanupHint(snapshot.cleanup) };
+
+/** The hint for a change made through another service (an import, a silence cut). */
+const cleanupAfterChange = Effect.fn("VideoHandlers.cleanupAfterChange")(function* (
+  project: VideoProject,
+  changed = true,
+) {
+  if (!changed) return {};
+  const edits = yield* EditDocumentService.EditDocumentService;
+  return yield* edits.read(project.projectId).pipe(
+    Effect.map(cleanupOf),
+    Effect.orElseSucceed(() => ({})),
+  );
+});
+
+/**
  * Plan mode is read-only: a tool that changes the edit or writes into the project (import,
  * transcribe, silence cut, export, undo, redo) refuses a plan-mode thread. `actsAsCaller` only
  * refuses read-only clients and dead callers.
@@ -221,6 +244,7 @@ const handlers = {
       return {
         media: imported.mediaId,
         ...(imported.jobId === undefined ? {} : { jobId: imported.jobId }),
+        ...(yield* cleanupAfterChange(project)),
       };
     }),
   ),
@@ -460,6 +484,7 @@ const handlers = {
           Effect.map((after) => ({
             revision: after.revision,
             message: `The video is now ${shape}. Say undo to put it back.`,
+            ...cleanupOf(after),
           })),
           Effect.mapError(
             (error) =>
@@ -513,6 +538,11 @@ const handlers = {
                   message:
                     error._tag === "EditUnavailableError" ? error.explanation : error.message,
                 }),
+          ),
+          Effect.flatMap((result) =>
+            cleanupAfterChange(project, result.changed).pipe(
+              Effect.map((hint) => ({ ...result, ...hint })),
+            ),
           ),
         );
     }),
@@ -593,7 +623,7 @@ const handlers = {
           summary: `Added ${count(items.length, "clip part")} to the timeline`,
         })
         .pipe(
-          Effect.map((after) => ({ revision: after.revision, itemIds })),
+          Effect.map((after) => ({ revision: after.revision, itemIds, ...cleanupOf(after) })),
           Effect.mapError(
             (error) =>
               new OrchestratorMcpFailure({

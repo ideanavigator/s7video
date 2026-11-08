@@ -51,6 +51,8 @@ const exportStore = vi.hoisted(() => {
 const commands = vi.hoisted(() => ({
   start: vi.fn(),
   cancel: vi.fn(async () => ({ _tag: "Success", value: { applied: true } })),
+  historyClean: vi.fn(),
+  historyDismiss: vi.fn(),
 }));
 const toasts = vi.hoisted(() => ({ add: vi.fn() }));
 
@@ -81,7 +83,11 @@ vi.mock(import("../../state/use-atom-command"), () => ({
       ? commands.start
       : command?.label.endsWith("engine:cancel")
         ? commands.cancel
-        : vi.fn()) as never,
+        : command?.label.endsWith("edit:history-clean")
+          ? commands.historyClean
+          : command?.label.endsWith("edit:history-dismiss")
+            ? commands.historyDismiss
+            : vi.fn()) as never,
 }));
 vi.mock(import("../../assets/assetUrls"), () => ({
   useAssetUrlState: ((
@@ -277,6 +283,128 @@ describe("EditorPanel", () => {
     state.edit = { _tag: "ready", snapshot: { ...ready.snapshot, revision: 2, notice } };
     await screen.rerender(panel());
     await expect.element(screen.getByText(notice)).toBeVisible();
+  });
+
+  describe("history cleanup banner (S7V-050)", () => {
+    const environmentId = EnvironmentId.make("env-1");
+    const withCleanup = (cleanup?: { versions: number; bytes: number }) => {
+      setState([asset("clip-0")], true);
+      const ready = state.edit as Extract<ProjectEditState, { _tag: "ready" }>;
+      const { cleanup: _old, ...snapshot } = ready.snapshot;
+      state.edit = {
+        _tag: "ready",
+        snapshot: cleanup === undefined ? snapshot : { ...snapshot, cleanup },
+      };
+    };
+    const banner = (screen: Awaited<ReturnType<typeof renderPanel>>) =>
+      screen.getByRole("region", { name: "Old versions" });
+
+    it("shows nothing below the limit", async () => {
+      withCleanup();
+      await using screen = await renderPanel();
+      await expect.element(screen.getByRole("button", { name: "Export" })).toBeVisible();
+      expect(banner(screen).query()).toBeNull();
+    });
+
+    it("asks with the count and size; Keep recent and Not now call their RPCs", async () => {
+      withCleanup({ versions: 62, bytes: 18.04 * 1024 * 1024 });
+      toasts.add.mockReset();
+      commands.historyClean.mockReset();
+      commands.historyClean.mockResolvedValueOnce({
+        _tag: "Success",
+        value: { removedVersions: 40, removedSteps: 40, freedBytes: 12 * 1024 * 1024 },
+      });
+      commands.historyDismiss.mockReset();
+      commands.historyDismiss.mockResolvedValueOnce({ _tag: "Success", value: {} });
+      await using screen = await renderPanel();
+      await expect
+        .element(
+          banner(screen).getByText(
+            "This project has 62 saved versions (18.0 MB). Keep only the last 20 (plus tagged and exported ones), or remove all old versions?",
+          ),
+        )
+        .toBeVisible();
+      await userEvent.click(screen.getByRole("button", { name: "Keep recent" }));
+      expect(commands.historyClean).toHaveBeenCalledWith({
+        environmentId,
+        input: { projectId, mode: "keep-recent" },
+      });
+      await vi.waitFor(() =>
+        expect(toasts.add).toHaveBeenCalledWith({
+          type: "success",
+          title: "Removed 40 old versions",
+          description: "Freed 12.0 MB. Your clips are not touched.",
+        }),
+      );
+      await userEvent.click(screen.getByRole("button", { name: "Not now" }));
+      expect(commands.historyDismiss).toHaveBeenCalledWith({ environmentId, input: { projectId } });
+      // The server's next snapshot has no cleanup: the banner goes.
+      withCleanup();
+      await screen.rerender(panel());
+      expect(banner(screen).query()).toBeNull();
+    });
+
+    it("Remove all says what it frees first and removes only after confirming", async () => {
+      withCleanup({ versions: 62, bytes: 18 * 1024 * 1024 });
+      toasts.add.mockReset();
+      commands.historyClean.mockReset();
+      commands.historyClean
+        .mockResolvedValueOnce({
+          _tag: "Success",
+          value: { removedVersions: 61, removedSteps: 61, freedBytes: 17.5 * 1024 * 1024 },
+        })
+        .mockResolvedValueOnce({
+          _tag: "Success",
+          value: { removedVersions: 61, removedSteps: 61, freedBytes: 17.5 * 1024 * 1024 },
+        });
+      await using screen = await renderPanel();
+      await userEvent.click(screen.getByRole("button", { name: "Remove all old versions" }));
+      expect(commands.historyClean).toHaveBeenCalledWith({
+        environmentId,
+        input: { projectId, mode: "remove-all", dryRun: true },
+      });
+      const dialog = screen.getByRole("alertdialog");
+      await expect
+        .element(
+          dialog.getByText(
+            "This frees 17.5 MB. The current edit and your tagged and exported versions are kept. Undo will start again from now. Your clips are not touched.",
+          ),
+        )
+        .toBeVisible();
+      // Cancel removes nothing.
+      await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+      await expect.element(dialog).not.toBeInTheDocument();
+      expect(commands.historyClean).toHaveBeenCalledTimes(1);
+
+      commands.historyClean.mockResolvedValueOnce({
+        _tag: "Success",
+        value: { removedVersions: 61, removedSteps: 61, freedBytes: 17.5 * 1024 * 1024 },
+      });
+      await userEvent.click(screen.getByRole("button", { name: "Remove all old versions" }));
+      await userEvent.click(screen.getByRole("button", { name: "Remove all", exact: true }));
+      expect(commands.historyClean).toHaveBeenLastCalledWith({
+        environmentId,
+        input: { projectId, mode: "remove-all" },
+      });
+      await vi.waitFor(() =>
+        expect(toasts.add).toHaveBeenCalledWith({
+          type: "success",
+          title: "Removed all old versions",
+          description: "Freed 17.5 MB. Undo starts again from now.",
+        }),
+      );
+    });
+
+    it("the buttons are reachable from the keyboard", async () => {
+      withCleanup({ versions: 51, bytes: 1024 * 1024 });
+      commands.historyDismiss.mockReset();
+      commands.historyDismiss.mockResolvedValueOnce({ _tag: "Success", value: {} });
+      await using screen = await renderPanel();
+      const notNow = screen.getByRole("button", { name: "Not now" });
+      (await notNow.findElement()).focus();
+      await userEvent.keyboard("{Enter}");
+      expect(commands.historyDismiss).toHaveBeenCalledTimes(1);
+    });
   });
 
   it("plays the edit with Export in the header", async () => {

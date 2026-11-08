@@ -208,6 +208,8 @@ export const EditSnapshot = Schema.Struct({
   notice: Schema.optionalKey(Schema.String),
   /** The current (newest) version's number (S7V-069); absent before the first version. */
   version: Schema.optionalKey(Schema.Int),
+  /** Present when the history is big enough to ask about cleaning it up (S7V-050). */
+  cleanup: Schema.optionalKey(Schema.Struct({ versions: Schema.Int, bytes: Schema.Int })),
 });
 export type EditSnapshot = typeof EditSnapshot.Type;
 
@@ -270,6 +272,30 @@ export const EditVersionRestoreInput = Schema.Struct({
   baseRevision: Schema.Int,
 });
 export type EditVersionRestoreInput = typeof EditVersionRestoreInput.Type;
+
+/**
+ * S7V-050: keep the last 20 versions, or only the current one; tagged and exported versions stay
+ * either way. "remove-all" also starts undo again from the current edit.
+ */
+export const EditHistoryCleanMode = Schema.Literals(["keep-recent", "remove-all"]);
+export type EditHistoryCleanMode = typeof EditHistoryCleanMode.Type;
+
+export const EditHistoryCleanInput = Schema.Struct({
+  projectId: ProjectId,
+  mode: EditHistoryCleanMode,
+  /** Removes nothing; reports what the clean would free. */
+  dryRun: Schema.optionalKey(Schema.Boolean),
+});
+export type EditHistoryCleanInput = typeof EditHistoryCleanInput.Type;
+
+export const EditHistoryCleanResult = Schema.Struct({
+  /** Numbered versions (S7V-069) removed. */
+  removedVersions: Schema.Int,
+  /** Undo steps removed. */
+  removedSteps: Schema.Int,
+  freedBytes: Schema.Int,
+});
+export type EditHistoryCleanResult = typeof EditHistoryCleanResult.Type;
 
 export const EditApplyInput = Schema.Struct({
   projectId: ProjectId,

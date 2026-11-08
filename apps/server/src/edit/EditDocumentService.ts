@@ -126,6 +126,24 @@ export class EditDocumentService extends Context.Service<
       projectId: ProjectId,
       n: number,
     ) => Effect.Effect<ReadonlyArray<EditVersion>, EditUnavailableError>;
+    /**
+     * S7V-050: cleans old versions under the project lock and publishes the new snapshot, so
+     * `canUndo`, `canRedo` and `cleanup` update. `dryRun` removes nothing and reports the space.
+     */
+    readonly cleanHistory: (
+      projectId: ProjectId,
+      mode: EditHistoryService.HistoryCleanMode,
+      options?: { readonly dryRun?: boolean },
+    ) => Effect.Effect<EditHistoryService.HistoryCleanResult, EditUnavailableError>;
+    /** "Not now" for the cleanup question; publishes the snapshot without `cleanup`. */
+    readonly dismissCleanup: (
+      projectId: ProjectId,
+    ) => Effect.Effect<EditSnapshot, EditUnavailableError>;
+    /**
+     * Marks version `n` (the snapshot's `version` when the export started) as exported once the
+     * export has finished, so cleanup keeps it (S7V-050). Never fails; a removed version is skipped.
+     */
+    readonly markExported: (projectId: ProjectId, n: number) => Effect.Effect<void>;
   }
 >()("t3/edit/EditDocumentService") {}
 
@@ -266,6 +284,7 @@ const make = Effect.gen(function* () {
       canUndo: status.canUndo,
       canRedo: status.canRedo,
       ...(status.version === undefined ? {} : { version: status.version }),
+      ...(status.cleanup === undefined ? {} : { cleanup: status.cleanup }),
     };
   });
 
@@ -773,8 +792,56 @@ const make = Effect.gen(function* () {
       }),
     );
 
+  const cleanHistory: EditDocumentService["Service"]["cleanHistory"] = Effect.fn(
+    "EditDocumentService.cleanHistory",
+  )(function* (projectId, mode, options) {
+    yield* Effect.annotateCurrentSpan({ mode, dryRun: options?.dryRun === true });
+    const root = yield* resolveRoot(projectId);
+    return yield* lockFor(root).withPermit(
+      Effect.gen(function* () {
+        // An outside change is recorded (or refused) first, so the step kept is the edit on disk.
+        const current = yield* loadReconciled(projectId, root, "write");
+        const result = yield* history
+          .clean(root, mode, options)
+          .pipe(Effect.mapError(historyError(projectId)));
+        if (options?.dryRun !== true) {
+          yield* publish(root, yield* snapshotOf(root, current.revision, current.document));
+        }
+        return result;
+      }),
+    );
+  });
+
+  const dismissCleanup: EditDocumentService["Service"]["dismissCleanup"] = Effect.fn(
+    "EditDocumentService.dismissCleanup",
+  )(function* (projectId) {
+    const root = yield* resolveRoot(projectId);
+    return yield* lockFor(root).withPermit(
+      Effect.gen(function* () {
+        const current = yield* loadReconciled(projectId, root, "write");
+        yield* history.dismissCleanup(root).pipe(Effect.mapError(historyError(projectId)));
+        const snapshot = yield* snapshotOf(root, current.revision, current.document);
+        yield* publish(root, snapshot);
+        return snapshot;
+      }),
+    );
+  });
+
+  const markExported: EditDocumentService["Service"]["markExported"] = Effect.fn(
+    "EditDocumentService.markExported",
+  )(
+    function* (projectId, n) {
+      const root = yield* resolveRoot(projectId);
+      yield* lockFor(root).withPermit(history.markExported(root, n));
+    },
+    (effect) => Effect.ignore(effect),
+  );
+
   return EditDocumentService.of({
     read,
+    cleanHistory,
+    dismissCleanup,
+    markExported,
     apply,
     subscribe,
     undo: Effect.fn("EditDocumentService.undo")(function* (projectId, options) {

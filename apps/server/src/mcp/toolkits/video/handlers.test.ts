@@ -52,7 +52,13 @@ import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpSessionRegistry from "../../McpSessionRegistry.ts";
 import * as McpToolAccessTestkit from "../../McpToolAccess.testkit.ts";
 import { NOT_IN_PROJECT, NOT_SHARED } from "../../VideoProjectScope.ts";
-import { editDurationFrames, KEEP_FORMAT, KEEP_OVERLAP, NO_ROOM_TO_COPY } from "./handlers.ts";
+import {
+  cleanupHint,
+  editDurationFrames,
+  KEEP_FORMAT,
+  KEEP_OVERLAP,
+  NO_ROOM_TO_COPY,
+} from "./handlers.ts";
 import { VideoToolkit } from "./tools.ts";
 
 const environmentId = EnvironmentId.make("environment-video-test");
@@ -171,6 +177,8 @@ interface Fixture {
   onSubscribe: Effect.Effect<void>;
   /** Jobs that ended recently, as `EngineService.recentJobs` answers. */
   recent: Array<EngineJob>;
+  /** The history size the edit snapshot reports as due a cleanup question (S7V-050). */
+  cleanup: { versions: number; bytes: number } | undefined;
 }
 
 const makeFixture = (): Fixture => {
@@ -241,6 +249,7 @@ const makeFixture = (): Fixture => {
     diskShort: false,
     onSubscribe: Effect.void,
     recent: [],
+    cleanup: undefined,
   };
 };
 
@@ -376,6 +385,7 @@ const layerFor = (fixture: Fixture, cancelSignal: Deferred.Deferred<string>) => 
           document: fixture.documents.get(projectId) ?? documentWith([]),
           canUndo: true,
           canRedo: false,
+          ...(fixture.cleanup === undefined ? {} : { cleanup: fixture.cleanup }),
         } satisfies EditSnapshot),
     }),
     Layer.mock(EngineService.EngineService)({
@@ -571,6 +581,28 @@ describe("video toolkit", () => {
           },
           { sourcePath: inProject, mode: "copy", origin: "agent", label: undefined },
         ]);
+      }),
+    ),
+  );
+
+  it.effect("a change past the history limit carries the cleanup hint (S7V-050)", () =>
+    withTools(({ fixture, call }) =>
+      Effect.gen(function* () {
+        fixture.cleanup = { versions: 62, bytes: 18 * 1024 * 1024 };
+        const hint = cleanupHint(fixture.cleanup);
+        expect(hint).toBe(
+          "Cleanup due: 62 saved versions (18.0 MB). Once, end your reply asking if the user wants to keep only the last 20 or remove all old versions; they choose in the Editor panel.",
+        );
+        const imported = yield* call(threadA, "video_import", { path: fixture.sharedInA });
+        expect(imported.structuredContent).toEqual({ media: "shared-sound", cleanup: hint });
+        const cut = yield* call(threadA, "video_remove_silences", {});
+        expect(cut.structuredContent).toMatchObject({ changed: true, cleanup: hint });
+        // Reads never carry it.
+        const read = yield* call(threadA, "video_edit_read", {});
+        expect(read.structuredContent).not.toHaveProperty("cleanup");
+        fixture.cleanup = undefined;
+        const below = yield* call(threadA, "video_remove_silences", {});
+        expect(below.structuredContent).not.toHaveProperty("cleanup");
       }),
     ),
   );

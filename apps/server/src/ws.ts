@@ -2771,6 +2771,11 @@ export const layerWsRpc = (
           editDocuments
             .deleteVersion(input.projectId, input.n)
             .pipe(Effect.map((versions) => ({ versions }))),
+        [WS_METHODS.editHistoryClean]: (input) =>
+          editDocuments.cleanHistory(input.projectId, input.mode, {
+            dryRun: input.dryRun === true,
+          }),
+        [WS_METHODS.editHistoryDismiss]: (input) => editDocuments.dismissCleanup(input.projectId),
         [WS_METHODS.mediaImportPlan]: (input) => mediaLibrary.plan(input),
         [WS_METHODS.mediaImport]: (input) => mediaLibrary.import(input),
         [WS_METHODS.mediaList]: (input) => mediaLibrary.list(input.projectId),

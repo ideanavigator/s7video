@@ -70,6 +70,8 @@ export const EditVersionRecord = Schema.Struct({
   /** 1-40 characters, unique in the project; a tagged version is never cleaned up (S7V-050). */
   tag: Schema.optionalKey(Schema.String),
   restoredFrom: Schema.optionalKey(Schema.Int),
+  /** An export of this version finished; cleanup keeps it (S7V-050). */
+  exported: Schema.optionalKey(Schema.Boolean),
 });
 export type EditVersionRecord = typeof EditVersionRecord.Type;
 
@@ -99,6 +101,15 @@ export const HistoryLog = Schema.Struct({
   nextVersion: Schema.optionalKey(Schema.Int),
   /** Numbered versions, oldest first; the last one is the current edit (S7V-069). */
   versions: Schema.optionalKey(Schema.Array(EditVersionRecord)),
+  /**
+   * The cleanup question (S7V-050): `nextVersion` and the objects' bytes when the user last said
+   * "Not now", so it is asked again only after enough new versions or growth.
+   */
+  cleanup: Schema.optionalKey(
+    Schema.Struct({
+      dismissedAt: Schema.Struct({ nextVersion: Schema.Int, bytes: Schema.Int }),
+    }),
+  ),
 });
 export type HistoryLog = typeof HistoryLog.Type;
 
@@ -153,11 +164,13 @@ export class EditSnapshotStore extends Context.Service<
     readonly writeLog: (cwd: string, log: HistoryLog) => Effect.Effect<void, EditHistoryError>;
     /**
      * Deletes objects that `log` does not name, temp files in objects/ and stale `.log.json.*.tmp`
-     * files; never touches anything else.
+     * files; never touches anything else. With `dryRun` it deletes nothing and reports what it
+     * would free (S7V-050).
      */
     readonly collect: (
       cwd: string,
       log: HistoryLog,
+      options?: { readonly dryRun?: boolean },
     ) => Effect.Effect<
       { readonly removedObjects: number; readonly freedBytes: number },
       EditHistoryError
@@ -347,18 +360,19 @@ const make = Effect.gen(function* () {
   });
 
   const collect: EditSnapshotStore["Service"]["collect"] = Effect.fn("EditSnapshotStore.collect")(
-    function* (cwd, log) {
+    function* (cwd, log, options) {
       const live = liveObjects(log);
+      const dryRun = options?.dryRun === true;
       let removedObjects = 0;
       let freedBytes = 0;
       for (const object of yield* listObjects(cwd)) {
         if (object.id !== null && live.has(object.id)) continue;
-        yield* fileSystem.remove(path.join(objectsDir(cwd), object.name));
+        if (!dryRun) yield* fileSystem.remove(path.join(objectsDir(cwd), object.name));
         // Leftover temp files free space but are not objects.
         if (object.id !== null) removedObjects += 1;
         freedBytes += object.bytes;
       }
-      if (freedBytes > 0) yield* syncFolder(objectsDir(cwd));
+      if (freedBytes > 0 && !dryRun) yield* syncFolder(objectsDir(cwd));
       // A crash before the log rename leaves its temp file next to log.json.
       const names = yield* fileSystem
         .readDirectory(historyDir(cwd))
@@ -368,7 +382,7 @@ const make = Effect.gen(function* () {
         const file = path.join(historyDir(cwd), name);
         const info = yield* fileSystem.stat(file).pipe(Effect.option);
         if (Option.isNone(info) || info.value.type !== "File") continue;
-        yield* fileSystem.remove(file);
+        if (!dryRun) yield* fileSystem.remove(file);
         freedBytes += Number(info.value.size);
       }
       return { removedObjects, freedBytes };

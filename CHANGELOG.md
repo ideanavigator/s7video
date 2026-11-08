@@ -71,6 +71,8 @@ from; the per-ticket entries and how this file is compiled are in
 - Each change you or the assistant make becomes a numbered version in the Editor's Versions tab.
   Name any version, watch it in the player, or make it current again without losing anything after
   it. (S7V-069)
+- When a project's history grows large, s7video asks whether to keep only recent versions or remove
+  all old ones, says how much space that frees, and never touches your footage. (S7V-050)
 
 ### Changed
 
