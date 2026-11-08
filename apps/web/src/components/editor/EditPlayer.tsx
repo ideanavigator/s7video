@@ -26,6 +26,8 @@ export interface EditPlayerProps {
   /** The first frame decoded, so the source plays. */
   readonly onLoaded?: (() => void) | undefined;
   readonly onError: () => void;
+  /** Drawn over the video inside the canvas: the edit's captions (S7V-075). */
+  readonly overlay?: ReactNode;
 }
 
 /**
@@ -45,7 +47,7 @@ export function CanvasFrame(props: {
     <div className="absolute inset-0 flex items-center justify-center [container-type:size]">
       <div
         data-canvas={`${canvas.width}x${canvas.height}`}
-        className="overflow-hidden"
+        className="relative overflow-hidden"
         style={{
           aspectRatio: `${canvas.width} / ${canvas.height}`,
           width: `min(100cqw, ${ratio} * 100cqh)`,
@@ -180,6 +182,7 @@ export function EditPlayer(props: EditPlayerProps) {
             onError={props.onError}
             onClick={togglePlay}
           />
+          {props.overlay}
         </CanvasFrame>
       </div>
       <div className="flex items-center gap-1 px-1">

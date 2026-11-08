@@ -53,6 +53,7 @@ import { Spinner } from "../ui/spinner";
 import { toastManager } from "../ui/toast";
 import { BROWSER_ADD_MEDIA_HINT } from "./addMediaHint";
 import { AssetsTab, useAssetsActions } from "./AssetsTab";
+import { CaptionOverlay } from "./CaptionOverlay";
 import { EditPlayer } from "./EditPlayer";
 import { HistoryCleanupBanner } from "./HistoryCleanupBanner";
 import { ImportDialog } from "./ImportDialog";
@@ -167,6 +168,7 @@ function PlayingSource(props: {
       startFrame={rememberedPlayerFrame(projectKey)}
       onPositionChange={(frame) => rememberPlayerFrame(projectKey, frame)}
       onPlayingChange={setPlaying}
+      overlay={view.mode === "edit" ? <CaptionOverlay projectRef={projectRef} /> : null}
       // A source that loaded earns its quiet retry back, for the next URL expiry.
       onLoaded={() => setErrors(0)}
       onError={() => {
@@ -297,6 +299,7 @@ function PlayingTimeline(props: {
         onPositionChange={(frame) => rememberPlayerFrame(projectKey, frame)}
         onPlayingChange={setPlaying}
         onSourceError={onSourceError}
+        overlay={<CaptionOverlay projectRef={projectRef} />}
         renderSourceProblem={(mediaId) => {
           const source = view.sources.find((entry) => entry.mediaId === mediaId);
           const status = sources.get(mediaId)?.status;

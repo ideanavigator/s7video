@@ -120,7 +120,8 @@ export function timelineModelOf(document: EditDocument): TimelineModel {
           (tracks.length > 1 ? `${TRACK_KIND_LABEL[kind]} ${index + 1}` : TRACK_KIND_LABEL[kind]),
         items,
         muted: track.muted ?? false,
-        locked: track.locked ?? false,
+        // S7V-075: captions are rebuilt from the transcript after every cut, so not edited by hand.
+        locked: (track.locked ?? false) || track.kind === "caption",
         real: true,
       });
     });

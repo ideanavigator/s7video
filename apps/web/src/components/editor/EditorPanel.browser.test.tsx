@@ -78,6 +78,8 @@ vi.mock(import("../../editor/editStore"), async (importOriginal) => ({
   useTranscriptionJobs: () => ({ transcribe: null, download: null }),
   // The Versions tab (S7V-069) has its own tests; here it stays loading.
   useProjectVersions: () => ({ _tag: "loading" }),
+  // The caption overlay (S7V-075) has its own tests.
+  useCaptionStills: () => ({ _tag: "none" }),
 }));
 vi.mock(import("../../state/media"), () => ({
   useMediaLibrary: () => state.library,
