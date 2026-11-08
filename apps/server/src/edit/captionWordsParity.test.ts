@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: MIT
 // @effect-diagnostics nodeBuiltinImport:off -- Reads the transcript fixture and runs the engine's Python.
 /**
- * S7V-075 confidence check 2 and AC-1: `captionItemsFor` maps words through the edit exactly as
- * the engine's `map_words` does, on 20 seeded edits of talking-head-01's transcript and on the
- * 4,079-frame `text-edit-cut` golden edit. The Python side runs through uv, as the goldens do.
+ * S7V-075 check 2, AC-1: `mapCaptionWords` equals the engine's `map_words` on 20 seeded edits and
+ * the `text-edit-cut` edit: always against the committed Python reference, and against Python
+ * itself where uv is found (PATH or `UV`). `S7VIDEO_GOLDEN_UPDATE=1` rewrites the reference.
  */
 import { type EditDocument, type EditRational, Transcript } from "@t3tools/contracts";
 import { mapCaptionWords } from "@t3tools/shared/captionWords";
@@ -20,7 +20,14 @@ const TEXT_EDIT_CUT = NodePath.join(
   REPO,
   "packages/engine/tests/golden/references/text-edit-cut.json",
 );
-const UV = ["/opt/homebrew/bin/uv", "/usr/local/bin/uv"].find((path) => NodeFS.existsSync(path));
+const REFERENCE = NodePath.join(import.meta.dirname, "captionWordsParity.reference.json");
+const UPDATE = process.env.S7VIDEO_GOLDEN_UPDATE === "1";
+const UV = [
+  process.env.UV,
+  ...(process.env.PATH ?? "").split(NodePath.delimiter).map((dir) => NodePath.join(dir, "uv")),
+  "/opt/homebrew/bin/uv",
+  "/usr/local/bin/uv",
+].find((path) => path !== undefined && path !== "" && NodeFS.existsSync(path));
 
 const transcript = Schema.decodeSync(Schema.fromJsonString(Transcript))(
   NodeFS.readFileSync(TRANSCRIPT, "utf8"),
@@ -139,36 +146,50 @@ const pythonGroups = (cases: ReadonlyArray<unknown>) =>
     ).toString(),
   ) as unknown;
 
-describe.skipIf(UV === undefined)("captionItemsFor parity with the engine", () => {
-  it("should map every word like map_words on 20 seeded edits and the text-edit-cut edit", () => {
-    const words = transcript.words.map(({ text, startFrame, endFrame }) => ({
-      text,
-      startFrame,
-      endFrame,
-    }));
-    const entry = { fps: transcript.fps, words };
-    const transcripts = new Map([
-      ["cam", entry],
-      ["b", entry],
-    ]);
-    const edits = [...seededEdits(), textEditCut()];
+const words = transcript.words.map(({ text, startFrame, endFrame }) => ({
+  text,
+  startFrame,
+  endFrame,
+}));
+const entry = { fps: transcript.fps, words };
+const edits = () => [...seededEdits(), textEditCut()];
+
+const typescriptGroups = () => {
+  const transcripts = new Map([
+    ["cam", entry],
+    ["b", entry],
+  ]);
+  return edits().map((edit) =>
+    mapCaptionWords(edit, transcripts).map((group) =>
+      group.map((word) => [word.text, word.start, word.end]),
+    ),
+  );
+};
+
+const enginesGroups = () =>
+  pythonGroups(
+    edits().map((edit) => ({
+      edit,
+      transcripts: { cam: { media: "cam", ...entry }, b: { media: "b", ...entry } },
+    })),
+  );
+
+describe("captionItemsFor parity with the engine", () => {
+  it("should map every word like map_words, as the committed Python reference records it", () => {
     expect(textEditCut().tracks[0]!.items.at(-1)).toMatchObject({ start: 443, duration: 3636 });
-    const expected = pythonGroups(
-      edits.map((edit) => ({
-        edit,
-        transcripts: {
-          cam: { media: "cam", ...entry },
-          b: { media: "b", ...entry },
-        },
-      })),
-    );
-    const actual = edits.map((edit) =>
-      mapCaptionWords(edit, transcripts).map((group) =>
-        group.map((word) => [word.text, word.start, word.end]),
-      ),
-    );
-    const total = actual.flat(2).length;
-    expect(total).toBeGreaterThan(2000);
-    expect(actual).toEqual(expected);
+    const actual = typescriptGroups();
+    expect(actual.flat(2).length).toBeGreaterThan(2000);
+    expect(actual).toEqual(JSON.parse(NodeFS.readFileSync(REFERENCE, "utf8")));
   });
+
+  // Shown as skipped, never silently passed, where uv is missing; the test above still runs.
+  it.skipIf(UV === undefined)(
+    "should map every word like map_words run now, which matches the reference",
+    () => {
+      const expected = enginesGroups();
+      if (UPDATE) NodeFS.writeFileSync(REFERENCE, `${JSON.stringify(expected)}\n`);
+      expect(typescriptGroups()).toEqual(expected);
+      expect(expected).toEqual(JSON.parse(NodeFS.readFileSync(REFERENCE, "utf8")));
+    },
+  );
 });

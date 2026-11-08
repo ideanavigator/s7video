@@ -335,6 +335,31 @@ describe("CaptionTrackService (S7V-075)", () => {
     ),
   );
 
+  it.effect("a cut while a transcript can't be read keeps that clip's captions", () =>
+    withProject((project) =>
+      Effect.gen(function* () {
+        writeClip(project.root, "cam");
+        yield* setUp(project);
+        yield* project.captions.addCaptions(project.projectId, {});
+        const before = yield* project.edits.read(project.projectId);
+        const items = captionsOf(before.document);
+        assert.deepStrictEqual(items[0]!.metadata, { s7: { media: "cam" } });
+        // The cache is cleared (or the clip's drive unplugged): no transcript can be read.
+        NodeFS.rmSync(NodePath.join(project.root, ".s7cache", "transcripts"), {
+          recursive: true,
+        });
+        const first = before.document.tracks.find((track) => track.kind === "video")!.items[0]!;
+        const after = yield* project.edits.apply(
+          project.projectId,
+          [{ _tag: "trimItem", itemId: first.id, edge: "end", frame: 60 }],
+          { origin: "timeline", baseRevision: before.revision },
+        );
+        assert.strictEqual(after.revision, before.revision + 1);
+        assert.deepStrictEqual(captionsOf(after.document), items);
+      }),
+    ),
+  );
+
   it.effect("cutting everything leaves an empty caption track", () =>
     withProject((project) =>
       Effect.gen(function* () {

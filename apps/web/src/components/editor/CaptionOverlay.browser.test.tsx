@@ -96,6 +96,7 @@ async function stillsFor(width: number, height: number): Promise<CaptionStillsRe
       await still("Hello there", width, height),
       await still("from the edit", width, height),
     ],
+    missing: [],
   };
 }
 
@@ -171,6 +172,32 @@ describe("CaptionOverlay", () => {
     await frame(5);
     await expect.element(screen.getByRole("status")).toHaveTextContent("Updating captions…");
     expect(overlay().hidden).toBe(false);
+  });
+
+  it("names a clip whose transcript can't be read", async () => {
+    stills.state = {
+      _tag: "ready",
+      stills: { ...(await stillsFor(1080, 1920)), missing: ["interview.mov"] },
+      updating: false,
+    };
+    const plan = editPlaybackPlan(documentOf(1080, 1920))!;
+    await using screen = await render(
+      <EditPlayer
+        projectKey={projectKey}
+        src=""
+        label="cam.mp4"
+        plan={plan}
+        startFrame={0}
+        onPositionChange={() => {}}
+        onError={() => {}}
+        overlay={<CaptionOverlay projectRef={projectRef} />}
+      />,
+      { router: false },
+    );
+    const note = await screen.getByRole("status").findElement();
+    expect(note.textContent).toBe(
+      "No transcript for interview.mov: its captions can't follow your cuts. Transcribe it again.",
+    );
   });
 
   it.each([

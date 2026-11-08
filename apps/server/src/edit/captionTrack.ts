@@ -10,6 +10,7 @@ import type { CaptionTranscript } from "@t3tools/shared/captionWords";
 import {
   captionItemsFor,
   captionMediaOf,
+  captionMediaOfItem,
   sameCaptions,
   transcriptCaptionTrackOf,
 } from "@t3tools/shared/captionWords";
@@ -53,9 +54,9 @@ const videoItemsOf = (document: EditDocument) =>
   JSON.stringify(document.tracks.find((track) => track.kind === "video")?.items ?? []);
 
 /**
- * The `setCaptions` that rebuilds the transcript caption track of `after`, when the change from
- * `before` touched the video track and the captions no longer match; else none. A caption track
- * without the transcript mark (written by hand) is never rebuilt.
+ * The `setCaptions` rebuilding `after`'s transcript caption track when the change touched the video
+ * track; a hand-written track is never rebuilt. A clip whose transcript can't be read keeps its
+ * items as they were (the player names it).
  */
 export const rebuildCaptionOps = Effect.fn("captionTrack.rebuildCaptionOps")(function* (
   root: string,
@@ -64,8 +65,14 @@ export const rebuildCaptionOps = Effect.fn("captionTrack.rebuildCaptionOps")(fun
 ) {
   const track = transcriptCaptionTrackOf(after);
   if (track === undefined || videoItemsOf(before) === videoItemsOf(after)) return [];
-  const { transcripts } = yield* loadCaptionTranscripts(root, after);
-  const captions = captionItemsFor(after, transcripts);
+  const { transcripts, missing } = yield* loadCaptionTranscripts(root, after);
+  const unreadable = new Set(missing);
+  const kept = track.items
+    .filter((item) => unreadable.has(captionMediaOfItem(item) ?? ""))
+    .map(({ id: _id, ...item }) => item);
+  const captions = [...captionItemsFor(after, transcripts), ...kept].toSorted(
+    (a, b) => a.start - b.start,
+  );
   if (sameCaptions(track, captions)) return [];
   return [{ _tag: "setCaptions", trackId: track.id, captions }] satisfies EditOp[];
 });

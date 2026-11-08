@@ -161,12 +161,14 @@ describe("captionItemsFor and the track ops", () => {
           { text: "one", start: 0, duration: 10 },
           { text: "two", start: 12, duration: 8 },
         ],
+        metadata: { s7: { media: "cam" } },
       },
       {
         start: 35,
         duration: 15,
         text: "three",
         words: [{ text: "three", start: 35, duration: 15 }],
+        metadata: { s7: { media: "cam" } },
       },
     ]);
   });

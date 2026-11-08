@@ -31,6 +31,12 @@ export interface TimelineWord {
   readonly end: number;
 }
 
+/** The kept words of one uncut run, and the clip they come from. */
+interface CaptionGroup {
+  readonly media: string;
+  readonly words: TimelineWord[];
+}
+
 /** A stretch of the timeline that plays `media` from `sourceIn` without a cut. */
 interface CaptionRun {
   readonly start: number;
@@ -44,11 +50,13 @@ export interface CaptionItemDraft {
   readonly start: number;
   readonly duration: number;
   readonly text: string;
-  readonly words: ReadonlyArray<{
+  readonly words?: ReadonlyArray<{
     readonly text: string;
     readonly start: number;
     readonly duration: number;
   }>;
+  /** `s7.media`: the clip the words come from, so a rebuild can keep a clip it can't read. */
+  readonly metadata?: { readonly [key: string]: unknown };
 }
 
 const CAPTION_TRACK_LABEL = "Captions";
@@ -95,7 +103,14 @@ export function mapCaptionWords(
   document: EditDocument,
   transcripts: ReadonlyMap<string, CaptionTranscript>,
 ): TimelineWord[][] {
-  const groups: TimelineWord[][] = [];
+  return captionGroups(document, transcripts).map((group) => group.words);
+}
+
+function captionGroups(
+  document: EditDocument,
+  transcripts: ReadonlyMap<string, CaptionTranscript>,
+): CaptionGroup[] {
+  const groups: CaptionGroup[] = [];
   for (const run of captionRuns(document)) {
     const transcript = transcripts.get(run.media);
     if (transcript === undefined) continue;
@@ -111,7 +126,7 @@ export function mapCaptionWords(
       if (text !== "" && end > start) words.push({ text, start: start + shift, end: end + shift });
     }
     words.sort((left, right) => left.start - right.start);
-    if (words.length > 0) groups.push(words);
+    if (words.length > 0) groups.push({ media: run.media, words });
   }
   return groups;
 }
@@ -121,7 +136,7 @@ export function captionItemsFor(
   document: EditDocument,
   transcripts: ReadonlyMap<string, CaptionTranscript>,
 ): CaptionItemDraft[] {
-  return mapCaptionWords(document, transcripts).map((words) => {
+  return captionGroups(document, transcripts).map(({ media, words }) => {
     const start = words[0]!.start;
     const end = Math.max(...words.map((word) => word.end));
     return {
@@ -133,8 +148,15 @@ export function captionItemsFor(
         start: word.start,
         duration: word.end - word.start,
       })),
+      metadata: { s7: { media } },
     };
   });
+}
+
+/** The clip a caption item was made from, as `captionItemsFor` records it. */
+export function captionMediaOfItem(item: { readonly metadata?: unknown }): string | undefined {
+  const s7 = (item.metadata as { readonly s7?: { readonly media?: unknown } } | undefined)?.s7;
+  return typeof s7?.media === "string" ? s7.media : undefined;
 }
 
 /**
@@ -217,8 +239,8 @@ export function sameCaptions(
       item.duration === want.duration &&
       item.text === want.text &&
       item.style === undefined &&
-      item.metadata === undefined &&
-      JSON.stringify(item.words ?? []) === JSON.stringify(want.words)
+      JSON.stringify(item.metadata) === JSON.stringify(want.metadata) &&
+      JSON.stringify(item.words) === JSON.stringify(want.words)
     );
   });
 }

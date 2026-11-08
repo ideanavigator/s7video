@@ -125,7 +125,8 @@ def test_caption_overlay_parity(media, tmp_path: Path, width: int, height: int) 
     edit = make_edit(source=source, ranges=ranges, fps=RATE, duration_frames=SOURCE_FRAMES, width=width, height=height)
     edit["tracks"].append({"kind": "caption", "id": "C1", "items": track_items(export.plan_segments(edit, width, height), transcript)})
 
-    stills = captions._render({"edit": edit, "outDir": str(tmp_path / "stills")}, JobContext.detached())
+    stills = captions._render({"edit": edit, "cacheDir": str(tmp_path / "stills")}, JobContext.detached())
+    still_dir = tmp_path / "stills" / stills["folder"]
     chunks = stills["chunks"]
     assert len(chunks) >= 6
     videos = {}
@@ -143,7 +144,7 @@ def test_caption_overlay_parity(media, tmp_path: Path, width: int, height: int) 
         middle = (chunk["start"] + chunk["end"]) // 2
         exported = _frame_png(videos["captioned"], middle, tmp_path / f"e{index}.png")
         plain = _frame_png(videos["plain"], middle, tmp_path / f"p{index}.png")
-        shown = _composite(plain, tmp_path / "stills" / chunk["png"], tmp_path / f"o{index}.png")
+        shown = _composite(plain, still_dir / chunk["png"], tmp_path / f"o{index}.png")
         scores.append(_band_ssim(exported, shown, band))
         bare.append(_band_ssim(exported, plain, band))
         errors.append(_text_error(exported, shown, plain, band))

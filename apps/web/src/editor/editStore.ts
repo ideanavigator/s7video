@@ -212,38 +212,6 @@ export function refreshProjectVersions(ref: ScopedProjectRef): void {
   appAtomRegistry.set(bump, appAtomRegistry.get(bump) + 1);
 }
 
-/** Refetches the caption stills only when the captions' look or timing changes (S7V-075). */
-const captionStillsTriggerAtom = Atom.family((key: string) =>
-  Atom.make((get) => {
-    const edit = get(projectEditAtom(key));
-    return edit._tag === "ready" ? captionStillsSignature(edit.snapshot.document) : "";
-  }).pipe(Atom.withLabel(`web-caption-stills-trigger:${key}`)),
-);
-
-const captionStillsQuery = createEnvironmentRpcQueryAtomFamily(connectionAtomRuntime, {
-  label: "environment-data:captions:stills",
-  tag: WS_METHODS.captionsStills,
-  refreshTrigger: ({ environmentId, input }) =>
-    captionStillsTriggerAtom(scopedProjectKey({ environmentId, projectId: input.projectId })),
-});
-
-export type CaptionStillsState =
-  | { readonly _tag: "none" }
-  /** `updating`: new stills are being drawn; these are the previous ones until they arrive. */
-  | { readonly _tag: "ready"; readonly stills: CaptionStillsResult; readonly updating: boolean };
-
-const NO_CAPTION_STILLS: CaptionStillsState = { _tag: "none" };
-
-/** The edit's caption stills, drawn by the export's renderer, for the player's overlay. */
-export function useCaptionStills(ref: ScopedProjectRef): CaptionStillsState {
-  const result = useAtomValue(
-    captionStillsQuery({ environmentId: ref.environmentId, input: { projectId: ref.projectId } }),
-  );
-  const value = AsyncResult.value(result);
-  if (value._tag === "None") return NO_CAPTION_STILLS;
-  return { _tag: "ready", stills: value.value, updating: result.waiting };
-}
-
 const NO_JOBS: ReadonlyMap<string, EngineJob> = new Map();
 
 const environmentJobsAtom = Atom.family((environmentId: EnvironmentId) =>
@@ -274,6 +242,44 @@ const finishedTranscriptionsAtom = Atom.family((key: string) => {
     return finished;
   }).pipe(Atom.withLabel(`web-finished-transcriptions:${key}`));
 });
+
+/** Refetches the caption stills only when the captions' look or timing changes (S7V-075). */
+const captionStillsTriggerAtom = Atom.family((key: string) => {
+  const [environmentId, projectId] = JSON.parse(key) as [EnvironmentId, string];
+  return Atom.make((get) => {
+    const edit = get(
+      projectEditAtom(scopedProjectKey({ environmentId, projectId: projectId as ProjectId })),
+    );
+    const transcriptions = get(finishedTranscriptionsAtom(key));
+    return edit._tag === "ready"
+      ? captionStillsSignature(edit.snapshot.document, transcriptions)
+      : "";
+  }).pipe(Atom.withLabel(`web-caption-stills-trigger:${key}`));
+});
+
+const captionStillsQuery = createEnvironmentRpcQueryAtomFamily(connectionAtomRuntime, {
+  label: "environment-data:captions:stills",
+  tag: WS_METHODS.captionsStills,
+  refreshTrigger: ({ environmentId, input }) =>
+    captionStillsTriggerAtom(JSON.stringify([environmentId, input.projectId])),
+});
+
+export type CaptionStillsState =
+  | { readonly _tag: "none" }
+  /** `updating`: new stills are being drawn; these are the previous ones until they arrive. */
+  | { readonly _tag: "ready"; readonly stills: CaptionStillsResult; readonly updating: boolean };
+
+const NO_CAPTION_STILLS: CaptionStillsState = { _tag: "none" };
+
+/** The edit's caption stills, drawn by the export's renderer, for the player's overlay. */
+export function useCaptionStills(ref: ScopedProjectRef): CaptionStillsState {
+  const result = useAtomValue(
+    captionStillsQuery({ environmentId: ref.environmentId, input: { projectId: ref.projectId } }),
+  );
+  const value = AsyncResult.value(result);
+  if (value._tag === "None") return NO_CAPTION_STILLS;
+  return { _tag: "ready", stills: value.value, updating: result.waiting };
+}
 
 const transcriptQuery = createEnvironmentRpcQueryAtomFamily(connectionAtomRuntime, {
   label: "environment-data:transcript:get",

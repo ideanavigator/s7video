@@ -469,10 +469,15 @@ export class ExportStartError extends Schema.TaggedError<ExportStartError>()("Ex
   }
 }
 
-/** `captions.render`: one transparent PNG per distinct caption text, for the player (S7V-075). */
+/**
+ * `captions.render`: the export's caption chunks, each naming a transparent PNG still in
+ * `cacheDir/<folder>/` (S7V-075). `drawn` counts the stills drawn by this call; the rest were cached.
+ */
 export const CaptionsRenderResult = Schema.Struct({
   width: PositiveInt,
   height: PositiveInt,
+  folder: TrimmedNonEmptyString,
+  drawn: NonNegativeInt,
   chunks: Schema.Array(
     Schema.Struct({ start: NonNegativeInt, end: NonNegativeInt, png: TrimmedNonEmptyString }),
   ),
@@ -480,9 +485,10 @@ export const CaptionsRenderResult = Schema.Struct({
 export type CaptionsRenderResult = typeof CaptionsRenderResult.Type;
 
 /**
- * `captions.stills`: the edit's caption chunks in timeline frames (`end` exclusive), each naming
- * one of `stills`, a PNG of the whole canvas drawn by the export's own renderer, base64. `key`
- * changes only when the captions' look or timing does.
+ * `captions.stills`: the captions the export burns in (the caption items, or the transcripts when
+ * there are none), in timeline frames (`end` exclusive), each naming one of `stills`, a PNG of the
+ * whole canvas drawn by the export's own renderer, base64. `missing` names the clips with sound
+ * whose transcript can't be read, so their captions can't follow the edit.
  */
 export const CaptionStillsResult = Schema.Struct({
   key: Schema.String,
@@ -492,6 +498,7 @@ export const CaptionStillsResult = Schema.Struct({
     Schema.Struct({ start: NonNegativeInt, end: NonNegativeInt, still: NonNegativeInt }),
   ),
   stills: Schema.Array(Schema.String),
+  missing: Schema.Array(Schema.String),
 });
 export type CaptionStillsResult = typeof CaptionStillsResult.Type;
 

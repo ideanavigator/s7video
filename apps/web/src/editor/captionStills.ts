@@ -8,14 +8,17 @@ import type { CaptionStillsResult, EditDocument } from "@t3tools/contracts";
 
 /**
  * Changes exactly when the stills could: the captions, the canvas, the rate or where the video
- * ends (chunks are clipped to it). A cut that leaves all of these alone fetches nothing.
+ * ends (chunks are clipped to it). With no caption items the export captions from the clips'
+ * transcripts, so then the cut and the finished transcriptions count too.
  */
-export function captionStillsSignature(document: EditDocument): string {
+export function captionStillsSignature(document: EditDocument, transcriptions: number): string {
   const video = document.tracks.find((track) => track.kind === "video");
   const end = Math.max(0, ...(video?.items ?? []).map((item) => item.start + item.duration));
   const captions = document.tracks.filter((track) => track.kind === "caption");
-  if (!captions.some((track) => track.items.length > 0)) return "none";
-  return JSON.stringify([document.canvas, document.fps, end, captions]);
+  const fallback = captions.some((track) => track.items.length > 0)
+    ? null
+    : [video?.items ?? [], document.media.map((media) => [media.id, media.fingerprint])];
+  return JSON.stringify([document.canvas, document.fps, end, captions, fallback, transcriptions]);
 }
 
 /** The still shown at `frame`, or -1: chunks are sorted, disjoint and `end` exclusive. */
