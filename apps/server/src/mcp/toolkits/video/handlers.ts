@@ -20,6 +20,7 @@ import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 
 import { CANVAS_FOR_RATIO } from "../../../edit/canvasForClip.ts";
+import * as CaptionTrackService from "../../../edit/CaptionTrackService.ts";
 import * as EditDocumentService from "../../../edit/EditDocumentService.ts";
 import * as SilenceCutService from "../../../edit/SilenceCutService.ts";
 import * as EngineService from "../../../engine/EngineService.ts";
@@ -669,6 +670,36 @@ const handlers = {
         );
     }),
   ),
+  // Writes the edit (one checkpoint), so plan-mode and read-only callers are refused.
+  video_add_captions: McpToolAccess.actsAsCaller(() =>
+    Effect.gen(function* () {
+      yield* refusePlanMode("add captions");
+      const project = yield* callerProject();
+      const captions = yield* CaptionTrackService.CaptionTrackService;
+      const result = yield* captions.addCaptions(project.projectId, { reply: project.reply }).pipe(
+        Effect.mapError(
+          (error) =>
+            new OrchestratorMcpFailure({
+              code:
+                error._tag === "CaptionsError" ||
+                error._tag === "EditConflict" ||
+                error._tag === "EditValidationError"
+                  ? "invalid_request"
+                  : "orchestration_error",
+              message: error._tag === "EditUnavailableError" ? error.explanation : error.message,
+            }),
+        ),
+      );
+      const hint = yield* cleanupAfterChange(project, result.changed);
+      return {
+        revision: result.revision,
+        message: result.changed
+          ? `Added ${result.captions} captions to the edit. They follow later cuts; say undo to remove them.`
+          : `The edit already has these ${result.captions} captions.`,
+        ...hint,
+      };
+    }),
+  ),
 } satisfies McpToolAccess.Handlers<typeof VideoToolkit.tools>;
 
 export const layerStandard = McpToolAccess.toLayer(VideoStandardToolkit, {
@@ -685,6 +716,7 @@ export const layerStandard = McpToolAccess.toLayer(VideoStandardToolkit, {
   video_remove_silences: handlers.video_remove_silences,
   video_canvas: handlers.video_canvas,
   video_assemble: handlers.video_assemble,
+  video_add_captions: handlers.video_add_captions,
 });
 
 export const layerFrame = McpToolAccess.toLayer(VideoFrameToolkit, {

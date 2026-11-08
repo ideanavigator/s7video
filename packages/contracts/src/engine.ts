@@ -469,6 +469,16 @@ export class ExportStartError extends Schema.TaggedError<ExportStartError>()("Ex
   }
 }
 
+/** "Add captions" refused (S7V-075): a clip on the video track has no transcript, or none has sound. */
+export class CaptionsError extends Schema.TaggedError<CaptionsError>()("CaptionsError", {
+  reason: Schema.Literals(["no-transcript", "no-clips"]),
+  detail: Schema.String,
+}) {
+  override get message(): string {
+    return this.detail;
+  }
+}
+
 /** `silence.detect`: whole-decibel RMS dBFS of the sound under each video frame (S7V-027). */
 export const SilenceDetectResult = Schema.Struct({
   rate: EngineRational,

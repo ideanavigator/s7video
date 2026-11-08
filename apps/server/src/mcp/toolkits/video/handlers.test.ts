@@ -19,6 +19,7 @@ import {
   type MediaProbeResult,
   ProjectId,
   ProviderInstanceId,
+  CaptionsError,
   SilenceCutError,
   ThreadId,
 } from "@t3tools/contracts";
@@ -39,6 +40,7 @@ import * as NodePath from "node:path";
 
 import * as ServerConfig from "../../../config.ts";
 import * as EditDocumentService from "../../../edit/EditDocumentService.ts";
+import * as CaptionTrackService from "../../../edit/CaptionTrackService.ts";
 import * as SilenceCutService from "../../../edit/SilenceCutService.ts";
 import * as EngineService from "../../../engine/EngineService.ts";
 import * as ExportService from "../../../export/ExportService.ts";
@@ -318,6 +320,17 @@ const layerFor = (fixture: Fixture, cancelSignal: Deferred.Deferred<string>) => 
               });
         }),
     }),
+    Layer.mock(CaptionTrackService.CaptionTrackService)({
+      addCaptions: (projectId) =>
+        projectId === projectB
+          ? Effect.fail(
+              new CaptionsError({
+                reason: "no-transcript",
+                detail: "Transcribe the clip first: cam has no transcript.",
+              }),
+            )
+          : Effect.succeed({ revision: 9, captions: 12, changed: true }),
+    }),
     Layer.mock(MediaLibraryService.MediaLibraryService)({
       plan: (input) =>
         Effect.succeed(
@@ -519,6 +532,7 @@ describe("video toolkit", () => {
       Effect.sync(() => {
         const tools = server.tools.map(({ tool }) => tool);
         expect(tools.map((tool) => tool.name).toSorted()).toEqual([
+          "video_add_captions",
           "video_assemble",
           "video_canvas",
           "video_edit_read",
@@ -956,6 +970,7 @@ describe("video toolkit", () => {
           ["video_redo", {}],
           ["video_remove_silences", {}],
           ["video_assemble", { items: [] }],
+          ["video_add_captions", {}],
         ] as const) {
           // A hidden tool is not callable at all: the server answers as for an unknown tool.
           const error = yield* call(threadA, tool, args, ["orchestration"]).pipe(Effect.flip);
@@ -967,6 +982,25 @@ describe("video toolkit", () => {
         expect(fixture.imports).toEqual([]);
       }),
     ),
+  );
+
+  it.effect(
+    "video_add_captions answers with the count, and refuses a clip with no transcript",
+    () =>
+      withTools(({ call }) =>
+        Effect.gen(function* () {
+          const added = yield* call(threadA, "video_add_captions", {});
+          expect(added.isError).toBe(false);
+          expect(added.structuredContent).toEqual({
+            revision: 9,
+            message:
+              "Added 12 captions to the edit. They follow later cuts; say undo to remove them.",
+          });
+          const refused = yield* call(threadB, "video_add_captions", {});
+          expect(refused.isError).toBe(true);
+          expect(textOf(refused)).toEqual(["Transcribe the clip first: cam has no transcript."]);
+        }),
+      ),
   );
 
   it.effect(
@@ -1330,6 +1364,7 @@ it.effect("should hide tools without the video capability", () =>
         });
 
       expect(yield* listed("videoToken")).toEqual([
+        "video_add_captions",
         "video_assemble",
         "video_canvas",
         "video_edit_read",

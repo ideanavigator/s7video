@@ -40,11 +40,11 @@ import * as EngineService from "../engine/EngineService.ts";
 import { projectFor, resolveMedia } from "../mcp/VideoProjectScope.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import { mediaFingerprint } from "./mediaFingerprint.ts";
+import { readCachedTranscript, transcriptCacheDir } from "./transcriptCache.ts";
 
 const LIGHT_MODEL_MEMORY_BYTES = 8 * 1024 ** 3;
 const CONSENT_FILE = "s7video-consent.json";
 
-const decodeTranscript = Schema.decodeUnknownEffect(Schema.fromJsonString(Transcript));
 const decodeLevels = Schema.decodeUnknownOption(Schema.fromJsonString(SilenceLevels));
 const ConsentFile = Schema.Struct({ consent: TranscribeConsent });
 const decodeConsent = Schema.decodeUnknownOption(Schema.fromJsonString(ConsentFile));
@@ -189,7 +189,7 @@ const make = Effect.fn("TranscriptService.make")(function* (options: TranscriptS
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.mapError((cause) => new TranscriptError({ reason: "media_unreadable", cause })),
     );
-    const cacheDir = path.join(project.root, ".s7cache", "transcripts");
+    const cacheDir = transcriptCacheDir(path, project.root);
     return { projectId: project.projectId, mediaPath: scoped.path, fingerprint, cacheDir };
   });
 
@@ -235,21 +235,12 @@ const make = Effect.fn("TranscriptService.make")(function* (options: TranscriptS
     } satisfies TranscribeModelsStatus;
   }).pipe(Effect.withSpan("TranscriptService.modelsStatus"));
 
-  const readCache = Effect.fnUntraced(function* (
-    resolved: Effect.Success<ReturnType<typeof media>>,
-  ) {
-    const { fingerprint, cacheDir } = resolved;
-    const file = path.join(cacheDir, `${fingerprint.sha256}.json`);
-    const text = yield* fileSystem.readFileString(file).pipe(Effect.option);
-    if (text._tag === "None") return null;
-    const transcript = yield* decodeTranscript(text.value).pipe(
+  const readCache = (resolved: Effect.Success<ReturnType<typeof media>>) =>
+    readCachedTranscript(resolved.cacheDir, resolved.fingerprint).pipe(
+      Effect.provideService(FileSystem.FileSystem, fileSystem),
+      Effect.provideService(Path.Path, path),
       Effect.mapError((cause) => new TranscriptError({ reason: "cache_unreadable", cause })),
     );
-    const same =
-      transcript.mediaFingerprint.sha256 === fingerprint.sha256 &&
-      transcript.mediaFingerprint.size === fingerprint.size;
-    return same ? transcript : null;
-  });
 
   const get = Effect.fn("TranscriptService.get")(function* (input: TranscriptMediaInput) {
     return yield* readCache(yield* media(input));

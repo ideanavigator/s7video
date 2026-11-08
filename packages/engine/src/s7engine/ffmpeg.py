@@ -33,7 +33,9 @@ def tool_path(tool: str) -> str:
 QUICK_TOOL_TIMEOUT = 25.0
 
 
-def run_tool(tool: str, args: list[str], job: JobContext, timeout: float = QUICK_TOOL_TIMEOUT) -> bytes:
+def run_tool(
+    tool: str, args: list[str], job: JobContext, timeout: float = QUICK_TOOL_TIMEOUT, cwd: str | None = None
+) -> bytes:
     """Runs a tool to completion and returns its stdout; a cancelled job stops it at once."""
     process = subprocess.Popen(
         [tool_path(tool), *args],
@@ -41,6 +43,7 @@ def run_tool(tool: str, args: list[str], job: JobContext, timeout: float = QUICK
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         env=_tool_env(),
+        cwd=cwd,
     )
     stop = process.kill
     job.on_cancel(stop)
