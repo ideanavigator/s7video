@@ -352,7 +352,8 @@ export const revealWindow = DesktopIpc.makeIpcMethod({
     ) {
       return;
     }
-    yield* electronWindow.reveal(window.value);
+    // The renderer asks for this only on a notification click, a user action (S7V-074).
+    yield* electronWindow.reveal(window.value, { steal: true });
   }),
 });
 

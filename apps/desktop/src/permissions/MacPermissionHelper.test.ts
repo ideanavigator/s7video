@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
+import { MAC_PERMISSION_HELPER_CHANNEL } from "../ipc/channels.ts";
 import { MacPermissionHelper } from "./MacPermissionHelper.ts";
 import type { SettingsWindow } from "./MacSettingsWindow.ts";
 
@@ -122,4 +123,33 @@ it("does not reopen a superseded helper when its initial probe completes", async
   await first;
   expect(windows).toHaveLength(1);
   expect(windows[0]!.destroyed).toBe(false);
+});
+
+// S7V-074: the always-on-top helper must be gone once its flow ends.
+it("permission helper closes and clears always-on-top once access is granted", async () => {
+  await open();
+  expect(windows).toHaveLength(1);
+  expect(windows[0]!.destroyed).toBe(false);
+  mocks.granted = true;
+  await vi.advanceTimersByTimeAsync(1_000);
+  expect(windows[0]!.destroyed).toBe(true);
+});
+
+it("permission helper closes when the user dismisses it", async () => {
+  const { ipcMain } = await import("electron");
+  await open();
+  const window = windows[0]!;
+  ipcMain.emit(
+    MAC_PERMISSION_HELPER_CHANNEL,
+    { sender: window.webContents, senderFrame: window.webContents.mainFrame },
+    "close",
+  );
+  expect(window.destroyed).toBe(true);
+});
+
+it("permission helper is destroyed when its page fails to load", async () => {
+  mocks.loadURL.mockRejectedValueOnce(new Error("load failed"));
+  await expect(open()).rejects.toThrow("load failed");
+  expect(windows).toHaveLength(1);
+  expect(windows[0]!.destroyed).toBe(true);
 });

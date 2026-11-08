@@ -116,6 +116,8 @@ from; the per-ticket entries and how this file is compiled are in
 
 ### Fixed
 
+- s7video no longer jumps in front of other apps by itself. It comes forward only when you click
+  it, its Dock icon or a notification. (S7V-074)
 - Asking to keep a pause that was already cut now gets a plain answer and a hint to undo, and a
   short pause you keep stays short (about a third of a second). (S7V-056)
 - In the browser, the greyed-out Add media button and the empty Assets list and player now explain

@@ -106,6 +106,17 @@ export class ElectronWindowOperationError extends Schema.TaggedError<ElectronWin
   }
 }
 
+/**
+ * How a reveal may take focus.
+ *
+ * `steal` is for explicit user actions only: a Dock click, a notification click, a second launch
+ * or deep link, a menu command, a return from provider sign-in. Without it, a reveal on macOS
+ * never pulls the app in front of the app the user is working in.
+ */
+export interface ElectronWindowRevealOptions {
+  readonly steal?: boolean;
+}
+
 export class ElectronWindow extends Context.Service<
   ElectronWindow,
   {
@@ -120,7 +131,10 @@ export class ElectronWindow extends Context.Service<
     readonly setMain: (window: Electron.BrowserWindow) => Effect.Effect<void>;
     readonly clearMain: (window: Option.Option<Electron.BrowserWindow>) => Effect.Effect<void>;
     readonly prepareReveal: (window: Electron.BrowserWindow) => Effect.Effect<boolean>;
-    readonly reveal: (window: Electron.BrowserWindow) => Effect.Effect<void>;
+    readonly reveal: (
+      window: Electron.BrowserWindow,
+      options?: ElectronWindowRevealOptions,
+    ) => Effect.Effect<void>;
     readonly sendAll: (channel: string, ...args: readonly unknown[]) => Effect.Effect<void>;
     readonly destroyAll: Effect.Effect<void>;
     readonly syncAllAppearance: <E, R>(
@@ -273,10 +287,22 @@ export const make = Effect.gen(function* () {
           .catch(() => false);
       });
     }),
-    reveal: Effect.fn("ElectronWindow.reveal")(function (window) {
+    reveal: Effect.fn("ElectronWindow.reveal")(function (window, options) {
+      const steal = options?.steal === true;
       return Effect.tryPromise({
         try: async () => {
           if (window.isDestroyed()) {
+            return;
+          }
+
+          // s7video (S7V-074): an automatic reveal, such as the first reveal after a launch or a
+          // dev watcher restart, must not pull the app in front of the app the user is working in.
+          if (platform === "darwin" && !steal && !Electron.app.isActive()) {
+            if (!window.isVisible()) {
+              window.showInactive();
+              // On macOS, blur() orders the window to the back, behind the frontmost app.
+              window.blur();
+            }
             return;
           }
 
@@ -300,7 +326,7 @@ export const make = Effect.gen(function* () {
             window.moveTop();
           }
 
-          if (platform === "darwin") {
+          if (platform === "darwin" && steal) {
             Electron.app.focus({ steal: true });
           }
 
