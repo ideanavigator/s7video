@@ -174,16 +174,20 @@ describe("CaptionOverlay", () => {
   });
 
   it.each([
-    ["9x16", 1080, 1920, "dark"],
-    ["16x9", 1920, 1080, "dark"],
-    ["9x16", 1080, 1920, "light"],
-    ["16x9", 1920, 1080, "light"],
-  ] as const)("renders captions in the player at %s (%s)", async (name, width, height, theme) => {
-    await page.viewport(1440, 900);
-    document.documentElement.classList.toggle("dark", theme === "dark");
-    await using _screen = await mountPlayer(width, height, name === "9x16" && theme === "dark");
-    await frame(5);
-    await page.screenshot({ path: `${SHOTS}/player-${name}-${theme}.png` });
-    expect(overlay().hidden).toBe(false);
-  });
+    ["9x16", 1080, 1920, "dark", 1440],
+    ["16x9", 1920, 1080, "dark", 1440],
+    ["9x16", 1080, 1920, "light", 1440],
+    ["16x9", 1920, 1080, "light", 1440],
+    ["9x16-min", 1080, 1920, "dark", 1180],
+  ] as const)(
+    "renders captions in the player at %s (%s)",
+    async (name, width, height, theme, wide) => {
+      await page.viewport(wide, wide === 1440 ? 900 : 760);
+      document.documentElement.classList.toggle("dark", theme === "dark");
+      await using _screen = await mountPlayer(width, height, name === "9x16" && theme === "dark");
+      await frame(5);
+      await page.screenshot({ path: `${SHOTS}/player-${name}-${theme}.png` });
+      expect(overlay().hidden).toBe(false);
+    },
+  );
 });

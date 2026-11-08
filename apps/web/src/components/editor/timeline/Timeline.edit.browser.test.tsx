@@ -175,6 +175,8 @@ describe("Timeline editing (S7V-034)", () => {
     await using _screen = view.screen;
     expect(view.block("c1").dataset.readonly).toBe("true");
     expect(view.block("c1").textContent).toContain("hello there");
+    // For the UX review: the Captions row, in the repo's ignored test-results folder.
+    await page.screenshot({ path: "../../../../../../test-results/S7V-075/timeline-captions.png" });
     await view.drag("c1", 50, 200, 10, { metaKey: true });
     await view.drag("c1", 89.6, 60, 10, { metaKey: true });
     expect(view.harness.apply).not.toHaveBeenCalled();
