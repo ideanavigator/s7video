@@ -117,6 +117,7 @@ import * as VcsProvisioningService from "./vcs/VcsProvisioningService.ts";
 import * as VcsStatusBroadcaster from "./vcs/VcsStatusBroadcaster.ts";
 import * as ProjectCloneTracker from "./project/ProjectCloneTracker.ts";
 import * as EngineService from "./engine/EngineService.ts";
+import * as CaptionStillsService from "./export/CaptionStillsService.ts";
 import * as ExportService from "./export/ExportService.ts";
 import * as TranscriptService from "./transcript/TranscriptService.ts";
 import * as CaptionTrackService from "./edit/CaptionTrackService.ts";
@@ -605,6 +606,7 @@ const layerRuntimeCoreDependencies = layerRuntimeCoreDependenciesBase.pipe(
 const layerRuntimeDependencies = MediaLibraryService.layer.pipe(
   Layer.provideMerge(SilenceCutService.layer),
   Layer.provideMerge(CaptionTrackService.layer),
+  Layer.provideMerge(CaptionStillsService.layer),
   Layer.provideMerge(ExportService.layer.pipe(Layer.provideMerge(TranscriptService.layer))),
   Layer.provideMerge(layerEditDocument),
   Layer.provideMerge(layerRuntimeCoreDependencies),

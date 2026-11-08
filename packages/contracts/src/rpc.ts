@@ -12,6 +12,7 @@ import {
   EngineJobsCancelResult,
   EngineJobsEvent,
   EngineJobsSubscribeInput,
+  CaptionStillsResult,
   ExportStartError,
   ExportStartInput,
   ExportStartResult,
@@ -649,6 +650,8 @@ export const WS_METHODS = {
   engineJobsCancel: "engine.jobs.cancel",
   exportStart: "export.start",
   exportStatus: "export.status",
+  // Caption stills for the player (S7V-075)
+  captionsStills: "captions.stills",
 
   // Edit document (S7V-024)
   editGet: "edit.get",
@@ -2050,6 +2053,12 @@ const WsExportStatusRpc = Rpc.make(WS_METHODS.exportStatus, {
   error: EnvironmentAuthorizationError,
 });
 
+const WsCaptionsStillsRpc = Rpc.make(WS_METHODS.captionsStills, {
+  payload: EditProjectInput,
+  success: CaptionStillsResult,
+  error: Schema.Union([EditUnavailableError, EngineError, EnvironmentAuthorizationError]),
+});
+
 const EditRpcError = Schema.Union([EditUnavailableError, EnvironmentAuthorizationError]);
 const WsEditGetRpc = Rpc.make(WS_METHODS.editGet, {
   payload: EditProjectInput,
@@ -2395,6 +2404,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsEngineJobsCancelRpc,
   WsExportStartRpc,
   WsExportStatusRpc,
+  WsCaptionsStillsRpc,
   WsEditGetRpc,
   WsEditApplyRpc,
   WsEditSubscribeRpc,

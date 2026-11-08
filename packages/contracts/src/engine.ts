@@ -469,6 +469,32 @@ export class ExportStartError extends Schema.TaggedError<ExportStartError>()("Ex
   }
 }
 
+/** `captions.render`: one transparent PNG per distinct caption text, for the player (S7V-075). */
+export const CaptionsRenderResult = Schema.Struct({
+  width: PositiveInt,
+  height: PositiveInt,
+  chunks: Schema.Array(
+    Schema.Struct({ start: NonNegativeInt, end: NonNegativeInt, png: TrimmedNonEmptyString }),
+  ),
+});
+export type CaptionsRenderResult = typeof CaptionsRenderResult.Type;
+
+/**
+ * `captions.stills`: the edit's caption chunks in timeline frames (`end` exclusive), each naming
+ * one of `stills`, a PNG of the whole canvas drawn by the export's own renderer, base64. `key`
+ * changes only when the captions' look or timing does.
+ */
+export const CaptionStillsResult = Schema.Struct({
+  key: Schema.String,
+  width: PositiveInt,
+  height: PositiveInt,
+  chunks: Schema.Array(
+    Schema.Struct({ start: NonNegativeInt, end: NonNegativeInt, still: NonNegativeInt }),
+  ),
+  stills: Schema.Array(Schema.String),
+});
+export type CaptionStillsResult = typeof CaptionStillsResult.Type;
+
 /** "Add captions" refused (S7V-075): a clip on the video track has no transcript, or none has sound. */
 export class CaptionsError extends Schema.TaggedError<CaptionsError>()("CaptionsError", {
   reason: Schema.Literals(["no-transcript", "no-clips"]),
