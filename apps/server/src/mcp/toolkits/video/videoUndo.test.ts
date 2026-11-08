@@ -16,6 +16,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 import { McpSchema, McpServer } from "effect/ai";
+import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
@@ -465,6 +466,7 @@ describe("video_undo and video_redo", () => {
           ["video_assemble", { items: [{ mediaId: "cam", in: 0, duration: 30 }] }],
           ["video_import", { path: NodePath.join(root, "clip.mp4") }],
           ["video_transcribe", { media: "cam" }],
+          ["video_add_captions", {}],
         ];
         for (const [tool, args] of changing) {
           const result = yield* call(tool, args);
@@ -477,6 +479,62 @@ describe("video_undo and video_redo", () => {
         for (const tool of ["video_edit_read", "video_job_status"]) {
           expect((yield* call(tool)).isError, tool).toBe(false);
         }
+      }),
+    ),
+  );
+
+  // S7V-075: captions are one assistant version; undo removes the track and redo puts it back.
+  it.effect("video_add_captions adds the caption track as one undoable step", () =>
+    withProject(({ root, thread, edits, call }) =>
+      Effect.gen(function* () {
+        const clip = Buffer.from("a talking-head clip");
+        NodeFS.mkdirSync(NodePath.join(root, "assets"), { recursive: true });
+        NodeFS.writeFileSync(NodePath.join(root, "assets", "cam.mp4"), clip);
+        const sha256 = NodeCrypto.createHash("sha256").update(clip).digest("hex");
+        const cache = NodePath.join(root, ".s7cache", "transcripts");
+        NodeFS.mkdirSync(cache, { recursive: true });
+        NodeFS.writeFileSync(
+          NodePath.join(cache, `${sha256}.json`),
+          JSON.stringify({
+            transcriptVersion: 1,
+            mediaFingerprint: { sha256, size: clip.length },
+            model: "test",
+            revision: "test",
+            fps: { num: 30, den: 1 },
+            durationFrames: 900,
+            words: [
+              { text: "Hello", startFrame: 10, endFrame: 20, confidence: 1, speaker: "S1" },
+              { text: "there.", startFrame: 22, endFrame: 30, confidence: 1, speaker: "S1" },
+              { text: "Gone", startFrame: 100, endFrame: 110, confidence: 1, speaker: "S1" },
+            ],
+            createdAt: "2026-11-09T00:00:00.000Z",
+          }),
+        );
+        const initial = yield* edits.read(thread.projectId);
+        yield* edits.apply(thread.projectId, [...setup, keep([[0, 60]])], {
+          origin: "agent",
+          baseRevision: initial.revision,
+        });
+        const before = readFile(root, "edit.json");
+
+        const added = yield* call("video_add_captions");
+        expect(added.isError).toBe(false);
+        expect(textOf(added).join("")).toContain("Added 1 captions to the edit.");
+        const captioned = readFile(root, "edit.json");
+        const track = JSON.parse(captioned).tracks.find(
+          (entry: { kind: string }) => entry.kind === "caption",
+        );
+        expect(track.items.map((item: { text: string }) => item.text)).toEqual(["Hello there."]);
+        // No video file is made: captions live in the edit (AC-1).
+        expect(NodeFS.existsSync(NodePath.join(root, "exports"))).toBe(false);
+        const [newest] = yield* edits.versions(thread.projectId);
+        expect(newest!.changes).toEqual(["Added captions"]);
+        expect(newest!.author).toBe("assistant");
+
+        expect((yield* call("video_undo")).isError).toBe(false);
+        expect(readFile(root, "edit.json")).toBe(before);
+        expect((yield* call("video_redo")).isError).toBe(false);
+        expect(readFile(root, "edit.json")).toBe(captioned);
       }),
     ),
   );
