@@ -622,7 +622,7 @@ describe("DesktopWindow", () => {
   // S7V-074: s7video must not pull itself in front of the app the user is working in.
   it.effect.each([
     { launch: "packaged", steal: false, devTools: false },
-    { launch: "dev", steal: true, devTools: true },
+    { launch: "dev", steal: false, devTools: true },
     { launch: "dev-restart", steal: false, devTools: false },
   ] as const)(
     "ready-to-show reveal on a $launch launch: steal=$steal",

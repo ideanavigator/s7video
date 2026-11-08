@@ -844,11 +844,8 @@ export const make = Effect.gen(function* () {
       pendingMainReveals.delete(window);
       window.webContents.setBackgroundThrottling(true);
       if (persistedSettings.mainWindowMaximized) window.maximize();
-      // S7V-074: the first reveal steals focus only after a user action, or on a dev launch the
-      // user started; a dev watcher restart never steals.
-      const userRequested = userRevealsBeforeReady.delete(window);
-      const steal =
-        userRequested || (environment.isDevelopment && !environment.isDevelopmentRestart);
+      // The automatic first reveal never steals focus (S7V-074), unless a user action asked for it.
+      const steal = userRevealsBeforeReady.delete(window);
       yield* electronWindow.reveal(window, { steal });
       yield* dismissConnectingSplash;
     });
