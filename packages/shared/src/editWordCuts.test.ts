@@ -179,10 +179,11 @@ describe("planWordRestore", () => {
       [0, 4],
     ] as const) {
       const cut = planWordCut(input(first, last))!;
-      const kept: FrameSpan[] = [
+      const around: FrameSpan[] = [
         [0, cut.range[0]],
         [cut.range[1], 100],
-      ].filter(([a, b]) => b! > a!) as FrameSpan[];
+      ];
+      const kept = around.filter(([a, b]) => b > a);
       expect(planWordRestore(input(first, last, kept)).ranges).toEqual([cut.range]);
     }
   });

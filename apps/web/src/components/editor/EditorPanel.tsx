@@ -8,6 +8,7 @@
 import { scopedProjectKey } from "@t3tools/client-runtime/environment";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import {
+  type EditOp,
   type EditSnapshot,
   type EngineJobId,
   type EnvironmentId,
@@ -60,9 +61,9 @@ import { SpeechModelPrompt } from "./SpeechModelPrompt";
 import { applyOutcomeOfError, stepOutcomeOfError } from "../../editor/timelineEditing";
 import { editFrameToPlayerFrame } from "./timeline/editFrames";
 import type { TimelineEditing } from "./timeline/Timeline";
-import type { TimelineNotice } from "./timeline/timelineEditor";
+import type { EditApplyOutcome, TimelineNotice } from "./timeline/timelineEditor";
 import { TimelinePane } from "./timeline/TimelinePane";
-import { TranscriptTab } from "./TranscriptTab";
+import { type TranscriptEditing, TranscriptTab } from "./TranscriptTab";
 import { VersionsTab } from "./VersionsTab";
 
 type EditorTab = "transcript" | "assets" | "versions";
@@ -497,6 +498,7 @@ function transcriptSourceOf(
 function TimelineTranscriptTab(props: {
   readonly projectRef: ScopedProjectRef;
   readonly plan: TimelinePlan;
+  readonly editing: TranscriptEditing | undefined;
 }) {
   const { plan } = props;
   const projectKey = scopedProjectKey(props.projectRef);
@@ -514,7 +516,11 @@ function TimelineTranscriptTab(props: {
   );
   const index = Math.min(segment, plan.segments.length - 1);
   return (
-    <TranscriptTab projectRef={props.projectRef} {...timelineTranscriptPlayback(plan, index)} />
+    <TranscriptTab
+      projectRef={props.projectRef}
+      editing={props.editing}
+      {...timelineTranscriptPlayback(plan, index)}
+    />
   );
 }
 
@@ -637,12 +643,27 @@ function showTimelineNotice(notice: TimelineNotice) {
   }
 }
 
+/** `edit.apply` as an edit outcome, for the timeline and the transcript alike. */
+function useEditApply(projectRef: ScopedProjectRef, origin: "timeline" | "transcript") {
+  const apply = useAtomCommand(editEnvironment.apply, { reportFailure: false });
+  const { environmentId, projectId } = projectRef;
+  return async (ops: ReadonlyArray<EditOp>, baseRevision: number): Promise<EditApplyOutcome> => {
+    const result = await apply({
+      environmentId,
+      input: { projectId, baseRevision, origin, ops: [...ops] },
+    });
+    return result._tag === "Success"
+      ? { _tag: "applied", revision: result.value.revision }
+      : applyOutcomeOfError(squashAtomCommandFailure(result));
+  };
+}
+
 /** Timeline edits go through `edit.apply`/`undo`/`redo`, origin `timeline` (S7V-034). */
 function useTimelineEditing(
   projectRef: ScopedProjectRef,
   snapshot: EditSnapshot | null,
 ): TimelineEditing | undefined {
-  const apply = useAtomCommand(editEnvironment.apply, { reportFailure: false });
+  const apply = useEditApply(projectRef, "timeline");
   const undo = useAtomCommand(editEnvironment.undo, { reportFailure: false });
   const redo = useAtomCommand(editEnvironment.redo, { reportFailure: false });
   const { environmentId, projectId } = projectRef;
@@ -658,20 +679,23 @@ function useTimelineEditing(
     canUndo: snapshot.canUndo,
     canRedo: snapshot.canRedo,
     actions: {
-      apply: async (ops, baseRevision) => {
-        const result = await apply({
-          environmentId,
-          input: { projectId, baseRevision, origin: "timeline", ops: [...ops] },
-        });
-        return result._tag === "Success"
-          ? { _tag: "applied", revision: result.value.revision }
-          : applyOutcomeOfError(squashAtomCommandFailure(result));
-      },
+      apply,
       undo: () => step(undo),
       redo: () => step(redo),
       notify: showTimelineNotice,
     },
   };
+}
+
+/** Text edits from the Transcript tab, origin `transcript` (S7V-038), on the edit as it plays. */
+function useTranscriptEditing(
+  projectRef: ScopedProjectRef,
+  snapshot: EditSnapshot | null,
+  enabled: boolean,
+): TranscriptEditing | undefined {
+  const apply = useEditApply(projectRef, "transcript");
+  if (snapshot === null || !enabled) return undefined;
+  return { document: snapshot.document, revision: snapshot.revision, apply };
 }
 
 /** Why an outside change to the edit was not kept (S7V-054), until dismissed or the next change. */
@@ -740,6 +764,15 @@ export default function EditorPanel(props: {
     requestPlayerSeek(projectKey, frame);
   };
   const editing = useTimelineEditing(projectRef, edit._tag === "ready" ? edit.snapshot : null);
+  // Words are edited only on the edit itself: not while a clip or an older version is previewed.
+  const transcriptEditing = useTranscriptEditing(
+    projectRef,
+    edit._tag === "ready" ? edit.snapshot : null,
+    source.kind === "edit" &&
+      (view._tag === "play-timeline" ||
+        view._tag === "all-cut" ||
+        (view._tag === "play" && view.mode === "edit")),
+  );
   const mediaById = new Map(
     library._tag === "ready" ? library.snapshot.items.map((item) => [item.id, item] as const) : [],
   );
@@ -809,9 +842,17 @@ export default function EditorPanel(props: {
         className="min-h-0 flex-1"
       >
         {view._tag === "play-timeline" ? (
-          <TimelineTranscriptTab projectRef={projectRef} plan={view.plan} />
+          <TimelineTranscriptTab
+            projectRef={projectRef}
+            plan={view.plan}
+            editing={transcriptEditing}
+          />
         ) : (
-          <TranscriptTab projectRef={projectRef} {...transcriptSourceOf(view, library, edit)} />
+          <TranscriptTab
+            projectRef={projectRef}
+            editing={transcriptEditing}
+            {...transcriptSourceOf(view, library, edit)}
+          />
         )}
       </div>
       <div

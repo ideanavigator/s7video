@@ -542,7 +542,7 @@ const make = Effect.gen(function* () {
           return yield* commit(projectId, root, current, editText, validated.document, {
             author: options.origin === "agent" ? "assistant" : "you",
             reply: options.reply,
-            change: options.summary ?? describeOps(ops),
+            change: options.summary ?? describeOps(ops, options.origin),
           });
         }),
       );

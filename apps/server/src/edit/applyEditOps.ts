@@ -349,13 +349,9 @@ function restoreOnTrack(
     const after = items.filter((item) => item.in > to).sort((a, b) => a.in - b.in)[0];
     const place = before !== undefined ? before.start + before.duration : (after?.start ?? 0);
     shiftAfter(track, place, length);
-    const {
-      id: _id,
-      linkId: _link,
-      fadeInFrames: _in,
-      fadeOutFrames: _out,
-      ...props
-    } = before ?? after ?? {};
+    // The new part takes its neighbour's props (gain, zoom), but not its id, link or fades.
+    const props: Record<string, unknown> = { ...(before ?? after) };
+    for (const key of ["linkId", "fadeInFrames", "fadeOutFrames"]) delete props[key];
     track.items.push({
       ...props,
       id: allocateId(document, ITEM_PREFIX.video),

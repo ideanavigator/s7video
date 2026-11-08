@@ -228,8 +228,8 @@ export interface WordRestore {
 
 /**
  * What restoring the selected words puts back: their frames and the gaps around them, the inverse
- * of `planWordCut`. Toward a kept word the whole gap comes back (the cut took it); toward a cut
- * word only the air, so that word stays cut. A restored island is grown to the minimum segment
+ * of `planWordCut`. Toward a kept word the whole gap comes back (the cut took it, so after a
+ * silence cut the pause comes back too); toward a cut word only the air, so that word stays cut. A restored island is grown to the minimum segment
  * where the cut around it allows.
  */
 export function planWordRestore(input: WordEditInput): WordRestore {
@@ -258,13 +258,13 @@ export function planWordRestore(input: WordEditInput): WordRestore {
     previous === undefined
       ? 0
       : plays(before)
-        ? Math.min(previous.end + air, start)
+        ? Math.min(previous.end, start)
         : Math.min(start, Math.max(previous.end, start - air));
   const to =
     next === undefined
       ? input.mediaFrames
       : plays(after)
-        ? Math.max(end, Math.min(next.start - air, input.mediaFrames))
+        ? Math.max(end, Math.min(next.start, input.mediaFrames))
         : Math.max(end, Math.min(next.start, end + air, input.mediaFrames));
   const floor = previous === undefined ? 0 : Math.min(previous.end, start);
   const ceiling = next === undefined ? input.mediaFrames : Math.max(next.start, end);

@@ -19,7 +19,7 @@ const TRANSCRIPT = NodePath.resolve(
   import.meta.dirname,
   "../../../../fixtures/media/talking-head-01.transcript.json",
 );
-const transcript = Schema.decodeUnknownSync(Schema.fromJsonString(Transcript))(
+const transcript = Schema.decodeSync(Schema.fromJsonString(Transcript))(
   NodeFS.readFileSync(TRANSCRIPT, "utf8"),
 );
 

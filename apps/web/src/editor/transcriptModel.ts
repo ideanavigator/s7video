@@ -5,7 +5,8 @@
  * marked kept or removed by the edit, grouped into rows at long pauses, with O(log n) lookups for
  * the word on screen. Pure: no React, no DOM.
  */
-import type { EditRational, Transcript } from "@t3tools/contracts";
+import type { EditDocument, EditRational, Transcript } from "@t3tools/contracts";
+import { type WordEdit, wordEditOps } from "@t3tools/shared/editWordCuts";
 
 import {
   nextTimelineSegmentFrom,
@@ -32,6 +33,8 @@ export interface TranscriptModelWord {
   readonly end: number;
   /** Every frame of the word was cut. */
   readonly removed: boolean;
+  /** False when the transcript gives the word no frames: a text edit skips it (S7V-038). */
+  readonly timed: boolean;
 }
 
 /** One rendered row: words `[first, end)`. */
@@ -148,7 +151,7 @@ export function buildTranscriptModel(
     const end = Math.max(start + 1, convertFrame(word.endFrame, transcript.fps, fps, true));
     const removed = segments !== null && !isKept(segments, start, end);
     if (removed) removedCount += 1;
-    return { text: word.text, start, end, removed };
+    return { text: word.text, start, end, removed, timed: word.endFrame > word.startFrame };
   });
   const pauseFrames = (PARAGRAPH_PAUSE_SECONDS * fps.num) / fps.den;
   return { words, rows: splitRows(words, pauseFrames), removedCount };
@@ -251,4 +254,59 @@ export function timelineTranscriptPlayback(
       })),
     },
   };
+}
+
+/** Words `first..last`, inclusive and in order, as the Transcript tab selects them (S7V-038). */
+export interface TranscriptSelection {
+  readonly first: number;
+  readonly last: number;
+}
+
+/** How many selected words play now, and how many were cut: what the action bar offers. */
+export function selectionSummary(model: TranscriptModel, selection: TranscriptSelection) {
+  let kept = 0;
+  let removed = 0;
+  for (let index = selection.first; index <= selection.last; index += 1) {
+    const word = model.words[index];
+    if (word === undefined || !word.timed) continue;
+    if (word.removed) removed += 1;
+    else kept += 1;
+  }
+  return { kept, removed };
+}
+
+/**
+ * A text edit as `edit.apply` ops (S7V-038): cut the selected words that play, or restore the
+ * selected words that were cut. The model's frames are at the document fps, as the player's are.
+ */
+export function selectionToOps(
+  model: TranscriptModel,
+  selection: TranscriptSelection,
+  document: EditDocument,
+  mediaId: string,
+  action: "cut" | "restore",
+): WordEdit {
+  const words = model.words.map((word) => ({
+    start: word.start,
+    end: word.timed ? word.end : word.start,
+  }));
+  return wordEditOps(document, mediaId, words, selection, action);
+}
+
+/**
+ * The model while a text edit is on its way: the words it cuts show struck, the words it restores
+ * show kept, until the new edit arrives.
+ */
+export function withPendingEdit(model: TranscriptModel, edit: WordEdit): TranscriptModel {
+  if (edit._tag === "nothing") return model;
+  const changed = new Set(edit._tag === "cut" ? edit.cut.words : edit.restore.words);
+  if (edit._tag === "cut") for (const index of edit.cut.widenedWords) changed.add(index);
+  const removed = edit._tag === "cut";
+  let removedCount = model.removedCount;
+  const words = model.words.map((word, index) => {
+    if (!changed.has(index) || word.removed === removed) return word;
+    removedCount += removed ? 1 : -1;
+    return { ...word, removed };
+  });
+  return { ...model, words, removedCount };
 }

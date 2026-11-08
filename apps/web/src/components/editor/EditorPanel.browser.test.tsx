@@ -18,6 +18,7 @@ import { act, render } from "../../../test/render";
 import { scopedProjectKey } from "@t3tools/client-runtime/environment";
 
 import {
+  type MediaTranscriptState,
   type ProjectEditState,
   type ProjectExport,
   subscribePlayerSeek,
@@ -32,6 +33,7 @@ const state = vi.hoisted(() => ({
   urlRevisions: [] as Array<string | null | undefined>,
   urlVariants: [] as Array<string | undefined>,
   transcriptMedia: [] as Array<string | null>,
+  transcript: { _tag: "loading" } as MediaTranscriptState,
 }));
 
 /** The export as the jobs stream would deliver it: setting it re-renders its readers. */
@@ -71,7 +73,7 @@ vi.mock(import("../../editor/editStore"), async (importOriginal) => ({
   useProjectExport: () => useSyncExternalStore(exportStore.subscribe, () => state.export),
   useMediaTranscript: (_ref: unknown, mediaId: string | null) => {
     state.transcriptMedia.push(mediaId);
-    return { _tag: "loading" };
+    return state.transcript;
   },
   useTranscriptionJobs: () => ({ transcribe: null, download: null }),
   // The Versions tab (S7V-069) has its own tests; here it stays loading.
@@ -737,6 +739,61 @@ describe("EditorPanel", () => {
       }),
     );
     await expect.element(toolbar.getByRole("button", { name: "Redo" })).toBeDisabled();
+  });
+
+  // S7V-038: text edits take the same edit.apply path, with origin transcript.
+  it("cuts words from the Transcript tab through edit.apply, origin transcript", async () => {
+    setState([asset("clip-0")], true);
+    const word = (text: string, startFrame: number, endFrame: number) => ({
+      text,
+      startFrame,
+      endFrame,
+      confidence: 0.9,
+      speaker: "S1",
+    });
+    state.transcript = {
+      _tag: "ready",
+      transcript: {
+        transcriptVersion: 1,
+        mediaFingerprint: { sha256: "0".repeat(64), size: 1 },
+        model: "test",
+        revision: "test",
+        fps: FPS,
+        durationFrames: 300,
+        words: [word("one", 12, 18), word("two", 22, 28), word("three", 32, 38)],
+        createdAt: "2026-11-08T00:00:00Z",
+      },
+    };
+    commands.apply.mockReset();
+    commands.apply.mockResolvedValueOnce({
+      _tag: "Success",
+      value: { revision: 2, document: {}, canUndo: true, canRedo: false },
+    });
+    try {
+      await using screen = await renderPanel();
+      await screen.getByRole("tab", { name: "Transcript" }).click();
+      const one = screen.getByRole("option", { name: "one" });
+      await expect.element(one).toBeVisible();
+      await one.click();
+      await userEvent.keyboard("{Shift>}{ArrowRight}{/Shift}{Delete}");
+      // "one" starts the clip: the cut runs from its first frame to "three"'s air.
+      await vi.waitFor(() =>
+        expect(commands.apply).toHaveBeenCalledWith({
+          environmentId: EnvironmentId.make("env-1"),
+          input: {
+            projectId,
+            baseRevision: 1,
+            origin: "transcript",
+            ops: [
+              { _tag: "splitItem", itemId: "a", atFrame: 19, newItemId: "vt1" },
+              { _tag: "deleteItem", itemIds: ["a"], ripple: true },
+            ],
+          },
+        }),
+      );
+    } finally {
+      state.transcript = { _tag: "loading" };
+    }
   });
 
   it("hides the timeline playhead while a clip previews, and a click goes back to the edit", async () => {
