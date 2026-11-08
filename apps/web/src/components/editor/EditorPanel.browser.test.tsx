@@ -312,7 +312,7 @@ describe("EditorPanel", () => {
       commands.historyClean.mockReset();
       commands.historyClean.mockResolvedValueOnce({
         _tag: "Success",
-        value: { removedVersions: 40, freedBytes: 12 * 1024 * 1024 },
+        value: { removedVersions: 40, removedSteps: 40, freedBytes: 12 * 1024 * 1024 },
       });
       commands.historyDismiss.mockReset();
       commands.historyDismiss.mockResolvedValueOnce({ _tag: "Success", value: {} });
@@ -320,7 +320,7 @@ describe("EditorPanel", () => {
       await expect
         .element(
           banner(screen).getByText(
-            "This project has 62 saved versions (18.0 MB). Keep only the last 20 (plus any you exported), or remove all old versions?",
+            "This project has 62 saved versions (18.0 MB). Keep only the last 20 (plus tagged and exported ones), or remove all old versions?",
           ),
         )
         .toBeVisible();
@@ -351,11 +351,11 @@ describe("EditorPanel", () => {
       commands.historyClean
         .mockResolvedValueOnce({
           _tag: "Success",
-          value: { removedVersions: 61, freedBytes: 17.5 * 1024 * 1024 },
+          value: { removedVersions: 61, removedSteps: 61, freedBytes: 17.5 * 1024 * 1024 },
         })
         .mockResolvedValueOnce({
           _tag: "Success",
-          value: { removedVersions: 61, freedBytes: 17.5 * 1024 * 1024 },
+          value: { removedVersions: 61, removedSteps: 61, freedBytes: 17.5 * 1024 * 1024 },
         });
       await using screen = await renderPanel();
       await userEvent.click(screen.getByRole("button", { name: "Remove all old versions" }));
@@ -367,7 +367,7 @@ describe("EditorPanel", () => {
       await expect
         .element(
           dialog.getByText(
-            "This frees 17.5 MB. Only the current edit is kept, and exported versions are removed too. Undo will start again from now. Your clips are not touched.",
+            "This frees 17.5 MB. The current edit and your tagged and exported versions are kept. Undo will start again from now. Your clips are not touched.",
           ),
         )
         .toBeVisible();
@@ -378,7 +378,7 @@ describe("EditorPanel", () => {
 
       commands.historyClean.mockResolvedValueOnce({
         _tag: "Success",
-        value: { removedVersions: 61, freedBytes: 17.5 * 1024 * 1024 },
+        value: { removedVersions: 61, removedSteps: 61, freedBytes: 17.5 * 1024 * 1024 },
       });
       await userEvent.click(screen.getByRole("button", { name: "Remove all old versions" }));
       await userEvent.click(screen.getByRole("button", { name: "Remove all", exact: true }));

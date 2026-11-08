@@ -140,13 +140,10 @@ export class EditDocumentService extends Context.Service<
       projectId: ProjectId,
     ) => Effect.Effect<EditSnapshot, EditUnavailableError>;
     /**
-     * For an export of the edit at `revision`: an effect that marks that version as exported once
-     * the export has finished, so "Keep recent" keeps it. It never fails.
+     * Marks version `n` (the snapshot's `version` when the export started) as exported once the
+     * export has finished, so cleanup keeps it (S7V-050). Never fails; a removed version is skipped.
      */
-    readonly exportMarker: (
-      projectId: ProjectId,
-      revision: number,
-    ) => Effect.Effect<Effect.Effect<void>>;
+    readonly markExported: (projectId: ProjectId, n: number) => Effect.Effect<void>;
   }
 >()("t3/edit/EditDocumentService") {}
 
@@ -830,23 +827,21 @@ const make = Effect.gen(function* () {
     );
   });
 
-  const exportMarker: EditDocumentService["Service"]["exportMarker"] = Effect.fn(
-    "EditDocumentService.exportMarker",
-  )(function* (projectId, revision) {
-    const root = yield* resolveRoot(projectId).pipe(Effect.option);
-    if (Option.isNone(root)) return Effect.void;
-    const version = yield* lockFor(root.value).withPermit(history.versionOf(root.value, revision));
-    if (Option.isNone(version)) return Effect.void;
-    return lockFor(root.value)
-      .withPermit(history.markExported(root.value, version.value))
-      .pipe(Effect.ignore);
-  });
+  const markExported: EditDocumentService["Service"]["markExported"] = Effect.fn(
+    "EditDocumentService.markExported",
+  )(
+    function* (projectId, n) {
+      const root = yield* resolveRoot(projectId);
+      yield* lockFor(root).withPermit(history.markExported(root, n));
+    },
+    (effect) => Effect.ignore(effect),
+  );
 
   return EditDocumentService.of({
     read,
     cleanHistory,
     dismissCleanup,
-    exportMarker,
+    markExported,
     apply,
     subscribe,
     undo: Effect.fn("EditDocumentService.undo")(function* (projectId, options) {

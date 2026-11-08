@@ -98,9 +98,9 @@ export class LegacyEditHistory extends Context.Service<
     /** Looks for the old history of `cwd`; never fails. */
     readonly read: (cwd: string) => Effect.Effect<LegacyOutcome>;
     /**
-     * S7V-050 "Remove all old versions": where a working git exists, deletes the project's
-     * `refs/t3/edit/*` refs and `.s7cache/edit-history.json`, then `git gc --prune=now --quiet`.
-     * Without git it starts no process and changes nothing. Never fails; whether it removed them.
+     * S7V-050 "Remove all" (PO 2026-11-08): only with a working git whose top level is `cwd`,
+     * deletes the refs `.s7cache/edit-history.json` names, then that file, then plain `git gc` if
+     * a ref went. Without the file or git no process starts. Never fails.
      */
     readonly removeLeftovers: (cwd: string) => Effect.Effect<boolean>;
   }
@@ -161,13 +161,31 @@ export const make = Effect.fn("LegacyEditHistory.make")(function* (git: LegacyGi
     "LegacyEditHistory.removeLeftovers",
   )(function* (cwd) {
     const run = git.run;
-    if (run === undefined || !(yield* git.available)) return false;
+    if (run === undefined) return false;
+    const file = path.join(cwd, CACHE_DIR, LEGACY_HISTORY_FILE);
+    const text = yield* fileSystem.readFileString(file).pipe(Effect.option);
+    if (Option.isNone(text)) return false;
+    const state = decodeLegacyState(text.value);
+    if (Option.isNone(state)) return false;
+    // Only the refs this project's own file names; never a prefix sweep (PO 2026-11-08).
+    const named = new Set(
+      state.value.entries
+        .map((entry) => entry.ref)
+        .filter((ref) => ref.startsWith(LEGACY_REFS_PREFIX)),
+    );
+    if (!(yield* git.available)) return false;
     return yield* Effect.gen(function* () {
+      // A project inside another repository: its refs are not ours to touch.
+      const top = yield* run(cwd, ["rev-parse", "--show-toplevel"]);
+      if (top.exitCode !== 0) return false;
+      const [topReal, rootReal] = yield* Effect.all([
+        fileSystem.realPath(top.stdout.trim()),
+        fileSystem.realPath(cwd),
+      ]);
+      if (topReal !== rootReal) return false;
       const listed = yield* run(cwd, ["for-each-ref", "--format=%(refname)", LEGACY_REFS_PREFIX]);
-      const refs =
-        listed.exitCode === 0
-          ? listed.stdout.split("\n").filter((ref) => ref.startsWith(LEGACY_REFS_PREFIX))
-          : [];
+      if (listed.exitCode !== 0) return false;
+      const refs = listed.stdout.split("\n").filter((ref) => named.has(ref));
       if (refs.length > 0) {
         const deleted = yield* run(
           cwd,
@@ -177,9 +195,10 @@ export const make = Effect.fn("LegacyEditHistory.make")(function* (git: LegacyGi
         // Refs still there: keep the file that names them, so nothing is half removed.
         if (deleted.exitCode !== 0) return false;
       }
-      yield* fileSystem.remove(path.join(cwd, CACHE_DIR, LEGACY_HISTORY_FILE), { force: true });
-      // Not a git repository (exit 128): no objects to collect.
-      if (listed.exitCode === 0) yield* run(cwd, ["gc", "--prune=now", "--quiet"]);
+      yield* fileSystem.remove(file, { force: true });
+      // Plain gc keeps git's grace period for unreachable objects, so a T3 checkpoint being
+      // written right now is safe; only when something was actually deleted (PO 2026-11-08).
+      if (refs.length > 0) yield* run(cwd, ["gc", "--quiet"]);
       return true;
     }).pipe(Effect.orElseSucceed(() => false));
   });

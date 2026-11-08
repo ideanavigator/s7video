@@ -273,7 +273,10 @@ export const EditVersionRestoreInput = Schema.Struct({
 });
 export type EditVersionRestoreInput = typeof EditVersionRestoreInput.Type;
 
-/** S7V-050: keep the last 20 (plus the current and exported ones), or only the current edit. */
+/**
+ * S7V-050: keep the last 20 versions, or only the current one; tagged and exported versions stay
+ * either way. "remove-all" also starts undo again from the current edit.
+ */
 export const EditHistoryCleanMode = Schema.Literals(["keep-recent", "remove-all"]);
 export type EditHistoryCleanMode = typeof EditHistoryCleanMode.Type;
 
@@ -286,7 +289,10 @@ export const EditHistoryCleanInput = Schema.Struct({
 export type EditHistoryCleanInput = typeof EditHistoryCleanInput.Type;
 
 export const EditHistoryCleanResult = Schema.Struct({
+  /** Numbered versions (S7V-069) removed. */
   removedVersions: Schema.Int,
+  /** Undo steps removed. */
+  removedSteps: Schema.Int,
   freedBytes: Schema.Int,
 });
 export type EditHistoryCleanResult = typeof EditHistoryCleanResult.Type;

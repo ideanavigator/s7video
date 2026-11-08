@@ -151,8 +151,11 @@ const make = Effect.gen(function* () {
   const start: ExportService["Service"]["start"] = Effect.fn("ExportService.start")(
     function* (input) {
       const snapshot = yield* edits.read(input.projectId);
-      // S7V-050: a finished export marks its version, so "Keep recent" keeps it.
-      const markExported = yield* edits.exportMarker(input.projectId, snapshot.revision);
+      // S7V-050: a finished export marks its version, so cleanup keeps it.
+      const markExported =
+        snapshot.version === undefined
+          ? Effect.void
+          : edits.markExported(input.projectId, snapshot.version);
       const project = yield* projects
         .getById(input.projectId)
         .pipe(Effect.orElseSucceed(() => Option.none()));

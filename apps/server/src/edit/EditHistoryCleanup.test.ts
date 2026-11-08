@@ -14,6 +14,7 @@ import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
+import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
@@ -101,7 +102,7 @@ const makeChanges = Effect.fnUntraced(function* (
   return snapshot;
 });
 
-const durationOf = (snapshot: EditSnapshot) =>
+const durationOf = (snapshot: Pick<EditSnapshot, "document">) =>
   snapshot.document.tracks[0]?.items.reduce((sum, item) => sum + item.duration, 0) ?? 0;
 
 const readEdit = (root: string) => NodeFS.readFileSync(NodePath.join(root, "edit.json"), "utf8");
@@ -118,12 +119,15 @@ const objectBytes = (root: string) =>
     0,
   );
 
-/** Every object the log names (and the edit last written), as object file names. */
+/** Every object the log's steps and versions name (and the edit last written), as file names. */
 const namedObjects = (root: string) => {
   const log = logOf(root);
   return [
     ...new Set([
-      ...log.entries.flatMap((entry) => [entry.files["edit.json"], entry.files["project.json"]]),
+      ...[...log.entries, ...(log.versions ?? [])].flatMap(({ files }) => [
+        files["edit.json"],
+        files["project.json"],
+      ]),
       ...(log.knownEdit === undefined ? [] : [log.knownEdit]),
     ]),
   ]
@@ -162,78 +166,98 @@ const undoAll = Effect.fnUntraced(function* ({ edits, projectId }: Project) {
 });
 
 describe("cleanupDue", () => {
-  const log = (dismissedAt?: EditHistoryService.HistoryUsage) => ({
+  const log = (
+    nextVersion: number,
+    dismissedAt?: { nextVersion: number; bytes: number },
+  ): EditSnapshotStore.HistoryLog => ({
     ...EditSnapshotStore.EMPTY_HISTORY_LOG,
+    nextVersion,
     ...(dismissedAt === undefined ? {} : { cleanup: { dismissedAt } }),
   });
   const ask = EditHistoryService.CLEANUP_ASK_VERSIONS;
   const bytes = EditHistoryService.CLEANUP_ASK_BYTES;
+  const MB = 1024 * 1024;
 
   it("asks past 50 versions or 200 MB, not at them", () => {
     assert.strictEqual(ask, 50);
-    assert.strictEqual(bytes, 200 * 1024 * 1024);
-    assert.isFalse(EditHistoryService.cleanupDue({ versions: ask, bytes }, log()));
-    assert.isTrue(EditHistoryService.cleanupDue({ versions: ask + 1, bytes: 0 }, log()));
-    assert.isTrue(EditHistoryService.cleanupDue({ versions: 2, bytes: bytes + 1 }, log()));
+    assert.strictEqual(bytes, 200 * MB);
+    assert.isFalse(EditHistoryService.cleanupDue({ versions: ask, bytes }, log(51)));
+    assert.isTrue(EditHistoryService.cleanupDue({ versions: ask + 1, bytes: 0 }, log(52)));
+    assert.isTrue(EditHistoryService.cleanupDue({ versions: 2, bytes: bytes + 1 }, log(3)));
   });
 
-  it("after not now, waits for 50 more versions or double the size", () => {
-    const again = EditHistoryService.CLEANUP_ASK_AGAIN_VERSIONS;
-    const dismissed = log({ versions: 60, bytes: 300 * 1024 * 1024 });
+  it("after not now, waits for 50 more versions saved or double the size", () => {
+    assert.strictEqual(EditHistoryService.CLEANUP_ASK_AGAIN_VERSIONS, 50);
+    const dismissedAt = { nextVersion: 61, bytes: 300 * MB };
+    const usage = { versions: 60, bytes: 300 * MB };
+    assert.isFalse(EditHistoryService.cleanupDue(usage, log(61, dismissedAt)));
     assert.isFalse(
-      EditHistoryService.cleanupDue({ versions: 60, bytes: 300 * 1024 * 1024 }, dismissed),
-    );
-    assert.isFalse(
-      EditHistoryService.cleanupDue(
-        { versions: 60 + again - 1, bytes: 599 * 1024 * 1024 },
-        dismissed,
-      ),
+      EditHistoryService.cleanupDue({ versions: 109, bytes: 599 * MB }, log(110, dismissedAt)),
     );
     assert.isTrue(
-      EditHistoryService.cleanupDue({ versions: 60 + again, bytes: 300 * 1024 * 1024 }, dismissed),
+      EditHistoryService.cleanupDue({ versions: 110, bytes: 300 * MB }, log(111, dismissedAt)),
     );
     assert.isTrue(
-      EditHistoryService.cleanupDue({ versions: 61, bytes: 600 * 1024 * 1024 }, dismissed),
+      EditHistoryService.cleanupDue({ versions: 61, bytes: 600 * MB }, log(62, dismissedAt)),
+    );
+  });
+
+  it("counts versions saved since not now, so deleted versions or the step cap never hide growth", () => {
+    // Said "Not now" at 180 versions; versions were deleted since, so only 100 are listed.
+    const dismissedAt = { nextVersion: 181, bytes: 300 * MB };
+    assert.isTrue(
+      EditHistoryService.cleanupDue({ versions: 100, bytes: 300 * MB }, log(231, dismissedAt)),
+    );
+    assert.isFalse(
+      EditHistoryService.cleanupDue({ versions: 100, bytes: 300 * MB }, log(230, dismissedAt)),
     );
   });
 });
 
 describe("keepForCleanup", () => {
-  const entry = (seq: number, exported?: boolean): EditSnapshotStore.HistoryEntry => ({
-    seq,
-    revision: seq,
-    files: { "edit.json": "a".repeat(64), "project.json": "b".repeat(64) },
-    at: 0,
-    ...(exported === undefined ? {} : { exported }),
+  const version = (n: number, extra: Partial<EditSnapshotStore.EditVersionRecord> = {}) =>
+    ({
+      n,
+      files: { "edit.json": "a".repeat(64), "project.json": "b".repeat(64) },
+      revision: n,
+      at: 0,
+      author: "you",
+      changes: ["Changed the edit"],
+      ...extra,
+    }) satisfies EditSnapshotStore.EditVersionRecord;
+  const versions = Array.from({ length: 60 }, (_, index) =>
+    version(index + 1, index === 3 ? { tag: "first cut" } : index === 10 ? { exported: true } : {}),
+  );
+  const numbers = (kept: ReadonlyArray<EditSnapshotStore.EditVersionRecord>) =>
+    kept.map((entry) => entry.n);
+
+  it("keep-recent keeps the last 20, the current, tagged and exported versions", () => {
+    assert.strictEqual(EditHistoryService.CLEANUP_KEEP_RECENT, 20);
+    assert.deepEqual(numbers(EditHistoryService.keepForCleanup(versions, "keep-recent")), [
+      4,
+      11,
+      ...Array.from({ length: 20 }, (_, index) => 41 + index),
+    ]);
   });
 
-  it("keeps the last 20, the current step and exported ones", () => {
-    assert.strictEqual(EditHistoryService.CLEANUP_KEEP_RECENT, 20);
-    const entries = Array.from({ length: 60 }, (_, index) =>
-      entry(index + 1, index === 3 || index === 10 ? true : undefined),
-    );
-    const kept = EditHistoryService.keepForCleanup({
-      ...EditSnapshotStore.EMPTY_HISTORY_LOG,
-      entries,
-      cursor: 30,
-    });
+  it("remove-all keeps the current, tagged and exported versions", () => {
     assert.deepEqual(
-      [...kept].toSorted((a, b) => a - b),
-      [3, 10, 30, ...Array.from({ length: 20 }, (_, index) => 40 + index)],
+      numbers(EditHistoryService.keepForCleanup(versions, "remove-all")),
+      [4, 11, 60],
     );
-    // One rule per reason, so S7V-069 adds tagged versions as one more.
-    assert.strictEqual(EditHistoryService.CLEANUP_KEEP_RULES.length, 3);
+    assert.deepEqual(numbers(EditHistoryService.keepForCleanup([], "remove-all")), []);
   });
 });
 
 describe("history cleanup", () => {
-  it.effect("reports history usage", () =>
+  it.effect("reports history usage in versions, not undo steps", () =>
     withProject((project) =>
       Effect.gen(function* () {
         yield* makeChanges(project, 5);
         const usage = yield* project.history.usage(project.root);
-        assert.strictEqual(usage.versions, logOf(project.root).entries.length);
-        assert.strictEqual(usage.versions, 6);
+        // Five changes: five versions; the starting edit is an undo step but no version.
+        assert.strictEqual(usage.versions, 5);
+        assert.strictEqual(logOf(project.root).entries.length, 6);
         assert.strictEqual(usage.bytes, objectBytes(project.root));
       }),
     ),
@@ -243,26 +267,22 @@ describe("history cleanup", () => {
     withProject((project) =>
       Effect.gen(function* () {
         const { edits, projectId } = project;
-        // The starting edit plus 50 changes: 51 versions, one past the limit.
-        const at50 = yield* makeChanges(project, 49);
-        assert.strictEqual(logOf(project.root).entries.length, 50);
+        const at50 = yield* makeChanges(project, 50);
+        assert.strictEqual(logOf(project.root).versions?.length, 50);
         assert.isUndefined(at50.cleanup);
-        const at51 = yield* makeChanges(project, 1, 49);
-        assert.deepEqual(at51.cleanup, {
-          versions: 51,
-          bytes: objectBytes(project.root),
-        });
+        const at51 = yield* makeChanges(project, 1, 50);
+        assert.deepEqual(at51.cleanup, { versions: 51, bytes: objectBytes(project.root) });
 
         const dismissed = yield* edits.dismissCleanup(projectId);
         assert.isUndefined(dismissed.cleanup);
         assert.deepEqual(logOf(project.root).cleanup, {
-          dismissedAt: { versions: 51, bytes: objectBytes(project.root) },
+          dismissedAt: { nextVersion: 52, bytes: objectBytes(project.root) },
         });
-        const later = yield* makeChanges(project, 49, 50);
+        const later = yield* makeChanges(project, 49, 51);
         assert.isUndefined(later.cleanup);
         // "Not now" stays in the log through every change.
-        assert.strictEqual(logOf(project.root).cleanup?.dismissedAt.versions, 51);
-        const again = yield* makeChanges(project, 1, 99);
+        assert.strictEqual(logOf(project.root).cleanup?.dismissedAt.nextVersion, 52);
+        const again = yield* makeChanges(project, 1, 100);
         assert.strictEqual(again.cleanup?.versions, 101);
         assert.isDefined((yield* edits.read(projectId)).cleanup);
       }),
@@ -287,37 +307,46 @@ describe("history cleanup", () => {
         );
         const status = yield* fresh.status(project.root);
         assert.isUndefined(status.cleanup);
-        assert.strictEqual((yield* fresh.usage(project.root)).versions, 56);
+        assert.strictEqual((yield* fresh.usage(project.root)).versions, 55);
       }),
     ),
   );
 
-  it.effect("keep-recent keeps the last 20, the current and exported ones", () =>
+  it.effect("keep-recent keeps the last 20 versions, the current, tagged and exported ones", () =>
     withProject((project) =>
       Effect.gen(function* () {
         const { edits, history, projectId, root } = project;
         yield* makeChanges(project, 59);
         const before = logOf(root);
         assert.strictEqual(before.entries.length, 60);
-        // Two old versions were exported. Entry 0 is the starting edit; entry n keeps 10 + n - 1.
-        const exported = [before.entries[3]!, before.entries[10]!];
-        for (const entry of exported) yield* history.markExported(root, entry.seq);
+        assert.deepEqual(
+          before.versions?.map((version) => version.n),
+          Array.from({ length: 59 }, (_, index) => index + 1),
+        );
+        yield* edits.tagVersion(projectId, 2, "first cut");
+        yield* history.markExported(root, 4);
+        yield* history.markExported(root, 11);
         const bytesBefore = objectBytes(root);
         const current = readEdit(root);
 
         const result = yield* edits.cleanHistory(projectId, "keep-recent");
         const after = logOf(root);
-        assert.strictEqual(after.entries.length, 22);
-        assert.strictEqual(result.removedVersions, 38);
         assert.deepEqual(
-          after.entries.slice(0, 2).map((entry) => entry.seq),
-          exported.map((entry) => entry.seq),
+          after.versions?.map((version) => version.n),
+          [2, 4, 11, ...Array.from({ length: 20 }, (_, index) => 40 + index)],
         );
+        assert.strictEqual(after.versions?.[0]?.tag, "first cut");
+        assert.strictEqual(result.removedVersions, 36);
+        // Undo keeps the newest 20 steps (the current one among them).
+        assert.strictEqual(result.removedSteps, 40);
         assert.deepEqual(
-          after.entries.slice(2).map((entry) => entry.seq),
+          after.entries.map((entry) => entry.seq),
           before.entries.slice(-20).map((entry) => entry.seq),
         );
-        assert.strictEqual(after.cursor, 21);
+        assert.strictEqual(after.cursor, 19);
+        // Numbers never restart.
+        assert.strictEqual(after.nextVersion, 60);
+        // Only the objects kept steps and versions use stay.
         assert.deepEqual(historyObjects(root), namedObjects(root));
         assert.strictEqual(result.freedBytes, bytesBefore - objectBytes(root));
         assert.isAbove(result.freedBytes, 0);
@@ -325,26 +354,32 @@ describe("history cleanup", () => {
         const snapshot = yield* edits.read(projectId);
         assert.isUndefined(snapshot.cleanup);
         assert.isTrue(snapshot.canUndo);
+        assert.strictEqual(snapshot.version, 59);
+        // A kept old version still opens.
+        assert.strictEqual(durationOf(yield* edits.versionDocument(projectId, 4)), 10 + 3);
 
-        // Undo reaches back to the oldest kept version, then stops; redo still works.
-        assert.strictEqual(yield* undoAll(project), 21);
-        assert.strictEqual(durationOf(yield* edits.read(projectId)), 10 + 2);
+        // Undo reaches back to the oldest kept step, then stops; redo still works.
+        assert.strictEqual(yield* undoAll(project), 19);
+        // Entry n keeps 10 + n - 1 frames; the oldest kept step is entry 40.
+        assert.strictEqual(durationOf(yield* edits.read(projectId)), 10 + 39);
         const redone = yield* edits.redo(projectId);
-        assert.strictEqual(durationOf(redone), 10 + 9);
+        assert.strictEqual(durationOf(redone), 10 + 40);
         assert.isTrue(redone.canRedo);
       }),
     ),
   );
 
   it.effect(
-    "dry run removes nothing and reports the space; remove-all keeps only the current edit",
+    "dry run removes nothing and reports the space; remove-all keeps the current, tagged and exported versions",
     () =>
       withProject((project) =>
         Effect.gen(function* () {
-          const { edits, projectId, root } = project;
+          const { edits, history, projectId, root } = project;
           yield* makeChanges(project, 30);
-          // One undo, so there is a redo step too.
+          // One undo, so there is a redo step too; the undo is version 31.
           yield* edits.undo(projectId);
+          yield* edits.tagVersion(projectId, 5, "keeper");
+          yield* history.markExported(root, 7);
           const logText = NodeFS.readFileSync(
             NodePath.join(root, ".s7history", "log.json"),
             "utf8",
@@ -354,7 +389,8 @@ describe("history cleanup", () => {
           const current = readEdit(root);
 
           const preview = yield* edits.cleanHistory(projectId, "remove-all", { dryRun: true });
-          assert.strictEqual(preview.removedVersions, 30);
+          assert.strictEqual(preview.removedVersions, 28);
+          assert.strictEqual(preview.removedSteps, 30);
           assert.strictEqual(
             NodeFS.readFileSync(NodePath.join(root, ".s7history", "log.json"), "utf8"),
             logText,
@@ -367,6 +403,11 @@ describe("history cleanup", () => {
           const log = logOf(root);
           assert.strictEqual(log.entries.length, 1);
           assert.strictEqual(log.cursor, 0);
+          assert.deepEqual(
+            log.versions?.map((version) => version.n),
+            [5, 7, 31],
+          );
+          assert.strictEqual(log.nextVersion, 32);
           assert.deepEqual(historyObjects(root), namedObjects(root));
           assert.strictEqual(readEdit(root), current);
           const snapshot = yield* edits.read(projectId);
@@ -374,8 +415,9 @@ describe("history cleanup", () => {
           assert.isFalse(snapshot.canRedo);
           const undo = yield* edits.undo(projectId).pipe(Effect.flip);
           assert.strictEqual(undo.reason, "nothing-to-undo");
-          // The next change undoes back to the kept edit.
-          yield* makeChanges(project, 1, 40);
+          // The next change is v32, and undoes back to the kept edit.
+          const next = yield* makeChanges(project, 1, 40);
+          assert.strictEqual(next.version, 32);
           assert.strictEqual(durationOf(yield* edits.undo(projectId)), durationOf(snapshot));
         }),
       ),
@@ -489,22 +531,81 @@ describe("history cleanup", () => {
   });
 });
 
-describe("old git leftovers", () => {
-  /** An S7V-024 checkpoint ref and its state file, as a project from before S7V-051 has them. */
-  const plantLeftovers = (root: string) => {
-    const tree = git(root, "write-tree").trim();
-    const commit = git(root, "commit-tree", tree, "-m", "old checkpoint").trim();
-    git(root, "update-ref", "refs/t3/edit/checkpoints/1", commit);
-    // No entries: the import finds nothing to bring in.
+describe("old git leftovers (PO 2026-11-08: only this project's named refs, plain gc)", () => {
+  const T3_REF = "refs/t3/orchestration-v2/checkpoints/turn-1";
+  const commitIn = (repo: string) => {
+    const tree = git(repo, "write-tree").trim();
+    return git(repo, "commit-tree", tree, "-m", "old checkpoint").trim();
+  };
+  /**
+   * S7V-024 leftovers as a project from before S7V-051 has them: `.s7cache/edit-history.json`
+   * naming `refs/t3/edit/checkpoints/1` and `/2` (only 1 exists), plus a ref the file does not name
+   * and one of T3's own turn refs, which must both survive.
+   */
+  const plantLeftovers = (repo: string, project = repo) => {
+    const commit = commitIn(repo);
+    for (const ref of ["refs/t3/edit/checkpoints/1", "refs/t3/edit/checkpoints/99", T3_REF]) {
+      git(repo, "update-ref", ref, commit);
+    }
+    NodeFS.mkdirSync(NodePath.join(project, ".s7cache"), { recursive: true });
     NodeFS.writeFileSync(
-      NodePath.join(root, ".s7cache", "edit-history.json"),
-      JSON.stringify({ version: 1, nextSeq: 2, highestRevision: 1, cursor: -1, entries: [] }),
+      NodePath.join(project, ".s7cache", "edit-history.json"),
+      JSON.stringify({
+        version: 1,
+        nextSeq: 3,
+        highestRevision: 2,
+        cursor: 1,
+        entries: [
+          { seq: 1, revision: 1, ref: "refs/t3/edit/checkpoints/1" },
+          { seq: 2, revision: 2, ref: "refs/t3/edit/checkpoints/2" },
+        ],
+      }),
     );
   };
-  const legacyRefs = (root: string) =>
-    git(root, "for-each-ref", "--format=%(refname)", "refs/t3/edit/").trim();
+  const refsOf = (repo: string) =>
+    git(repo, "for-each-ref", "--format=%(refname)", "refs/t3/").trim().split("\n").toSorted();
+  const packs = (repo: string) =>
+    NodeFS.readdirSync(NodePath.join(repo, ".git", "objects", "pack")).filter((name) =>
+      name.endsWith(".pack"),
+    );
+  const stateFile = (project: string) => NodePath.join(project, ".s7cache", "edit-history.json");
 
-  it.effect("removes old git leftovers only when git works", () => {
+  /** Git access that runs the real git and records each command's arguments. */
+  const recordingGit = (available: boolean) => {
+    const runs: Array<ReadonlyArray<string>> = [];
+    const access: LegacyEditHistory.LegacyGitAccess = {
+      available: Effect.succeed(available),
+      show: () => Effect.succeedNone,
+      run: (cwd, args, stdin) =>
+        Effect.sync(() => {
+          runs.push(args);
+          const result = NodeChildProcess.spawnSync("git", args, {
+            cwd,
+            input: stdin,
+            encoding: "utf8",
+          });
+          return { exitCode: result.status ?? 1, stdout: result.stdout };
+        }),
+    };
+    return { runs, access };
+  };
+  const removeWith = (access: LegacyEditHistory.LegacyGitAccess, cwd: string) =>
+    Effect.gen(function* () {
+      const legacy = yield* LegacyEditHistory.make(access);
+      return yield* legacy.removeLeftovers(cwd);
+    }).pipe(Effect.provide(NodeServices.layer));
+  const tempRepo = Effect.fnUntraced(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const repo = NodeFS.realpathSync(
+      yield* fileSystem.makeTempDirectoryScoped({ prefix: "s7v-git-" }),
+    );
+    git(repo, "init", "--quiet");
+    NodeFS.writeFileSync(NodePath.join(repo, "README.md"), "x");
+    git(repo, "add", "README.md");
+    return repo;
+  });
+
+  it.effect("remove-all deletes only the named refs and the file, then runs plain gc", () => {
     const legacy = LegacyEditHistory.layer.pipe(
       Layer.provide(
         Layer.mergeAll(
@@ -517,52 +618,86 @@ describe("old git leftovers", () => {
       (project) =>
         Effect.gen(function* () {
           const { edits, projectId, root } = project;
-          plantLeftovers(root);
           yield* makeChanges(project, 10);
-          // Keep recent never touches them.
+          plantLeftovers(root);
+          assert.deepEqual(packs(root), []);
+          // Keep recent and a dry run never touch them.
           yield* edits.cleanHistory(projectId, "keep-recent");
-          assert.strictEqual(legacyRefs(root), "refs/t3/edit/checkpoints/1");
           yield* edits.cleanHistory(projectId, "remove-all", { dryRun: true });
-          assert.strictEqual(legacyRefs(root), "refs/t3/edit/checkpoints/1");
+          assert.include(refsOf(root), "refs/t3/edit/checkpoints/1");
+          assert.isTrue(NodeFS.existsSync(stateFile(root)));
 
           yield* edits.cleanHistory(projectId, "remove-all");
-          assert.strictEqual(legacyRefs(root), "");
-          assert.isFalse(NodeFS.existsSync(NodePath.join(root, ".s7cache", "edit-history.json")));
-          // T3's own refs and the project's commits stay.
-          assert.isAbove(Number(git(root, "rev-list", "--all", "--count").trim()), 0);
+          // The named ref is gone; the unnamed one and T3's turn ref stay.
+          assert.deepEqual(refsOf(root), ["refs/t3/edit/checkpoints/99", T3_REF]);
+          assert.isFalse(NodeFS.existsSync(stateFile(root)));
+          // gc ran: the loose objects are packed, and every ref still resolves.
+          assert.isAbove(packs(root).length, 0);
+          git(root, "cat-file", "-e", `${T3_REF}^{commit}`);
         }),
       undefined,
       { legacy },
     );
   });
 
+  it.effect("runs no gc when no named ref exists, and removes the stale file", () =>
+    Effect.gen(function* () {
+      const repo = yield* tempRepo();
+      plantLeftovers(repo);
+      git(repo, "update-ref", "-d", "refs/t3/edit/checkpoints/1");
+      const { runs, access } = recordingGit(true);
+      assert.isTrue(yield* removeWith(access, repo));
+      assert.isFalse(runs.some((args) => args[0] === "gc" || args[0] === "update-ref"));
+      assert.isFalse(NodeFS.existsSync(stateFile(repo)));
+      assert.deepEqual(refsOf(repo), ["refs/t3/edit/checkpoints/99", T3_REF]);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("starts no git at all without the old file", () =>
+    Effect.gen(function* () {
+      const repo = yield* tempRepo();
+      git(repo, "update-ref", "refs/t3/edit/checkpoints/1", commitIn(repo));
+      const { runs, access } = recordingGit(true);
+      assert.isFalse(yield* removeWith(access, repo));
+      assert.deepEqual(runs, []);
+      assert.include(refsOf(repo), "refs/t3/edit/checkpoints/1");
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("does nothing for a project folder nested inside another repository", () =>
+    Effect.gen(function* () {
+      const repo = yield* tempRepo();
+      const nested = NodePath.join(repo, "videos", "My project");
+      NodeFS.mkdirSync(nested, { recursive: true });
+      plantLeftovers(repo, nested);
+      const { runs, access } = recordingGit(true);
+      assert.isFalse(yield* removeWith(access, nested));
+      assert.deepEqual(runs, [["rev-parse", "--show-toplevel"]]);
+      assert.include(refsOf(repo), "refs/t3/edit/checkpoints/1");
+      assert.isTrue(NodeFS.existsSync(stateFile(nested)));
+      assert.deepEqual(packs(repo), []);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("starts no process without git", () => {
     const spawns: SpawnCounter = { count: 0 };
-    const runs = { count: 0 };
+    const { runs, access } = recordingGit(false);
     const legacy = Layer.effect(
       LegacyEditHistory.LegacyEditHistory,
-      LegacyEditHistory.make({
-        available: Effect.succeed(false),
-        show: () => Effect.succeedNone,
-        run: () =>
-          Effect.sync(() => {
-            runs.count += 1;
-            return { exitCode: 0, stdout: "" };
-          }),
-      }),
+      LegacyEditHistory.make(access),
     );
     return withProject(
       (project) =>
         Effect.gen(function* () {
           const { edits, projectId, root } = project;
-          plantLeftovers(root);
           yield* makeChanges(project, 10);
+          plantLeftovers(root);
           spawns.count = 0;
           yield* edits.cleanHistory(projectId, "remove-all");
           assert.strictEqual(spawns.count, 0);
-          assert.strictEqual(runs.count, 0);
-          assert.strictEqual(legacyRefs(root), "refs/t3/edit/checkpoints/1");
-          assert.isTrue(NodeFS.existsSync(NodePath.join(root, ".s7cache", "edit-history.json")));
+          assert.deepEqual(runs, []);
+          assert.include(refsOf(root), "refs/t3/edit/checkpoints/1");
+          assert.isTrue(NodeFS.existsSync(stateFile(root)));
           // The old history is not imported after the user removed old versions.
           assert.strictEqual(logOf(root).legacy, "none");
         }),

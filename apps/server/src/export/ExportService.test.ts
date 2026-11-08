@@ -262,14 +262,15 @@ describe("ExportService", () => {
       "ok",
       ({ projectId, root, exports, finish }) =>
         Effect.gen(function* () {
-          const exportedOf = () => historyLog(root)?.entries.map((entry) => entry.exported);
-          assert.deepStrictEqual(exportedOf(), [undefined, undefined]);
+          const exportedOf = () =>
+            historyLog(root)?.versions?.map((version) => [version.n, version.exported]);
+          assert.deepStrictEqual(exportedOf(), [[1, undefined]]);
           const started = yield* exports.start({ projectId, captions: false });
           // Running: nothing is marked yet.
-          assert.deepStrictEqual(exportedOf(), [undefined, undefined]);
+          assert.deepStrictEqual(exportedOf(), [[1, undefined]]);
           yield* finish;
           yield* settled(exports, started.jobId);
-          assert.deepStrictEqual(exportedOf(), [undefined, true]);
+          assert.deepStrictEqual(exportedOf(), [[1, true]]);
         }),
       { ops: withVideo },
     ),
@@ -283,7 +284,9 @@ describe("ExportService", () => {
           const started = yield* exports.start({ projectId, captions: false });
           yield* finish;
           yield* settled(exports, started.jobId);
-          assert.isTrue(historyLog(root)?.entries.every((entry) => entry.exported === undefined));
+          assert.isTrue(
+            historyLog(root)?.versions?.every((version) => version.exported === undefined),
+          );
         }),
       { ops: withVideo },
     ),

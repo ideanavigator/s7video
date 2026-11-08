@@ -103,7 +103,7 @@ export function HistoryCleanupBanner(props: {
         <AlertDescription>
           <p>
             This project has {cleanup.versions} saved versions ({historyMegabytes(cleanup.bytes)}).
-            Keep only the last 20 (plus any you exported), or remove all old versions?
+            Keep only the last 20 (plus tagged and exported ones), or remove all old versions?
           </p>
           {/* Below the question, wrapping: the Editor panel is narrow. */}
           <div className="flex flex-wrap gap-1">
@@ -140,7 +140,7 @@ export function HistoryCleanupBanner(props: {
             <AlertDialogTitle>Remove all old versions?</AlertDialogTitle>
             <AlertDialogDescription>
               {typeof confirm === "number"
-                ? `This frees ${historyMegabytes(confirm)}. Only the current edit is kept, and exported versions are removed too. Undo will start again from now. Your clips are not touched.`
+                ? `This frees ${historyMegabytes(confirm)}. The current edit and your tagged and exported versions are kept. Undo will start again from now. Your clips are not touched.`
                 : "Measuring the old versions…"}
             </AlertDialogDescription>
           </AlertDialogHeader>

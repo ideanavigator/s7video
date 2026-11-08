@@ -47,8 +47,6 @@ export const HistoryEntry = Schema.Struct({
   files: HistoryFiles,
   /** When the step was saved, epoch milliseconds. */
   at: Schema.Int,
-  /** An export of this step finished; "Keep recent" keeps it (S7V-050). */
-  exported: Schema.optionalKey(Schema.Boolean),
 });
 export type HistoryEntry = typeof HistoryEntry.Type;
 
@@ -72,6 +70,8 @@ export const EditVersionRecord = Schema.Struct({
   /** 1-40 characters, unique in the project; a tagged version is never cleaned up (S7V-050). */
   tag: Schema.optionalKey(Schema.String),
   restoredFrom: Schema.optionalKey(Schema.Int),
+  /** An export of this version finished; cleanup keeps it (S7V-050). */
+  exported: Schema.optionalKey(Schema.Boolean),
 });
 export type EditVersionRecord = typeof EditVersionRecord.Type;
 
@@ -102,12 +102,12 @@ export const HistoryLog = Schema.Struct({
   /** Numbered versions, oldest first; the last one is the current edit (S7V-069). */
   versions: Schema.optionalKey(Schema.Array(EditVersionRecord)),
   /**
-   * The cleanup question (S7V-050): the history's size when the user last said "Not now", so it is
-   * asked again only after it grows enough.
+   * The cleanup question (S7V-050): `nextVersion` and the objects' bytes when the user last said
+   * "Not now", so it is asked again only after enough new versions or growth.
    */
   cleanup: Schema.optionalKey(
     Schema.Struct({
-      dismissedAt: Schema.Struct({ versions: Schema.Int, bytes: Schema.Int }),
+      dismissedAt: Schema.Struct({ nextVersion: Schema.Int, bytes: Schema.Int }),
     }),
   ),
 });

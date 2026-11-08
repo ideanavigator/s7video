@@ -45,13 +45,18 @@ export { EditHistoryError } from "./EditSnapshotStore.ts";
 const MAX_TRACKED_FILE_BYTES = 10 * 1024 * 1024;
 const MAX_HISTORY_ENTRIES = 200;
 
-/** S7V-050: the cleanup question appears past either size (PO 2026-11-07). */
+/**
+ * S7V-050: the cleanup question appears past either size (PO 2026-11-07). "Versions" are S7V-069's
+ * numbered versions; undo steps are "steps".
+ */
 export const CLEANUP_ASK_VERSIONS = 50;
 export const CLEANUP_ASK_BYTES = 200 * 1024 * 1024;
-/** After "Not now", asked again only this many versions later, or once the size doubles. */
+/** After "Not now", asked again once this many more versions were saved, or the size doubles. */
 export const CLEANUP_ASK_AGAIN_VERSIONS = 50;
 /** "Keep recent" keeps this many of the newest versions, plus those the keep rules name. */
 export const CLEANUP_KEEP_RECENT = 20;
+/** "Keep recent" also keeps this many of the newest undo steps (and the current step). */
+const CLEANUP_KEEP_STEPS = 20;
 
 const MEDIA_EXTENSIONS = new Set([
   "3gp",
@@ -88,7 +93,7 @@ const isSha256Hex = Schema.is(Sha256Hex);
  */
 export type EditStanding = "known" | "earlier" | "outside" | "no-history";
 
-/** The history's size: its steps and the bytes of its saved objects. */
+/** The history's size: its numbered versions (S7V-069) and the bytes of its saved objects. */
 export interface HistoryUsage {
   readonly versions: number;
   readonly bytes: number;
@@ -100,6 +105,8 @@ export interface EditHistoryStatus {
   readonly highestRevision: number;
   /** The newest version's number (S7V-069), when there is one. */
   readonly version: number | undefined;
+  /** Present when the cleanup question is due (S7V-050). */
+  readonly cleanup?: HistoryUsage;
 }
 
 /** The chat reply a change came from: every change with the same pair folds into one version. */
@@ -196,46 +203,67 @@ export type TagVersionOutcome =
   | { readonly _tag: "tag-taken"; readonly by: number };
 
 export type DeleteVersionOutcome = "deleted" | "unknown-version" | "current-version";
-  /** Present when the cleanup question is due (S7V-050). */
-  readonly cleanup?: HistoryUsage;
-}
 
 export type HistoryCleanMode = "keep-recent" | "remove-all";
 
 export interface HistoryCleanResult {
+  /** Numbered versions (S7V-069) removed. */
   readonly removedVersions: number;
+  /** Undo steps removed. */
+  readonly removedSteps: number;
   readonly freedBytes: number;
 }
 
-/** Whether to ask: past either size, and grown enough since the last "Not now". */
+/**
+ * Whether to ask: past either size, and, after "Not now", 50 more versions saved since (counted
+ * from `nextVersion`, so deleted versions and caps never hide growth) or twice the bytes.
+ */
 export const cleanupDue = (usage: HistoryUsage, log: HistoryLog) => {
   if (usage.versions <= CLEANUP_ASK_VERSIONS && usage.bytes <= CLEANUP_ASK_BYTES) return false;
   const dismissed = log.cleanup?.dismissedAt;
   if (dismissed === undefined) return true;
   return (
-    usage.versions >= dismissed.versions + CLEANUP_ASK_AGAIN_VERSIONS ||
+    nextVersionOf(log) >= dismissed.nextVersion + CLEANUP_ASK_AGAIN_VERSIONS ||
     usage.bytes >= dismissed.bytes * 2
   );
 };
 
-/**
- * Why "Keep recent" keeps a step: each rule names steps to keep, and any rule keeps it. S7V-069
- * adds its tagged versions as one more rule.
- */
-export const CLEANUP_KEEP_RULES: ReadonlyArray<
-  (entry: HistoryEntry, index: number, log: HistoryLog) => boolean
-> = [
-  (_entry, index, log) => index >= log.entries.length - CLEANUP_KEEP_RECENT,
-  (_entry, index, log) => index === log.cursor,
-  (entry) => entry.exported === true,
-];
+type KeepRule = (
+  version: EditVersionRecord,
+  index: number,
+  versions: ReadonlyArray<EditVersionRecord>,
+) => boolean;
 
-/** The indexes of `log.entries` that "Keep recent" keeps. */
-export const keepForCleanup = (log: HistoryLog): ReadonlySet<number> =>
-  new Set(
-    log.entries.flatMap((entry, index) =>
-      CLEANUP_KEEP_RULES.some((keeps) => keeps(entry, index, log)) ? [index] : [],
-    ),
+const keepsCurrent: KeepRule = (_version, index, versions) => index === versions.length - 1;
+const keepsTagged: KeepRule = (version) => version.tag !== undefined;
+const keepsExported: KeepRule = (version) => version.exported === true;
+
+/** Which versions each cleanup keeps; a version any rule names stays. */
+const CLEANUP_KEEP_RULES: Readonly<Record<HistoryCleanMode, ReadonlyArray<KeepRule>>> = {
+  "keep-recent": [
+    (_version, index, versions) => index >= versions.length - CLEANUP_KEEP_RECENT,
+    keepsCurrent,
+    keepsTagged,
+    keepsExported,
+  ],
+  "remove-all": [keepsCurrent, keepsTagged, keepsExported],
+};
+
+/** The versions a cleanup keeps, oldest first. */
+export const keepForCleanup = (
+  versions: ReadonlyArray<EditVersionRecord>,
+  mode: HistoryCleanMode,
+): ReadonlyArray<EditVersionRecord> =>
+  versions.filter((version, index) =>
+    CLEANUP_KEEP_RULES[mode].some((keeps) => keeps(version, index, versions)),
+  );
+
+/** The undo steps a cleanup keeps: the newest `CLEANUP_KEEP_STEPS` and the current one, or only it. */
+const stepsToKeep = (log: HistoryLog, mode: HistoryCleanMode) =>
+  log.entries.filter(
+    (_entry, index) =>
+      index === log.cursor ||
+      (mode === "keep-recent" && index >= log.entries.length - CLEANUP_KEEP_STEPS),
   );
 
 export class EditHistoryService extends Context.Service<
@@ -311,13 +339,12 @@ export class EditHistoryService extends Context.Service<
       cwd: string,
       n: number,
     ) => Effect.Effect<DeleteVersionOutcome, EditHistoryError>;
-    /** Steps and object bytes (S7V-050); the size is measured once per change to the log. */
+    /** Versions and object bytes (S7V-050); the size is measured once per change to the log. */
     readonly usage: (cwd: string) => Effect.Effect<HistoryUsage>;
     /**
-     * S7V-050: "keep-recent" keeps `keepForCleanup`'s steps; "remove-all" keeps only the current
-     * one (and, where git works, removes the S7V-024 leftovers). Rewrites the log, then collects
-     * the objects no step names. `dryRun` changes nothing and reports what it would free. Only
-     * `.s7history/` changes; the old git history is not imported after a clean.
+     * S7V-050: keeps `keepForCleanup`'s versions and the newest 20 steps (or, for "remove-all",
+     * only the current step, plus the safe S7V-024 git cleanup). Log first, then `collect`;
+     * `nextVersion` is kept. `dryRun` changes nothing and reports what it would free.
      */
     readonly clean: (
       cwd: string,
@@ -326,13 +353,8 @@ export class EditHistoryService extends Context.Service<
     ) => Effect.Effect<HistoryCleanResult, EditHistoryError>;
     /** "Not now": records the current size, so the question waits until it grows (S7V-050). */
     readonly dismissCleanup: (cwd: string) => Effect.Effect<void, EditHistoryError>;
-    /**
-     * The step an edit at `revision` is: the step recorded with it, or the current step when
-     * `revision` is the latest (an undo or redo gives a new revision). None when it has moved on.
-     */
-    readonly versionOf: (cwd: string, revision: number) => Effect.Effect<Option.Option<number>>;
-    /** Marks the step with this `seq` as exported, so "Keep recent" keeps it (S7V-050). */
-    readonly markExported: (cwd: string, seq: number) => Effect.Effect<void, EditHistoryError>;
+    /** Marks version `n` as exported, so cleanup keeps it (S7V-050); a missing `n` is ignored. */
+    readonly markExported: (cwd: string, n: number) => Effect.Effect<void, EditHistoryError>;
   }
 >()("t3/edit/EditHistoryService") {}
 
@@ -583,12 +605,19 @@ const make = Effect.gen(function* () {
   // The objects' size, measured again only when the log changes (one folder listing per change).
   const measured = new Map<string, { readonly key: string; readonly bytes: number }>();
   const usageOf = Effect.fnUntraced(function* (cwd: string, state: HistoryLog) {
-    const key = `${state.nextSeq}:${state.entries.length}:${state.knownEdit ?? ""}`;
+    const versions = state.versions?.length ?? 0;
+    const key = [
+      state.nextSeq,
+      state.entries.length,
+      state.knownEdit ?? "",
+      nextVersionOf(state),
+      versions,
+    ].join(":");
     const cached = measured.get(cwd);
-    if (cached?.key === key) return { versions: state.entries.length, bytes: cached.bytes };
+    if (cached?.key === key) return { versions, bytes: cached.bytes };
     const { bytes } = yield* store.usage(cwd);
     measured.set(cwd, { key, bytes });
-    return { versions: state.entries.length, bytes };
+    return { versions, bytes };
   });
 
   const status: EditHistoryService["Service"]["status"] = Effect.fn("EditHistoryService.status")(
@@ -615,27 +644,34 @@ const make = Effect.gen(function* () {
     function* (cwd, mode, options) {
       const state = yield* readState(cwd);
       const current = state.entries[state.cursor];
-      if (current === undefined) return { removedVersions: 0, freedBytes: 0 };
-      const kept = mode === "remove-all" ? new Set([state.cursor]) : keepForCleanup(state);
-      const entries = state.entries.filter((_entry, index) => kept.has(index));
+      if (current === undefined) return { removedVersions: 0, removedSteps: 0, freedBytes: 0 };
+      const entries = stepsToKeep(state, mode);
+      const before = state.versions ?? [];
+      const kept = keepForCleanup(before, mode);
       const { cleanup: _asked, ...rest } = state;
       const next: HistoryLog = {
         ...rest,
         entries,
         cursor: entries.indexOf(current),
+        // Numbers never restart, even when the newest versions go.
+        nextVersion: nextVersionOf(state),
+        ...(state.versions === undefined ? {} : { versions: kept }),
         // The user chose to drop older versions: an old git history found later stays out.
         legacy: state.legacy === "imported" ? "imported" : "none",
       };
-      const removedVersions = state.entries.length - entries.length;
+      const removed = {
+        removedVersions: before.length - kept.length,
+        removedSteps: state.entries.length - entries.length,
+      };
       if (options?.dryRun === true) {
         const { freedBytes } = yield* store.collect(cwd, next, { dryRun: true });
-        return { removedVersions, freedBytes };
+        return { ...removed, freedBytes };
       }
       // The log goes first: a crash before it leaves the old history whole; after it, orphans.
       yield* store.writeLog(cwd, next);
       const { freedBytes } = yield* store.collect(cwd, next);
       if (mode === "remove-all") yield* legacy.removeLeftovers(cwd);
-      return { removedVersions, freedBytes };
+      return { ...removed, freedBytes };
     },
   );
 
@@ -644,32 +680,24 @@ const make = Effect.gen(function* () {
   )(function* (cwd) {
     const state = yield* readState(cwd);
     if (state.entries.length === 0) return;
-    const dismissedAt = yield* usageOf(cwd, state);
-    yield* store.writeLog(cwd, { ...state, cleanup: { dismissedAt } });
-  });
-
-  const versionOf: EditHistoryService["Service"]["versionOf"] = Effect.fn(
-    "EditHistoryService.versionOf",
-  )(function* (cwd, revision) {
-    const state = yield* readStateOrEmpty(cwd);
-    const recorded = state.entries.find((entry) => entry.revision === revision);
-    const current = state.entries[state.cursor];
-    if (recorded !== undefined) return Option.some(recorded.seq);
-    return revision === state.highestRevision && current !== undefined
-      ? Option.some(current.seq)
-      : Option.none();
+    const { bytes } = yield* usageOf(cwd, state);
+    yield* store.writeLog(cwd, {
+      ...state,
+      cleanup: { dismissedAt: { nextVersion: nextVersionOf(state), bytes } },
+    });
   });
 
   const markExported: EditHistoryService["Service"]["markExported"] = Effect.fn(
     "EditHistoryService.markExported",
-  )(function* (cwd, seq) {
+  )(function* (cwd, n) {
     const state = yield* readState(cwd);
-    const entry = state.entries.find((candidate) => candidate.seq === seq);
-    if (entry === undefined || entry.exported === true) return;
+    const list = state.versions ?? [];
+    const version = list.find((candidate) => candidate.n === n);
+    if (version === undefined || version.exported === true) return;
     yield* store.writeLog(cwd, {
       ...state,
-      entries: state.entries.map((candidate) =>
-        candidate === entry ? { ...candidate, exported: true } : candidate,
+      versions: list.map((candidate) =>
+        candidate === version ? { ...candidate, exported: true } : candidate,
       ),
     });
   });
@@ -748,7 +776,6 @@ const make = Effect.gen(function* () {
     usage,
     clean,
     dismissCleanup,
-    versionOf,
     markExported,
   });
 });
