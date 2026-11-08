@@ -100,7 +100,8 @@ outside React like the controller. What the code does not show:
   elements on every mounted clip cost a dropped frame in the 1,000-clip scroll test. Clips under
   18 px have no edge zones (handles hidden by a container query), so they can always be moved.
 - **Ripple stays on its track.** A ripple delete closes the gap on the deleted item's own track;
-  captions and sounds on other tracks do not follow. `video_assemble`'s mid-edit `at` is the one
+  sounds on other tracks do not follow. A transcript caption track is rebuilt in the same change
+  instead ([captions.md](captions.md)), and its rows are read-only. `video_assemble`'s mid-edit `at` is the one
   place that moves every track in step.
 - A press on a clip selects it and does not seek; a read-only timeline (no `editing`) still seeks.
 
