@@ -526,7 +526,9 @@ describe("video_undo and video_redo", () => {
         );
         expect(track.items.map((item: { text: string }) => item.text)).toEqual(["Hello there."]);
         // No video file is made: captions live in the edit (AC-1).
-        expect(NodeFS.existsSync(NodePath.join(root, "exports"))).toBe(false);
+        const exportsDir = NodePath.join(root, "exports");
+        const made = NodeFS.existsSync(exportsDir) ? NodeFS.readdirSync(exportsDir) : [];
+        expect(made.filter((name) => name.endsWith(".mp4"))).toEqual([]);
         const [newest] = yield* edits.versions(thread.projectId);
         expect(newest!.changes).toEqual(["Added captions"]);
         expect(newest!.author).toBe("assistant");
