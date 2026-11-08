@@ -14,11 +14,13 @@ and the MIT License; what the fork changed is recorded in docs/FORK.md.
 
 It also includes code adapted from:
 
-  OpenCut classic (timeline ruler intervals, snapping and track layout constants)
+  OpenCut classic (timeline ruler intervals, snapping and track layout constants; the timeline
+  editing controllers: resize, element interaction, group move, group resize and placement)
   https://github.com/opencut-app/opencut-classic (commit cf5e79e9)
   Copyright 2025-2026 OpenCut
   Licensed under the MIT License
-  (apps/web/src/components/editor/timeline/vendor/opencut/LICENSE.opencut)
+  (apps/web/src/components/editor/timeline/vendor/opencut/LICENSE.opencut,
+  apps/web/src/components/editor/timeline/controllers/LICENSE.opencut)
 
 Proprietary component
 

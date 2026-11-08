@@ -11,7 +11,7 @@ import { useState, type KeyboardEvent, type PointerEvent } from "react";
 import type { PlayerFramePlan } from "../../../editor/editPlayback";
 import { getLocalStorageItem, setLocalStorageItem } from "../../../hooks/useLocalStorage";
 import { observeResize } from "../../../lib/observeResize";
-import { Timeline, TimelineSkeleton } from "./Timeline";
+import { Timeline, type TimelineEditing, TimelineSkeleton } from "./Timeline";
 import {
   TIMELINE_RULER_HEIGHT_PX,
   TIMELINE_TRACK_GAP_PX,
@@ -29,8 +29,10 @@ const FIVE_ROWS_PX =
     (total, kind) => total + TIMELINE_TRACK_HEIGHTS_PX[kind] + TIMELINE_TRACK_GAP_PX,
     TIMELINE_TRACK_GAP_PX,
   );
-/** Never shorter than the five rows plus a scrollbar, so no row is cut off. */
-const MIN_TIMELINE_HEIGHT_PX = FIVE_ROWS_PX + SCROLLBAR_PX + BORDER_PX;
+/** The edit toolbar above the rows (S7V-034, `TimelineToolbar.tsx`). */
+const TOOLBAR_PX = 32;
+/** Never shorter than the toolbar, five rows and a scrollbar, so no row is cut off. */
+const MIN_TIMELINE_HEIGHT_PX = TOOLBAR_PX + FIVE_ROWS_PX + SCROLLBAR_PX + BORDER_PX;
 const DEFAULT_TIMELINE_HEIGHT_PX = MIN_TIMELINE_HEIGHT_PX + 16;
 /** The player and tabs keep at least this much of the panel. */
 const MIN_ABOVE_PX = 240;
@@ -64,6 +66,7 @@ export function TimelinePane(props: {
   readonly plan: PlayerFramePlan | null;
   readonly projectRef: ScopedProjectRef;
   readonly mediaById: ReadonlyMap<string, MediaAsset>;
+  readonly editing?: TimelineEditing | undefined;
 }) {
   const [height, setHeight] = useState(storedHeight);
   const [drag, setDrag] = useState<{
@@ -149,6 +152,7 @@ export function TimelinePane(props: {
             plan={props.plan}
             projectRef={props.projectRef}
             mediaById={props.mediaById}
+            editing={props.editing}
           />
         )}
       </section>

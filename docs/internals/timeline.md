@@ -6,8 +6,9 @@ SPDX-License-Identifier: MIT
 # Timeline
 
 The Editor panel's timeline (S7V-033, ADR-007): `apps/web/src/components/editor/timeline/`. It
-reads `edit.json` through `useProjectEdit` and never writes it. The rules below are what kept it at
-0 dropped frames with 1,000 clips; editing (S7V-034) and the player clock (S7V-039, [player-clock.md](player-clock.md)) build on them.
+reads `edit.json` through `useProjectEdit` and changes it only through `edit.apply`, `edit.undo`
+and `edit.redo` (S7V-034). The rules below are what kept it at 0 dropped frames with 1,000 clips;
+editing and the player clock (S7V-039, [player-clock.md](player-clock.md)) build on them.
 
 ## The controller owns geometry, React owns the mounted set
 
@@ -74,6 +75,34 @@ timeline's playhead.
 - `ClipMediaSlot.browser.test.tsx` checks the seam's props with a stand-in;
   `ClipMediaSlot.tiles.browser.test.tsx` draws real tiles from synthetic media data and is S7V-035's
   AC-7 check (no main-thread task over 50 ms while scrolling and zooming a 30-minute edit).
+
+## Editing (S7V-034)
+
+`timelineEditor.ts` holds selection, the ported OpenCut controllers (`controllers/`) and the keys,
+outside React like the controller. What the code does not show:
+
+- **One gesture, one batch.** A drag or trim previews in a ghost layer (`dragPreview.ts`) and sends
+  nothing until release. The release is a delta, planned again against the rows on screen when it
+  is sent (`timelineEdits.ts`), so one `edit.apply`, one history step. A burst of arrow nudges on
+  the same selection becomes one move after `NUDGE_SETTLE_MS`.
+- **Revisions.** A batch goes with the revision the timeline shows. While the timeline's own
+  request is in flight, the next gesture waits for its reply and its new revision, so it never
+  sends a stale base. Any other change of revision (the assistant, an outside edit) cancels an open
+  gesture with a notice; a stale base that still reaches the server comes back as `EditConflict`.
+- **Versions (S7V-069).** Each batch is one version by "You", worded by `describeOps.ts`: one line
+  per kind of change, counted when it touches several items ("Moved 3 items"). An undo with a
+  nudge still pending drops only the nudge and sends nothing.
+- **The ghost stays until the edit arrives**, so a moved clip never flashes back to its old place.
+- **Linked items.** The server carries items that share a `linkId` (`applyEditOps.ts`), so the
+  timeline names one item per link group; naming both would move them twice.
+- **No per-clip handles.** Trim handles are drawn on selected clips only; a press within 6 px of
+  any clip's edge trims it, and one delegated pointermove sets the resize cursor there. Two handle
+  elements on every mounted clip cost a dropped frame in the 1,000-clip scroll test. Clips under
+  18 px have no edge zones (handles hidden by a container query), so they can always be moved.
+- **Ripple stays on its track.** A ripple delete closes the gap on the deleted item's own track;
+  captions and sounds on other tracks do not follow. `video_assemble`'s mid-edit `at` is the one
+  place that moves every track in step.
+- A press on a clip selects it and does not seek; a read-only timeline (no `editing`) still seeks.
 
 ## Performance test
 

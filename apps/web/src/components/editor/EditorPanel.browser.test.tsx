@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 s7video contributors
 // SPDX-License-Identifier: MIT
 import {
+  EditConflict,
   EngineJobId,
   type EngineJob,
   EnvironmentId,
@@ -53,6 +54,9 @@ const commands = vi.hoisted(() => ({
   cancel: vi.fn(async () => ({ _tag: "Success", value: { applied: true } })),
   historyClean: vi.fn(),
   historyDismiss: vi.fn(),
+  apply: vi.fn(),
+  undo: vi.fn(),
+  redo: vi.fn(),
 }));
 const toasts = vi.hoisted(() => ({ add: vi.fn() }));
 
@@ -87,7 +91,13 @@ vi.mock(import("../../state/use-atom-command"), () => ({
           ? commands.historyClean
           : command?.label.endsWith("edit:history-dismiss")
             ? commands.historyDismiss
-            : vi.fn()) as never,
+            : command?.label.endsWith("edit:apply")
+              ? commands.apply
+              : command?.label.endsWith("edit:undo")
+                ? commands.undo
+                : command?.label.endsWith("edit:redo")
+                  ? commands.redo
+                  : vi.fn()) as never,
 }));
 vi.mock(import("../../assets/assetUrls"), () => ({
   useAssetUrlState: ((
@@ -109,7 +119,7 @@ vi.mock(import("../../assets/assetUrls"), () => ({
 import "../../index.css";
 
 import { BROWSER_ADD_MEDIA_HINT } from "./addMediaHint";
-import EditorPanel from "./EditorPanel";
+import EditorPanel, { CHANGED_ELSEWHERE_NOTICE } from "./EditorPanel";
 
 const FPS = { num: 30, den: 1 };
 const projectId = ProjectId.make("project-1");
@@ -677,6 +687,56 @@ describe("EditorPanel", () => {
     } finally {
       stop();
     }
+  });
+
+  // S7V-034: timeline edits go through edit.apply (origin timeline) and the toolbar's undo.
+  it("splits through edit.apply, undoes from the toolbar, and says when the edit changed", async () => {
+    setState([asset("clip-0")], true);
+    state.edit =
+      state.edit._tag === "ready"
+        ? { _tag: "ready", snapshot: { ...state.edit.snapshot, canUndo: true } }
+        : state.edit;
+    toasts.add.mockReset();
+    commands.apply.mockReset();
+    commands.undo.mockReset();
+    commands.apply.mockResolvedValueOnce({
+      _tag: "Failure",
+      cause: Cause.fail(new EditConflict({ baseRevision: 1, currentRevision: 2 })),
+    });
+    commands.undo.mockResolvedValueOnce({
+      _tag: "Success",
+      value: { revision: 2, document: {}, canUndo: false, canRedo: true },
+    });
+    await using screen = await renderPanel();
+    const toolbar = screen.getByRole("toolbar", { name: "Timeline editing" });
+    await expect.element(toolbar).toBeVisible();
+    const ruler = document.querySelector<HTMLElement>("[data-timeline-ruler]")!;
+    const scroller = document.querySelector<HTMLElement>("[data-testid=timeline-scroller]")!;
+    const ppf = Number(scroller.dataset.pxPerFrame);
+    await userEvent.click(ruler, { position: { x: 12.5 * ppf, y: 10 } });
+    await toolbar.getByRole("button", { name: "Split" }).click();
+    await vi.waitFor(() =>
+      expect(commands.apply).toHaveBeenCalledWith({
+        environmentId: EnvironmentId.make("env-1"),
+        input: {
+          projectId,
+          baseRevision: 1,
+          origin: "timeline",
+          ops: [{ _tag: "splitItem", itemId: "a", atFrame: 12 }],
+        },
+      }),
+    );
+    await vi.waitFor(() =>
+      expect(toasts.add).toHaveBeenCalledWith({ type: "info", title: CHANGED_ELSEWHERE_NOTICE }),
+    );
+    await toolbar.getByRole("button", { name: "Undo" }).click();
+    await vi.waitFor(() =>
+      expect(commands.undo).toHaveBeenCalledWith({
+        environmentId: EnvironmentId.make("env-1"),
+        input: { projectId },
+      }),
+    );
+    await expect.element(toolbar.getByRole("button", { name: "Redo" })).toBeDisabled();
   });
 
   it("hides the timeline playhead while a clip previews, and a click goes back to the edit", async () => {

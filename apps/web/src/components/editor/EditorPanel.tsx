@@ -57,7 +57,10 @@ import { HistoryCleanupBanner } from "./HistoryCleanupBanner";
 import { ImportDialog } from "./ImportDialog";
 import { MultiClipPlayer, type MultiClipSource } from "./MultiClipPlayer";
 import { SpeechModelPrompt } from "./SpeechModelPrompt";
+import { applyOutcomeOfError, stepOutcomeOfError } from "../../editor/timelineEditing";
 import { editFrameToPlayerFrame } from "./timeline/editFrames";
+import type { TimelineEditing } from "./timeline/Timeline";
+import type { TimelineNotice } from "./timeline/timelineEditor";
 import { TimelinePane } from "./timeline/TimelinePane";
 import { TranscriptTab } from "./TranscriptTab";
 import { VersionsTab } from "./VersionsTab";
@@ -623,6 +626,54 @@ function ExportButton(props: { readonly projectRef: ScopedProjectRef }) {
   );
 }
 
+/** The notice when the edit changed under a gesture (S7V-034 AC-7). */
+export const CHANGED_ELSEWHERE_NOTICE = "The assistant changed the edit; try again.";
+
+function showTimelineNotice(notice: TimelineNotice) {
+  if (notice.kind === "changed-elsewhere") {
+    toastManager.add({ type: "info", title: CHANGED_ELSEWHERE_NOTICE });
+  } else {
+    toastManager.add({ type: "error", title: notice.title, description: notice.message });
+  }
+}
+
+/** Timeline edits go through `edit.apply`/`undo`/`redo`, origin `timeline` (S7V-034). */
+function useTimelineEditing(
+  projectRef: ScopedProjectRef,
+  snapshot: EditSnapshot | null,
+): TimelineEditing | undefined {
+  const apply = useAtomCommand(editEnvironment.apply, { reportFailure: false });
+  const undo = useAtomCommand(editEnvironment.undo, { reportFailure: false });
+  const redo = useAtomCommand(editEnvironment.redo, { reportFailure: false });
+  const { environmentId, projectId } = projectRef;
+  if (snapshot === null) return undefined;
+  const step = async (run: typeof undo) => {
+    const result = await run({ environmentId, input: { projectId } });
+    return result._tag === "Success"
+      ? ({ _tag: "applied", revision: result.value.revision } as const)
+      : stepOutcomeOfError(squashAtomCommandFailure(result));
+  };
+  return {
+    revision: snapshot.revision,
+    canUndo: snapshot.canUndo,
+    canRedo: snapshot.canRedo,
+    actions: {
+      apply: async (ops, baseRevision) => {
+        const result = await apply({
+          environmentId,
+          input: { projectId, baseRevision, origin: "timeline", ops: [...ops] },
+        });
+        return result._tag === "Success"
+          ? { _tag: "applied", revision: result.value.revision }
+          : applyOutcomeOfError(squashAtomCommandFailure(result));
+      },
+      undo: () => step(undo),
+      redo: () => step(redo),
+      notify: showTimelineNotice,
+    },
+  };
+}
+
 /** Why an outside change to the edit was not kept (S7V-054), until dismissed or the next change. */
 function RefusedChangeNotice(props: { readonly snapshot: EditSnapshot | null }) {
   const [dismissed, setDismissed] = useState<EditSnapshot | null>(null);
@@ -688,6 +739,7 @@ export default function EditorPanel(props: {
     rememberPlayerFrame(projectKey, frame);
     requestPlayerSeek(projectKey, frame);
   };
+  const editing = useTimelineEditing(projectRef, edit._tag === "ready" ? edit.snapshot : null);
   const mediaById = new Map(
     library._tag === "ready" ? library.snapshot.items.map((item) => [item.id, item] as const) : [],
   );
@@ -804,6 +856,7 @@ export default function EditorPanel(props: {
           plan={playingPlan}
           projectRef={projectRef}
           mediaById={mediaById}
+          editing={editing}
         />
       )}
       <ImportDialog

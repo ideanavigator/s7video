@@ -12,6 +12,8 @@ const item = (id: string, start: number, duration: number): TimelineItem => ({
   label: id,
   mediaId: null,
   in: 0,
+  linkId: null,
+  mediaFrames: null,
 });
 
 describe("lod", () => {

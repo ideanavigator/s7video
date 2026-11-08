@@ -165,6 +165,67 @@ describe("edit versions", () => {
     ),
   );
 
+  // S7V-034: one timeline gesture is one version by you, one counted line however many items.
+  it.effect("a timeline gesture makes one version by you, with one counted line", () =>
+    withProject(({ projectId, edits }) =>
+      Effect.gen(function* () {
+        yield* change(
+          edits,
+          projectId,
+          [
+            ...setup,
+            keep([
+              [0, 30],
+              [60, 30],
+              [120, 30],
+            ]),
+          ],
+          {
+            origin: "agent",
+            reply: chatA,
+          },
+        );
+        const before = (yield* edits.versions(projectId)).length;
+        yield* change(
+          edits,
+          projectId,
+          [
+            { _tag: "moveItem", itemId: "v1", start: 200 },
+            { _tag: "moveItem", itemId: "v2", start: 230 },
+            { _tag: "moveItem", itemId: "v3", start: 260 },
+          ],
+          { origin: "timeline" },
+        );
+        yield* change(
+          edits,
+          projectId,
+          [{ _tag: "trimItem", itemId: "v1", edge: "end", frame: 220 }],
+          {
+            origin: "timeline",
+          },
+        );
+        yield* change(
+          edits,
+          projectId,
+          [{ _tag: "deleteItem", itemIds: ["v2", "v3"], ripple: true }],
+          { origin: "timeline" },
+        );
+        const versions = yield* edits.versions(projectId);
+        assert.strictEqual(versions.length, before + 3);
+        assert.deepEqual(
+          versions
+            .slice(0, 3)
+            .map(({ author, changes, threadId }) => ({ author, changes, threadId })),
+          [
+            { author: "you", changes: ["Deleted 2 items from the timeline"], threadId: undefined },
+            { author: "you", changes: ["Trimmed an item"], threadId: undefined },
+            { author: "you", changes: ["Moved 3 items"], threadId: undefined },
+          ],
+        );
+      }),
+    ),
+  );
+
   it.effect("undo from chat makes a version by the assistant; from the Editor, by you", () =>
     withProject(({ projectId, edits }) =>
       Effect.gen(function* () {

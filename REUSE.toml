@@ -59,6 +59,14 @@ precedence = "closest"
 SPDX-FileCopyrightText = ["2025-2026 OpenCut", "2026 s7video contributors"]
 SPDX-License-Identifier = "MIT"
 
+# Timeline editing controllers ported from OpenCut classic (MIT, S7V-034); the licence is in
+# LICENSE.opencut beside them.
+[[annotations]]
+path = "apps/web/src/components/editor/timeline/controllers/LICENSE.opencut"
+precedence = "closest"
+SPDX-FileCopyrightText = ["2025-2026 OpenCut", "2026 s7video contributors"]
+SPDX-License-Identifier = "MIT"
+
 # Keyboard handling adapted from the Ionic Framework (MIT).
 [[annotations]]
 path = "apps/web/src/lib/softwareKeyboard.ts"

@@ -27,6 +27,8 @@ export function TimelineTrack(props: {
   readonly projectId?: ProjectId | undefined;
   /** The project's media library by id, for each clip's media slot. */
   readonly mediaById?: ReadonlyMap<string, MediaAsset> | undefined;
+  /** Selected clips and their linked items (S7V-034). */
+  readonly highlighted?: ReadonlySet<string>;
 }) {
   const { row, pxPerFrame, window } = props;
   const height = TIMELINE_TRACK_HEIGHTS_PX[row.kind];
@@ -96,6 +98,7 @@ export function TimelineTrack(props: {
             environmentId={props.environmentId}
             projectId={props.projectId}
             asset={item.mediaId === null ? undefined : props.mediaById?.get(item.mediaId)}
+            selected={props.highlighted?.has(item.id) === true}
           />
         );
       })}

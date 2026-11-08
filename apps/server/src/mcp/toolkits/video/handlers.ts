@@ -4,6 +4,7 @@
 // edit service method, map its errors. The Editor panel reaches the same services directly.
 import {
   type EditDocument,
+  type EditOp,
   type EditSnapshot,
   type EngineError,
   type TranscriptError,
@@ -581,20 +582,52 @@ const handlers = {
         if (!taken.has(id)) itemIds.push(id);
       }
       const from = at ?? end;
-      // Mid-edit inserts only between items, and only when no other track has anything from
-      // there on: moving captions (whose words hold timeline frames), sounds and overlays in
-      // step is S7V-034's ripple work (review of PR #48).
+      const length = items.reduce((total, item) => total + item.duration, 0);
+      // Mid-edit inserts go only where a video item starts. Everything from there on, on every
+      // track, moves right by the inserted length (S7V-034): one moveItem per item, or per link
+      // group, since moveItem carries linked items; the inserts then fill the opened gap.
+      const shifts: EditOp[] = [];
       if (from !== end) {
         if (!track.items.some((item) => item.start === from)) {
           return yield* invalid(
             `at must be where a video item starts, or the end of the edit (frame ${end}).`,
           );
         }
-        const others = document.tracks.filter((entry) => entry.id !== track.id);
-        if (others.some((entry) => entry.items.some((item) => item.start + item.duration > from))) {
-          return yield* invalid(
-            `Captions, sounds or overlays come after frame ${from}, so clips can only be added at the end (frame ${end}) for now.`,
+        const groups = new Map<string, Array<{ id: string; start: number; end: number }>>();
+        const kindOf = new Map<string, string>();
+        for (const entry of document.tracks) {
+          for (const item of entry.items) {
+            const linkId = "linkId" in item ? item.linkId : undefined;
+            const key = linkId === undefined ? `item:${item.id}` : `link:${linkId}`;
+            const group = groups.get(key) ?? [];
+            group.push({ id: item.id, start: item.start, end: item.start + item.duration });
+            groups.set(key, group);
+            kindOf.set(item.id, entry.kind);
+          }
+        }
+        for (const group of groups.values()) {
+          const first = group.reduce((low, member) => (member.start < low.start ? member : low));
+          if (first.start >= from) {
+            shifts.push({ _tag: "moveItem", itemId: first.id, start: first.start + length });
+            continue;
+          }
+          // A music bed plays on under the new clips; anything else cut by `at` would drift.
+          const across = group.find(
+            (member) => member.end > from && kindOf.get(member.id) !== "music",
           );
+          if (across !== undefined) {
+            return yield* invalid(
+              `"${across.id}" runs across frame ${from}, so clips can't be added there. Pick a frame where it has ended, or the end (frame ${end}).`,
+            );
+          }
+        }
+        if (document.markers.some((marker) => marker.start >= from)) {
+          shifts.push({
+            _tag: "setMarkers",
+            markers: document.markers.map((marker) =>
+              marker.start >= from ? { ...marker, start: marker.start + length } : marker,
+            ),
+          });
         }
       }
       let position = from;
@@ -609,14 +642,13 @@ const handlers = {
             duration: item.duration,
             in: item.in,
           },
-          ripple: true,
         };
         position += item.duration;
         return op;
       });
       const edits = yield* EditDocumentService.EditDocumentService;
       return yield* edits
-        .apply(project.projectId, inserts, {
+        .apply(project.projectId, [...shifts, ...inserts], {
           origin: "agent",
           baseRevision: revision,
           reply: project.reply,

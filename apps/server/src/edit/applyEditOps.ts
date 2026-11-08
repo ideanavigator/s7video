@@ -173,10 +173,122 @@ function mergeRanges(ranges: ReadonlyArray<EditSourceRange>): EditSourceRange[] 
   return merged;
 }
 
+interface DraftWord {
+  readonly text: string;
+  readonly start: number;
+  readonly duration: number;
+}
+
+const wordsOf = (item: DraftItem): ReadonlyArray<DraftWord> | null =>
+  "words" in item && Array.isArray(item.words) ? (item.words as ReadonlyArray<DraftWord>) : null;
+
+/** Moves an item along the timeline; caption words hold timeline frames, so they move with it. */
+function shiftItem(item: DraftItem, by: number) {
+  item.start += by;
+  const words = wordsOf(item);
+  if (words !== null && by !== 0) {
+    item.words = words.map((word) => ({ ...word, start: word.start + by }));
+  }
+}
+
+/**
+ * Keeps a caption's words inside its frames after a trim: words outside are dropped, a word cut
+ * by an edge is shortened, and the text follows the words (as a split does).
+ */
+function clipWords(item: DraftItem) {
+  const words = wordsOf(item);
+  if (words === null) return;
+  const end = item.start + item.duration;
+  const kept: DraftWord[] = [];
+  for (const word of words) {
+    const from = Math.max(word.start, item.start);
+    const to = Math.min(word.start + word.duration, end);
+    if (to > from) kept.push({ ...word, start: from, duration: to - from });
+  }
+  const changed =
+    kept.length !== words.length ||
+    kept.some(
+      (word, index) =>
+        word.start !== words[index]!.start || word.duration !== words[index]!.duration,
+    );
+  if (!changed) return;
+  item.words = kept;
+  item.text = kept.map((word) => word.text).join(" ");
+}
+
 function shiftAfter(track: DraftTrack, from: number, by: number, except?: string) {
   for (const item of track.items) {
-    if (item.id !== except && item.start >= from) item.start += by;
+    if (item.id !== except && item.start >= from) shiftItem(item, by);
   }
+}
+
+/**
+ * The item and every other item sharing its `linkId` (S7V-034): linked audio and video move,
+ * trim, split and delete together, from the timeline and from agent tools alike.
+ */
+function withLinked(document: DraftDocument, itemId: string) {
+  const found = findItem(document, itemId);
+  const linkId = typeof found.item.linkId === "string" ? found.item.linkId : undefined;
+  const linked: Array<{ track: DraftTrack; item: DraftItem }> = [];
+  if (linkId !== undefined) {
+    for (const track of document.tracks) {
+      for (const item of track.items) {
+        if (item !== found.item && item.linkId === linkId) linked.push({ track, item });
+      }
+    }
+  }
+  return { ...found, linked };
+}
+
+function trimOne(item: DraftItem, edge: "start" | "end", frame: number) {
+  const end = item.start + item.duration;
+  if (edge === "start") {
+    if (frame >= end) fail(item.id, `"${item.id}" would have no frames left.`);
+    const delta = frame - item.start;
+    const from = sourceIn(item);
+    if (from !== undefined) {
+      if (from + delta < 0) fail(item.id, `"${item.id}" cannot start before its media.`);
+      item.in = from + delta;
+    }
+    item.start = frame;
+    item.duration = end - frame;
+  } else {
+    if (frame <= item.start) fail(item.id, `"${item.id}" would have no frames left.`);
+    item.duration = frame - item.start;
+  }
+  clipWords(item);
+}
+
+/** Splits `item` at `atFrame` and returns the right-hand part, already on `track`. */
+function splitOne(track: DraftTrack, item: DraftItem, atFrame: number, id: string): DraftItem {
+  const end = item.start + item.duration;
+  const left = atFrame - item.start;
+  const right: DraftItem = {
+    ...item,
+    id,
+    start: atFrame,
+    duration: end - atFrame,
+  };
+  const from = sourceIn(item);
+  if (from !== undefined) right.in = from + left;
+  if ("fadeInFrames" in item) delete right.fadeInFrames;
+  if ("fadeOutFrames" in item) delete item.fadeOutFrames;
+  const words = wordsOf(item);
+  if (words !== null) {
+    // A word spoken across the cut ends at it, so it stays inside the left half.
+    const before = words
+      .filter((word) => word.start < atFrame)
+      .map((word) => ({ ...word, duration: Math.min(word.duration, atFrame - word.start) }));
+    const after = words.filter((word) => word.start >= atFrame);
+    // Text follows the words, so a half without words is left with no text, not a copy.
+    item.words = before;
+    right.words = after;
+    item.text = before.map((word) => word.text).join(" ");
+    right.text = after.map((word) => word.text).join(" ");
+  }
+  item.duration = left;
+  track.items.push(right);
+  return right;
 }
 
 function applyOne(document: DraftDocument, op: EditOp): void {
@@ -226,36 +338,34 @@ function applyOne(document: DraftDocument, op: EditOp): void {
       return;
     }
     case "moveItem": {
-      const found = findItem(document, op.itemId);
+      const found = withLinked(document, op.itemId);
       const target = op.toTrackId === undefined ? found.track : findTrack(document, op.toTrackId);
       if (target.kind !== found.track.kind) {
         fail(op.itemId, `"${op.itemId}" can only move to another ${found.track.kind} track.`);
       }
+      const by = op.start - found.item.start;
       found.track.items.splice(found.index, 1);
-      target.items.push({ ...found.item, start: op.start });
+      const moved = { ...found.item };
+      shiftItem(moved, by);
+      target.items.push(moved);
+      // Linked items keep their own tracks and move by the same frames.
+      for (const { item } of found.linked) shiftItem(item, by);
       return;
     }
     case "trimItem": {
-      const { item } = findItem(document, op.itemId);
-      const end = item.start + item.duration;
-      if (op.edge === "start") {
-        if (op.frame >= end) fail(op.itemId, `"${op.itemId}" would have no frames left.`);
-        const delta = op.frame - item.start;
-        const from = sourceIn(item);
-        if (from !== undefined) {
-          if (from + delta < 0) fail(op.itemId, `"${op.itemId}" cannot start before its media.`);
-          item.in = from + delta;
-        }
-        item.start = op.frame;
-        item.duration = end - op.frame;
-      } else {
-        if (op.frame <= item.start) fail(op.itemId, `"${op.itemId}" would have no frames left.`);
-        item.duration = op.frame - item.start;
+      const { item, linked } = withLinked(document, op.itemId);
+      const edgeFrame = op.edge === "start" ? item.start : item.start + item.duration;
+      const by = op.frame - edgeFrame;
+      trimOne(item, op.edge, op.frame);
+      for (const other of linked) {
+        const otherEdge =
+          op.edge === "start" ? other.item.start : other.item.start + other.item.duration;
+        trimOne(other.item, op.edge, otherEdge + by);
       }
       return;
     }
     case "splitItem": {
-      const { track, item } = findItem(document, op.itemId);
+      const { track, item, linked } = withLinked(document, op.itemId);
       const end = item.start + item.duration;
       if (op.atFrame <= item.start || op.atFrame >= end) {
         fail(
@@ -263,41 +373,41 @@ function applyOne(document: DraftDocument, op: EditOp): void {
           `Frame ${op.atFrame} is not inside "${op.itemId}" (${item.start} to ${end}).`,
         );
       }
-      const id = op.newItemId ?? allocateId(document, ITEM_PREFIX[track.kind]);
-      const left = op.atFrame - item.start;
-      const right: DraftItem = {
-        ...item,
-        id,
-        start: op.atFrame,
-        duration: end - op.atFrame,
-      };
-      const from = sourceIn(item);
-      if (from !== undefined) right.in = from + left;
-      if ("fadeInFrames" in item) delete right.fadeInFrames;
-      if ("fadeOutFrames" in item) delete item.fadeOutFrames;
-      if ("words" in item && Array.isArray(item.words)) {
-        const words = item.words as ReadonlyArray<{
-          readonly start: number;
-          readonly duration: number;
-          readonly text: string;
-        }>;
-        // A word spoken across the cut ends at it, so it stays inside the left half.
-        const before = words
-          .filter((word) => word.start < op.atFrame)
-          .map((word) => ({ ...word, duration: Math.min(word.duration, op.atFrame - word.start) }));
-        const after = words.filter((word) => word.start >= op.atFrame);
-        // Text follows the words, so a half without words is left with no text, not a copy.
-        item.words = before;
-        right.words = after;
-        item.text = before.map((word) => word.text).join(" ");
-        right.text = after.map((word) => word.text).join(" ");
+      const taken = allIds(document);
+      const id = op.newItemId ?? allocateId(document, ITEM_PREFIX[track.kind], taken);
+      taken.add(id);
+      const right = splitOne(track, item, op.atFrame, id);
+      // Linked items under the cut split too; the right-hand parts get a link of their own.
+      const parts = linked.filter(
+        (other) =>
+          other.item.start < op.atFrame && op.atFrame < other.item.start + other.item.duration,
+      );
+      if (parts.length > 0) {
+        // A fresh id, never derived from the old one, so repeated splits stay unique and short.
+        const linkIds = new Set(allIds(document));
+        for (const entry of document.tracks.flatMap((each) => each.items)) {
+          if (typeof entry.linkId === "string") linkIds.add(entry.linkId);
+        }
+        const rightLink = allocateId(document, "link", linkIds);
+        right.linkId = rightLink;
+        for (const other of parts) {
+          const otherId = allocateId(document, ITEM_PREFIX[other.track.kind], taken);
+          splitOne(other.track, other.item, op.atFrame, otherId).linkId = rightLink;
+        }
+      } else if ("linkId" in right) {
+        delete right.linkId;
       }
-      item.duration = left;
-      track.items.push(right);
       return;
     }
     case "deleteItem": {
+      const ids: string[] = [];
       for (const itemId of op.itemIds) {
+        const { item, linked } = withLinked(document, itemId);
+        for (const entry of [item, ...linked.map((other) => other.item)]) {
+          if (!ids.includes(entry.id)) ids.push(entry.id);
+        }
+      }
+      for (const itemId of ids) {
         const { track, index, item } = findItem(document, itemId);
         track.items.splice(index, 1);
         if (op.ripple) shiftAfter(track, item.start + item.duration, -item.duration);
