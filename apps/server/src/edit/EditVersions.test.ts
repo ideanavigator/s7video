@@ -5,6 +5,7 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { type EditOp, type ProjectId, RunId, ThreadId } from "@t3tools/contracts";
+import { wordEditOps } from "@t3tools/shared/editWordCuts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as NodeFS from "node:fs";
@@ -222,6 +223,77 @@ describe("edit versions", () => {
             { author: "you", changes: ["Moved 3 items"], threadId: undefined },
           ],
         );
+      }),
+    ),
+  );
+
+  // S7V-038: a text cut or restore is one version, worded as one change; agent, timeline and text
+  // edits undo one at a time, in order, back to the exact bytes.
+  it.effect("text edits interleave with agent and timeline edits and undo in order", () =>
+    withProject(({ projectId, root, edits }) =>
+      Effect.gen(function* () {
+        // Ten words of 20 frames with 10-frame gaps, from frame 10.
+        const words = Array.from({ length: 10 }, (_, index) => ({
+          start: 10 + index * 30,
+          end: 30 + index * 30,
+        }));
+        yield* change(edits, projectId, [...setup, keep([[0, 300]])], {
+          origin: "agent",
+          reply: chatA,
+        });
+        const bytes = [readEdit(root)];
+        const text = (action: "cut" | "restore", first: number, last: number) =>
+          Effect.gen(function* () {
+            const current = yield* edits.read(projectId);
+            const edit = wordEditOps(current.document, "cam", words, { first, last }, action);
+            assert.strictEqual(edit._tag, action);
+            if (edit._tag !== "cut" && edit._tag !== "restore") return;
+            yield* edits.apply(projectId, edit.ops, {
+              origin: "transcript",
+              baseRevision: current.revision,
+            });
+            bytes.push(readEdit(root));
+          });
+        yield* text("cut", 2, 3);
+        // The agent trims the end; the timeline moves the last part right, leaving a gap.
+        const cut = yield* edits.read(projectId);
+        const last = cut.document.tracks[0]!.items.at(-1)!;
+        yield* change(
+          edits,
+          projectId,
+          [
+            {
+              _tag: "trimItem",
+              itemId: last.id,
+              edge: "end",
+              frame: last.start + last.duration - 30,
+            },
+          ],
+          { origin: "agent", reply: replyOf("thread-a", "run-a2") },
+        );
+        bytes.push(readEdit(root));
+        yield* change(
+          edits,
+          projectId,
+          [{ _tag: "moveItem", itemId: last.id, start: last.start + 20 }],
+          { origin: "timeline" },
+        );
+        bytes.push(readEdit(root));
+        yield* text("restore", 2, 2);
+        const versions = yield* edits.versions(projectId);
+        assert.deepEqual(
+          versions.slice(0, 4).map(({ author, changes }) => ({ author, changes })),
+          [
+            { author: "you", changes: ["Put back words in the transcript"] },
+            { author: "you", changes: ["Moved an item"] },
+            { author: "assistant", changes: ["Trimmed an item"] },
+            { author: "you", changes: ["Cut words in the transcript"] },
+          ],
+        );
+        for (let step = bytes.length - 2; step >= 0; step -= 1) {
+          yield* edits.undo(projectId);
+          assert.strictEqual(readEdit(root), bytes[step]);
+        }
       }),
     ),
   );

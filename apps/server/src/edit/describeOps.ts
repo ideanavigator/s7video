@@ -4,7 +4,7 @@
  * A version's line for a change whose caller gave none (S7V-069): an Editor action on the
  * timeline or transcript, worded from its ops. Tools and imports pass their own line.
  */
-import type { EditOp } from "@t3tools/contracts";
+import type { EditOp, EditOrigin } from "@t3tools/contracts";
 
 const PHRASES: Record<EditOp["_tag"], string> = {
   setKeepRanges: "Cut parts of a clip",
@@ -36,7 +36,13 @@ const COUNTED: Partial<Record<EditOp["_tag"], (count: number) => string>> = {
 const itemsOf = (op: EditOp) => (op._tag === "deleteItem" ? op.itemIds.length : 1);
 
 /** One line naming each kind of change once, in the order the ops make them. */
-export const describeOps = (ops: ReadonlyArray<EditOp>): string => {
+export const describeOps = (ops: ReadonlyArray<EditOp>, origin?: EditOrigin): string => {
+  // A text edit's splits and deletes are one change to the user (S7V-038).
+  if (origin === "transcript" && ops.length > 0) {
+    return ops.every((op) => op._tag === "restoreRange")
+      ? "Put back words in the transcript"
+      : "Cut words in the transcript";
+  }
   const counts = new Map<EditOp["_tag"], number>();
   for (const op of ops) counts.set(op._tag, (counts.get(op._tag) ?? 0) + itemsOf(op));
   if (counts.size === 0) return "Changed the edit";

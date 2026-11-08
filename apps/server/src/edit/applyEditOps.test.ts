@@ -162,6 +162,111 @@ describe("applyEditOps", () => {
     expect(items(gap)).toEqual([{ id: "v2", start: 50, duration: 90, in: 210 }]);
   });
 
+  it("restores a range beside its neighbours and keeps manual moves (S7V-038)", () => {
+    // Three parts, then the last moved to the front by hand: [200,300) [0,90) [120,180).
+    const cut = run([
+      keep([
+        [0, 90],
+        [120, 60],
+        [200, 100],
+      ]),
+      { _tag: "moveItem", itemId: "v3", start: 0 },
+      { _tag: "moveItem", itemId: "v1", start: 100 },
+      { _tag: "moveItem", itemId: "v2", start: 190 },
+    ]);
+    expect(items(cut)).toEqual([
+      { id: "v3", start: 0, duration: 100, in: 200 },
+      { id: "v1", start: 100, duration: 90, in: 0 },
+      { id: "v2", start: 190, duration: 60, in: 120 },
+    ]);
+    // [90,120) joins v1 and v2, which sit side by side; v3 stays first.
+    const joined = run(
+      [{ _tag: "restoreRange", trackId: "V1", mediaId: "cam", range: { in: 90, duration: 30 } }],
+      cut,
+    );
+    expect(items(joined)).toEqual([
+      { id: "v3", start: 0, duration: 100, in: 200 },
+      { id: "v1", start: 100, duration: 180, in: 0 },
+    ]);
+    // [180,200) grows v2's end: nothing after it on the track, v3 does not move.
+    const grown = run(
+      [{ _tag: "restoreRange", trackId: "V1", mediaId: "cam", range: { in: 170, duration: 40 } }],
+      cut,
+    );
+    expect(items(grown)).toEqual([
+      { id: "v3", start: 0, duration: 100, in: 200 },
+      { id: "v1", start: 100, duration: 90, in: 0 },
+      { id: "v2", start: 190, duration: 80, in: 120 },
+    ]);
+    // [300,320) has v3 before it in the source: v3 grows and the rest moves right by 20.
+    const tail = run(
+      [{ _tag: "restoreRange", trackId: "V1", mediaId: "cam", range: { in: 300, duration: 20 } }],
+      cut,
+    );
+    expect(items(tail)).toEqual([
+      { id: "v3", start: 0, duration: 120, in: 200 },
+      { id: "v1", start: 120, duration: 90, in: 0 },
+      { id: "v2", start: 210, duration: 60, in: 120 },
+    ]);
+  });
+
+  it("undoes a split and ripple delete exactly with restoreRange", () => {
+    const start = run([
+      keep([[0, 300]]),
+      { _tag: "setItemProps", itemId: "v1", props: { gainDb: -2 } },
+      {
+        _tag: "insertItem",
+        trackId: "V1",
+        item: { media: "cam", start: 400, duration: 50, in: 600 },
+      },
+    ]);
+    const cut = run(
+      [
+        { _tag: "splitItem", itemId: "v1", atFrame: 150, newItemId: "vt1" },
+        { _tag: "splitItem", itemId: "v1", atFrame: 100, newItemId: "vt2" },
+        { _tag: "deleteItem", itemIds: ["vt2"], ripple: true },
+      ],
+      start,
+    );
+    expect(items(cut)).toEqual([
+      { id: "v1", start: 0, duration: 100, in: 0 },
+      { id: "vt1", start: 100, duration: 150, in: 150 },
+      { id: "v2", start: 350, duration: 50, in: 600 },
+    ]);
+    const restored = run(
+      [{ _tag: "restoreRange", trackId: "V1", mediaId: "cam", range: { in: 100, duration: 50 } }],
+      cut,
+    );
+    expect(restored).toEqual(start);
+  });
+
+  it("restores a part with no source neighbour after the part before it", () => {
+    const cut = run([
+      keep([
+        [0, 50],
+        [300, 50],
+      ]),
+      { _tag: "setItemProps", itemId: "v1", props: { gainDb: -4 } },
+    ]);
+    const restored = run(
+      [{ _tag: "restoreRange", trackId: "V1", mediaId: "cam", range: { in: 100, duration: 40 } }],
+      cut,
+    );
+    expect(items(restored)).toEqual([
+      { id: "v1", start: 0, duration: 50, in: 0 },
+      { id: "v3", start: 50, duration: 40, in: 100 },
+      { id: "v2", start: 90, duration: 50, in: 300 },
+    ]);
+    expect(restored.tracks[0]!.items[1]).toMatchObject({ gainDb: -4 });
+    // With nothing of the clip left, the part goes at the start.
+    const empty = run([{ _tag: "deleteItem", itemIds: ["v1", "v2"], ripple: true }], cut);
+    const back = run(
+      [{ _tag: "restoreRange", trackId: "V1", mediaId: "cam", range: { in: 0, duration: 50 } }],
+      empty,
+    );
+    expect(items(back)).toEqual([{ id: "v1", start: 0, duration: 50, in: 0 }]);
+  });
+
   it("splits caption words between the two halves", () => {
     const document = run([
       {

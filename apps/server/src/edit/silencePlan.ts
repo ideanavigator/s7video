@@ -4,11 +4,15 @@
 // ranges in document frames out. Pauses come from the gaps between words; a gap is cut only when
 // its sound is quiet next to the clip's own speech, so laughter or music between words stays.
 import type { EditRational, EditSourceRange } from "@t3tools/contracts";
+import {
+  AIR_SECONDS,
+  convertFrame,
+  minSegmentFrames,
+  secondsToFrames,
+} from "@t3tools/shared/editWordCuts";
 
-/** Air kept before and after every word. */
-export const AIR_SECONDS = 0.1;
-/** No kept segment is shorter than this. */
-export const MIN_SEGMENT_SECONDS = 0.3;
+// The word-cut rules are shared with the Transcript tab's text edits (S7V-038).
+export { AIR_SECONDS, MIN_SEGMENT_SECONDS } from "@t3tools/shared/editWordCuts";
 export const DEFAULT_MIN_GAP_SECONDS = 0.4;
 /** A gap is quiet when its sound is at least this far below the clip's speech level. */
 export const QUIET_MARGIN_DB = 6;
@@ -60,17 +64,6 @@ export type SilencePlan =
   | { readonly _tag: "no-speech" };
 
 type Span = [number, number];
-
-const secondsToFrames = (seconds: number, rate: EditRational) =>
-  Math.round((seconds * rate.num) / rate.den);
-
-/** `frame` at `from` as a frame at `to`, rounded down or up, in exact integer arithmetic. */
-function convertFrame(frame: number, from: EditRational, to: EditRational, up: boolean): number {
-  const numerator = BigInt(frame) * BigInt(to.num) * BigInt(from.den);
-  const denominator = BigInt(to.den) * BigInt(from.num);
-  const quotient = numerator / denominator;
-  return Number(up && quotient * denominator < numerator ? quotient + 1n : quotient);
-}
 
 const power = (db: number) => 10 ** (db / 10);
 const decibels = (meanPower: number) => (meanPower > 0 ? 10 * Math.log10(meanPower) : -Infinity);
@@ -210,8 +203,7 @@ export function planSilenceCuts(input: SilencePlanInput): SilencePlan {
 
   const air = secondsToFrames(AIR_SECONDS, input.sourceRate);
   const minGap = Math.max(1, secondsToFrames(input.minGapSeconds, input.sourceRate));
-  // Rounded up: at 23.976 fps, 7 frames would be 0.292 s.
-  const minSegment = Math.ceil((MIN_SEGMENT_SECONDS * input.sourceRate.num) / input.sourceRate.den);
+  const minSegment = minSegmentFrames(input.sourceRate);
   const quietBelow = meanLevel(input.levels, words) - QUIET_MARGIN_DB;
 
   // What already plays, as document spans, and the rest of the source as fixed cuts. Converted

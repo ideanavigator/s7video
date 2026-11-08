@@ -291,6 +291,79 @@ function splitOne(track: DraftTrack, item: DraftItem, atFrame: number, id: strin
   return right;
 }
 
+const sameLink = (left: DraftItem, right: DraftItem) =>
+  (left.linkId ?? null) === (right.linkId ?? null);
+
+/**
+ * Puts back the frames of `range` the track does not play, beside the items that play their
+ * source neighbours; later items move right, so manual moves stay (S7V-038, PO 2026-11-06).
+ * Linked items are not extended; text edits refuse a clip with sound on its own track
+ * (`hasLinkedAudio`), so the transcript never restores half of a linked pair.
+ */
+function restoreOnTrack(
+  document: DraftDocument,
+  track: DraftTrack,
+  mediaId: string,
+  range: EditSourceRange,
+) {
+  const own = () =>
+    track.items
+      .filter((item) => item.media === mediaId && typeof item.in === "number")
+      .sort(byStart) as Array<DraftItem & { in: number }>;
+  const missing: Array<[number, number]> = [];
+  let at = range.in;
+  const end = range.in + range.duration;
+  for (const kept of mergeRanges(own().map((item) => ({ in: item.in, duration: item.duration })))) {
+    if (kept.in + kept.duration <= at) continue;
+    if (kept.in >= end) break;
+    if (kept.in > at) missing.push([at, kept.in]);
+    at = Math.max(at, kept.in + kept.duration);
+  }
+  if (at < end) missing.push([at, end]);
+
+  for (const [from, to] of missing) {
+    const length = to - from;
+    const items = own();
+    const left = items.find((item) => item.in + item.duration === from);
+    const right = items.find((item) => item.in === to);
+    if (left !== undefined) {
+      const join = left.start + left.duration;
+      shiftAfter(track, join, length, left.id);
+      left.duration += length;
+      if (right !== undefined && right.start === join + length && sameLink(left, right)) {
+        left.duration += right.duration;
+        if ("fadeOutFrames" in right) left.fadeOutFrames = right.fadeOutFrames;
+        else delete left.fadeOutFrames;
+        track.items.splice(track.items.indexOf(right), 1);
+      }
+      continue;
+    }
+    if (right !== undefined) {
+      shiftAfter(track, right.start, length, right.id);
+      right.in = from;
+      right.duration += length;
+      continue;
+    }
+    const before = items
+      .filter((item) => item.in + item.duration < from)
+      .sort((a, b) => b.in + b.duration - (a.in + a.duration))[0];
+    const after = items.filter((item) => item.in > to).sort((a, b) => a.in - b.in)[0];
+    const place = before !== undefined ? before.start + before.duration : (after?.start ?? 0);
+    shiftAfter(track, place, length);
+    // The new part takes its neighbour's props (gain, zoom), but not its id, link or fades.
+    const props: Record<string, unknown> = { ...(before ?? after) };
+    for (const key of ["linkId", "fadeInFrames", "fadeOutFrames"]) delete props[key];
+    track.items.push({
+      ...props,
+      id: allocateId(document, ITEM_PREFIX.video),
+      media: mediaId,
+      start: place,
+      duration: length,
+      in: from,
+    });
+  }
+}
+
 function applyOne(document: DraftDocument, op: EditOp): void {
   switch (op._tag) {
     case "setKeepRanges": {
@@ -306,16 +379,7 @@ function applyOne(document: DraftDocument, op: EditOp): void {
     case "restoreRange": {
       const track = findTrack(document, op.trackId);
       requireKind(track, ["video"], "restoring a range");
-      const kept = track.items
-        .filter((item) => "media" in item && item.media === op.mediaId)
-        .sort(byStart);
-      const start = kept[0]?.start ?? 0;
-      const ranges = mergeRanges([
-        ...kept.map((item) => ({ in: (item as { in: number }).in, duration: item.duration })),
-        op.range,
-      ]);
-      const others = track.items.filter((item) => !("media" in item) || item.media !== op.mediaId);
-      track.items = [...others, ...layRanges(document, track, op.mediaId, ranges, start)];
+      restoreOnTrack(document, track, op.mediaId, op.range);
       return;
     }
     case "setCaptions": {
