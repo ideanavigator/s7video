@@ -104,6 +104,24 @@ outside React like the controller. What the code does not show:
   place that moves every track in step.
 - A press on a clip selects it and does not seek; a read-only timeline (no `editing`) still seeks.
 
+## Text edits (S7V-038)
+
+The Transcript tab cuts and restores words through the same `edit.apply` (origin `transcript`),
+with the rules in `packages/shared/src/editWordCuts.ts`, which silence removal also uses.
+
+- **A cut is split + ripple delete** on the items under it, never `setKeepRanges`, which re-lays the
+  clip end to end and would undo manual moves and gaps. All splits come first in the batch, so
+  every frame is planned from the document the tab rendered. Split parts are named `vt…`, a prefix
+  the server never allocates.
+- **`restoreRange` keeps the layout** (PO 2026-11-06): each missing part joins the item that plays
+  its source neighbour and pushes later items on that track right. It no longer re-lays in source
+  order; `setKeepRanges` still does.
+- **Restore is the inverse of a cut** when the gaps were not cut before: toward a kept word the
+  whole gap comes back. After a silence cut, restoring a word also brings back the pauses beside
+  it; Undo gives the exact earlier edit.
+- **One click still seeks.** Selecting needs a drag or shift-click (or shift + arrows). The
+  selection is set by attribute outside React, like the highlight, so a drag re-renders nothing.
+
 ## Performance test
 
 `Timeline.perf.browser.test.tsx` is spike B1's harness: a generated 1,000-clip edit, a real CDP

@@ -75,6 +75,9 @@ from; the per-ticket entries and how this file is compiled are in
   all old ones, says how much space that frees, and never touches your footage. (S7V-050)
 - Drag, trim, split and delete clips on the timeline, with snapping to the playhead and other
   clips. Undo and redo cover your changes and the assistant's in one history. (S7V-034)
+- Select words in the transcript and delete them to cut that part of the video, or restore
+  struck-through words to bring them back. The timeline and player follow, and undo works.
+  (S7V-038)
 
 ### Changed
 
