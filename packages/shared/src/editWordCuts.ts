@@ -95,6 +95,36 @@ function anyKept(kept: ReadonlyArray<FrameSpan>, from: number, to: number): bool
   return span !== undefined && span[0] < to;
 }
 
+/** True when the word has frames and one of them plays. */
+export const wordPlays = (kept: ReadonlyArray<FrameSpan>, word: WordSpan): boolean =>
+  isTimed(word) && anyKept(kept, word.start, word.end);
+
+/**
+ * True when the clip's sound is on another track, linked to its video or not: cutting or
+ * restoring only the video would put the sound out of step, so silence removal and text edits
+ * refuse it for now.
+ */
+export function hasLinkedAudio(document: EditDocument, mediaId: string): boolean {
+  const links = new Set(
+    document.tracks.flatMap((track) =>
+      track.kind === "video"
+        ? track.items.flatMap((item) =>
+            item.media === mediaId && item.linkId !== undefined ? [item.linkId] : [],
+          )
+        : [],
+    ),
+  );
+  return document.tracks.some(
+    (track) =>
+      track.kind !== "video" &&
+      track.items.some(
+        (item) =>
+          ("media" in item && item.media === mediaId) ||
+          ("linkId" in item && item.linkId !== undefined && links.has(item.linkId)),
+      ),
+  );
+}
+
 /** What the edit plays of `mediaId`: its video items' source spans, joined. */
 export function keptSpansOf(document: EditDocument, mediaId: string): FrameSpan[] {
   const spans: FrameSpan[] = [];
@@ -224,6 +254,11 @@ export interface WordRestore {
   readonly ranges: ReadonlyArray<FrameSpan>;
   /** The selected words that were cut, which the restore brings back. */
   readonly words: ReadonlyArray<number>;
+  /**
+   * Frames put back beyond the words and their air: the pauses beside them, which an earlier cut
+   * (such as silence removal) may have taken. The UI says so.
+   */
+  readonly pauseFrames: number;
 }
 
 /**
@@ -243,7 +278,7 @@ export function planWordRestore(input: WordEditInput): WordRestore {
     if (isTimed(words[index])) timed.push(index);
   }
   const restored = timed.filter((index) => !plays(index));
-  if (restored.length === 0) return { ranges: [], words: [] };
+  if (restored.length === 0) return { ranges: [], words: [], pauseFrames: 0 };
   const air = secondsToFrames(AIR_SECONDS, input.fps);
   const minimum = minSegmentFrames(input.fps);
   const start = words[timed[0]!]!.start;
@@ -281,7 +316,18 @@ export function planWordRestore(input: WordEditInput): WordRestore {
     growLeft = Math.min(leftRoom, need - growRight);
     return [a - growLeft, b + growRight];
   });
-  return { ranges: subtract(union(grown), kept), words: restored };
+  const ranges = subtract(union(grown), kept);
+  // The words with their air (and a grown island) is what was asked for; the rest is pause.
+  const asked = union([
+    ...restored.map((index): FrameSpan => [
+      Math.max(floor, words[index]!.start - air),
+      Math.min(ceiling, words[index]!.end + air),
+    ]),
+    ...grown.filter(([a, b], index) => a !== holes[index]![0] || b !== holes[index]![1]),
+  ]);
+  const total = (spans: ReadonlyArray<FrameSpan>) => spans.reduce((sum, [a, b]) => sum + b - a, 0);
+  const pauseFrames = total(subtract(ranges, asked));
+  return { ranges, words: restored, pauseFrames };
 }
 
 /** Ids this module gives the right-hand parts of a split; never one the server allocates. */
@@ -395,7 +441,9 @@ export type WordEdit =
       readonly ops: ReadonlyArray<EditOp>;
       readonly restore: WordRestore;
     }
-  | { readonly _tag: "nothing" };
+  | { readonly _tag: "nothing" }
+  /** The clip's sound is on its own track (`hasLinkedAudio`), so no text edit is made. */
+  | { readonly _tag: "linked-audio" };
 
 /**
  * A text edit as ops on `document`: cutting removes the selected words that play, restoring brings
@@ -408,6 +456,7 @@ export function wordEditOps(
   selection: { readonly first: number; readonly last: number },
   action: "cut" | "restore",
 ): WordEdit {
+  if (hasLinkedAudio(document, mediaId)) return { _tag: "linked-audio" };
   const input: WordEditInput = {
     words,
     first: Math.min(selection.first, selection.last),

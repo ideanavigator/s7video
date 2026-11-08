@@ -297,7 +297,8 @@ const sameLink = (left: DraftItem, right: DraftItem) =>
 /**
  * Puts back the frames of `range` the track does not play, beside the items that play their
  * source neighbours; later items move right, so manual moves stay (S7V-038, PO 2026-11-06).
- * Linked items are not extended: nothing writes `linkId` yet (S7V-036).
+ * Linked items are not extended; text edits refuse a clip with sound on its own track
+ * (`hasLinkedAudio`), so the transcript never restores half of a linked pair.
  */
 function restoreOnTrack(
   document: DraftDocument,

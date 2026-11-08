@@ -118,7 +118,12 @@ with the rules in `packages/shared/src/editWordCuts.ts`, which silence removal a
   order; `setKeepRanges` still does.
 - **Restore is the inverse of a cut** when the gaps were not cut before: toward a kept word the
   whole gap comes back. After a silence cut, restoring a word also brings back the pauses beside
-  it; Undo gives the exact earlier edit.
+  it; the tab says so, and Undo gives the exact earlier edit.
+- **Sound on its own track is refused.** When the clip's sound sits on another track, linked or
+  not (`hasLinkedAudio`, shared with silence removal), cutting or restoring only the video would
+  put the sound out of step, so the tab says words can't be cut there yet.
+- **What plays comes from the edit.** The struck marks follow the part on screen; a reused clip can
+  play a struck word elsewhere, so Cut or Restore is chosen from the edit's items.
 - **One click still seeks.** Selecting needs a drag or shift-click (or shift + arrows). The
   selection is set by attribute outside React, like the highlight, so a drag re-renders nothing.
 

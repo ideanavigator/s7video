@@ -85,7 +85,13 @@ vi.mock(import("../../state/use-atom-command"), () => ({
 import "../../index.css";
 
 import type { EditApplyOutcome } from "./timeline/timelineEditor";
-import { TRANSCRIPT_CONFLICT_NOTICE, type TranscriptEditing, TranscriptTab } from "./TranscriptTab";
+import {
+  LINKED_AUDIO_NOTICE,
+  RESTORED_PAUSE_NOTE,
+  TRANSCRIPT_CONFLICT_NOTICE,
+  type TranscriptEditing,
+  TranscriptTab,
+} from "./TranscriptTab";
 
 const FPS = { num: 30, den: 1 };
 const environmentId = EnvironmentId.make("env-1");
@@ -752,6 +758,8 @@ describe("TranscriptTab", () => {
       expect(apply.mock.calls[0]![0]).toEqual([
         { _tag: "restoreRange", trackId: "V1", mediaId: "clip-0", range: { in: 22, duration: 18 } },
       ]);
+      // The frame after "silence"'s air was a pause: the tab says it came back too.
+      await expect.element(screen.getByText(RESTORED_PAUSE_NOTE).first()).toBeVisible();
     });
 
     it("should handle a stale revision: keeps the selection, rolls back and says so", async () => {
@@ -787,6 +795,67 @@ describe("TranscriptTab", () => {
       await expect
         .element(screen.getByText(/Also cut 0\.1 s between these words/u).first())
         .toBeVisible();
+    });
+
+    it("names and strikes an unselected word a cut also takes, and announces it", async () => {
+      // "so" plays alone in [9,18): cutting "really" would leave it under 0.3 s with no pause to
+      // give back, so it goes with the cut.
+      ready([word("so", 10, 14), word("really", 15, 40), word("fine", 60, 70)]);
+      const { editing, apply } = editingOf([[9, 100]], 100);
+      await using screen = await renderTab(
+        { fps: FPS, segments: segmentsOf([[9, 100]]) },
+        { editing },
+      );
+      await screen.getByRole("option", { name: "really" }).click();
+      await userEvent.keyboard("{Delete}");
+      expect(apply).toHaveBeenCalledOnce();
+      const note = "Also cut “so” so the video doesn't flicker.";
+      await expect.element(screen.getByText(note, { exact: true })).toBeVisible();
+      await expect.poll(() => wordElement("so")?.hasAttribute("data-removed")).toBe(true);
+      await expect.element(screen.getByRole("option", { name: "so (removed)" })).toBeVisible();
+      const statuses = [...screen.container.querySelectorAll('[role="status"]')].map(
+        (element) => element.textContent,
+      );
+      expect(statuses).toContain(`Cut 1 word. ${note}`);
+    });
+
+    it("refuses a text edit when the clip's sound is on its own track", async () => {
+      ready(SHORT);
+      const { editing, apply } = editingOf([[0, 62]], 62);
+      const document: EditDocument = {
+        ...editing.document,
+        tracks: [
+          ...editing.document.tracks,
+          {
+            kind: "sfx",
+            id: "A1",
+            items: [{ id: "a1", media: "clip-0", start: 0, duration: 62, in: 0 }],
+          } as unknown as EditDocument["tracks"][number],
+        ],
+      };
+      await using screen = await renderTab(wholeClip(62), { editing: { ...editing, document } });
+      await act(() => dragAcross("there", "silence"));
+      await userEvent.keyboard("{Delete}");
+      await expect.element(screen.getByText(LINKED_AUDIO_NOTICE)).toBeVisible();
+      expect(apply).not.toHaveBeenCalled();
+      expect(wordElement("there")?.hasAttribute("data-removed")).toBe(false);
+    });
+
+    it("cuts a struck word that plays in another part of the timeline", async () => {
+      // A reused clip: the tab shows only the part on screen, [0,22), so "general" shows struck,
+      // but the edit plays it elsewhere. The choice comes from the edit: Cut, not Restore.
+      ready(SHORT);
+      const { editing, apply } = editingOf([[0, 62]], 62);
+      await using screen = await renderTab(
+        { fps: FPS, segments: segmentsOf([[0, 22]]) },
+        { editing },
+      );
+      await expect.element(screen.getByRole("option", { name: "general (removed)" })).toBeVisible();
+      await act(() => dragAcross("silence", "general"));
+      await expect.element(screen.getByRole("button", { name: "Cut", exact: true })).toBeVisible();
+      expect(screen.getByRole("button", { name: /Restore/u }).query()).toBeNull();
+      await userEvent.keyboard("{Delete}");
+      expect(apply.mock.calls[0]![0].at(-1)).toMatchObject({ _tag: "deleteItem", ripple: true });
     });
 
     it("is keyboard only: shift+arrows select, Delete cuts, Backspace restores", async () => {

@@ -6,7 +6,12 @@
  * the word on screen. Pure: no React, no DOM.
  */
 import type { EditDocument, EditRational, Transcript } from "@t3tools/contracts";
-import { type WordEdit, wordEditOps } from "@t3tools/shared/editWordCuts";
+import {
+  type FrameSpan,
+  type WordEdit,
+  wordEditOps,
+  wordPlays,
+} from "@t3tools/shared/editWordCuts";
 
 import {
   nextTimelineSegmentFrom,
@@ -262,17 +267,26 @@ export interface TranscriptSelection {
   readonly last: number;
 }
 
-/** How many selected words play now, and how many were cut: what the action bar offers. */
-export function selectionSummary(model: TranscriptModel, selection: TranscriptSelection) {
-  let kept = 0;
+/**
+ * How many selected words play now, and how many were cut: what the action bar offers. With
+ * `kept` (`keptSpansOf` the edit), it reads the edit itself, so a word of a reused clip that plays
+ * in another part counts as playing even when it shows struck here.
+ */
+export function selectionSummary(
+  model: TranscriptModel,
+  selection: TranscriptSelection,
+  kept?: ReadonlyArray<FrameSpan>,
+) {
+  let playing = 0;
   let removed = 0;
   for (let index = selection.first; index <= selection.last; index += 1) {
     const word = model.words[index];
     if (word === undefined || !word.timed) continue;
-    if (word.removed) removed += 1;
-    else kept += 1;
+    const plays = kept === undefined ? !word.removed : wordPlays(kept, word);
+    if (plays) playing += 1;
+    else removed += 1;
   }
-  return { kept, removed };
+  return { kept: playing, removed };
 }
 
 /**
@@ -298,7 +312,7 @@ export function selectionToOps(
  * show kept, until the new edit arrives.
  */
 export function withPendingEdit(model: TranscriptModel, edit: WordEdit): TranscriptModel {
-  if (edit._tag === "nothing") return model;
+  if (edit._tag !== "cut" && edit._tag !== "restore") return model;
   const changed = new Set(edit._tag === "cut" ? edit.cut.words : edit.restore.words);
   if (edit._tag === "cut") for (const index of edit.cut.widenedWords) changed.add(index);
   const removed = edit._tag === "cut";

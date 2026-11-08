@@ -15,7 +15,7 @@ import type {
   TranscribeModel,
   TranscribeModelsStatus,
 } from "@t3tools/contracts";
-import type { WordEdit } from "@t3tools/shared/editWordCuts";
+import { keptSpansOf, type WordEdit } from "@t3tools/shared/editWordCuts";
 import { AudioLinesIcon, FileTextIcon, TriangleAlertIcon } from "lucide-react";
 import {
   useEffect,
@@ -64,6 +64,10 @@ export interface TranscriptEditing {
   readonly revision: number;
   readonly apply: (ops: ReadonlyArray<EditOp>, baseRevision: number) => Promise<EditApplyOutcome>;
 }
+
+/** Text edits refuse a clip whose sound is on its own track, as silence removal does. */
+export const LINKED_AUDIO_NOTICE =
+  "This clip's sound is on its own track, so words can't be cut here yet.";
 
 /** Shown when the edit changed between the selection and the cut (S7V-038 AC-6). */
 export const TRANSCRIPT_CONFLICT_NOTICE =
@@ -263,6 +267,10 @@ const secondsOf = (frames: number, fps: TranscriptPlayback["fps"]) =>
 
 const countWords = (count: number) => (count === 1 ? "1 word" : `${count} words`);
 
+/** The note when a restore also brought back the pauses beside the words. */
+export const RESTORED_PAUSE_NOTE =
+  "Also brought back the pause beside these words; use Undo to go back exactly.";
+
 /** The note when a cut took more than the selection, so the video doesn't flicker. */
 function widenedNote(
   model: TranscriptModel,
@@ -342,6 +350,10 @@ function TranscriptWords(props: {
   const run = async (action: "cut" | "restore", selection: TranscriptSelection) => {
     if (!editable || editing === undefined || pending !== null) return;
     const edit = selectionToOps(model, selection, editing.document, mediaId, action);
+    if (edit._tag === "linked-audio") {
+      setNotice(LINKED_AUDIO_NOTICE);
+      return;
+    }
     if (edit._tag === "nothing") {
       setNotice(action === "cut" ? "Those words are already cut." : "Those words already play.");
       return;
@@ -356,7 +368,13 @@ function TranscriptWords(props: {
         clearSelection();
         const count = edit._tag === "cut" ? edit.cut.words.length : edit.restore.words.length;
         const note =
-          edit._tag === "cut" && playback !== null ? widenedNote(model, edit, playback.fps) : null;
+          edit._tag === "cut"
+            ? playback === null
+              ? null
+              : widenedNote(model, edit, playback.fps)
+            : edit.restore.pauseFrames > 0
+              ? RESTORED_PAUSE_NOTE
+              : null;
         setNotice(note);
         setAnnouncement(
           `${edit._tag === "cut" ? "Cut" : "Restored"} ${countWords(count)}.${note === null ? "" : ` ${note}`}`,
@@ -373,10 +391,14 @@ function TranscriptWords(props: {
     }
   };
 
+  // What plays is read from the edit, not the struck marks: a reused clip can play a word in
+  // another part of the timeline while it shows struck here.
+  const kept = editing === undefined ? undefined : keptSpansOf(editing.document, mediaId);
+
   /** Cut when a selected word plays, else restore. */
   const cutOrRestore = (selection: TranscriptSelection) => {
-    const { kept } = selectionSummary(model, selection);
-    void run(kept > 0 ? "cut" : "restore", selection);
+    const { kept: playing } = selectionSummary(model, selection, kept);
+    void run(playing > 0 ? "cut" : "restore", selection);
   };
 
   const wordIndexOf = (target: EventTarget | null) => {
@@ -511,7 +533,7 @@ function TranscriptWords(props: {
   };
 
   const allCut = model.words.length > 0 && model.removedCount === model.words.length;
-  const summary = selected === null || !editable ? null : selectionSummary(model, selected);
+  const summary = selected === null || !editable ? null : selectionSummary(model, selected, kept);
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -539,7 +561,7 @@ function TranscriptWords(props: {
               aria-keyshortcuts="Delete Backspace"
               onClick={() => void run("cut", selected)}
             >
-              Cut <Kbd>⌫</Kbd>
+              Cut <Kbd aria-hidden>⌫</Kbd>
             </Button>
           ) : null}
           {summary.removed > 0 ? (
@@ -550,7 +572,7 @@ function TranscriptWords(props: {
               aria-keyshortcuts={summary.kept > 0 ? undefined : "Delete Backspace"}
               onClick={() => void run("restore", selected)}
             >
-              Restore {summary.kept > 0 ? null : <Kbd>⌫</Kbd>}
+              Restore {summary.kept > 0 ? null : <Kbd aria-hidden>⌫</Kbd>}
             </Button>
           ) : null}
         </div>

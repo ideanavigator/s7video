@@ -111,7 +111,7 @@ describe("text-edit-cut golden", () => {
             const before = snapshot.revision;
             snapshot = yield* edits.apply(
               created.projectId,
-              edit._tag === "nothing" ? [] : edit.ops,
+              edit._tag === "cut" || edit._tag === "restore" ? edit.ops : [],
               {
                 origin: "transcript",
                 baseRevision: before,

@@ -246,8 +246,8 @@ describe("edit versions", () => {
           Effect.gen(function* () {
             const current = yield* edits.read(projectId);
             const edit = wordEditOps(current.document, "cam", words, { first, last }, action);
-            assert.notStrictEqual(edit._tag, "nothing");
-            if (edit._tag === "nothing") return;
+            assert.strictEqual(edit._tag, action);
+            if (edit._tag !== "cut" && edit._tag !== "restore") return;
             yield* edits.apply(projectId, edit.ops, {
               origin: "transcript",
               baseRevision: current.revision,

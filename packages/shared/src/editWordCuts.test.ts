@@ -5,6 +5,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   type FrameSpan,
+  hasLinkedAudio,
   keptSpansOf,
   planWordCut,
   planWordRestore,
@@ -194,7 +195,32 @@ describe("planWordRestore", () => {
       [0, 13],
       [77, 100],
     ];
-    expect(planWordRestore(input(2, 2, kept))).toEqual({ ranges: [[37, 53]], words: [2] });
+    expect(planWordRestore(input(2, 2, kept))).toEqual({
+      ranges: [[37, 53]],
+      words: [2],
+      pauseFrames: 0,
+    });
+  });
+
+  it("should count the pauses a restore brings back beside kept words", () => {
+    // b and c were cut with the gaps around them: [13,77).
+    const kept: FrameSpan[] = [
+      [0, 13],
+      [77, 100],
+    ];
+    const words: WordSpan[] = [
+      { start: 0, end: 10 },
+      { start: 20, end: 30 },
+      { start: 40, end: 50 },
+      { start: 80, end: 90 },
+    ];
+    // Restoring b..c brings the whole gap back to a and d: [13,77). The words with air are
+    // [17,33) and [37,53); the rest, 4 + 4 + 24 frames, is pause.
+    expect(planWordRestore(input(1, 2, kept, words))).toEqual({
+      ranges: [[13, 77]],
+      words: [1, 2],
+      pauseFrames: 32,
+    });
   });
 
   it("should grow a restored island to the minimum segment", () => {
@@ -211,7 +237,7 @@ describe("planWordRestore", () => {
   });
 
   it("should restore nothing for a selection that plays", () => {
-    expect(planWordRestore(input(1, 2))).toEqual({ ranges: [], words: [] });
+    expect(planWordRestore(input(1, 2))).toEqual({ ranges: [], words: [], pauseFrames: 0 });
   });
 });
 
@@ -270,6 +296,50 @@ describe("word edit ops", () => {
       _tag: "restore",
       ops: [{ _tag: "restoreRange", range: { in: 33, duration: 24 } }],
     });
+  });
+
+  it("should refuse a clip whose sound is on its own track", () => {
+    const linked = documentOf(
+      [[0, 100, 0]],
+      [
+        {
+          kind: "sfx",
+          id: "A1",
+          items: [{ id: "a1", media: "cam", start: 0, duration: 100, in: 0, linkId: "l1" }],
+        } as unknown as EditDocument["tracks"][number],
+      ],
+    );
+    const withLink: EditDocument = {
+      ...linked,
+      tracks: [
+        {
+          ...linked.tracks[0]!,
+          items: [{ ...linked.tracks[0]!.items[0]!, linkId: "l1" }],
+        } as EditDocument["tracks"][number],
+        linked.tracks[1]!,
+      ],
+    };
+    // Linked sound, and the same clip on a sound track without a link.
+    for (const document of [withLink, linked]) {
+      expect(hasLinkedAudio(document, "cam")).toBe(true);
+      for (const action of ["cut", "restore"] as const) {
+        expect(wordEditOps(document, "cam", WORDS, { first: 2, last: 2 }, action)).toEqual({
+          _tag: "linked-audio",
+        });
+      }
+    }
+    // Another clip's sound on its own track is fine.
+    const other = documentOf(
+      [[0, 100, 0]],
+      [
+        {
+          kind: "music",
+          id: "M1",
+          items: [{ id: "m1", media: "song", start: 0, duration: 100, in: 0 }],
+        } as unknown as EditDocument["tracks"][number],
+      ],
+    );
+    expect(hasLinkedAudio(other, "cam")).toBe(false);
   });
 
   it("should handle deleting every word", () => {
