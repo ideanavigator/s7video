@@ -196,7 +196,7 @@ const layerElectronTheme = Layer.succeed(ElectronTheme.ElectronTheme, {
   onUpdated: () => Effect.void,
 } satisfies ElectronTheme.ElectronTheme["Service"]);
 
-const makeLayerDesktopEnvironment = (env: Readonly<Record<string, string>> = {}) =>
+const makeLayerDesktopEnvironment = (env: Readonly<Record<string, string | undefined>> = {}) =>
   DesktopEnvironment.layer(environmentInput).pipe(
     Layer.provide(
       Layer.mergeAll(
@@ -212,6 +212,9 @@ const makeLayerDesktopEnvironment = (env: Readonly<Record<string, string>> = {})
 const layerDesktopEnvironment = makeLayerDesktopEnvironment();
 const layerDesktopEnvironmentAfterDevRestart = makeLayerDesktopEnvironment({
   S7VIDEO_DESKTOP_DEV_RESTART: "1",
+});
+const layerDesktopEnvironmentPackaged = makeLayerDesktopEnvironment({
+  VITE_DEV_SERVER_URL: undefined,
 });
 
 const desktopWindowBoundsEquivalence = Schema.toEquivalence(
@@ -241,7 +244,7 @@ function layerTest(input: {
     options?: ElectronWindow.ElectronWindowRevealOptions,
   ) => void;
   readonly focusedWindow?: Electron.BrowserWindow;
-  readonly devRestart?: boolean;
+  readonly launch?: "dev" | "dev-restart" | "packaged";
 }) {
   let desktopSettings = input.desktopSettings ?? DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS;
   const layerDesktopAppSettings = Layer.succeed(DesktopAppSettings.DesktopAppSettings, {
@@ -305,9 +308,11 @@ function layerTest(input: {
           recordMetrics: () => Effect.void,
           shutdown: Effect.void,
         }),
-        input.devRestart === true
+        input.launch === "dev-restart"
           ? layerDesktopEnvironmentAfterDevRestart
-          : layerDesktopEnvironment,
+          : input.launch === "packaged"
+            ? layerDesktopEnvironmentPackaged
+            : layerDesktopEnvironment,
         layerDesktopAppSettings,
         layerDesktopClientSettings,
         layerDesktopServerExposure,
@@ -615,7 +620,47 @@ describe("DesktopWindow", () => {
   );
 
   // S7V-074: s7video must not pull itself in front of the app the user is working in.
-  it.effect("ready-to-show reveal is not a steal", () =>
+  it.effect.each([
+    { launch: "packaged", steal: false, devTools: false },
+    { launch: "dev", steal: true, devTools: true },
+    { launch: "dev-restart", steal: false, devTools: false },
+  ] as const)(
+    "ready-to-show reveal on a $launch launch: steal=$steal",
+    ({ launch, steal, devTools }) =>
+      Effect.gen(function* () {
+        const fake = makeFakeBrowserWindow();
+        const createCount = yield* Ref.make(0);
+        const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+        const reveals: (ElectronWindow.ElectronWindowRevealOptions | undefined)[] = [];
+        const revealed = Promise.withResolvers<void>();
+        yield* Effect.gen(function* () {
+          const windows = yield* DesktopWindow.DesktopWindow;
+          yield* windows.ensureMain;
+          fake.windowListeners.get("ready-to-show")?.();
+          yield* Effect.promise(() => revealed.promise);
+          assert.deepEqual(reveals, [{ steal }]);
+          assert.deepEqual(
+            fake.openDevTools.mock.calls,
+            devTools ? [[{ mode: "detach", activate: false }]] : [],
+          );
+        }).pipe(
+          Effect.provide(
+            layerTest({
+              window: fake.window,
+              createCount,
+              mainWindow,
+              launch,
+              onReveal: (_window, options) => {
+                reveals.push(options);
+                revealed.resolve();
+              },
+            }),
+          ),
+        );
+      }),
+  );
+
+  it.effect("the connecting splash reveals without a focus steal", () =>
     Effect.gen(function* () {
       const fake = makeFakeBrowserWindow();
       const createCount = yield* Ref.make(0);
@@ -624,11 +669,12 @@ describe("DesktopWindow", () => {
       const revealed = Promise.withResolvers<void>();
       yield* Effect.gen(function* () {
         const windows = yield* DesktopWindow.DesktopWindow;
-        yield* windows.ensureMain;
+        yield* windows.showConnectingSplash;
+        assert.equal(yield* Ref.get(createCount), 1);
         fake.windowListeners.get("ready-to-show")?.();
         yield* Effect.promise(() => revealed.promise);
-        assert.deepEqual(reveals, [{ steal: false }]);
-        assert.deepEqual(fake.openDevTools.mock.calls, [[{ mode: "detach", activate: false }]]);
+        assert.deepEqual(reveals, [undefined]);
+        assert.equal(vi.mocked(fake.window.show).mock.calls.length, 0);
       }).pipe(
         Effect.provide(
           layerTest({
@@ -666,6 +712,7 @@ describe("DesktopWindow", () => {
             window: fake.window,
             createCount,
             mainWindow,
+            launch: "packaged",
             onReveal: (_window, options) => {
               reveals.push(options);
               revealed.resolve();
@@ -697,29 +744,12 @@ describe("DesktopWindow", () => {
             window: fake.window,
             createCount,
             mainWindow,
+            launch: "packaged",
             onReveal: (_window, options) => {
               reveals.push(options);
               revealed.resolve();
             },
           }),
-        ),
-      );
-    }),
-  );
-
-  it.effect("does not reopen DevTools after a dev watcher restart", () =>
-    Effect.gen(function* () {
-      const fake = makeFakeBrowserWindow();
-      const createCount = yield* Ref.make(0);
-      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
-      yield* Effect.gen(function* () {
-        const windows = yield* DesktopWindow.DesktopWindow;
-        yield* windows.ensureMain;
-        assert.equal(yield* Ref.get(createCount), 1);
-        assert.equal(fake.openDevTools.mock.calls.length, 0);
-      }).pipe(
-        Effect.provide(
-          layerTest({ window: fake.window, createCount, mainWindow, devRestart: true }),
         ),
       );
     }),

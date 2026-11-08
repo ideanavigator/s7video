@@ -99,6 +99,8 @@ it.effect.each([
       const loaded: string[] = [];
       const appListeners = new Map<string, (...args: readonly unknown[]) => void>();
       const mainListeners = new Map<string, () => void>();
+      const recoveryListeners = new Map<string, () => void>();
+      const reveals: unknown[][] = [];
       let closeCount = 0;
       let mainVisible = visible;
       const main = {
@@ -118,7 +120,7 @@ it.effect.each([
           loaded.push(url);
           return Promise.resolve();
         },
-        once: () => {},
+        once: (event: string, listener: () => void) => recoveryListeners.set(event, listener),
         webContents: { setWindowOpenHandler: () => {}, on: () => {} },
       } as unknown as Electron.BrowserWindow;
       const state = yield* DesktopState.DesktopState;
@@ -152,6 +154,8 @@ it.effect.each([
             Layer.succeed(ElectronWindow.ElectronWindow, {
               main: Ref.get(mainRef),
               create: () => Effect.succeed(recovery),
+              reveal: (window: unknown, options: unknown) =>
+                Effect.sync(() => reveals.push([window, options])),
             } as unknown as ElectronWindow.ElectronWindow["Service"]),
             Layer.succeed(DesktopUpdates.DesktopUpdates, {
               subscribe: Effect.succeed({
@@ -174,6 +178,10 @@ it.effect.each([
       expect(loaded.length).toBe(shouldRecover ? 1 : 0);
       if (shouldRecover) {
         expect(decodeURIComponent(loaded[0]!)).toContain("Failure details");
+        // S7V-074: the recovery window opens on its own, so it reveals without a focus steal.
+        recoveryListeners.get("ready-to-show")?.();
+        yield* Effect.yieldNow;
+        expect(reveals).toEqual([[recovery, undefined]]);
         if (closeMain) yield* Ref.set(mainRef, Option.none());
         yield* SubscriptionRef.set(state.primaryBackendStartup, { _tag: "Ready" });
         yield* Deferred.await(remembered);
