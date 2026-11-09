@@ -251,14 +251,19 @@ type Span = readonly [start: number, end: number];
 const placementsOf = (document: EditDocument, media: string) =>
   (firstVideoTrack(document)?.items ?? [])
     .filter((item) => item.media === media)
-    .map((item) => ({ start: item.start, end: item.start + item.duration, in: item.in }));
+    .map((item) => ({
+      id: item.id,
+      start: item.start,
+      end: item.start + item.duration,
+      in: item.in,
+    }));
 
 /**
  * Where timeline frames `[from, to)` of `media` in `before` play in `after`, through the source
- * frames they show: the longest piece, or none when the change cut them all.
+ * frames they show: the longest piece and the video item it lies in, or none when all were cut.
  */
 function carrySpan(before: EditDocument, after: EditDocument, media: string, span: Span) {
-  let best: Span | undefined;
+  let best: { readonly span: Span; readonly item: string } | undefined;
   for (const old of placementsOf(before, media)) {
     const from = Math.max(span[0], old.start);
     const to = Math.min(span[1], old.end);
@@ -270,7 +275,9 @@ function carrySpan(before: EditDocument, after: EditDocument, media: string, spa
       const high = Math.min(source[1], nowEnd);
       if (high <= low) continue;
       const piece: Span = [low - now.in + now.start, high - now.in + now.start];
-      if (best === undefined || piece[1] - piece[0] > best[1] - best[0]) best = piece;
+      if (best === undefined || piece[1] - piece[0] > best.span[1] - best.span[0]) {
+        best = { span: piece, item: now.id };
+      }
     }
   }
   return best;
@@ -294,20 +301,24 @@ function freePieces(span: Span, blocked: ReadonlyArray<Span>): Span[] {
   return pieces;
 }
 
-/** A carried word: its new frames, and how far it moved from its old start. */
+/** A carried word: its new frames, the video item they lie in, and how far it moved. */
 interface CarriedWord {
   readonly text: string;
   readonly span: Span;
+  readonly item: string;
   readonly shift: number;
 }
 
-/** Consecutive words that moved by the same amount: they stay together, in order. */
+/**
+ * Consecutive words in the same video item that moved by the same amount. A caption is made from
+ * one run, so it lies wholly inside one item: it can never span a hole or another clip.
+ */
 function runsOf(words: ReadonlyArray<CarriedWord>): CarriedWord[][] {
   const runs: CarriedWord[][] = [];
   for (const word of words) {
     const run = runs.at(-1);
     const last = run?.at(-1);
-    if (run !== undefined && last !== undefined && last.shift === word.shift) run.push(word);
+    if (run !== undefined && last?.item === word.item && last.shift === word.shift) run.push(word);
     else runs.push([word]);
   }
   return runs;
@@ -315,8 +326,8 @@ function runsOf(words: ReadonlyArray<CarriedWord>): CarriedWord[][] {
 
 /**
  * Captions of clips whose transcript can't be read, carried from `before` to `after` (S7V-075):
- * words follow their source frames, words that moved together stay one caption, and nothing shares
- * a frame with `rebuilt` or another kept caption, so the track always validates.
+ * words follow their source frames; each caption stays inside one video item (`runsOf`); nothing
+ * shares a frame with `rebuilt` or another kept caption, so the track always validates.
  */
 export function carryCaptions(
   before: EditDocument,
@@ -334,10 +345,10 @@ export function carryCaptions(
     if (media === undefined) continue;
     const words = (item.words ?? [{ text: item.text, start: item.start, duration: item.duration }])
       .map((word) => {
-        const span = carrySpan(before, after, media, [word.start, word.start + word.duration]);
-        return span === undefined
+        const carried = carrySpan(before, after, media, [word.start, word.start + word.duration]);
+        return carried === undefined
           ? undefined
-          : { text: word.text, span, shift: span[0] - word.start };
+          : { text: word.text, ...carried, shift: carried.span[0] - word.start };
       })
       .filter((word) => word !== undefined);
     for (const run of runsOf(words))

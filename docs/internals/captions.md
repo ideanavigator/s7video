@@ -39,10 +39,11 @@ worded from the caller's ops only, so a cut still reads "Cut words in the transc
 - A caption track without the mark (hand-written, or from an older tool) is never rebuilt.
 - A clip whose transcript can't be read (its drive unplugged, the cache cleared) keeps its caption
   items instead of losing them. `carryCaptions` moves each word through its source frames, as
-  the cut moved the clip (a move shifts it; a trim, cut or delete clips or drops it). Words that
-  moved by the same amount stay one caption, so reordering a clip's parts splits a caption
-  instead of stretching it over the gap. Any word that would share a frame with a rebuilt
-  caption is dropped, so the track always validates (`captionCarry.test.ts`, 200 seeded cuts). The player names the clip ("No transcript for …").
+  the cut moved the clip (a move shifts it; a trim, cut or delete clips or drops it). **Every
+  carried caption lies inside one video item**, and its words map through that item: words that
+  land in another item, or moved by another amount, start a new caption, so no caption spans a
+  hole or another clip. Only a word that would share a frame with another caption is dropped,
+  so the track always validates (`captionCarry.test.ts`, 500 seeds with 2-3 unreadable clips). The player names the clip ("No transcript for …").
 - Undo, redo and "make current" restore whole documents, captions included; they never rebuild.
 - Caption rows are read-only on the timeline: a press on one seeks, and split and delete skip
   them (the rows are `locked` in the timeline model).

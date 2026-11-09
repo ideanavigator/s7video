@@ -36,12 +36,8 @@ const transcript = (media: string): CaptionTranscript => ({
     endFrame: index * 20 + 15,
   })),
 });
-const BOTH = new Map([
-  ["a", transcript("a")],
-  ["b", transcript("b")],
-]);
-/** `b`'s transcript can no longer be read: its drive is unplugged, or the cache was cleared. */
-const ONLY_A = new Map([["a", transcript("a")]]);
+const MEDIA = ["a", "b", "c", "d"] as const;
+const ALL = new Map(MEDIA.map((id) => [id, transcript(id)]));
 
 const applied = (document: EditDocument, ops: ReadonlyArray<EditOp>) => {
   const result = applyEditOps(document, ops);
@@ -56,23 +52,28 @@ const captioned = (items: ReadonlyArray<EditVideoItem>): EditDocument => {
       version: 1,
       fps: FPS,
       canvas: { width: 1080, height: 1920 },
-      media: [media("a"), media("b")],
+      media: MEDIA.map(media),
       tracks: [{ kind: "video", id: "V1", items: [] }],
       markers: [],
       metadata: {},
     },
     items.map((item) => ({ _tag: "insertItem" as const, trackId: "V1", item })),
   );
-  return applied(placed, captionTrackOps(placed, BOTH));
+  return applied(placed, captionTrackOps(placed, ALL));
 };
 
 const captionTrack = (document: EditDocument) =>
   document.tracks.find((track) => track.kind === "caption")!;
 
-/** The rebuild after `ops` with `b` unreadable, by `rebuildCaptionOps`'s own merge; validated. */
-const cut = (before: EditDocument, ops: ReadonlyArray<EditOp>) => {
+/** The rebuild after `ops`, by `rebuildCaptionOps`'s own merge, with `unreadable` clips; validated. */
+const cut = (
+  before: EditDocument,
+  ops: ReadonlyArray<EditOp>,
+  unreadable: ReadonlyArray<string> = ["b"],
+) => {
   const after = applied(before, ops);
-  const captions = mergeCaptionTrack(before, after, captionTrack(before), ONLY_A, ["b"]);
+  const readable = new Map([...ALL].filter(([id]) => !unreadable.includes(id)));
+  const captions = mergeCaptionTrack(before, after, captionTrack(before), readable, unreadable);
   const document = applied(after, [{ _tag: "setCaptions", trackId: "C1", captions }]);
   return { document, validation: validateEditDocument(document), captions };
 };
@@ -91,6 +92,84 @@ const loose = (document: EditDocument) =>
 
 const textsOf = (document: EditDocument) =>
   captionTrack(document).items.flatMap((item) => item.text.split(" "));
+
+const placementsOf = (document: EditDocument, media: string) =>
+  document.tracks
+    .find((track) => track.kind === "video")!
+    .items.filter((item) => item.media === media);
+
+/** The clip and the source frames a word's text names (`b12` is b's frames 240-255). */
+const sourceOf = (text: string) => {
+  const media = text[0]!;
+  const index = Number.parseInt(text.slice(1), 10);
+  return { media, from: index * 20, to: index * 20 + 15 };
+};
+
+/**
+ * Broken promises after a cut: a carried caption not inside one video item of its clip, or with a
+ * word showing frames its source doesn't play there; or a word dropped while some of its source
+ * still plays on frames no caption uses.
+ */
+const violations = (
+  before: EditDocument,
+  after: EditDocument,
+  unreadable: ReadonlyArray<string>,
+): string[] => {
+  const problems: string[] = [];
+  const items = captionTrack(after).items;
+  for (const caption of items) {
+    const media = (caption.metadata as { s7?: { media?: string } } | undefined)?.s7?.media ?? "";
+    if (!unreadable.includes(media)) continue;
+    const home = placementsOf(after, media).find(
+      (item) =>
+        item.start <= caption.start &&
+        caption.start + caption.duration <= item.start + item.duration,
+    );
+    if (home === undefined) {
+      problems.push(`"${caption.text}" is not inside one item of ${media}`);
+      continue;
+    }
+    for (const word of caption.words ?? []) {
+      const source = sourceOf(word.text);
+      const from = word.start - home.start + home.in;
+      if (from < source.from || from + word.duration > source.to) {
+        problems.push(`"${word.text}" shows source ${from}, not ${source.from}-${source.to}`);
+      }
+    }
+  }
+  const shown = new Set(items.flatMap((item) => (item.words ?? []).map((word) => word.text)));
+  // What each word may still show: a readable clip's whole word (from its transcript); an
+  // unreadable clip's only the source frames its caption showed before the cut.
+  const candidates = new Map<string, { media: string; from: number; to: number }>();
+  for (const [id, entry] of ALL) {
+    if (unreadable.includes(id)) continue;
+    for (const word of entry.words) candidates.set(word.text, sourceOf(word.text));
+  }
+  for (const word of captionTrack(before).items.flatMap((item) => item.words ?? [])) {
+    const media = word.text[0]!;
+    if (!unreadable.includes(media)) continue;
+    const item = placementsOf(before, media).find(
+      (entry) =>
+        entry.start <= word.start && word.start + word.duration <= entry.start + entry.duration,
+    );
+    if (item === undefined) continue;
+    const from = word.start - item.start + item.in;
+    candidates.set(word.text, { media, from, to: from + word.duration });
+  }
+  for (const [text, source] of candidates) {
+    if (shown.has(text)) continue;
+    for (const item of placementsOf(after, source.media)) {
+      const low = Math.max(source.from, item.in);
+      const high = Math.min(source.to, item.in + item.duration);
+      if (high <= low) continue;
+      const from = low - item.in + item.start;
+      const to = high - item.in + item.start;
+      const taken = items.some((other) => other.start < to && from < other.start + other.duration);
+      if (!taken) problems.push(`"${text}" was dropped though ${from}-${to} plays and is free`);
+    }
+  }
+  return problems;
+};
 
 describe("captions of an unreadable clip through a cut (S7V-075)", () => {
   it("follows the reviewer's case: b unreadable then a; trimming b to 120 frames stays valid", () => {
@@ -170,79 +249,88 @@ describe("captions of an unreadable clip through a cut (S7V-075)", () => {
     expect(textsOf(document).some((word) => word.startsWith("b"))).toBe(false);
   });
 
-  it("gives a valid edit after any cut while b is unreadable (200 seeded edits)", () => {
+  it("keeps each carried caption inside one item when a lifted gap is filled by another clip", () => {
+    // The reviewer's lift-then-fill: b and c unreadable; a piece of b lifted out, c moved in.
+    let document = captioned([
+      { id: "v1", media: "b", start: 0, duration: 300, in: 0 },
+      { id: "c1", media: "c", start: 300, duration: 40, in: 0 },
+    ]);
+    const step = (ops: ReadonlyArray<EditOp>) => {
+      const result = cut(document, ops, ["b", "c"]);
+      expect(violations(document, result.document, ["b", "c"])).toEqual([]);
+      document = result.document;
+    };
+    step([{ _tag: "splitItem", itemId: "v1", atFrame: 100 }]);
+    const middle = () => document.tracks[0]!.items.find((item) => item.start === 100)!.id;
+    step([{ _tag: "splitItem", itemId: middle(), atFrame: 120 }]);
+    step([{ _tag: "deleteItem", itemIds: [middle()], ripple: false }]);
+    step([{ _tag: "trimItem", itemId: "c1", edge: "end", frame: 320 }]);
+    step([{ _tag: "moveItem", itemId: "c1", start: 100 }]);
+    const words = captionTrack(document).items.flatMap((item) => item.words ?? []);
+    expect(words.map((word) => word.text)).toContain("c0");
+  });
+
+  it("keeps every carried caption in one item and drops no free word (500 seeds, 2-3 unreadable clips)", () => {
     let state = 75;
     const random = () => {
       state = (state * 1103515245 + 12345) % 2 ** 31;
       return state / 2 ** 31;
     };
     const pick = <T>(values: ReadonlyArray<T>) => values[Math.floor(random() * values.length)]!;
-    let checked = 0;
-    for (let round = 0; round < 200; round++) {
-      // 2-5 parts of a and b, end to end, some splits that continue their source.
+    const between = (low: number, high: number) => low + Math.floor(random() * (high - low));
+    let steps = 0;
+    for (let round = 0; round < 500; round++) {
+      const unreadable = MEDIA.filter((id) => id !== "a" && random() < 0.8).slice(0, 3);
+      if (unreadable.length < 2)
+        unreadable.push(...(["b", "c"] as const).filter((id) => !unreadable.includes(id)));
+      // 3-6 parts of the four clips, end to end, some continuing their source (a split).
       const items: EditVideoItem[] = [];
       let at = 0;
-      const sources = { a: 0, b: 0 };
-      for (let index = 0; index < 2 + Math.floor(random() * 4); index++) {
-        const from = pick(["a", "b"] as const);
-        const duration = 30 + Math.floor(random() * 250);
-        items.push({ id: `v${index + 1}`, media: from, start: at, duration, in: sources[from] });
+      const sources: Record<string, number> = { a: 0, b: 0, c: 0, d: 0 };
+      for (let index = 0; index < between(3, 7); index++) {
+        const from = pick(MEDIA);
+        const duration = between(30, 260);
+        items.push({ id: `v${index + 1}`, media: from, start: at, duration, in: sources[from]! });
         at += duration;
-        sources[from] += duration + (random() < 0.5 ? 0 : Math.floor(random() * 100));
+        sources[from]! += duration + (random() < 0.5 ? 0 : between(0, 100));
       }
-      const before = captioned(items);
-      const target = pick(items);
-      const ops: EditOp[] = pick([
-        () => [
-          {
-            _tag: "trimItem",
-            itemId: target.id,
-            edge: "end",
-            frame: target.start + 1 + Math.floor(random() * (target.duration - 1)),
-          },
-        ],
-        () => [
-          {
-            _tag: "trimItem",
-            itemId: target.id,
-            edge: "start",
-            frame: target.start + Math.floor(random() * (target.duration - 1)),
-          },
-        ],
-        () => [{ _tag: "deleteItem", itemIds: [target.id], ripple: true }],
-        () => [{ _tag: "deleteItem", itemIds: [target.id], ripple: false }],
-        () => [
-          {
-            _tag: "splitItem",
-            itemId: target.id,
-            atFrame: target.start + 1 + Math.floor(random() * (target.duration - 1)),
-          },
-        ],
-        () => [{ _tag: "moveItem", itemId: target.id, start: at + Math.floor(random() * 100) }],
-        () => [
-          {
-            _tag: "setKeepRanges",
-            trackId: "V1",
-            mediaId: target.media,
-            ranges: [
-              { in: 0, duration: 40 + Math.floor(random() * 100) },
-              { in: 200 + Math.floor(random() * 100), duration: 40 + Math.floor(random() * 200) },
-            ],
-            start: at + 10,
-          },
-        ],
-      ] satisfies ReadonlyArray<() => EditOp[]>)();
-      const result = applyEditOps(before, ops);
-      // A gesture the edit refuses on its own (an overlap) is not a cut to check.
-      if (result._tag === "failed" || !validateEditDocument(result.document).ok) continue;
-      const { validation, document } = cut(before, ops);
-      expect(
-        validation.ok ? [] : validation.issues,
-        `round ${round}: ${JSON.stringify(ops)}`,
-      ).toEqual([]);
-      expect(loose(document), `round ${round}: ${JSON.stringify(ops)}`).toEqual([]);
-      checked += 1;
+      let document = captioned(items);
+      for (let move = 0; move < between(1, 4); move++) {
+        const placed = document.tracks.find((track) => track.kind === "video")!.items;
+        const end = Math.max(...placed.map((item) => item.start + item.duration));
+        const target = pick(placed);
+        const inside = () => target.start + between(1, Math.max(2, target.duration));
+        const ops: EditOp[] = pick([
+          () => [{ _tag: "trimItem", itemId: target.id, edge: "end", frame: inside() }],
+          () => [{ _tag: "trimItem", itemId: target.id, edge: "start", frame: inside() - 1 }],
+          () => [{ _tag: "deleteItem", itemIds: [target.id], ripple: random() < 0.5 }],
+          () => [{ _tag: "splitItem", itemId: target.id, atFrame: inside() }],
+          () => [{ _tag: "moveItem", itemId: target.id, start: between(0, end + 100) }],
+          () => [
+            {
+              _tag: "setKeepRanges",
+              trackId: "V1",
+              mediaId: target.media,
+              ranges: [
+                { in: 0, duration: between(40, 140) },
+                { in: between(200, 300), duration: between(40, 240) },
+              ],
+              start: end + 10,
+            },
+          ],
+        ] satisfies ReadonlyArray<() => EditOp[]>)();
+        const result = applyEditOps(document, ops);
+        // A gesture the edit refuses on its own (an overlap) is not a cut to check.
+        if (result._tag === "failed" || !validateEditDocument(result.document).ok) continue;
+        const next = cut(document, ops, unreadable);
+        const where = `round ${round} move ${move}: ${JSON.stringify(ops)}`;
+        expect(next.validation.ok ? [] : next.validation.issues, where).toEqual([]);
+        expect(loose(next.document), where).toEqual([]);
+        expect(violations(document, next.document, unreadable), where).toEqual([]);
+        document = next.document;
+        steps += 1;
+      }
     }
-    expect(checked).toBeGreaterThan(150);
+    expect(steps).toBeGreaterThan(700);
   });
 });
