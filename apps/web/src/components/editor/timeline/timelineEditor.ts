@@ -406,7 +406,8 @@ export function createTimelineEditor(host: TimelineEditorHost): TimelineEditor {
   const onPointerDown = (event: PointerEvent) => {
     // A read-only timeline (no edit RPCs) seeks on every press, as before S7V-034.
     if (actions === null || event.button !== 0 || !(event.target instanceof Element)) return;
-    const block = event.target.closest<HTMLElement>("[data-timeline-item]");
+    // A caption block is read-only (S7V-075): a press on it seeks, as on empty lane.
+    const block = event.target.closest<HTMLElement>("[data-timeline-item]:not([data-readonly])");
     if (block === null || lanes === null) {
       if (!event.shiftKey) setSelection(EMPTY);
       return;
@@ -451,7 +452,7 @@ export function createTimelineEditor(host: TimelineEditorHost): TimelineEditor {
     if (actions === null || element.isDragging || resize.isResizing) return;
     const block =
       event.target instanceof Element
-        ? event.target.closest<HTMLElement>("[data-timeline-item]")
+        ? event.target.closest<HTMLElement>("[data-timeline-item]:not([data-readonly])")
         : null;
     setHover(block !== null && edgeUnder(block, event.clientX) !== undefined ? block : null);
   };

@@ -19,6 +19,7 @@ import * as Schema from "effect/Schema";
 import { McpSchema, Tool, Toolkit } from "effect/ai";
 
 import * as ServerConfig from "../../../config.ts";
+import * as CaptionTrackService from "../../../edit/CaptionTrackService.ts";
 import * as EditDocumentService from "../../../edit/EditDocumentService.ts";
 import * as SilenceCutService from "../../../edit/SilenceCutService.ts";
 import * as EngineService from "../../../engine/EngineService.ts";
@@ -283,6 +284,17 @@ const VideoAssembleTool = Tool.make("video_assemble", {
   .annotate(Tool.Title, "Assemble clips")
   .annotateMerge(videoAnnotations(false));
 
+// S7V-075: user-triggered only. Writes the caption track from the clips' transcripts (one
+// checkpoint); later cuts rebuild it. A clip with no transcript is refused: transcribe it first.
+const VideoAddCaptionsTool = Tool.make("video_add_captions", {
+  description: "Add captions to the video edit only if user asks.",
+  success: EditStep,
+  failure: OrchestratorMcpFailure,
+  dependencies: [...dependencies, CaptionTrackService.CaptionTrackService],
+})
+  .annotate(Tool.Title, "Add captions")
+  .annotateMerge(videoAnnotations(false));
+
 /** Tools that return JSON. A new tool goes here, with its handler in `handlers.ts`. */
 export const VideoStandardToolkit = Toolkit.make(
   VideoImportTool,
@@ -298,6 +310,7 @@ export const VideoStandardToolkit = Toolkit.make(
   VideoRemoveSilencesTool,
   VideoCanvasTool,
   VideoAssembleTool,
+  VideoAddCaptionsTool,
 );
 
 /** `video_frame` returns image content, so it registers on its own (`registerVideoFrame`). */
@@ -318,6 +331,7 @@ export const VideoToolkit = Toolkit.make(
   VideoRemoveSilencesTool,
   VideoCanvasTool,
   VideoAssembleTool,
+  VideoAddCaptionsTool,
   VideoFrameTool,
 );
 

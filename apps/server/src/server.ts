@@ -117,8 +117,10 @@ import * as VcsProvisioningService from "./vcs/VcsProvisioningService.ts";
 import * as VcsStatusBroadcaster from "./vcs/VcsStatusBroadcaster.ts";
 import * as ProjectCloneTracker from "./project/ProjectCloneTracker.ts";
 import * as EngineService from "./engine/EngineService.ts";
+import * as CaptionStillsService from "./export/CaptionStillsService.ts";
 import * as ExportService from "./export/ExportService.ts";
 import * as TranscriptService from "./transcript/TranscriptService.ts";
+import * as CaptionTrackService from "./edit/CaptionTrackService.ts";
 import * as SilenceCutService from "./edit/SilenceCutService.ts";
 import * as GitWorkflowService from "./git/GitWorkflowService.ts";
 import * as ReviewService from "./review/ReviewService.ts";
@@ -603,6 +605,8 @@ const layerRuntimeCoreDependencies = layerRuntimeCoreDependenciesBase.pipe(
 // imports and the project-media asset route share one library (S7V-025).
 const layerRuntimeDependencies = MediaLibraryService.layer.pipe(
   Layer.provideMerge(SilenceCutService.layer),
+  Layer.provideMerge(CaptionTrackService.layer),
+  Layer.provideMerge(CaptionStillsService.layer),
   Layer.provideMerge(ExportService.layer.pipe(Layer.provideMerge(TranscriptService.layer))),
   Layer.provideMerge(layerEditDocument),
   Layer.provideMerge(layerRuntimeCoreDependencies),

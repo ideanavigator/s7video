@@ -63,7 +63,9 @@ interface Harness {
   readonly notify: ReturnType<typeof vi.fn<(notice: TimelineNotice) => void>>;
 }
 
-async function mount(options: { initialFrame?: number; reply?: EditApplyOutcome } = {}) {
+async function mount(
+  options: { initialFrame?: number; reply?: EditApplyOutcome; document?: EditDocument } = {},
+) {
   await page.viewport(1_280, 800);
   const container = window.document.createElement("div");
   container.style.cssText = "width: 1112px; height: 300px;";
@@ -95,7 +97,7 @@ async function mount(options: { initialFrame?: number; reply?: EditApplyOutcome 
       editing={{ ...editing(revision), actions }}
     />
   );
-  const screen = await render(ui(edit, 7), { container, router: false });
+  const screen = await render(ui(options.document ?? edit, 7), { container, router: false });
   const scroller = container.querySelector<HTMLDivElement>("[data-testid=timeline-scroller]")!;
   const ppf = () => Number(scroller.dataset.pxPerFrame);
   const block = (id: string) =>
@@ -152,7 +154,41 @@ async function mount(options: { initialFrame?: number; reply?: EditApplyOutcome 
   return { screen, container, scroller, harness, ui, block, xOf, yOf, pointer, drag, key };
 }
 
+/** The edit with a caption track, as "add captions" writes it (S7V-075). */
+const captioned: EditDocument = {
+  ...edit,
+  tracks: [
+    ...edit.tracks,
+    {
+      kind: "caption",
+      id: "C1",
+      label: "Captions",
+      metadata: { s7: { source: "transcript" } },
+      items: [{ id: "c1", start: 10, duration: 80, text: "hello there" }],
+    },
+  ],
+};
+
 describe("Timeline editing (S7V-034)", () => {
+  it("leaves captions read-only: no drag, trim, split or delete of a caption (S7V-075)", async () => {
+    const view = await mount({ document: captioned, initialFrame: 50 });
+    await using _screen = view.screen;
+    expect(view.block("c1").dataset.readonly).toBe("true");
+    expect(view.block("c1").textContent).toContain("hello there");
+    // For the UX review: the Captions row, in the repo's ignored test-results folder.
+    await page.screenshot({ path: "../../../../../../test-results/S7V-075/timeline-captions.png" });
+    await view.drag("c1", 50, 200, 10, { metaKey: true });
+    await view.drag("c1", 89.6, 60, 10, { metaKey: true });
+    expect(view.harness.apply).not.toHaveBeenCalled();
+    expect(view.block("c1").dataset.selected).toBe("false");
+    // A split at the playhead with nothing selected splits the video, never the caption (a press
+    // on a caption seeks, so the playhead is somewhere inside v1).
+    await view.key("s");
+    expect(view.harness.apply).toHaveBeenCalledTimes(1);
+    const [ops] = view.harness.apply.mock.calls[0]!;
+    expect(ops.map((op) => op._tag === "splitItem" && op.itemId)).toEqual(["v1"]);
+  });
+
   it("sends one batch for a 100-step drag, and none while the pointer moves", async () => {
     const view = await mount();
     await using _screen = view.screen;

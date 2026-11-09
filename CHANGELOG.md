@@ -78,6 +78,9 @@ from; the per-ticket entries and how this file is compiled are in
 - Select words in the transcript and delete them to cut that part of the video, or restore
   struck-through words to bring them back. The timeline and player follow, and undo works.
   (S7V-038)
+- "Add captions" now adds captions to the edit: a Captions row on the timeline and captions over
+  the player, exactly as they will export. They follow your cuts, and one undo removes them.
+  (S7V-075)
 
 ### Changed
 

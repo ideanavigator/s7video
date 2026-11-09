@@ -82,6 +82,15 @@ it.layer(NodeServices.layer)("built-in skills", (it) => {
       const skills = yield* discoverClaudeSkills({ homePath: home }, undefined, {}, [pluginDir]);
       assert.deepEqual(skills, [
         {
+          name: "video:add-captions",
+          path: path.join(builtInSkillsRoot(path, pluginDir), "add-captions", "SKILL.md"),
+          enabled: true,
+          scope: "system",
+          description:
+            "Add captions - put captions in the user's video edit. Use only when the user asks for it.",
+          displayName: "Add captions",
+        },
+        {
           name: "video:remove-silences",
           path: path.join(builtInSkillsRoot(path, pluginDir), "remove-silences", "SKILL.md"),
           enabled: true,

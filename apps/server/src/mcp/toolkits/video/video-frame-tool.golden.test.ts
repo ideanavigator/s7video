@@ -31,6 +31,7 @@ import * as MediaLibraryService from "../../../media/MediaLibraryService.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../../../project/ProjectService.ts";
 import * as TranscriptService from "../../../transcript/TranscriptService.ts";
+import * as CaptionTrackService from "../../../edit/CaptionTrackService.ts";
 import * as SilenceCutService from "../../../edit/SilenceCutService.ts";
 import * as McpHttpServer from "../../McpHttpServer.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
@@ -156,6 +157,7 @@ describe.skipIf(!available)("video-frame-tool golden", () => {
             EngineService.layer.pipe(Layer.provideMerge(config)),
             Layer.mock(TranscriptService.TranscriptService)({}),
             Layer.mock(SilenceCutService.SilenceCutService)({}),
+            Layer.mock(CaptionTrackService.CaptionTrackService)({}),
             Layer.mock(MediaLibraryService.MediaLibraryService)({}),
           ),
         ),

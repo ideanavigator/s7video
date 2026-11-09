@@ -17,6 +17,7 @@ import {
   type ExportStartResult,
   type ExportStatus,
 } from "@t3tools/contracts";
+import { captionMediaOf } from "@t3tools/shared/captionWords";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -78,13 +79,7 @@ export const transcriptMediaFor = (document: EditDocument, captions: boolean) =>
   if (document.tracks.some((track) => track.kind === "caption" && track.items.length > 0)) {
     return [];
   }
-  const video = document.tracks.find((track) => track.kind === "video");
-  const audible = new Set(
-    document.media.filter((entry) => entry.probe.hasAudio).map((entry) => entry.id),
-  );
-  return [...new Set(video?.items.map((item) => item.media) ?? [])].filter((media) =>
-    audible.has(media),
-  );
+  return captionMediaOf(document);
 };
 
 /** Local date and time to the minute, `yyyymmdd-hhmm`. */

@@ -34,6 +34,7 @@ import * as Stream from "effect/Stream";
 
 import * as ProjectService from "../project/ProjectService.ts";
 import { allIds, applyEditOps } from "./applyEditOps.ts";
+import { rebuildCaptionOps } from "./captionTrack.ts";
 import * as EditHistoryService from "./EditHistoryService.ts";
 import * as EditProjectLayout from "./EditProjectLayout.ts";
 import { migrateEditDocument } from "./editMigrations.ts";
@@ -530,7 +531,14 @@ const make = Effect.gen(function* () {
             });
           }
           if (ops.length === 0) return yield* snapshotOf(root, current.revision, current.document);
-          const applied = applyEditOps(current.document, ops);
+          const edited = applyEditOps(current.document, ops);
+          if (edited._tag === "failed") return yield* edited.error;
+          // S7V-075: captions made from the transcripts follow the cut in the same change.
+          const rebuild = yield* rebuildCaptionOps(root, current.document, edited.document).pipe(
+            Effect.provideService(FileSystem.FileSystem, fileSystem),
+            Effect.provideService(Path.Path, path),
+          );
+          const applied = rebuild.length === 0 ? edited : applyEditOps(edited.document, rebuild);
           if (applied._tag === "failed") return yield* applied.error;
           const validated = validateEditDocument(applied.document);
           if (!validated.ok) return yield* editValidationError(validated.issues);

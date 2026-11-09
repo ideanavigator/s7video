@@ -103,11 +103,15 @@ export class EngineService extends Context.Service<
     readonly probe: (input: MediaProbeInput) => Effect.Effect<MediaProbeResult, EngineError>;
     /** Writes the frame as a PNG; `outputDir` defaults to the service's scratch folder. */
     readonly frame: (input: MediaFrameInput) => Effect.Effect<MediaFrameResult, EngineError>;
-    /** Any quick engine method, with the quick-call timeout; for the engine's other services. */
+    /**
+     * Any quick engine method, with the quick-call timeout unless the caller gives a longer one
+     * for a call whose work grows with its input; for the engine's other services.
+     */
     readonly call: <A>(
       method: string,
       params: Readonly<Record<string, unknown>>,
       success: Schema.Decoder<A>,
+      timeout?: Duration.Input,
     ) => Effect.Effect<A, EngineError>;
     readonly thumbnail: (
       input: MediaThumbnailInput,
@@ -367,7 +371,11 @@ const make = Effect.fn("EngineService.make")(function* (options: EngineServiceOp
     method: string,
     params: Readonly<Record<string, unknown>>,
     success: Schema.Decoder<A>,
-  ) => call(method, params, success, callTimeout).pipe(Effect.withSpan(`EngineService.${method}`));
+    timeout?: Duration.Input,
+  ) =>
+    call(method, params, success, timeout ?? callTimeout).pipe(
+      Effect.withSpan(`EngineService.${method}`),
+    );
 
   const proxy = Effect.fn("EngineService.proxy")(function* (
     input: MediaProxyInput &

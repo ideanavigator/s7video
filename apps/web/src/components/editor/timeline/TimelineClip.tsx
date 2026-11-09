@@ -46,7 +46,8 @@ function TimelineClipBlock(props: {
       data-clip-media={item.mediaId ?? undefined}
       data-media-in={item.in}
       data-selected={props.selected === true}
-      className="@container absolute top-0 cursor-grab data-[edge-hover=true]:cursor-ew-resize touch-none overflow-hidden rounded-sm border px-1 text-3xs leading-4 whitespace-nowrap text-foreground [contain:strict] data-[blocked=true]:outline-2 data-[blocked=true]:-outline-offset-2 data-[blocked=true]:outline-destructive data-[editing=true]:opacity-40 data-[selected=true]:ring-2 data-[selected=true]:ring-primary data-[selected=true]:ring-inset"
+      data-readonly={kind === "caption" || undefined}
+      className="@container absolute top-0 cursor-grab data-[readonly=true]:cursor-default data-[edge-hover=true]:cursor-ew-resize touch-none overflow-hidden rounded-sm border px-1 text-3xs leading-4 whitespace-nowrap text-foreground [contain:strict] data-[blocked=true]:outline-2 data-[blocked=true]:-outline-offset-2 data-[blocked=true]:outline-destructive data-[editing=true]:opacity-40 data-[selected=true]:ring-2 data-[selected=true]:ring-primary data-[selected=true]:ring-inset"
       style={{
         left: spanX(item.start, props.durationFrames),
         width: spanWidth(item.duration, props.durationFrames),

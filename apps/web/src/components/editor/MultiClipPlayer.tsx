@@ -44,6 +44,8 @@ export interface MultiClipPlayerProps {
   readonly renderSourceProblem?: ((mediaId: string) => ReactNode) | undefined;
   /** Dev and golden hook: every join the clock makes. */
   readonly onJoin?: PlayerClockEvents["onJoin"];
+  /** Drawn over the video inside the canvas: the edit's captions (S7V-075). */
+  readonly overlay?: ReactNode;
 }
 
 /** The clock text and slider move at most this often while playing; the playhead moves per frame. */
@@ -192,6 +194,7 @@ export function MultiClipPlayer(props: MultiClipPlayerProps) {
               />
             ))}
           </div>
+          {props.overlay}
         </CanvasFrame>
         {problem !== null && shown._tag === "missing" ? (
           <div

@@ -33,7 +33,7 @@ The user asked you to cut the pauses from their clip. Do it with the video tools
    `waitSeconds: 30` until the job ends. If it `succeeded`, call `video_remove_silences` again;
    if it `failed` or was `cancelled`, tell the user and stop.
 
-3. Do not export. Captions are added when the user exports; if they asked for captions, say so.
+3. Do not export. If the user also asked for captions, call `video_add_captions` after the cut.
    Call `video_export` only when this message asks for a video file ("export", "render", "make
    the video"), never because an earlier message did. Call `video_canvas` only when the user names a
    shape (reel or tall 9:16, wide 16:9, square 1:1, 4:5, 4:3); otherwise the video keeps the clip's
