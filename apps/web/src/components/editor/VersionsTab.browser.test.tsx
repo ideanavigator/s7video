@@ -132,7 +132,7 @@ describe("VersionsTab", () => {
       .element(screen.getByText("Removed 14.2 s of silence in 26 cuts; Added captions"))
       .toBeVisible();
     // Main has no Preview, Make main or Delete: it is what the player shows.
-    expect(rows[0]!.getByRole("button", { name: "Make version 3 main" }).query()).toBeNull();
+    expect(rows[0]!.getByRole("button", { name: "Make main, version 3" }).query()).toBeNull();
     expect(rows[0]!.getByRole("button", { name: "Preview" }).query()).toBeNull();
     expect(rows[0]!.getByRole("button", { name: "Delete" }).query()).toBeNull();
     expect(screen.getByText("Current", { exact: true }).query()).toBeNull();
@@ -143,7 +143,7 @@ describe("VersionsTab", () => {
     ] as const) {
       const row = rows[index]!;
       await expect
-        .element(row.getByRole("button", { name: `Make version ${n} main` }))
+        .element(row.getByRole("button", { name: `Make main, version ${n}` }))
         .toHaveTextContent("Make main");
       await expect.element(row.getByRole("button", { name: "Preview" })).toBeVisible();
       await expect.element(row.getByRole("button", { name: /^(Name|Rename)…$/u })).toBeVisible();
@@ -186,7 +186,7 @@ describe("VersionsTab", () => {
     await screen
       .getByRole("listitem")
       .nth(2)
-      .getByRole("button", { name: "Make version 1 main" })
+      .getByRole("button", { name: "Make main, version 1" })
       .click();
     await vi.waitFor(() => expect(onShowCurrent).toHaveBeenCalled());
     expect(commands.restore).toHaveBeenCalledWith({

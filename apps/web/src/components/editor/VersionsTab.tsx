@@ -133,7 +133,7 @@ function VersionRow(props: VersionsListProps & { readonly version: EditVersion }
               <Button
                 size="xs"
                 variant="ghost"
-                aria-label={`Make version ${version.n} main`}
+                aria-label={`Make main, version ${version.n}`}
                 onClick={() => props.onRestore(version)}
               >
                 Make main

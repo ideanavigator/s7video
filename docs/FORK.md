@@ -444,6 +444,17 @@ in `apps/web/src/components/editor/` and `apps/web/src/editor/`. These upstream 
 - `apps/web/vite.config.ts` and `apps/web/tsconfig.json` add the `golden` browser project, which
   plays cached test clips in the real player (`pnpm test:golden`).
 
+The Editor is the main view of a video project (S7V-076). These upstream files have small edits:
+
+- `rightPanelStore.ts` adds `openEditorByDefault` and the persisted `editorOpenedByDefault` marker,
+  and `openProactive` takes a `keepEditor` flag: in a video project a proactive panel never takes
+  the active tab from the Editor.
+- `ChatView.tsx` calls `useVideoProjectLayout` and passes the Editor's 60% default width.
+- `hooks/useProactivePanels.ts` passes whether the thread's project is a video project.
+- `ChatMarkdown.tsx` and `chat/ChatMarkdownMedia.tsx` send a link to a clip in Media to the
+  Editor's player (`openMediaLinkInEditor`) before opening the file viewer.
+- `chat/ChatRightPanel.tsx` and `hooks/usePreviewPanelInlineSize.ts` add `defaultWidthFraction`.
+
 ## Edit, export and transcription wiring (S7V-024 to S7V-028, S7V-046)
 
 The services are new code (`edit/`, `export/`, `transcript/`, `engine/`). The upstream files only

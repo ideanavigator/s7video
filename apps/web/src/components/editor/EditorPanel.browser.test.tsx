@@ -1052,7 +1052,7 @@ describe("EditorPanel", () => {
             await using screen = await layout();
             await expect.element(screen.getByText("Main", { exact: true })).toBeVisible();
             await expect
-              .element(screen.getByRole("button", { name: "Make version 5 main" }))
+              .element(screen.getByRole("button", { name: "Make main, version 5" }))
               .toBeVisible();
             await page.screenshot({ path: `${SHOTS}/layout-versions-${theme}-${w}.png` });
             await drag(await videoOf(screen), clip(), "dragover");

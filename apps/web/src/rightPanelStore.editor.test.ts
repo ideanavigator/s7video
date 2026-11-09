@@ -223,11 +223,16 @@ describe("rightPanelStore opens the Editor by default in a video project (S7V-07
     const store = useRightPanelStore.getState();
     store.openEditorByDefault(refA, "project-1");
     const revision = store.getUserActionRevision(refA);
-    expect(store.openProactive(refA, { kind: "diff", turnId: RunId.make("run-1") }, revision)).toBe(
-      false,
-    );
+    const diff = { kind: "diff", turnId: RunId.make("run-1") } as const;
+    expect(store.openProactive(refA, diff, revision, false, true)).toBe(false);
     expect(
-      store.openProactive(refA, { id: "pull-requests", kind: "pull-requests" }, revision),
+      store.openProactive(
+        refA,
+        { id: "pull-requests", kind: "pull-requests" },
+        revision,
+        false,
+        true,
+      ),
     ).toBe(false);
     const state = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA);
     expect(state.activeSurfaceId).toBe("editor");
@@ -236,13 +241,30 @@ describe("rightPanelStore opens the Editor by default in a video project (S7V-07
     expect(state.proactiveDiffTurnId).toBe("run-1");
   });
 
+  it("proactive panels behave as in T3 in a normal project, even over an Editor tab", () => {
+    const store = useRightPanelStore.getState();
+    store.openEditor(refA, "project-1");
+    const revision = store.getUserActionRevision(refA);
+    const diff = { kind: "diff", turnId: RunId.make("run-1") } as const;
+    expect(store.openProactive(refA, diff, revision)).toBe(true);
+    expect(selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, refA)?.id).toBe(
+      "diff",
+    );
+  });
+
   it("proactive panels still open when another tab is active", () => {
     const store = useRightPanelStore.getState();
     store.openEditorByDefault(refA, "project-1");
-    store.close(refA);
+    store.openFile(refA, "README.md");
     const revision = store.getUserActionRevision(refA);
-    expect(store.openProactive(refA, { kind: "diff", turnId: RunId.make("run-1") }, revision)).toBe(
-      true,
-    );
+    const diff = { kind: "diff", turnId: RunId.make("run-1") } as const;
+    expect(store.openProactive(refA, diff, revision, false, true)).toBe(true);
+    const state = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA);
+    expect(state.activeSurfaceId).toBe("diff");
+    expect(state.surfaces.map((surface) => surface.id)).toEqual([
+      "editor",
+      "file:README.md",
+      "diff",
+    ]);
   });
 });

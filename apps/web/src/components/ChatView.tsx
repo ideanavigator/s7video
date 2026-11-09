@@ -2026,6 +2026,7 @@ export default function ChatView(props: ChatViewProps) {
     pullRequestsSurfaceAvailable,
     visiblePullRequestCount,
     onDiffPanelOpen,
+    keepEditor: videoProject,
   });
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- consumes a pending maximize request from the right panel store once the panel can maximize
   useEffect(() => {

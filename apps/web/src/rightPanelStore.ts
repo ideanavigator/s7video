@@ -125,6 +125,8 @@ interface RightPanelStoreState {
       | { kind: "diff"; turnId: RunId },
     expectedUserActionRevision: number,
     activateExisting?: boolean,
+    /** In a video project, an active Editor keeps the panel (S7V-076). */
+    keepEditor?: boolean,
   ) => boolean;
   open: (
     ref: ScopedThreadRef,
@@ -673,13 +675,19 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
         }));
         return revision;
       },
-      openProactive: (ref, request, expectedUserActionRevision, activateExisting = false) => {
+      openProactive: (
+        ref,
+        request,
+        expectedUserActionRevision,
+        activateExisting = false,
+        keepEditor = false,
+      ) => {
         let opened = false;
         set((state) => {
           const threadKey = scopedThreadKey(ref);
           const activePanel = selectActiveRightPanel(state.byThreadKey, ref);
-          // A proactive panel never hides the Editor (S7V-076).
-          const editorActive = activePanel === "editor";
+          // In a video project a proactive panel never hides the Editor (S7V-076).
+          const editorActive = keepEditor && activePanel === "editor";
           if (request.kind === "diff") {
             const current = selectThreadRightPanelState(state.byThreadKey, ref);
             if (current.proactiveDiffTurnId === request.turnId) return state;
