@@ -298,6 +298,127 @@ describe("edit versions", () => {
     ),
   );
 
+  // S7V-032 AC-8: at least three agent, three timeline and three transcript edits, interleaved
+  // in one session. Each undo gives back the bytes before that change; each redo the bytes after.
+  it.effect("interleaved undo and redo across agent, timeline and transcript edits", () =>
+    withProject(({ projectId, root, edits }) =>
+      Effect.gen(function* () {
+        // Ten words of 20 frames with 10-frame gaps, from frame 10.
+        const words = Array.from({ length: 10 }, (_, index) => ({
+          start: 10 + index * 30,
+          end: 30 + index * 30,
+        }));
+        // The clip is in Assets first: undo keeps library clips, so a session that starts
+        // before the import could not get back the exact first bytes (by design).
+        yield* change(edits, projectId, [{ _tag: "putMedia", media }], { origin: "import" });
+        const bytes = [readEdit(root)];
+        // Agent edits in one reply fold into one version (S7V-069), so each agent edit here
+        // comes from its own reply: then each is its own version as well as its own undo step.
+        let run = 0;
+        const agent = (ops: ReadonlyArray<EditOp>) =>
+          change(edits, projectId, ops, {
+            origin: "agent",
+            reply: replyOf("thread-a", `run-a${++run}`),
+          }).pipe(Effect.tap(() => Effect.sync(() => bytes.push(readEdit(root)))));
+        /** One timeline gesture, built from the current edit's video items. */
+        const timeline = (
+          gesture: (
+            items: ReadonlyArray<{ id: string; start: number; duration: number }>,
+          ) => EditOp,
+        ) =>
+          Effect.gen(function* () {
+            const current = yield* edits.read(projectId);
+            const items = current.document.tracks.find((track) => track.id === "V1")!.items;
+            yield* edits.apply(projectId, [gesture(items)], {
+              origin: "timeline",
+              baseRevision: current.revision,
+            });
+            bytes.push(readEdit(root));
+          });
+        /** A transcript cut or restore of words `first`…`last`, the way S7V-038 sends it. */
+        const text = (action: "cut" | "restore", first: number, last: number) =>
+          Effect.gen(function* () {
+            const current = yield* edits.read(projectId);
+            const edit = wordEditOps(current.document, "cam", words, { first, last }, action);
+            assert.strictEqual(edit._tag, action, `${action} words ${first}–${last}`);
+            if (edit._tag !== "cut" && edit._tag !== "restore") return;
+            yield* edits.apply(projectId, edit.ops, {
+              origin: "transcript",
+              baseRevision: current.revision,
+            });
+            bytes.push(readEdit(root));
+          });
+
+        yield* agent([setup[1]!, keep([[0, 300]])]);
+        yield* text("cut", 2, 3);
+        yield* timeline((items) => ({
+          _tag: "moveItem",
+          itemId: items.at(-1)!.id,
+          start: items.at(-1)!.start + 20,
+        }));
+        yield* agent([{ _tag: "addTrack", track: { kind: "caption", id: "C1", items: [] } }]);
+        yield* text("cut", 6, 6);
+        yield* timeline((items) => ({
+          _tag: "trimItem",
+          itemId: items[0]!.id,
+          edge: "end",
+          frame: items[0]!.start + items[0]!.duration - 5,
+        }));
+        yield* agent([
+          {
+            _tag: "setCaptions",
+            trackId: "C1",
+            captions: [{ start: 0, duration: 15, text: "hi" }],
+          },
+        ]);
+        yield* text("restore", 2, 2);
+        yield* timeline((items) => ({
+          _tag: "splitItem",
+          itemId: items.at(-1)!.id,
+          atFrame: items.at(-1)!.start + 10,
+        }));
+        yield* agent([
+          { _tag: "setMarkers", markers: [{ id: "mk", start: 5, duration: 0, label: "Hook" }] },
+        ]);
+        yield* timeline((items) => ({
+          _tag: "deleteItem",
+          itemIds: [items.at(-1)!.id],
+          ripple: true,
+        }));
+
+        // 4 agent, 4 timeline and 3 transcript edits: 11 changes, each with different bytes.
+        assert.strictEqual(bytes.length, 12);
+        assert.strictEqual(new Set(bytes).size, bytes.length);
+        const versions = yield* edits.versions(projectId);
+        assert.deepEqual(
+          versions.slice(0, 11).map(({ author }) => author),
+          // Newest first; the session ran agent, text, timeline ×3, then agent, timeline.
+          [
+            "you",
+            "assistant",
+            "you",
+            "you",
+            "assistant",
+            "you",
+            "you",
+            "assistant",
+            "you",
+            "you",
+            "assistant",
+          ],
+        );
+        for (let step = bytes.length - 2; step >= 0; step -= 1) {
+          yield* edits.undo(projectId);
+          assert.strictEqual(readEdit(root), bytes[step], `undo back to step ${step}`);
+        }
+        for (let step = 1; step < bytes.length; step += 1) {
+          yield* edits.redo(projectId);
+          assert.strictEqual(readEdit(root), bytes[step], `redo to step ${step}`);
+        }
+      }),
+    ),
+  );
+
   it.effect("undo from chat makes a version by the assistant; from the Editor, by you", () =>
     withProject(({ projectId, edits }) =>
       Effect.gen(function* () {
