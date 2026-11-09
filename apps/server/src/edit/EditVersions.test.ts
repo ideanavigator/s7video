@@ -573,7 +573,7 @@ describe("edit versions", () => {
           error._tag === "EditUnavailableError" && error.reason,
           "library-conflict",
         );
-        assert.include(error.message, 'Making v1 current would clash with the clip "a"');
+        assert.include(error.message, 'Making v1 main would clash with the clip "a"');
         assert.strictEqual(readEdit(root), editBefore);
         assert.strictEqual(
           NodeFS.readFileSync(NodePath.join(root, ".s7history", "log.json"), "utf8"),

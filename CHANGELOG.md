@@ -122,6 +122,9 @@ from; the per-ticket entries and how this file is compiled are in
 
 ### Fixed
 
+- While you look at an older version, the timeline only lets you look: a drag, trim, split or
+  delete no longer changes your main edit, and a click on the timeline takes you back to it.
+  Version messages say "main", like the Versions tab. (S7V-087)
 - For developers: a dev desktop app started from a linked git worktree keeps its own Electron
   profile in that worktree's dev home, so it no longer hands off to, or focuses, another
   checkout's app. The main checkout keeps its `s7video-dev` profile. (S7V-073)

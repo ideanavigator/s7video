@@ -518,7 +518,7 @@ describe("EditDocumentService", () => {
         assert.deepEqual(gitState(root), before);
         const log = historyLog(root)!;
         assert.strictEqual(log.format, "s7history");
-        // No probe until S7V-052: the old git history is still to be looked for later.
+        // The test layer has no legacy probe (`layerNone`), so the old git history stays unchecked.
         assert.strictEqual(log.legacy, "unchecked");
         assert.deepEqual(
           log.entries.map((entry) => entry.revision),

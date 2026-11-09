@@ -383,6 +383,9 @@ upstream files have small edits:
 - `provider/AgentContextBudget.test.ts` and `agentContextBudget.json`: `mcpToolListVideoJsonBytes`,
   the video-project tool list, measured by evaluating each tool's `EnabledWhen` under a video-thread
   scope. The handler mocks moved to `mcp/McpTools.testkit.ts`.
+- `evals/mcp-tool-use/run.ts`: `visibleT3Tools({ video: true })` offers only
+  `VIDEO_PROJECT_TOOL_NAMES`, and the context report prints a second line for a video project's
+  thread, so the eval measures what that thread is really offered.
 
 The ACP first-prompt text (`t3AcpPromptWithInstructions`) still carries the orchestration text; ACP
 gets the filtered list from the server.
@@ -443,6 +446,8 @@ in `apps/web/src/components/editor/` and `apps/web/src/editor/`. These upstream 
   `engine.jobs.subscribe` to the subscriptions that resubscribe after a reconnect.
 - `apps/web/vite.config.ts` and `apps/web/tsconfig.json` add the `golden` browser project, which
   plays cached test clips in the real player (`pnpm test:golden`).
+- `themePalette.ts` exports `--track-overlay` with the other `--track-*` tokens, for the
+  timeline's overlay track (S7V-033).
 
 The Editor is the main view of a video project (S7V-076). These upstream files have small edits:
 
@@ -479,6 +484,56 @@ small wiring as the other `edit.*` methods: `edit.versions`, `edit.versionGet`, 
 `edit.versionRestore` and `edit.versionDelete` in `contracts/rpc.ts`, `ws.ts`,
 `observability/RpcInstrumentation.ts`, `auth/RpcAuthorization.ts` (reads: read scope) and
 `contracts/clientRpcPermissions.ts` (tag, restore, delete: operate scope). No agent tools change.
+`RpcInstrumentation.ts` also puts `edit.historyClean` and `edit.historyDismiss` (S7V-050) in the
+`edit` group. The caption stills (S7V-075) get the same wiring: `captions.stills` in
+`contracts/rpc.ts`, a thin handler in `ws.ts`, read scope in `auth/RpcAuthorization.ts` and the
+`engine` group in `observability/RpcInstrumentation.ts`.
+
+## Media data assets (S7V-035)
+
+The timeline's waveform peaks and filmstrip tiles are files the media service writes per clip. They
+are served through the existing `project-media` asset route, so these upstream files have small,
+additive edits:
+
+- `contracts/assets.ts`: the `project-media` resource takes an optional `part`, which file of a
+  `peaks` or `filmstrip` variant; the server refuses it for the other variants.
+- `assets/AssetAccess.ts`: the token's claims carry the `part`, and both issuing and serving pass it
+  to `MediaLibraryService.resolveVariant`, so a token names one file and is re-checked on every
+  request as before.
+- `apps/web/src/assets/assetUrls.ts`: `useAssetUrlMinter` mints URLs on demand for code outside
+  React (the timeline's media-tiles worker); `refresh` mints a new token for an expired URL.
+
+## Window focus (S7V-074)
+
+**This changes upstream window behaviour on macOS**, so an upstream merge that touches window
+reveals needs a look. An automatic reveal (the first reveal after launch, the splash, the startup
+recovery window, a dev watcher restart) no longer pulls the app in front of the app the user is
+working in; only user actions take focus. These upstream desktop files have small edits:
+
+- `electron/ElectronWindow.ts`: `reveal` takes `{ steal }`. Without it, on macOS, when the app is
+  not active, a hidden window is shown inactive behind the frontmost app and `app.focus` is not
+  called. Other platforms are unchanged.
+- `window/DesktopWindow.ts`: `activate` (Dock, app menu, links, capture) and the reveal after a
+  sent action pass `steal: true`; a user reveal that arrives before the first reveal makes that one
+  take focus. The splash reveals through `reveal`. In development, DevTools open with
+  `activate: false`, and not again after a watcher restart.
+- `app/DesktopLaunchLinks.ts`, `ipc/methods/providerAuth.ts` (return from provider sign-in) and
+  `ipc/methods/window.ts` (`revealWindow`, a notification click) pass `steal: true`.
+- `app/DesktopStartupRecovery.ts`: the recovery window reveals through `reveal` instead of `show()`.
+- `scripts/dev-electron.mjs` sets `S7VIDEO_DESKTOP_DEV_RESTART=1` on a watcher relaunch;
+  `app/DesktopConfig.ts` reads it and `app/DesktopEnvironment.ts` exposes `isDevelopmentRestart`.
+
+## Dev profile per worktree (S7V-073)
+
+A desktop dev app started from a linked git worktree gets its own Electron profile, so it neither
+hands off to another checkout's app through the single-instance lock nor shares its storage. The
+main checkout keeps the shared `s7video-dev` profile, and packaged builds ignore the setting.
+
+- `scripts/dev-runner.ts`: in `dev:desktop` from a linked worktree, sets
+  `S7VIDEO_DESKTOP_DEV_PROFILE_DIR` to `<dev home>/electron-profile`.
+- `app/DesktopConfig.ts` reads it and `app/DesktopEnvironment.ts` exposes `devProfileDirectory`.
+- `app/DesktopUserData.ts`: `resolveUserDataPath` uses that folder for an unpackaged dev app, and
+  the branded profile folder otherwise.
 
 ## Licensing (S7V-004)
 
