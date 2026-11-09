@@ -109,37 +109,42 @@ function VersionRow(props: VersionsListProps & { readonly version: EditVersion }
           {authorWords[version.author]} · {when}
         </span>
       </div>
-      <div className="line-clamp-3 min-w-0 text-xs text-muted-foreground">{summary}</div>
-      <div className="flex flex-wrap items-center gap-1">
-        {!version.current && (
-          <Button
-            size="xs"
-            variant="outline"
-            disabled={previewing}
-            onClick={() => props.onPreview(version)}
-          >
-            Preview
-          </Button>
-        )}
-        <Button size="xs" variant="ghost" onClick={() => props.onTag(version)}>
-          {version.tag === undefined ? "Name…" : "Rename…"}
-        </Button>
-        {!version.current && (
-          <>
+      {/* Actions share the summary's line, so the tab shows four versions at 1440x900 (S7V-076). */}
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+        <div className="line-clamp-2 min-w-0 flex-1 basis-48 text-xs text-muted-foreground">
+          {summary}
+        </div>
+        <div className="flex shrink-0 flex-wrap items-center gap-1">
+          {!version.current && (
             <Button
               size="xs"
-              variant="ghost"
-              aria-label={`Make version ${version.n} main`}
-              onClick={() => props.onRestore(version)}
+              variant="outline"
+              disabled={previewing}
+              onClick={() => props.onPreview(version)}
             >
-              Make main
+              Preview
             </Button>
-            <Button size="xs" variant="ghost" onClick={() => props.onDelete(version)}>
-              Delete
-            </Button>
-          </>
-        )}
-        {props.renderChatLink(version)}
+          )}
+          <Button size="xs" variant="ghost" onClick={() => props.onTag(version)}>
+            {version.tag === undefined ? "Name…" : "Rename…"}
+          </Button>
+          {!version.current && (
+            <>
+              <Button
+                size="xs"
+                variant="ghost"
+                aria-label={`Make version ${version.n} main`}
+                onClick={() => props.onRestore(version)}
+              >
+                Make main
+              </Button>
+              <Button size="xs" variant="ghost" onClick={() => props.onDelete(version)}>
+                Delete
+              </Button>
+            </>
+          )}
+          {props.renderChatLink(version)}
+        </div>
       </div>
     </div>
   );

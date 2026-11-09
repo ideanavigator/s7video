@@ -54,8 +54,8 @@ function storeHeight(height: number): void {
   }
 }
 
-const maxHeightIn = (panelHeight: number): number =>
-  Math.max(MIN_TIMELINE_HEIGHT_PX, panelHeight - MIN_ABOVE_PX);
+const maxHeightIn = (panelHeight: number, minAbove: number): number =>
+  Math.max(MIN_TIMELINE_HEIGHT_PX, panelHeight - Math.max(MIN_ABOVE_PX, minAbove));
 
 export function TimelinePane(props: {
   readonly projectKey: string;
@@ -67,6 +67,8 @@ export function TimelinePane(props: {
   readonly projectRef: ScopedProjectRef;
   readonly mediaById: ReadonlyMap<string, MediaAsset>;
   readonly editing?: TimelineEditing | undefined;
+  /** What the panel keeps above the timeline, when more than the default (S7V-076). */
+  readonly minAbovePx?: number | undefined;
 }) {
   const [height, setHeight] = useState(storedHeight);
   const [drag, setDrag] = useState<{
@@ -81,7 +83,10 @@ export function TimelinePane(props: {
     if (panel === null || panel === undefined) return undefined;
     return observeResize(panel, () => setPanelHeight(panel.clientHeight));
   };
-  const maxHeight = panelHeight === null ? Number.POSITIVE_INFINITY : maxHeightIn(panelHeight);
+  const maxHeight =
+    panelHeight === null
+      ? Number.POSITIVE_INFINITY
+      : maxHeightIn(panelHeight, props.minAbovePx ?? MIN_ABOVE_PX);
   const shown = Math.round(Math.max(MIN_TIMELINE_HEIGHT_PX, Math.min(maxHeight, height)));
 
   const resize = (next: number) => {

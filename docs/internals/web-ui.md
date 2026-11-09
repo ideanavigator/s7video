@@ -85,3 +85,8 @@ this session. It sets `editorOpenedByDefault`, which keeps the thread's entry af
 closes every tab, so a closed Editor stays closed after a reload. Proactive panels never take the
 active tab from the Editor, and a chat link to a clip in Media plays it in the Editor
 ([`clipLinks.ts`](../../apps/web/src/editor/clipLinks.ts)). Other projects keep T3's layout.
+
+The Editor's tabs keep room for two version rows in a short panel and four in a 900 px window
+(`tabsRoomPx` in `EditorPanel.tsx`, sized from the row height in `VersionsTab.tsx`). The player
+shrinks and letterboxes first, and the timeline cannot be dragged into that room; a saved timeline
+height still applies wherever it fits.

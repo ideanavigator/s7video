@@ -821,7 +821,7 @@ describe("EditorPanel", () => {
     await expect.poll(() => playhead.hidden).toBe(false);
   });
 
-  it("previews a version read only, with a bar back to the current edit", async () => {
+  it("previews a version read only, with a bar back to the main version", async () => {
     setState([asset("clip-0")], true);
     const projectKey = scopedProjectKey({ environmentId: EnvironmentId.make("env-1"), projectId });
     if (state.edit._tag !== "ready") throw new Error("edit not ready");
@@ -843,7 +843,7 @@ describe("EditorPanel", () => {
     expect(screen.getByRole("button", { name: "Export" }).query()).toBeNull();
     const playhead = document.querySelector<HTMLElement>("[data-testid=timeline-playhead]")!;
     await expect.poll(() => playhead.hidden).toBe(true);
-    await screen.getByRole("button", { name: "Back to current" }).click();
+    await screen.getByRole("button", { name: "Back to main" }).click();
     expect(useEditPlayerStore.getState().sourceByProjectKey[projectKey]).toEqual({ kind: "edit" });
     await expect.element(screen.getByText("Previewing v2")).not.toBeInTheDocument();
     await expect.element(screen.getByRole("button", { name: "Export" })).toBeVisible();
@@ -945,51 +945,95 @@ describe("EditorPanel", () => {
       expect(commands.plan).not.toHaveBeenCalled();
     });
 
-    describe("screenshots for the UX review", () => {
+    describe("room for the Versions list in a video project", () => {
       const SHOTS = "../../../../../test-results/S7V-076";
+      const at = (minute: number) => Date.UTC(2026, 10, 9, 10, minute);
       const versions: ProjectVersionsState = {
         _tag: "ready",
         versions: [
           {
-            n: 4,
-            revision: 5,
-            at: Date.UTC(2026, 10, 9, 10, 4),
+            n: 6,
+            revision: 7,
+            at: at(9),
             author: "assistant",
             changes: ["Removed 14.2 s of silence in 26 cuts"],
             current: true,
           },
-          {
-            n: 3,
-            revision: 4,
-            at: Date.UTC(2026, 10, 9, 10, 2),
-            author: "you",
-            tag: "tight cut",
-            changes: ["Trimmed the first clip"],
+          ...[5, 4, 3, 2, 1].map((n) => ({
+            n,
+            revision: n + 1,
+            at: at(n),
+            author: n % 2 === 0 ? ("you" as const) : ("assistant" as const),
+            ...(n === 4 ? { tag: "tight cut" } : {}),
+            changes: [n === 2 ? "Added captions" : `Trimmed clip ${n}`],
             current: false,
-          },
-          {
-            n: 2,
-            revision: 3,
-            at: Date.UTC(2026, 10, 9, 9, 58),
-            author: "assistant",
-            changes: ["Added captions"],
-            current: false,
-          },
+          })),
         ],
       };
-      /** The Editor at 60% of a row, beside a stand-in for the chat column. */
+      /** The app's right panel: its tab bar (52 px) over the Editor, at 60% beside the chat. */
       const layout = () =>
         render(
           <div className="flex h-screen w-screen bg-background text-foreground">
             <div className="flex min-w-0 flex-1 items-center justify-center border-r text-sm text-muted-foreground">
               Chat column (stand-in)
             </div>
-            <div className="h-full" style={{ width: "60%" }}>
-              {panel()}
+            <div className="flex h-full flex-col" style={{ width: "60%" }}>
+              <div className="flex h-[52px] shrink-0 items-center border-b px-3 text-sm text-muted-foreground">
+                Panel tabs (stand-in)
+              </div>
+              <div className="min-h-0 flex-1">{panel()}</div>
             </div>
           </div>,
           { router: false },
         );
+      const inside = (inner: DOMRect, outer: DOMRect) =>
+        inner.top >= outer.top - 0.5 && inner.bottom <= outer.bottom + 0.5;
+      /** Version rows shown whole, without scrolling the list. */
+      const visibleRows = () => {
+        const list = document
+          .getElementById("editor-tabpanel-versions")!
+          .querySelector<HTMLElement>("[role=list]")!;
+        const shown = list.getBoundingClientRect();
+        return [...list.querySelectorAll("[role=listitem]")].filter((row) =>
+          inside(row.getBoundingClientRect(), shown),
+        ).length;
+      };
+      const timelineTracksShown = () => {
+        const timeline = document.querySelector("[data-testid=editor-timeline]")!;
+        const box = timeline.getBoundingClientRect();
+        const panelBox = document
+          .querySelector("[data-testid=editor-panel]")!
+          .getBoundingClientRect();
+        return (
+          inside(box, panelBox) &&
+          ["Overlays", "Video", "Captions", "Sound effects", "Music"].every((label) => {
+            const element = [...timeline.querySelectorAll("*")].find(
+              (node) => node.childElementCount === 0 && node.textContent === label,
+            );
+            return element !== undefined && inside(element.getBoundingClientRect(), box);
+          })
+        );
+      };
+
+      it.each([
+        [1440, 900, 4],
+        [1180, 760, 2],
+      ] as const)("shows the version rows at %ix%i (at least %i)", async (w, h, rows) => {
+        await page.viewport(w, h);
+        setState([asset("clip-0")], true);
+        state.versions = versions;
+        try {
+          await using screen = await layout();
+          await expect.element(screen.getByText("Main", { exact: true })).toBeVisible();
+          await expect.poll(visibleRows).toBeGreaterThanOrEqual(rows);
+          expect(timelineTracksShown()).toBe(true);
+          // The player letterboxes rather than vanishing.
+          const player = (await videoOf(screen)).closest("[role=group]")!;
+          expect(player.getBoundingClientRect().height).toBeGreaterThanOrEqual(96);
+        } finally {
+          state.versions = { _tag: "loading" };
+        }
+      });
 
       it.each([
         ["dark", 1440, 900],
@@ -997,7 +1041,7 @@ describe("EditorPanel", () => {
         ["dark", 1180, 760],
         ["light", 1180, 760],
       ] as const)(
-        "default layout, Versions with Main, drop overlay (%s, %i)",
+        "screenshots: layout, Versions with Main, drop overlay (%s, %i)",
         async (theme, w, h) => {
           await page.viewport(w, h);
           document.documentElement.classList.toggle("dark", theme === "dark");
@@ -1008,7 +1052,7 @@ describe("EditorPanel", () => {
             await using screen = await layout();
             await expect.element(screen.getByText("Main", { exact: true })).toBeVisible();
             await expect
-              .element(screen.getByRole("button", { name: "Make version 3 main" }))
+              .element(screen.getByRole("button", { name: "Make version 5 main" }))
               .toBeVisible();
             await page.screenshot({ path: `${SHOTS}/layout-versions-${theme}-${w}.png` });
             await drag(await videoOf(screen), clip(), "dragover");

@@ -173,7 +173,7 @@ export function MultiClipPlayer(props: MultiClipPlayerProps) {
       className="flex min-h-0 flex-col gap-1.5 outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
       onKeyDown={onKeyDown}
     >
-      <div className="relative flex aspect-video max-h-[50vh] w-full items-center justify-center overflow-hidden rounded-md bg-black">
+      <div className="relative flex aspect-video max-h-[50vh] min-h-0 w-full items-center justify-center overflow-hidden rounded-md bg-black">
         <CanvasFrame canvas={plan.canvas}>
           <div ref={attachStage} className="relative size-full" data-testid="multi-clip-stage">
             {Array.from({ length: PLAYER_POOL_SIZE }, (_, index) => (
