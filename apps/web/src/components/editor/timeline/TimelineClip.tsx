@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: MIT
 /**
  * One mounted clip block (S7V-033): label and track colour, positioned in lane pixels from its
- * integer frames. The media layer is a flat placeholder until S7V-035 draws waveform peaks and
- * filmstrip tiles into it; the clip never waits for media data to render.
+ * integer frames. Its media layer (`ClipMediaSlot`, S7V-035) draws waveform peaks and filmstrip
+ * tiles; the clip never waits for media data to render.
  */
 import type {
   EditRational,

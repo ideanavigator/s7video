@@ -850,6 +850,62 @@ describe("EditorPanel", () => {
     expect(commands.start).not.toHaveBeenCalled();
   });
 
+  // S7V-087: the timeline shows the main edit while vN plays, so it must not edit it.
+  it("leaves the timeline read-only while a version previews: no edit, and a press goes back to main", async () => {
+    setState([asset("clip-0")], true);
+    const projectKey = scopedProjectKey({ environmentId: EnvironmentId.make("env-1"), projectId });
+    if (state.edit._tag !== "ready") throw new Error("edit not ready");
+    commands.apply.mockReset();
+    await using screen = await renderPanel();
+    await expect.element(screen.getByRole("toolbar", { name: "Timeline editing" })).toBeVisible();
+    const scroller = document.querySelector<HTMLElement>("[data-testid=timeline-scroller]")!;
+    const clip = () => document.querySelector<HTMLElement>('[data-timeline-item="a"]')!;
+    const at = (frame: number) => {
+      const rect = clip().getBoundingClientRect();
+      const ppf = Number(scroller.dataset.pxPerFrame);
+      return { x: rect.left + frame * ppf, y: rect.top + rect.height / 2 };
+    };
+    const pointer = (type: string, target: EventTarget, frame: number) =>
+      target.dispatchEvent(
+        new PointerEvent(type, {
+          pointerId: 1,
+          button: 0,
+          clientX: at(frame).x,
+          clientY: at(frame).y,
+          bubbles: true,
+          cancelable: true,
+          metaKey: true,
+        }),
+      );
+    const key = (name: string) =>
+      scroller.dispatchEvent(
+        new KeyboardEvent("keydown", { key: name, bubbles: true, cancelable: true }),
+      );
+    // Select the clip on the main edit, then preview v2: the selection must not act on main.
+    pointer("pointerdown", clip(), 15);
+    pointer("pointerup", window.document, 15);
+    await expect.poll(() => clip().dataset.selected).toBe("true");
+    useEditPlayerStore.getState().setSource(projectKey, {
+      kind: "version",
+      n: 2,
+      document: state.edit.snapshot.document,
+    });
+    await expect.element(screen.getByRole("status").getByText("Previewing v2")).toBeVisible();
+    key("Delete");
+    key("Backspace");
+    key("s");
+    await act(async () => {});
+    expect(commands.apply).not.toHaveBeenCalled();
+    // A drag on the clip moves nothing; the press goes back to the main edit.
+    pointer("pointerdown", clip(), 15);
+    for (let frame = 15; frame <= 25; frame++) pointer("pointermove", window.document, frame);
+    pointer("pointerup", window.document, 25);
+    await act(async () => {});
+    expect(commands.apply).not.toHaveBeenCalled();
+    expect(useEditPlayerStore.getState().sourceByProjectKey[projectKey]).toEqual({ kind: "edit" });
+    await expect.element(screen.getByText("Previewing v2")).not.toBeInTheDocument();
+  });
+
   describe("Versions first, Media last, drop anywhere (S7V-076)", () => {
     /** The desktop app, whose files have paths; each drop test starts with no calls recorded. */
     const withDesktop = () => {

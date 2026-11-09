@@ -569,8 +569,7 @@ const make = Effect.gen(function* () {
     restoredText: string,
     current: EditDocument,
   ) {
-    const doing =
-      typeof action === "string" ? `This ${action}` : `Making v${action.restore} current`;
+    const doing = typeof action === "string" ? `This ${action}` : `Making v${action.restore} main`;
     const again = typeof action === "string" ? `${action} again` : "try again";
     const unreadable = () =>
       unavailable(projectId, "unreadable", "The saved version of this edit could not be read.");
@@ -772,7 +771,7 @@ const make = Effect.gen(function* () {
           return yield* unavailable(
             projectId,
             "current-version",
-            `v${n} is the current version, so it can't be deleted.`,
+            `v${n} is the main version, so it can't be deleted.`,
           );
         }
         const all = yield* history.versions(root).pipe(Effect.mapError(historyError(projectId)));

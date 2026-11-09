@@ -665,12 +665,13 @@ function useEditApply(projectRef: ScopedProjectRef, origin: "timeline" | "transc
 function useTimelineEditing(
   projectRef: ScopedProjectRef,
   snapshot: EditSnapshot | null,
+  enabled: boolean,
 ): TimelineEditing | undefined {
   const apply = useEditApply(projectRef, "timeline");
   const undo = useAtomCommand(editEnvironment.undo, { reportFailure: false });
   const redo = useAtomCommand(editEnvironment.redo, { reportFailure: false });
   const { environmentId, projectId } = projectRef;
-  if (snapshot === null) return undefined;
+  if (snapshot === null || !enabled) return undefined;
   const step = async (run: typeof undo) => {
     const result = await run({ environmentId, input: { projectId } });
     return result._tag === "Success"
@@ -795,7 +796,12 @@ export default function EditorPanel(props: {
     rememberPlayerFrame(projectKey, frame);
     requestPlayerSeek(projectKey, frame);
   };
-  const editing = useTimelineEditing(projectRef, edit._tag === "ready" ? edit.snapshot : null);
+  // While vN previews, the timeline still shows the main edit: it is read-only, and a press goes back to main.
+  const editing = useTimelineEditing(
+    projectRef,
+    edit._tag === "ready" ? edit.snapshot : null,
+    previewingVersion === null,
+  );
   // Words are edited only on the edit itself: not while a clip or an older version is previewed.
   const transcriptEditing = useTranscriptEditing(
     projectRef,
