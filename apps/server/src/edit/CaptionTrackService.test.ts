@@ -360,6 +360,68 @@ describe("CaptionTrackService (S7V-075)", () => {
     ),
   );
 
+  it.effect("a ripple cut on an unreadable first clip moves the next clip's captions validly", () =>
+    withProject((project) =>
+      Effect.gen(function* () {
+        writeClip(project.root, "b");
+        writeClip(project.root, "cam");
+        const initial = yield* project.edits.read(project.projectId);
+        yield* project.edits.apply(
+          project.projectId,
+          [
+            { _tag: "putMedia", media: mediaEntry("b") },
+            { _tag: "putMedia", media: mediaEntry("cam") },
+            {
+              _tag: "addTrack",
+              track: {
+                kind: "video",
+                id: "V1",
+                items: [
+                  { id: "v1", media: "b", start: 0, duration: 240, in: 0 },
+                  { id: "v2", media: "cam", start: 240, duration: 240, in: 0 },
+                ],
+              },
+            },
+          ],
+          { origin: "agent", baseRevision: initial.revision },
+        );
+        yield* project.captions.addCaptions(project.projectId, {});
+        // b's transcript can no longer be read.
+        NodeFS.rmSync(
+          NodePath.join(
+            project.root,
+            ".s7cache",
+            "transcripts",
+            `${fingerprintOf(clipBytes("b")).sha256}.json`,
+          ),
+        );
+        const before = yield* project.edits.read(project.projectId);
+        const after = yield* project.edits.apply(
+          project.projectId,
+          [
+            { _tag: "trimItem", itemId: "v1", edge: "end", frame: 120 },
+            { _tag: "moveItem", itemId: "v2", start: 120 },
+          ],
+          { origin: "timeline", baseRevision: before.revision },
+        );
+        assert.strictEqual(after.revision, before.revision + 1);
+        const items = captionsOf(after.document);
+        const media = (item: (typeof items)[number]) =>
+          (item.metadata as { s7: { media: string } }).s7.media;
+        // b keeps the captions of what still plays of it; cam's follow cam to frame 120.
+        const kept = items.filter((item) => media(item) === "b");
+        assert.isAbove(kept.length, 0);
+        assert.isTrue(kept.every((item) => item.start + item.duration <= 120));
+        const moved = items.filter((item) => media(item) === "cam");
+        assert.strictEqual(moved[0]!.start, 120);
+        assert.deepStrictEqual(
+          moved,
+          captionItemsFor(after.document, transcripts).filter((item) => item.start >= 120),
+        );
+      }),
+    ),
+  );
+
   it.effect("cutting everything leaves an empty caption track", () =>
     withProject((project) =>
       Effect.gen(function* () {

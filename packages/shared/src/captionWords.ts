@@ -294,11 +294,29 @@ function freePieces(span: Span, blocked: ReadonlyArray<Span>): Span[] {
   return pieces;
 }
 
+/** A carried word: its new frames, and how far it moved from its old start. */
+interface CarriedWord {
+  readonly text: string;
+  readonly span: Span;
+  readonly shift: number;
+}
+
+/** Consecutive words that moved by the same amount: they stay together, in order. */
+function runsOf(words: ReadonlyArray<CarriedWord>): CarriedWord[][] {
+  const runs: CarriedWord[][] = [];
+  for (const word of words) {
+    const run = runs.at(-1);
+    const last = run?.at(-1);
+    if (run !== undefined && last !== undefined && last.shift === word.shift) run.push(word);
+    else runs.push([word]);
+  }
+  return runs;
+}
+
 /**
- * The captions a rebuild keeps for clips whose transcript can't be read (S7V-075), carried from
- * `before` to `after`: each word follows its source frames (a move shifts it, a trim or cut
- * clips or drops it), and nothing may share a frame with `rebuilt` or another kept caption.
- * Valid by construction: every caption has frames, and its words stay inside it.
+ * Captions of clips whose transcript can't be read, carried from `before` to `after` (S7V-075):
+ * words follow their source frames, words that moved together stay one caption, and nothing shares
+ * a frame with `rebuilt` or another kept caption, so the track always validates.
  */
 export function carryCaptions(
   before: EditDocument,
@@ -306,45 +324,55 @@ export function carryCaptions(
   kept: ReadonlyArray<CaptionItemDraft & { readonly metadata?: unknown }>,
   rebuilt: ReadonlyArray<CaptionItemDraft>,
 ): CaptionItemDraft[] {
-  const blocked: Span[] = rebuilt.map((item) => [item.start, item.start + item.duration]);
-  const carried: CaptionItemDraft[] = [];
+  const runs: Array<{
+    readonly media: string;
+    readonly timed: boolean;
+    readonly words: CarriedWord[];
+  }> = [];
   for (const item of [...kept].sort((a, b) => a.start - b.start)) {
     const media = captionMediaOfItem(item);
     if (media === undefined) continue;
     const words = (item.words ?? [{ text: item.text, start: item.start, duration: item.duration }])
       .map((word) => {
         const span = carrySpan(before, after, media, [word.start, word.start + word.duration]);
-        return span === undefined ? undefined : { text: word.text, span };
+        return span === undefined
+          ? undefined
+          : { text: word.text, span, shift: span[0] - word.start };
       })
       .filter((word) => word !== undefined);
-    if (words.length === 0) continue;
-    const whole: Span = [
-      Math.min(...words.map((word) => word.span[0])),
-      Math.max(...words.map((word) => word.span[1])),
-    ];
-    // The free stretch holding the most words; words reaching into a taken frame are dropped.
-    const inside = freePieces(whole, blocked)
-      .map((piece) => words.filter((word) => word.span[0] >= piece[0] && word.span[1] <= piece[1]))
-      .sort((a, b) => b.length - a.length)[0];
-    if (inside === undefined || inside.length === 0) continue;
-    const start = Math.min(...inside.map((word) => word.span[0]));
-    const end = Math.max(...inside.map((word) => word.span[1]));
-    blocked.push([start, end]);
-    carried.push({
-      start,
-      duration: end - start,
-      text: inside.map((word) => word.text).join(" "),
-      ...(item.words === undefined
-        ? {}
-        : {
-            words: inside.map((word) => ({
-              text: word.text,
-              start: word.span[0],
-              duration: word.span[1] - word.span[0],
-            })),
-          }),
-      metadata: { s7: { media } },
-    });
+    for (const run of runsOf(words))
+      runs.push({ media, timed: item.words !== undefined, words: run });
+  }
+  const blocked: Span[] = rebuilt.map((item) => [item.start, item.start + item.duration]);
+  const carried: CaptionItemDraft[] = [];
+  for (const run of runs.sort((a, b) => a.words[0]!.span[0] - b.words[0]!.span[0])) {
+    const whole: Span = [run.words[0]!.span[0], Math.max(...run.words.map((word) => word.span[1]))];
+    const from = carried.length;
+    // Each free stretch keeps the words wholly inside it; words reaching into a taken frame go.
+    for (const piece of freePieces(whole, blocked)) {
+      const inside = run.words.filter(
+        (word) => word.span[0] >= piece[0] && word.span[1] <= piece[1],
+      );
+      if (inside.length === 0) continue;
+      const start = inside[0]!.span[0];
+      const end = Math.max(...inside.map((word) => word.span[1]));
+      carried.push({
+        start,
+        duration: end - start,
+        text: inside.map((word) => word.text).join(" "),
+        ...(run.timed
+          ? {
+              words: inside.map((word) => ({
+                text: word.text,
+                start: word.span[0],
+                duration: word.span[1] - word.span[0],
+              })),
+            }
+          : {}),
+        metadata: { s7: { media: run.media } },
+      });
+    }
+    for (const item of carried.slice(from)) blocked.push([item.start, item.start + item.duration]);
   }
   return carried;
 }

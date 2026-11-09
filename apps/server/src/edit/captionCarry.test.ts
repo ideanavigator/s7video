@@ -11,15 +11,11 @@ import {
   type EditVideoItem,
   validateEditDocument,
 } from "@t3tools/contracts";
-import {
-  type CaptionTranscript,
-  captionItemsFor,
-  captionTrackOps,
-  carryCaptions,
-} from "@t3tools/shared/captionWords";
+import { type CaptionTranscript, captionTrackOps } from "@t3tools/shared/captionWords";
 import { describe, expect, it } from "vite-plus/test";
 
 import { applyEditOps } from "./applyEditOps.ts";
+import { mergeCaptionTrack } from "./captionTrack.ts";
 
 const FPS = { num: 30, den: 1 };
 
@@ -73,19 +69,25 @@ const captioned = (items: ReadonlyArray<EditVideoItem>): EditDocument => {
 const captionTrack = (document: EditDocument) =>
   document.tracks.find((track) => track.kind === "caption")!;
 
-/** The rebuild after `ops`, as `rebuildCaptionOps` merges it with `b` unreadable; then validated. */
+/** The rebuild after `ops` with `b` unreadable, by `rebuildCaptionOps`'s own merge; validated. */
 const cut = (before: EditDocument, ops: ReadonlyArray<EditOp>) => {
   const after = applied(before, ops);
-  const rebuilt = captionItemsFor(after, ONLY_A);
-  const kept = captionTrack(before).items.filter(
-    (item) => (item.metadata as { s7?: { media?: string } } | undefined)?.s7?.media === "b",
-  );
-  const captions = [...rebuilt, ...carryCaptions(before, after, kept, rebuilt)].toSorted(
-    (left, right) => left.start - right.start,
-  );
+  const captions = mergeCaptionTrack(before, after, captionTrack(before), ONLY_A, ["b"]);
   const document = applied(after, [{ _tag: "setCaptions", trackId: "C1", captions }]);
-  return { document, validation: validateEditDocument(document), rebuilt, captions };
+  return { document, validation: validateEditDocument(document), captions };
 };
+
+/** Captions whose words don't ascend, or that span more than their words: none may stretch. */
+const loose = (document: EditDocument) =>
+  captionTrack(document).items.filter((item) => {
+    const words = item.words ?? [];
+    const ascending = words.every(
+      (word, index) =>
+        index === 0 || word.start >= words[index - 1]!.start + words[index - 1]!.duration,
+    );
+    const end = Math.max(...words.map((word) => word.start + word.duration));
+    return !(ascending && words[0]?.start === item.start && end === item.start + item.duration);
+  });
 
 const textsOf = (document: EditDocument) =>
   captionTrack(document).items.flatMap((item) => item.text.split(" "));
@@ -125,6 +127,35 @@ describe("captions of an unreadable clip through a cut (S7V-075)", () => {
     expect(items[0]!.words![0]).toEqual({ text: "b5", start: 300, duration: 15 });
     expect(items.every((item) => item.start >= 300)).toBe(true);
     expect(textsOf(document)).not.toContain("b4.");
+  });
+
+  it("splits b's captions when its parts are reordered, instead of stretching one over the gap", () => {
+    // The reviewer's swap: b split at 100, its first part moved after its second.
+    const before = captioned([
+      { id: "v1", media: "b", start: 0, duration: 100, in: 0 },
+      { id: "v2", media: "b", start: 100, duration: 200, in: 100 },
+    ]);
+    const { document, validation } = cut(before, [
+      { _tag: "moveItem", itemId: "v2", start: 0 },
+      { _tag: "moveItem", itemId: "v1", start: 200 },
+    ]);
+    expect(validation.ok).toBe(true);
+    expect(loose(document)).toEqual([]);
+    const words = captionTrack(document).items.flatMap((item) => item.words ?? []);
+    // Every word still plays, where its source now plays.
+    expect(words.map((word) => word.text).toSorted()).toEqual(
+      Array.from({ length: 15 }, (_, index) => `b${index}${index % 4 === 3 ? "." : ""}`).toSorted(),
+    );
+    expect(words.find((word) => word.text === "b4")).toEqual({
+      text: "b4",
+      start: 280,
+      duration: 15,
+    });
+    expect(words.find((word) => word.text === "b5")).toEqual({
+      text: "b5",
+      start: 0,
+      duration: 15,
+    });
   });
 
   it("drops b's captions with b, and keeps the rest valid, when b is deleted", () => {
@@ -204,11 +235,12 @@ describe("captions of an unreadable clip through a cut (S7V-075)", () => {
       const result = applyEditOps(before, ops);
       // A gesture the edit refuses on its own (an overlap) is not a cut to check.
       if (result._tag === "failed" || !validateEditDocument(result.document).ok) continue;
-      const { validation } = cut(before, ops);
+      const { validation, document } = cut(before, ops);
       expect(
         validation.ok ? [] : validation.issues,
         `round ${round}: ${JSON.stringify(ops)}`,
       ).toEqual([]);
+      expect(loose(document), `round ${round}: ${JSON.stringify(ops)}`).toEqual([]);
       checked += 1;
     }
     expect(checked).toBeGreaterThan(150);

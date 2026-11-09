@@ -15,7 +15,7 @@ import {
   sameCaptions,
   transcriptCaptionTrackOf,
 } from "@t3tools/shared/captionWords";
-import type { EditDocument, EditMedia, EditOp } from "@t3tools/contracts";
+import type { EditCaptionTrack, EditDocument, EditMedia, EditOp } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Path from "effect/Path";
 
@@ -55,6 +55,25 @@ const videoItemsOf = (document: EditDocument) =>
   JSON.stringify(document.tracks.find((track) => track.kind === "video")?.items ?? []);
 
 /**
+ * The rebuilt track's captions: the readable clips' from their transcripts, and the `unreadable`
+ * clips' carried through the change from `before` (`carryCaptions`). Pure.
+ */
+export const mergeCaptionTrack = (
+  before: EditDocument,
+  after: EditDocument,
+  track: EditCaptionTrack,
+  transcripts: ReadonlyMap<string, CaptionTranscript>,
+  unreadable: ReadonlyArray<string>,
+) => {
+  const missing = new Set(unreadable);
+  const kept = track.items.filter((item) => missing.has(captionMediaOfItem(item) ?? ""));
+  const rebuilt = captionItemsFor(after, transcripts);
+  return [...rebuilt, ...carryCaptions(before, after, kept, rebuilt)].sort(
+    (a, b) => a.start - b.start,
+  );
+};
+
+/**
  * The `setCaptions` rebuilding `after`'s transcript caption track when the change touched the video
  * track; a hand-written track is never rebuilt. A clip whose transcript can't be read keeps its
  * items, carried through the cut (`carryCaptions`); the player names the clip.
@@ -67,12 +86,7 @@ export const rebuildCaptionOps = Effect.fn("captionTrack.rebuildCaptionOps")(fun
   const track = transcriptCaptionTrackOf(after);
   if (track === undefined || videoItemsOf(before) === videoItemsOf(after)) return [];
   const { transcripts, missing } = yield* loadCaptionTranscripts(root, after);
-  const unreadable = new Set(missing);
-  const kept = track.items.filter((item) => unreadable.has(captionMediaOfItem(item) ?? ""));
-  const rebuilt = captionItemsFor(after, transcripts);
-  const captions = [...rebuilt, ...carryCaptions(before, after, kept, rebuilt)].toSorted(
-    (a, b) => a.start - b.start,
-  );
+  const captions = mergeCaptionTrack(before, after, track, transcripts, missing);
   if (sameCaptions(track, captions)) return [];
   return [{ _tag: "setCaptions", trackId: track.id, captions }] satisfies EditOp[];
 });
