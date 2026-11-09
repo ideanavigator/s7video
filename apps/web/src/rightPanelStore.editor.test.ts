@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 s7video contributors
 // SPDX-License-Identifier: MIT
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { type EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { type EnvironmentId, RunId, ThreadId } from "@t3tools/contracts";
 import { beforeEach, describe, expect, it } from "vite-plus/test";
 
 import { useClosedViewStore } from "./closedViewStore";
@@ -157,5 +157,92 @@ describe("rightPanelStore migrates v14 to v15", () => {
     expect(
       selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, refA),
     ).toMatchObject({ kind: "editor", projectId: "project-1" });
+  });
+});
+
+describe("rightPanelStore opens the Editor by default in a video project (S7V-076)", () => {
+  const reload = async () => {
+    const { storage, name } = useRightPanelStore.persist.getOptions();
+    const persisted = await storage!.getItem(name!);
+    useRightPanelStore.setState(useRightPanelStore.getInitialState());
+    await storage!.setItem(name!, persisted!);
+    await useRightPanelStore.persist.rehydrate();
+  };
+
+  it("opens the Editor by default in a video project", () => {
+    useRightPanelStore.getState().openEditorByDefault(refA, "project-1");
+    const { byThreadKey } = useRightPanelStore.getState();
+    expect(selectActiveRightPanelSurface(byThreadKey, refA)).toEqual({
+      id: "editor",
+      kind: "editor",
+      projectId: "project-1",
+    });
+    // Not a user choice, so a proactive panel's revision check still holds.
+    expect(useRightPanelStore.getState().getUserActionRevision(refA)).toBe(0);
+  });
+
+  it("keeps the user's panel choice: a closed Editor stays closed after a reload", async () => {
+    const store = useRightPanelStore.getState();
+    store.openEditorByDefault(refA, "project-1");
+    store.closeSurface(refA, "editor");
+    await reload();
+    useRightPanelStore.getState().openEditorByDefault(refA, "project-1");
+    const { byThreadKey } = useRightPanelStore.getState();
+    expect(selectActiveRightPanelSurface(byThreadKey, refA)).toBeNull();
+    expect(selectThreadRightPanelState(byThreadKey, refA).surfaces).toEqual([]);
+  });
+
+  it("keeps another tab the user picked, and a hidden panel", async () => {
+    const store = useRightPanelStore.getState();
+    store.openEditorByDefault(refA, "project-1");
+    store.openFile(refA, "README.md");
+    await reload();
+    useRightPanelStore.getState().openEditorByDefault(refA, "project-1");
+    expect(selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, refA)?.id).toBe(
+      "file:README.md",
+    );
+
+    useRightPanelStore.getState().openEditorByDefault(refB, "project-1");
+    useRightPanelStore.getState().close(refB);
+    await reload();
+    useRightPanelStore.getState().openEditorByDefault(refB, "project-1");
+    expect(
+      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refB).isOpen,
+    ).toBe(false);
+  });
+
+  it("leaves a thread the user arranged before alone", () => {
+    const store = useRightPanelStore.getState();
+    store.open(refA, "diff");
+    store.openEditorByDefault(refA, "project-1");
+    const state = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA);
+    expect(state.surfaces.map((surface) => surface.id)).toEqual(["diff"]);
+  });
+
+  it("proactive panels do not hide the Editor in a video project", () => {
+    const store = useRightPanelStore.getState();
+    store.openEditorByDefault(refA, "project-1");
+    const revision = store.getUserActionRevision(refA);
+    expect(store.openProactive(refA, { kind: "diff", turnId: RunId.make("run-1") }, revision)).toBe(
+      false,
+    );
+    expect(
+      store.openProactive(refA, { id: "pull-requests", kind: "pull-requests" }, revision),
+    ).toBe(false);
+    const state = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA);
+    expect(state.activeSurfaceId).toBe("editor");
+    expect(state.surfaces.map((surface) => surface.id)).toEqual(["editor"]);
+    // The refused diff offer is recorded, so a revisit does not retry that turn.
+    expect(state.proactiveDiffTurnId).toBe("run-1");
+  });
+
+  it("proactive panels still open when another tab is active", () => {
+    const store = useRightPanelStore.getState();
+    store.openEditorByDefault(refA, "project-1");
+    store.close(refA);
+    const revision = store.getUserActionRevision(refA);
+    expect(store.openProactive(refA, { kind: "diff", turnId: RunId.make("run-1") }, revision)).toBe(
+      true,
+    );
   });
 });

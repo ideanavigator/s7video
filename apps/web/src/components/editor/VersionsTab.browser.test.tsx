@@ -35,6 +35,11 @@ vi.mock(import("../../editor/editStore"), async (importOriginal) => ({
   useProjectEdit: () => state.edit,
   refreshProjectVersions: () => undefined,
 }));
+const confirms = vi.hoisted(() => ({ request: vi.fn(async () => true) }));
+vi.mock(import("../../confirmDialog"), async (importOriginal) => ({
+  ...(await importOriginal()),
+  requestConfirmDialog: confirms.request,
+}));
 vi.mock(import("../../state/use-atom-command"), () => ({
   useAtomCommand: ((command: { label: string } | undefined) => {
     const label = command?.label ?? "";
@@ -111,7 +116,7 @@ const renderTab = (handlers: { onPreview?: () => void; onShowCurrent?: () => voi
 const failure = (error: unknown) => ({ _tag: "Failure", cause: Cause.fail(error) });
 
 describe("VersionsTab", () => {
-  it("should list versions newest first, mark the current one and link its chat", async () => {
+  it("should list versions newest first, mark the newest Main and link its chat", async () => {
     setReady(LIST);
     await using screen = await renderTab();
     const rows = screen.getByRole("listitem").all();
@@ -120,16 +125,31 @@ describe("VersionsTab", () => {
       "Version 2",
       "Version 1",
     ]);
-    await expect
-      .element(rows[0]!)
-      .toHaveAccessibleName(/^Version 3, by the assistant, .+, current$/u);
+    await expect.element(rows[0]!).toHaveAccessibleName(/^Version 3, by the assistant, .+, main$/u);
+    await expect.element(rows[0]!.getByText("Main", { exact: true })).toBeVisible();
     await expect.element(rows[1]!).toHaveAccessibleName(/^Version 2, first cut, by you, /u);
     await expect
       .element(screen.getByText("Removed 14.2 s of silence in 26 cuts; Added captions"))
       .toBeVisible();
-    // The current version has no Preview or Make current: it is what the player shows.
-    expect(rows[0]!.getByRole("button", { name: "Make current" }).query()).toBeNull();
+    // Main has no Preview, Make main or Delete: it is what the player shows.
+    expect(rows[0]!.getByRole("button", { name: "Make version 3 main" }).query()).toBeNull();
     expect(rows[0]!.getByRole("button", { name: "Preview" }).query()).toBeNull();
+    expect(rows[0]!.getByRole("button", { name: "Delete" }).query()).toBeNull();
+    expect(screen.getByText("Current", { exact: true }).query()).toBeNull();
+    // Every other version offers Make main, Preview, Name… and Delete, and nothing else to revert.
+    for (const [index, n] of [
+      [1, 2],
+      [2, 1],
+    ] as const) {
+      const row = rows[index]!;
+      await expect
+        .element(row.getByRole("button", { name: `Make version ${n} main` }))
+        .toHaveTextContent("Make main");
+      await expect.element(row.getByRole("button", { name: "Preview" })).toBeVisible();
+      await expect.element(row.getByRole("button", { name: /^(Name|Rename)…$/u })).toBeVisible();
+      await expect.element(row.getByRole("button", { name: "Delete" })).toBeVisible();
+      expect(row.getByRole("button", { name: /revert|current/iu }).query()).toBeNull();
+    }
     await expect
       .element(rows[0]!.getByRole("link", { name: "Open chat" }))
       .toHaveAttribute("href", "/env-1/thread-b");
@@ -141,7 +161,7 @@ describe("VersionsTab", () => {
     await using screen = await renderTab();
     await expect.element(screen.getByText("No versions yet")).toBeVisible();
     await expect
-      .element(screen.getByText("Ask the assistant for a change, or import a clip."))
+      .element(screen.getByText("Ask the assistant for a change, or drop a video here."))
       .toBeVisible();
   });
 
@@ -158,17 +178,36 @@ describe("VersionsTab", () => {
     expect(commands.other).not.toHaveBeenCalled();
   });
 
-  it("should make a version current on the shown revision and go back to the current edit", async () => {
+  it("should make a version main on the shown revision and go back to the current edit", async () => {
     setReady(LIST);
     commands.restore.mockResolvedValueOnce({ _tag: "Success", value: {} });
     const onShowCurrent = vi.fn();
     await using screen = await renderTab({ onShowCurrent });
-    await screen.getByRole("listitem").nth(2).getByRole("button", { name: "Make current" }).click();
+    await screen
+      .getByRole("listitem")
+      .nth(2)
+      .getByRole("button", { name: "Make version 1 main" })
+      .click();
     await vi.waitFor(() => expect(onShowCurrent).toHaveBeenCalled());
     expect(commands.restore).toHaveBeenCalledWith({
       environmentId,
       input: { projectId, n: 1, baseRevision: 4 },
     });
+  });
+
+  it("should delete a version after confirming, leaving Main alone", async () => {
+    setReady(LIST);
+    commands.remove.mockResolvedValueOnce({ _tag: "Success", value: {} });
+    await using screen = await renderTab();
+    await screen.getByRole("listitem").nth(1).getByRole("button", { name: "Delete" }).click();
+    await vi.waitFor(() =>
+      expect(commands.remove).toHaveBeenCalledWith({ environmentId, input: { projectId, n: 2 } }),
+    );
+    expect(confirms.request).toHaveBeenCalledWith(
+      'Delete v2 "first cut"? Your clips in Media are not touched.',
+      { variant: "destructive" },
+    );
+    expect(commands.restore).not.toHaveBeenCalled();
   });
 
   it("should name a version, and say so plainly when the name is taken", async () => {

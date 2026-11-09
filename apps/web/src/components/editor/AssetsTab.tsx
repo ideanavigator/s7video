@@ -1,11 +1,12 @@
 // SPDX-FileCopyrightText: 2026 s7video contributors
 // SPDX-License-Identifier: MIT
 /**
- * The Editor panel's Assets tab (S7V-025): the project's clips and sounds with length, size and
+ * The Editor panel's Media tab (S7V-025; "Assets" until S7V-076): the project's clips and sounds with length, size and
  * thumbnail, import by drop or "Add media", and the missing/relink and preparing-preview states.
  * S7V-029 mounts it in the Editor panel; nothing here knows about the panel.
  */
 import { LegendList } from "@legendapp/list/react";
+import { mediaKindFromPath } from "@t3tools/shared/mediaPreview";
 import type {
   MediaAsset,
   MediaImporting,
@@ -247,7 +248,7 @@ export function AssetsList(props: AssetsListProps) {
       onDrop={onDrop}
     >
       <div className="flex items-center justify-between gap-2">
-        <span className="text-sm font-medium">Assets</span>
+        <span className="text-sm font-medium">Media</span>
         <Button
           size="xs"
           variant="outline"
@@ -290,6 +291,16 @@ function AssetThumbnail(props: {
   }
   return item.hasVideo ? <FilmIcon aria-hidden /> : <AudioLinesIcon aria-hidden />;
 }
+
+/**
+ * A dropped file that is plainly not video or audio. An unknown kind still goes to the server,
+ * which reads the file itself and refuses it with its own reason.
+ */
+const isNotMedia = (file: File) => {
+  const kind = mediaKindFromPath(file.name);
+  if (kind === "video" || kind === "audio") return false;
+  return kind === "image" || (file.type !== "" && !/^(?:video|audio)\//u.test(file.type));
+};
 
 /** Import, relink and remove for one project; the dialog state lives here. */
 export function useAssetsActions(projectRef: ScopedProjectRef) {
@@ -384,8 +395,17 @@ export function useAssetsActions(projectRef: ScopedProjectRef) {
     confirmImport,
     addMedia: async () => offerImport(await pickFiles(true)),
     addFiles: (files: ReadonlyArray<File>) => {
+      const refused = files.filter(isNotMedia);
+      if (refused.length > 0) {
+        toastManager.add({
+          type: "warning",
+          title: "Only video and audio files can be added",
+          description: `Not added: ${refused.map((file) => file.name).join(", ")}`,
+        });
+      }
       const getPath = window.desktopBridge?.getPathForFile;
-      void offerImport(getPath ? files.map((file) => getPath(file)).filter(Boolean) : []);
+      const accepted = files.filter((file) => !isNotMedia(file));
+      void offerImport(getPath ? accepted.map((file) => getPath(file)).filter(Boolean) : []);
     },
     relinkItem,
     removeItem,

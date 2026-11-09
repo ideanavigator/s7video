@@ -309,6 +309,10 @@ import { QueuedRunsControl, type QueuedRunsControlHandle } from "./chat/QueuedRu
 import { useThreadLinkedPullRequest } from "./pullRequest/useThreadLinkedPullRequest";
 import { useProactivePanels } from "../hooks/useProactivePanels";
 import { useOpenEditorOnModelsMissing } from "../editor/modelsMissing";
+import {
+  useVideoProjectLayout,
+  VIDEO_PROJECT_EDITOR_WIDTH_FRACTION,
+} from "../editor/videoProjectLayout";
 import { useIncrementalTimelineEntries } from "../hooks/useIncrementalTimelineEntries";
 import { useRightPanelSurfaceClose } from "../hooks/useRightPanelSurfaceClose";
 import { ComposerBannerStack, type ComposerBannerStackItem } from "./chat/ComposerBannerStack";
@@ -1994,6 +1998,10 @@ export default function ChatView(props: ChatViewProps) {
       )
     : linkedThreadPullRequestKey;
   const activeRunningTurnId = activeRuntime?.activeRunId ?? null;
+  const videoProject = useVideoProjectLayout({
+    threadRef: isServerThread && !embedded ? activeThreadRef : null,
+    projectRef: activeProjectRef,
+  });
   useOpenEditorOnModelsMissing({
     threadRef: isServerThread && !embedded ? activeThreadRef : null,
     projectId: activeProject?.id ?? null,
@@ -3916,6 +3924,7 @@ export default function ChatView(props: ChatViewProps) {
           sheet={shouldUsePlanSidebarSheet}
           workspaceLayoutElement={workspaceLayoutElement}
           widthStorageKey={`t3code:preview-panel-width:${activeThreadKey}`}
+          defaultWidthFraction={videoProject ? VIDEO_PROJECT_EDITOR_WIDTH_FRACTION : undefined}
           sheetAnimationDurationMs={panelAnimationsActive ? panelAnimationDurationMs : 0}
           onCloseSheet={closePreviewPanelStable}
           open={rightPanelOpen}

@@ -59,6 +59,7 @@ const commands = vi.hoisted(() => ({
   apply: vi.fn(),
   undo: vi.fn(),
   redo: vi.fn(),
+  plan: vi.fn(),
 }));
 const toasts = vi.hoisted(() => ({ add: vi.fn() }));
 
@@ -83,7 +84,7 @@ vi.mock(import("../../editor/editStore"), async (importOriginal) => ({
 }));
 vi.mock(import("../../state/media"), () => ({
   useMediaLibrary: () => state.library,
-  mediaEnvironment: {} as never,
+  mediaEnvironment: { plan: { label: "environment-data:media:import-plan" } } as never,
 }));
 vi.mock(import("../../state/use-atom-command"), () => ({
   useAtomCommand: ((command: { label: string } | undefined) =>
@@ -101,7 +102,9 @@ vi.mock(import("../../state/use-atom-command"), () => ({
                 ? commands.undo
                 : command?.label.endsWith("edit:redo")
                   ? commands.redo
-                  : vi.fn()) as never,
+                  : command?.label.endsWith("media:import-plan")
+                    ? commands.plan
+                    : vi.fn()) as never,
 }));
 vi.mock(import("../../assets/assetUrls"), () => ({
   useAssetUrlState: ((
@@ -123,7 +126,7 @@ vi.mock(import("../../assets/assetUrls"), () => ({
 import "../../index.css";
 
 import { BROWSER_ADD_MEDIA_HINT } from "./addMediaHint";
-import EditorPanel, { CHANGED_ELSEWHERE_NOTICE } from "./EditorPanel";
+import EditorPanel, { CHANGED_ELSEWHERE_NOTICE, DROP_OVERLAY_TEXT } from "./EditorPanel";
 
 const FPS = { num: 30, den: 1 };
 const projectId = ProjectId.make("project-1");
@@ -190,9 +193,9 @@ const renderPanel = () => render(panel(), { container: sized(), router: false })
 const videoOf = async (screen: Awaited<ReturnType<typeof renderPanel>>) =>
   (await screen.getByLabelText("clip-0.mov", { exact: true }).findElement()) as HTMLVideoElement;
 
-/** The Assets tab's scrolling list; needs enough clips to overflow. */
+/** The Media tab's scrolling list; needs enough clips to overflow. */
 const assetsScroller = () =>
-  [...document.getElementById("editor-tabpanel-assets")!.querySelectorAll<HTMLElement>("*")].find(
+  [...document.getElementById("editor-tabpanel-media")!.querySelectorAll<HTMLElement>("*")].find(
     (element) =>
       element.scrollHeight > element.clientHeight + 100 &&
       ["auto", "scroll"].includes(getComputedStyle(element).overflowY),
@@ -234,8 +237,9 @@ describe("EditorPanel", () => {
     await expect.element(button).toBeDisabled();
     await expect.element(button).toHaveAccessibleDescription(BROWSER_ADD_MEDIA_HINT);
     expect(screen.getByText("Drop a clip here", { exact: false }).query()).toBeNull();
-    // The player and the Assets tab each say it once.
-    const assets = page.elementLocator(document.getElementById("editor-tabpanel-assets")!);
+    // The player and the Media tab each say it once.
+    await screen.getByRole("tab", { name: "Media" }).click();
+    const assets = page.elementLocator(document.getElementById("editor-tabpanel-media")!);
     expect(assets.getByText(BROWSER_ADD_MEDIA_HINT).elements()).toHaveLength(1);
     await expect
       .element(assets.getByRole("button", { name: "Add media" }))
@@ -486,8 +490,9 @@ describe("EditorPanel", () => {
       true,
     );
     await using screen = await renderPanel();
+    await screen.getByRole("tab", { name: "Media" }).click();
     await expect
-      .element(screen.getByRole("tab", { name: "Assets" }))
+      .element(screen.getByRole("tab", { name: "Media" }))
       .toHaveAttribute("aria-selected", "true");
     await expect.element(screen.getByRole("listitem", { name: /^clip-0\.mov/u })).toBeVisible();
     const scroller = assetsScroller();
@@ -499,10 +504,10 @@ describe("EditorPanel", () => {
 
     await screen.getByRole("tab", { name: "Transcript" }).click();
     await expect.element(screen.getByRole("tabpanel", { name: "Transcript" })).toBeVisible();
-    expect(document.getElementById("editor-tabpanel-assets")!.hidden).toBe(true);
-    await screen.getByRole("tab", { name: "Assets" }).click();
+    expect(document.getElementById("editor-tabpanel-media")!.hidden).toBe(true);
+    await screen.getByRole("tab", { name: "Media" }).click();
     await expect
-      .element(screen.getByRole("tab", { name: "Assets" }))
+      .element(screen.getByRole("tab", { name: "Media" }))
       .toHaveAttribute("aria-selected", "true");
     expect(scroller.isConnected).toBe(true);
     expect(scroller.scrollTop).toBe(scrolled);
@@ -626,7 +631,8 @@ describe("EditorPanel", () => {
     state.urlRevisions = [];
     await using screen = await renderPanel();
     await act(async () => (await videoOf(screen)).dispatchEvent(new Event("error")));
-    // Assets rows that render after the retry (a busy machine, a scroll) must not hide it.
+    // Media rows that render after the retry (a busy machine, a scroll) must not hide it.
+    await screen.getByRole("tab", { name: "Media" }).click();
     const list = assetsScroller();
     await act(() => {
       list.scrollTop = list.scrollHeight;
@@ -840,5 +846,101 @@ describe("EditorPanel", () => {
     await expect.element(screen.getByText("Previewing v2")).not.toBeInTheDocument();
     await expect.element(screen.getByRole("button", { name: "Export" })).toBeVisible();
     expect(commands.start).not.toHaveBeenCalled();
+  });
+
+  describe("Versions first, Media last, drop anywhere (S7V-076)", () => {
+    /** The desktop app, whose files have paths; each drop test starts with no calls recorded. */
+    const withDesktop = () => {
+      commands.plan.mockReset();
+      toasts.add.mockReset();
+      window.desktopBridge = {
+        getPathForFile: (file: File) => `/Users/me/Movies/${file.name}`,
+      } as unknown as NonNullable<typeof window.desktopBridge>;
+      return { [Symbol.dispose]: () => delete window.desktopBridge };
+    };
+    const drag = async (target: Element, file: File, type: "dragover" | "drop") => {
+      const transfer = new DataTransfer();
+      transfer.items.add(file);
+      await act(() => {
+        target.dispatchEvent(
+          new DragEvent(type, { bubbles: true, cancelable: true, dataTransfer: transfer }),
+        );
+      });
+    };
+    const clip = () => new File(["x"], "take-2.mov", { type: "video/quicktime" });
+
+    it("tabs are Versions, Transcript, Media with Versions first", async () => {
+      setState([asset("clip-0")], true);
+      await using screen = await renderPanel();
+      const tabs = screen.getByRole("tablist", { name: "Editor views" }).getByRole("tab").all();
+      expect(tabs.map((tab) => tab.element().textContent)).toEqual([
+        "Versions",
+        "Transcript",
+        "Media",
+      ]);
+      await expect.element(tabs[0]!).toHaveAttribute("aria-selected", "true");
+      await expect.element(screen.getByRole("tabpanel", { name: "Versions" })).toBeVisible();
+      expect(document.getElementById("editor-tabpanel-media")!.hidden).toBe(true);
+      expect(screen.getByRole("tab", { name: "Assets" }).query()).toBeNull();
+    });
+
+    it("drop on the player imports the file, with an overlay while dragging", async () => {
+      setState([asset("clip-0")], true);
+      using _desktop = withDesktop();
+      commands.plan.mockResolvedValueOnce({
+        _tag: "Failure",
+        cause: Cause.fail(new Error("stop")),
+      });
+      await using screen = await renderPanel();
+      const player = await videoOf(screen);
+      await drag(player, clip(), "dragover");
+      await expect
+        .element(screen.getByText(DROP_OVERLAY_TEXT, { exact: true }).first())
+        .toBeVisible();
+      await drag(player, clip(), "drop");
+      await vi.waitFor(() =>
+        expect(commands.plan).toHaveBeenCalledWith({
+          environmentId: EnvironmentId.make("env-1"),
+          input: { projectId, sourcePaths: ["/Users/me/Movies/take-2.mov"] },
+        }),
+      );
+      expect(screen.getByText(DROP_OVERLAY_TEXT, { exact: true }).query()).toBeNull();
+    });
+
+    it("drop on the tabs or the timeline imports the file too", async () => {
+      setState([asset("clip-0")], true);
+      using _desktop = withDesktop();
+      commands.plan.mockResolvedValue({ _tag: "Failure", cause: Cause.fail(new Error("stop")) });
+      await using screen = await renderPanel();
+      await drag(screen.getByRole("tablist", { name: "Editor views" }).element(), clip(), "drop");
+      await drag(document.querySelector("[data-timeline-ruler]")!, clip(), "drop");
+      await vi.waitFor(() => expect(commands.plan).toHaveBeenCalledTimes(2));
+    });
+
+    it("a file dropped on the Media list is imported once", async () => {
+      setState([], false);
+      using _desktop = withDesktop();
+      commands.plan.mockResolvedValue({ _tag: "Failure", cause: Cause.fail(new Error("stop")) });
+      await using screen = await renderPanel();
+      await screen.getByRole("tab", { name: "Media" }).click();
+      const list = page.elementLocator(document.getElementById("editor-tabpanel-media")!);
+      await drag(list.getByText("No clips yet").element(), clip(), "drop");
+      await vi.waitFor(() => expect(commands.plan).toHaveBeenCalled());
+      expect(commands.plan).toHaveBeenCalledTimes(1);
+    });
+
+    it("drop of a non-media file is refused plainly", async () => {
+      setState([asset("clip-0")], true);
+      using _desktop = withDesktop();
+      await using screen = await renderPanel();
+      const notes = new File(["x"], "notes.txt", { type: "text/plain" });
+      await drag(screen.getByRole("tablist", { name: "Editor views" }).element(), notes, "drop");
+      expect(toasts.add).toHaveBeenCalledWith({
+        type: "warning",
+        title: "Only video and audio files can be added",
+        description: "Not added: notes.txt",
+      });
+      expect(commands.plan).not.toHaveBeenCalled();
+    });
   });
 });

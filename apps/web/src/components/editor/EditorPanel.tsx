@@ -1,8 +1,9 @@
 // SPDX-FileCopyrightText: 2026 s7video contributors
 // SPDX-License-Identifier: MIT
 /**
- * The Editor right-panel kind (S7V-029): the player over the project's edit, with Transcript,
- * Assets and Versions (S7V-069) tabs below and Export in the header. The panel belongs to a thread; the edit belongs to
+ * The Editor right-panel kind (S7V-029): the player over the project's edit, with Versions
+ * (S7V-069), Transcript and Media tabs below and Export in the header. A video dropped anywhere on
+ * it is imported (S7V-076). The panel belongs to a thread; the edit belongs to
  * the project, so every thread of a project shows the same edit.
  */
 import { scopedProjectKey } from "@t3tools/client-runtime/environment";
@@ -67,15 +68,17 @@ import { TimelinePane } from "./timeline/TimelinePane";
 import { type TranscriptEditing, TranscriptTab } from "./TranscriptTab";
 import { VersionsTab } from "./VersionsTab";
 
-type EditorTab = "transcript" | "assets" | "versions";
+type EditorTab = "versions" | "transcript" | "media";
 
 const MAX_AUTOMATIC_RETRIES = 1;
 
 const TABS: ReadonlyArray<{ readonly id: EditorTab; readonly label: string }> = [
-  { id: "transcript", label: "Transcript" },
-  { id: "assets", label: "Assets" },
   { id: "versions", label: "Versions" },
+  { id: "transcript", label: "Transcript" },
+  { id: "media", label: "Media" },
 ];
+
+export const DROP_OVERLAY_TEXT = "Drop to add to this project. Nothing is uploaded.";
 
 function PlayerMessage(props: {
   readonly icon: ReactNode;
@@ -355,19 +358,7 @@ function PlayerArea(props: {
 }) {
   const { view, actions } = props;
   const canAddFiles = window.desktopBridge !== undefined;
-  const [dragging, setDragging] = useState(false);
   const hintId = useId();
-  const onDragOver = (event: DragEvent<HTMLDivElement>) => {
-    if (!canAddFiles || !event.dataTransfer.types.includes("Files")) return;
-    event.preventDefault();
-    setDragging(true);
-  };
-  const onDrop = (event: DragEvent<HTMLDivElement>) => {
-    setDragging(false);
-    if (!canAddFiles) return;
-    event.preventDefault();
-    actions.addFiles([...event.dataTransfer.files]);
-  };
   switch (view._tag) {
     case "loading":
       return (
@@ -389,13 +380,7 @@ function PlayerArea(props: {
       );
     case "empty":
       return (
-        <div
-          className="rounded-md data-[dragging=true]:ring-2 data-[dragging=true]:ring-ring"
-          data-dragging={dragging}
-          onDragOver={onDragOver}
-          onDragLeave={() => setDragging(false)}
-          onDrop={onDrop}
-        >
+        <div className="rounded-md">
           <PlayerMessage
             icon={<FilmIcon />}
             title="No clips yet"
@@ -735,7 +720,30 @@ export default function EditorPanel(props: {
   );
   const setSource = useEditPlayerStore((state) => state.setSource);
   const actions = useAssetsActions(projectRef);
-  const [tab, setTab] = useState<EditorTab>("assets");
+  const [tab, setTab] = useState<EditorTab>("versions");
+  const canAddFiles = window.desktopBridge !== undefined;
+  const [dragging, setDragging] = useState(false);
+  const acceptsDrop = (event: DragEvent<HTMLDivElement>) =>
+    canAddFiles && event.dataTransfer.types.includes("Files");
+  const onDragOver = (event: DragEvent<HTMLDivElement>) => {
+    if (!acceptsDrop(event)) return;
+    event.preventDefault();
+    setDragging(true);
+  };
+  const onDragLeave = (event: DragEvent<HTMLDivElement>) => {
+    // Moving onto a child fires a leave too; only leaving the panel ends the drag.
+    if (event.relatedTarget instanceof Node && event.currentTarget.contains(event.relatedTarget)) {
+      return;
+    }
+    setDragging(false);
+  };
+  const onDrop = (event: DragEvent<HTMLDivElement>) => {
+    setDragging(false);
+    // The Media list imports its own drops.
+    if (!acceptsDrop(event) || event.defaultPrevented) return;
+    event.preventDefault();
+    actions.addFiles([...event.dataTransfer.files]);
+  };
   const view = playerViewOf(edit, library, source);
 
   const showEdit = () => {
@@ -781,7 +789,25 @@ export default function EditorPanel(props: {
   );
 
   return (
-    <div className="flex h-full min-h-0 flex-col gap-2 p-2" data-testid="editor-panel">
+    <div
+      className="relative flex h-full min-h-0 flex-col gap-2 p-2"
+      data-testid="editor-panel"
+      data-dragging={dragging}
+      onDragOver={onDragOver}
+      onDragLeave={onDragLeave}
+      onDrop={onDrop}
+    >
+      {dragging ? (
+        <div
+          aria-hidden
+          className="pointer-events-none absolute inset-1 z-20 flex items-center justify-center rounded-md border-2 border-dashed border-ring bg-background/85 p-4 text-center text-sm font-medium"
+        >
+          {DROP_OVERLAY_TEXT}
+        </div>
+      ) : null}
+      <div role="status" aria-live="polite" className="sr-only">
+        {dragging ? DROP_OVERLAY_TEXT : ""}
+      </div>
       <SpeechModelPrompt projectRef={projectRef} />
       <div className="flex min-h-7 items-center justify-between gap-2">
         <div className="flex min-w-0 items-center gap-2 text-sm">
@@ -860,9 +886,9 @@ export default function EditorPanel(props: {
       </div>
       <div
         role="tabpanel"
-        id="editor-tabpanel-assets"
-        aria-labelledby="editor-tab-assets"
-        hidden={tab !== "assets"}
+        id="editor-tabpanel-media"
+        aria-labelledby="editor-tab-media"
+        hidden={tab !== "media"}
         className="min-h-0 flex-1"
       >
         <AssetsTab
