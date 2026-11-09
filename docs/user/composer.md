@@ -41,7 +41,7 @@ the agent a file path; only [Antigravity](./providers-antigravity.md#skills-and-
 sends supported videos to Gemini models as video.
 
 In a video project in the desktop app, video and audio you drop into the chat
-go to the project's Assets instead, with no upload and no size limit. Video is
+go to the project's Media instead, with no upload and no size limit. Video is
 not attached to the message; audio is attached as well, so the agent hears it.
 
 Uploads begin when you add an attachment. All uploads must finish before the

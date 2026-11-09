@@ -21,6 +21,7 @@ import {
   type MediaTranscriptState,
   type ProjectEditState,
   type ProjectExport,
+  type ProjectVersionsState,
   subscribePlayerSeek,
   useEditPlayerStore,
 } from "../../editor/editStore";
@@ -34,6 +35,7 @@ const state = vi.hoisted(() => ({
   urlVariants: [] as Array<string | undefined>,
   transcriptMedia: [] as Array<string | null>,
   transcript: { _tag: "loading" } as MediaTranscriptState,
+  versions: { _tag: "loading" } as ProjectVersionsState,
 }));
 
 /** The export as the jobs stream would deliver it: setting it re-renders its readers. */
@@ -59,6 +61,7 @@ const commands = vi.hoisted(() => ({
   apply: vi.fn(),
   undo: vi.fn(),
   redo: vi.fn(),
+  plan: vi.fn(),
 }));
 const toasts = vi.hoisted(() => ({ add: vi.fn() }));
 
@@ -76,14 +79,14 @@ vi.mock(import("../../editor/editStore"), async (importOriginal) => ({
     return state.transcript;
   },
   useTranscriptionJobs: () => ({ transcribe: null, download: null }),
-  // The Versions tab (S7V-069) has its own tests; here it stays loading.
-  useProjectVersions: () => ({ _tag: "loading" }),
+  // The Versions tab (S7V-069) has its own tests; here it stays loading but for screenshots.
+  useProjectVersions: () => state.versions,
   // The caption overlay (S7V-075) has its own tests.
   useCaptionStills: () => ({ _tag: "none" }),
 }));
 vi.mock(import("../../state/media"), () => ({
   useMediaLibrary: () => state.library,
-  mediaEnvironment: {} as never,
+  mediaEnvironment: { plan: { label: "environment-data:media:import-plan" } } as never,
 }));
 vi.mock(import("../../state/use-atom-command"), () => ({
   useAtomCommand: ((command: { label: string } | undefined) =>
@@ -101,7 +104,9 @@ vi.mock(import("../../state/use-atom-command"), () => ({
                 ? commands.undo
                 : command?.label.endsWith("edit:redo")
                   ? commands.redo
-                  : vi.fn()) as never,
+                  : command?.label.endsWith("media:import-plan")
+                    ? commands.plan
+                    : vi.fn()) as never,
 }));
 vi.mock(import("../../assets/assetUrls"), () => ({
   useAssetUrlState: ((
@@ -123,7 +128,7 @@ vi.mock(import("../../assets/assetUrls"), () => ({
 import "../../index.css";
 
 import { BROWSER_ADD_MEDIA_HINT } from "./addMediaHint";
-import EditorPanel, { CHANGED_ELSEWHERE_NOTICE } from "./EditorPanel";
+import EditorPanel, { CHANGED_ELSEWHERE_NOTICE, DROP_OVERLAY_TEXT } from "./EditorPanel";
 
 const FPS = { num: 30, den: 1 };
 const projectId = ProjectId.make("project-1");
@@ -190,9 +195,9 @@ const renderPanel = () => render(panel(), { container: sized(), router: false })
 const videoOf = async (screen: Awaited<ReturnType<typeof renderPanel>>) =>
   (await screen.getByLabelText("clip-0.mov", { exact: true }).findElement()) as HTMLVideoElement;
 
-/** The Assets tab's scrolling list; needs enough clips to overflow. */
+/** The Media tab's scrolling list; needs enough clips to overflow. */
 const assetsScroller = () =>
-  [...document.getElementById("editor-tabpanel-assets")!.querySelectorAll<HTMLElement>("*")].find(
+  [...document.getElementById("editor-tabpanel-media")!.querySelectorAll<HTMLElement>("*")].find(
     (element) =>
       element.scrollHeight > element.clientHeight + 100 &&
       ["auto", "scroll"].includes(getComputedStyle(element).overflowY),
@@ -234,8 +239,9 @@ describe("EditorPanel", () => {
     await expect.element(button).toBeDisabled();
     await expect.element(button).toHaveAccessibleDescription(BROWSER_ADD_MEDIA_HINT);
     expect(screen.getByText("Drop a clip here", { exact: false }).query()).toBeNull();
-    // The player and the Assets tab each say it once.
-    const assets = page.elementLocator(document.getElementById("editor-tabpanel-assets")!);
+    // The player and the Media tab each say it once.
+    await screen.getByRole("tab", { name: "Media" }).click();
+    const assets = page.elementLocator(document.getElementById("editor-tabpanel-media")!);
     expect(assets.getByText(BROWSER_ADD_MEDIA_HINT).elements()).toHaveLength(1);
     await expect
       .element(assets.getByRole("button", { name: "Add media" }))
@@ -486,8 +492,9 @@ describe("EditorPanel", () => {
       true,
     );
     await using screen = await renderPanel();
+    await screen.getByRole("tab", { name: "Media" }).click();
     await expect
-      .element(screen.getByRole("tab", { name: "Assets" }))
+      .element(screen.getByRole("tab", { name: "Media" }))
       .toHaveAttribute("aria-selected", "true");
     await expect.element(screen.getByRole("listitem", { name: /^clip-0\.mov/u })).toBeVisible();
     const scroller = assetsScroller();
@@ -499,10 +506,10 @@ describe("EditorPanel", () => {
 
     await screen.getByRole("tab", { name: "Transcript" }).click();
     await expect.element(screen.getByRole("tabpanel", { name: "Transcript" })).toBeVisible();
-    expect(document.getElementById("editor-tabpanel-assets")!.hidden).toBe(true);
-    await screen.getByRole("tab", { name: "Assets" }).click();
+    expect(document.getElementById("editor-tabpanel-media")!.hidden).toBe(true);
+    await screen.getByRole("tab", { name: "Media" }).click();
     await expect
-      .element(screen.getByRole("tab", { name: "Assets" }))
+      .element(screen.getByRole("tab", { name: "Media" }))
       .toHaveAttribute("aria-selected", "true");
     expect(scroller.isConnected).toBe(true);
     expect(scroller.scrollTop).toBe(scrolled);
@@ -626,7 +633,8 @@ describe("EditorPanel", () => {
     state.urlRevisions = [];
     await using screen = await renderPanel();
     await act(async () => (await videoOf(screen)).dispatchEvent(new Event("error")));
-    // Assets rows that render after the retry (a busy machine, a scroll) must not hide it.
+    // Media rows that render after the retry (a busy machine, a scroll) must not hide it.
+    await screen.getByRole("tab", { name: "Media" }).click();
     const list = assetsScroller();
     await act(() => {
       list.scrollTop = list.scrollHeight;
@@ -813,7 +821,7 @@ describe("EditorPanel", () => {
     await expect.poll(() => playhead.hidden).toBe(false);
   });
 
-  it("previews a version read only, with a bar back to the current edit", async () => {
+  it("previews a version read only, with a bar back to the main version", async () => {
     setState([asset("clip-0")], true);
     const projectKey = scopedProjectKey({ environmentId: EnvironmentId.make("env-1"), projectId });
     if (state.edit._tag !== "ready") throw new Error("edit not ready");
@@ -835,10 +843,229 @@ describe("EditorPanel", () => {
     expect(screen.getByRole("button", { name: "Export" }).query()).toBeNull();
     const playhead = document.querySelector<HTMLElement>("[data-testid=timeline-playhead]")!;
     await expect.poll(() => playhead.hidden).toBe(true);
-    await screen.getByRole("button", { name: "Back to current" }).click();
+    await screen.getByRole("button", { name: "Back to main" }).click();
     expect(useEditPlayerStore.getState().sourceByProjectKey[projectKey]).toEqual({ kind: "edit" });
     await expect.element(screen.getByText("Previewing v2")).not.toBeInTheDocument();
     await expect.element(screen.getByRole("button", { name: "Export" })).toBeVisible();
     expect(commands.start).not.toHaveBeenCalled();
+  });
+
+  describe("Versions first, Media last, drop anywhere (S7V-076)", () => {
+    /** The desktop app, whose files have paths; each drop test starts with no calls recorded. */
+    const withDesktop = () => {
+      commands.plan.mockReset();
+      toasts.add.mockReset();
+      window.desktopBridge = {
+        getPathForFile: (file: File) => `/Users/me/Movies/${file.name}`,
+      } as unknown as NonNullable<typeof window.desktopBridge>;
+      return { [Symbol.dispose]: () => delete window.desktopBridge };
+    };
+    const drag = async (target: Element, file: File, type: "dragover" | "drop") => {
+      const transfer = new DataTransfer();
+      transfer.items.add(file);
+      await act(() => {
+        target.dispatchEvent(
+          new DragEvent(type, { bubbles: true, cancelable: true, dataTransfer: transfer }),
+        );
+      });
+    };
+    const clip = () => new File(["x"], "take-2.mov", { type: "video/quicktime" });
+
+    it("tabs are Versions, Transcript, Media with Versions first", async () => {
+      setState([asset("clip-0")], true);
+      await using screen = await renderPanel();
+      const tabs = screen.getByRole("tablist", { name: "Editor views" }).getByRole("tab").all();
+      expect(tabs.map((tab) => tab.element().textContent)).toEqual([
+        "Versions",
+        "Transcript",
+        "Media",
+      ]);
+      await expect.element(tabs[0]!).toHaveAttribute("aria-selected", "true");
+      await expect.element(screen.getByRole("tabpanel", { name: "Versions" })).toBeVisible();
+      expect(document.getElementById("editor-tabpanel-media")!.hidden).toBe(true);
+      expect(screen.getByRole("tab", { name: "Assets" }).query()).toBeNull();
+    });
+
+    it("drop on the player imports the file, with an overlay while dragging", async () => {
+      setState([asset("clip-0")], true);
+      using _desktop = withDesktop();
+      commands.plan.mockResolvedValueOnce({
+        _tag: "Failure",
+        cause: Cause.fail(new Error("stop")),
+      });
+      await using screen = await renderPanel();
+      const player = await videoOf(screen);
+      await drag(player, clip(), "dragover");
+      await expect
+        .element(screen.getByText(DROP_OVERLAY_TEXT, { exact: true }).first())
+        .toBeVisible();
+      await drag(player, clip(), "drop");
+      await vi.waitFor(() =>
+        expect(commands.plan).toHaveBeenCalledWith({
+          environmentId: EnvironmentId.make("env-1"),
+          input: { projectId, sourcePaths: ["/Users/me/Movies/take-2.mov"] },
+        }),
+      );
+      expect(screen.getByText(DROP_OVERLAY_TEXT, { exact: true }).query()).toBeNull();
+    });
+
+    it("drop on the tabs or the timeline imports the file too", async () => {
+      setState([asset("clip-0")], true);
+      using _desktop = withDesktop();
+      commands.plan.mockResolvedValue({ _tag: "Failure", cause: Cause.fail(new Error("stop")) });
+      await using screen = await renderPanel();
+      await drag(screen.getByRole("tablist", { name: "Editor views" }).element(), clip(), "drop");
+      await drag(document.querySelector("[data-timeline-ruler]")!, clip(), "drop");
+      await vi.waitFor(() => expect(commands.plan).toHaveBeenCalledTimes(2));
+    });
+
+    it("a file dropped on the Media list is imported once", async () => {
+      setState([], false);
+      using _desktop = withDesktop();
+      commands.plan.mockResolvedValue({ _tag: "Failure", cause: Cause.fail(new Error("stop")) });
+      await using screen = await renderPanel();
+      await screen.getByRole("tab", { name: "Media" }).click();
+      const list = page.elementLocator(document.getElementById("editor-tabpanel-media")!);
+      await drag(list.getByText("No clips yet").element(), clip(), "drop");
+      await vi.waitFor(() => expect(commands.plan).toHaveBeenCalled());
+      expect(commands.plan).toHaveBeenCalledTimes(1);
+    });
+
+    it("drop of a non-media file is refused plainly", async () => {
+      setState([asset("clip-0")], true);
+      using _desktop = withDesktop();
+      await using screen = await renderPanel();
+      const notes = new File(["x"], "notes.txt", { type: "text/plain" });
+      await drag(screen.getByRole("tablist", { name: "Editor views" }).element(), notes, "drop");
+      expect(toasts.add).toHaveBeenCalledWith({
+        type: "warning",
+        title: "Only video and audio files can be added",
+        description: "Not added: notes.txt",
+      });
+      expect(commands.plan).not.toHaveBeenCalled();
+    });
+
+    describe("room for the Versions list in a video project", () => {
+      const SHOTS = "../../../../../test-results/S7V-076";
+      const at = (minute: number) => Date.UTC(2026, 10, 9, 10, minute);
+      const versions: ProjectVersionsState = {
+        _tag: "ready",
+        versions: [
+          {
+            n: 6,
+            revision: 7,
+            at: at(9),
+            author: "assistant",
+            changes: ["Removed 14.2 s of silence in 26 cuts"],
+            current: true,
+          },
+          ...[5, 4, 3, 2, 1].map((n) => ({
+            n,
+            revision: n + 1,
+            at: at(n),
+            author: n % 2 === 0 ? ("you" as const) : ("assistant" as const),
+            ...(n === 4 ? { tag: "tight cut" } : {}),
+            changes: [n === 2 ? "Added captions" : `Trimmed clip ${n}`],
+            current: false,
+          })),
+        ],
+      };
+      /** The app's right panel: its tab bar (52 px) over the Editor, at 60% beside the chat. */
+      const layout = () =>
+        render(
+          <div className="flex h-screen w-screen bg-background text-foreground">
+            <div className="flex min-w-0 flex-1 items-center justify-center border-r text-sm text-muted-foreground">
+              Chat column (stand-in)
+            </div>
+            <div className="flex h-full flex-col" style={{ width: "60%" }}>
+              <div className="flex h-[52px] shrink-0 items-center border-b px-3 text-sm text-muted-foreground">
+                Panel tabs (stand-in)
+              </div>
+              <div className="min-h-0 flex-1">{panel()}</div>
+            </div>
+          </div>,
+          { router: false },
+        );
+      const inside = (inner: DOMRect, outer: DOMRect) =>
+        inner.top >= outer.top - 0.5 && inner.bottom <= outer.bottom + 0.5;
+      /** Version rows shown whole, without scrolling the list. */
+      const visibleRows = () => {
+        const list = document
+          .getElementById("editor-tabpanel-versions")!
+          .querySelector<HTMLElement>("[role=list]")!;
+        const shown = list.getBoundingClientRect();
+        return [...list.querySelectorAll("[role=listitem]")].filter((row) =>
+          inside(row.getBoundingClientRect(), shown),
+        ).length;
+      };
+      const timelineTracksShown = () => {
+        const timeline = document.querySelector("[data-testid=editor-timeline]")!;
+        const box = timeline.getBoundingClientRect();
+        const panelBox = document
+          .querySelector("[data-testid=editor-panel]")!
+          .getBoundingClientRect();
+        return (
+          inside(box, panelBox) &&
+          ["Overlays", "Video", "Captions", "Sound effects", "Music"].every((label) => {
+            const element = [...timeline.querySelectorAll("*")].find(
+              (node) => node.childElementCount === 0 && node.textContent === label,
+            );
+            return element !== undefined && inside(element.getBoundingClientRect(), box);
+          })
+        );
+      };
+
+      it.each([
+        [1440, 900, 4],
+        [1180, 760, 2],
+      ] as const)("shows the version rows at %ix%i (at least %i)", async (w, h, rows) => {
+        await page.viewport(w, h);
+        setState([asset("clip-0")], true);
+        state.versions = versions;
+        try {
+          await using screen = await layout();
+          await expect.element(screen.getByText("Main", { exact: true })).toBeVisible();
+          await expect.poll(visibleRows).toBeGreaterThanOrEqual(rows);
+          expect(timelineTracksShown()).toBe(true);
+          // The player letterboxes rather than vanishing.
+          const player = (await videoOf(screen)).closest("[role=group]")!;
+          expect(player.getBoundingClientRect().height).toBeGreaterThanOrEqual(96);
+        } finally {
+          state.versions = { _tag: "loading" };
+        }
+      });
+
+      it.each([
+        ["dark", 1440, 900],
+        ["light", 1440, 900],
+        ["dark", 1180, 760],
+        ["light", 1180, 760],
+      ] as const)(
+        "screenshots: layout, Versions with Main, drop overlay (%s, %i)",
+        async (theme, w, h) => {
+          await page.viewport(w, h);
+          document.documentElement.classList.toggle("dark", theme === "dark");
+          setState([asset("clip-0")], true);
+          state.versions = versions;
+          try {
+            using _desktop = withDesktop();
+            await using screen = await layout();
+            await expect.element(screen.getByText("Main", { exact: true })).toBeVisible();
+            await expect
+              .element(screen.getByRole("button", { name: "Make main, version 5" }))
+              .toBeVisible();
+            await page.screenshot({ path: `${SHOTS}/layout-versions-${theme}-${w}.png` });
+            await drag(await videoOf(screen), clip(), "dragover");
+            await expect
+              .element(screen.getByText(DROP_OVERLAY_TEXT, { exact: true }).first())
+              .toBeVisible();
+            await page.screenshot({ path: `${SHOTS}/drop-overlay-${theme}-${w}.png` });
+          } finally {
+            state.versions = { _tag: "loading" };
+            document.documentElement.classList.remove("dark");
+          }
+        },
+      );
+    });
   });
 });

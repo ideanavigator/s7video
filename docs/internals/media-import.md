@@ -55,7 +55,7 @@ is S7V-054. Originals are also served only with a known video or audio extension
 ## Chat drops
 
 Video and audio dropped into a video project's chat import by path (`useChatMediaImport`). A failed
-import shows "Couldn't add <name> to Assets" with the same reason the Assets tab shows
+import shows "Couldn't add <name> to Media" with the same reason the Media tab shows
 (`mediaErrorExplanation.ts`) and Retry for that file, and stays until closed. A failed video is
 never attached to the message instead; a failed audio file stays attached, and its toast says so
 (S7V-071). The engine runs Python with `-I -B`: `-I` ignores

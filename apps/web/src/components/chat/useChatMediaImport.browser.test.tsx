@@ -92,7 +92,7 @@ describe("useChatMediaImport", () => {
     });
     commands.importMedia.mockResolvedValue({ _tag: "Success", value: { mediaId: "x" } });
     const attach = await dropped(projectId, [video, sound, notes]);
-    // The video went to Assets only; the sound is attached as well, for the agent to hear.
+    // The video went to Media only; the sound is attached as well, for the agent to hear.
     expect(attach).toEqual([sound, notes]);
     expect(commands.importMedia.mock.calls.map(([call]) => call.input)).toEqual([
       { projectId, sourcePath: "/Users/me/Desktop/interview.mov", mode: "copy" },
@@ -173,7 +173,7 @@ describe("useChatMediaImport", () => {
       expect(shown()).toEqual([
         expect.objectContaining({
           type: "error",
-          title: "Couldn't add interview.mov to Assets",
+          title: "Couldn't add interview.mov to Media",
           description: "Not a video.",
           timeout: 0,
           actionProps: expect.objectContaining({ children: "Retry" }),
@@ -206,7 +206,7 @@ describe("useChatMediaImport", () => {
         { projectId, sourcePath: "/Users/me/Desktop/interview.mov", mode: "reference" },
         { projectId, sourcePath: "/Users/me/Desktop/interview.mov", mode: "reference" },
       ]);
-      expect(shown().at(-1)).toEqual({ type: "success", title: "Added to Assets" });
+      expect(shown().at(-1)).toEqual({ type: "success", title: "Added to Media" });
     });
 
     it("Retry that fails again shows the same message and nothing else", async () => {
@@ -216,7 +216,7 @@ describe("useChatMediaImport", () => {
       await dropped(projectId, [video], opened);
       errors()[0]!.actionProps!.onClick();
       await vi.waitFor(() => expect(errors()).toHaveLength(2));
-      expect(errors()[1]!.title).toBe("Couldn't add interview.mov to Assets");
+      expect(errors()[1]!.title).toBe("Couldn't add interview.mov to Media");
       expect(shown().filter((toast) => toast.type === "success")).toEqual([]);
       expect(opened).not.toHaveBeenCalled();
     });
@@ -227,7 +227,7 @@ describe("useChatMediaImport", () => {
       expect(await dropped(projectId, [sound])).toEqual([sound]);
       expect(errors().map(({ title, description }) => ({ title, description }))).toEqual([
         {
-          title: "Couldn't add whoosh.m4a to Assets",
+          title: "Couldn't add whoosh.m4a to Media",
           description: "Not a video. It's still attached to your message.",
         },
       ]);
@@ -239,8 +239,8 @@ describe("useChatMediaImport", () => {
       commands.importMedia.mockResolvedValue(notAVideo);
       expect(await dropped(projectId, [video, take])).toEqual([]);
       expect(errors().map((toast) => toast.title)).toEqual([
-        "Couldn't add interview.mov to Assets",
-        "Couldn't add take-2.mp4 to Assets",
+        "Couldn't add interview.mov to Media",
+        "Couldn't add take-2.mp4 to Media",
       ]);
       commands.importMedia.mockClear();
       commands.importMedia.mockResolvedValue({ _tag: "Success", value: { mediaId: "x" } });

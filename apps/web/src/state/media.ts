@@ -7,6 +7,7 @@ import type { MediaLibrarySnapshot, ScopedProjectRef } from "@t3tools/contracts"
 import { AsyncResult, Atom } from "effect/reactivity";
 
 import { connectionAtomRuntime } from "../connection/runtime";
+import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentServerConfigsAtom } from "./server";
 
 export const mediaEnvironment = createMediaEnvironmentAtoms(connectionAtomRuntime);
@@ -34,7 +35,12 @@ const mediaLibraryAtom = Atom.family((key: string) => {
   }).pipe(Atom.withLabel(`web-media-library:${key}`));
 });
 
-/** The project's media, kept live: imports, copies, proxies and edits all update it. */
-export function useMediaLibrary(ref: ScopedProjectRef): MediaLibraryState {
-  return useAtomValue(mediaLibraryAtom(scopedProjectKey(ref)));
+/** The project's media, kept live: imports, copies, proxies and edits all update it. Null subscribes to nothing. */
+export function useMediaLibrary(ref: ScopedProjectRef | null): MediaLibraryState {
+  return useAtomValue(mediaLibraryAtom(ref === null ? "" : scopedProjectKey(ref)));
+}
+
+/** The library as last read, for a click handler; loading unless something keeps it subscribed. */
+export function readMediaLibrary(ref: ScopedProjectRef): MediaLibraryState {
+  return appAtomRegistry.get(mediaLibraryAtom(scopedProjectKey(ref)));
 }

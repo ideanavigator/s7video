@@ -105,6 +105,9 @@ from; the per-ticket entries and how this file is compiled are in
 - In a video project the assistant is offered only its video-editing tools, and none of the coding,
   pull-request, browser or device tools it inherited. Each reply sends about 95% less tool setup
   text. Other projects are unchanged. (S7V-072)
+- Video projects open with the Editor beside the chat. Its first list shows your versions, newest
+  marked Main, and you can make any older one main again. Drop a video anywhere on the Editor to
+  add it. The Editor stays open after the assistant edits. (S7V-076)
 
 ### Removed
 

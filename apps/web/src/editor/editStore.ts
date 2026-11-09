@@ -169,6 +169,19 @@ export function useProjectEdit(ref: ScopedProjectRef): ProjectEditState {
   return useAtomValue(projectEditAtom(scopedProjectKey(ref)));
 }
 
+/**
+ * Whether the project is a video project: its edit loads (S7V-076). A project without one fails
+ * fast with `not-an-edit-project`; null (a draft, no project) subscribes to nothing.
+ */
+export function useIsVideoProject(ref: ScopedProjectRef | null): boolean {
+  return useAtomValue(projectEditAtom(ref === null ? "" : scopedProjectKey(ref)))._tag === "ready";
+}
+
+/** The edit as last read, for a click handler; loading unless something keeps it subscribed. */
+export function readProjectEdit(ref: ScopedProjectRef): ProjectEditState {
+  return appAtomRegistry.get(projectEditAtom(scopedProjectKey(ref)));
+}
+
 /** Bumped after a tag or delete here, which changes the list but not the edit. */
 const versionsBumpAtom = Atom.family((_key: string) => Atom.make(0).pipe(Atom.keepAlive));
 

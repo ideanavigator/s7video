@@ -13,6 +13,7 @@ import {
 } from "react";
 
 import { useAssetUrlRefresh, useAssetUrlState } from "../../assets/assetUrls";
+import { openMediaLinkInEditor } from "../../editor/clipLinks";
 import { cn } from "../../lib/utils";
 import { useRightPanelStore } from "../../rightPanelStore";
 import { MediaActions, type MediaActionSource } from "../media/MediaActions";
@@ -387,13 +388,11 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
     ...(reference ? { reference } : {}),
     ...(relativePath && (resource._tag === "media-file" || resource._tag === "workspace-file")
       ? {
-          onOpenFile: () =>
-            useRightPanelStore
-              .getState()
-              .openFile(
-                { environmentId: props.environmentId, threadId: resource.threadId },
-                relativePath,
-              ),
+          onOpenFile: () => {
+            const threadRef = { environmentId: props.environmentId, threadId: resource.threadId };
+            if (openMediaLinkInEditor(threadRef, relativePath)) return;
+            useRightPanelStore.getState().openFile(threadRef, relativePath);
+          },
         }
       : {}),
   };

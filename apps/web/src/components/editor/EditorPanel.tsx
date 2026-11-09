@@ -1,8 +1,9 @@
 // SPDX-FileCopyrightText: 2026 s7video contributors
 // SPDX-License-Identifier: MIT
 /**
- * The Editor right-panel kind (S7V-029): the player over the project's edit, with Transcript,
- * Assets and Versions (S7V-069) tabs below and Export in the header. The panel belongs to a thread; the edit belongs to
+ * The Editor right-panel kind (S7V-029): the player over the project's edit, with Versions
+ * (S7V-069), Transcript and Media tabs below and Export in the header. A video dropped anywhere on
+ * it is imported (S7V-076). The panel belongs to a thread; the edit belongs to
  * the project, so every thread of a project shows the same edit.
  */
 import { scopedProjectKey } from "@t3tools/client-runtime/environment";
@@ -44,6 +45,7 @@ import {
   type TranscriptPlayback,
 } from "../../editor/transcriptModel";
 import { useStableCallback } from "../../hooks/useStableCallback";
+import { observeResize } from "../../lib/observeResize";
 import { useMediaLibrary, type MediaLibraryState } from "../../state/media";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { Alert, AlertAction, AlertDescription } from "../ui/alert";
@@ -67,15 +69,31 @@ import { TimelinePane } from "./timeline/TimelinePane";
 import { type TranscriptEditing, TranscriptTab } from "./TranscriptTab";
 import { VersionsTab } from "./VersionsTab";
 
-type EditorTab = "transcript" | "assets" | "versions";
+type EditorTab = "versions" | "transcript" | "media";
 
 const MAX_AUTOMATIC_RETRIES = 1;
 
 const TABS: ReadonlyArray<{ readonly id: EditorTab; readonly label: string }> = [
-  { id: "transcript", label: "Transcript" },
-  { id: "assets", label: "Assets" },
   { id: "versions", label: "Versions" },
+  { id: "transcript", label: "Transcript" },
+  { id: "media", label: "Media" },
 ];
+
+export const DROP_OVERLAY_TEXT = "Drop to add to this project. Nothing is uploaded.";
+
+/** One version row with its gap (`VersionsTab`), for the room the tabs keep (S7V-076). */
+const VERSION_ROW_PX = 62;
+/** The player, letterboxed, never gets shorter than this. */
+const PLAYER_MIN_PX = 96;
+/** Padding, header, tab bar and gaps above the timeline. */
+const ABOVE_CHROME_PX = 124;
+
+/**
+ * The room the tabs keep before the player shrinks: two version rows in a short panel, up to four
+ * in a 900 px window. Beyond that the player takes its full size and the tabs the rest.
+ */
+const tabsRoomPx = (panelHeight: number): number =>
+  Math.min(4 * VERSION_ROW_PX, Math.max(2 * VERSION_ROW_PX, panelHeight - 592)) + 8;
 
 function PlayerMessage(props: {
   readonly icon: ReactNode;
@@ -86,7 +104,7 @@ function PlayerMessage(props: {
   readonly children?: ReactNode;
 }) {
   return (
-    <div className="flex aspect-video max-h-[50vh] items-center rounded-md bg-muted/40">
+    <div className="flex aspect-video max-h-[50vh] min-h-0 items-center overflow-y-auto rounded-md bg-muted/40">
       <Empty>
         <EmptyHeader>
           <EmptyMedia variant="icon">{props.icon}</EmptyMedia>
@@ -152,7 +170,7 @@ function PlayingSource(props: {
       <div
         role="status"
         aria-label="Loading video"
-        className="flex aspect-video max-h-[50vh] items-center justify-center rounded-md bg-muted/40"
+        className="flex aspect-video max-h-[50vh] min-h-0 items-center justify-center rounded-md bg-muted/40"
       >
         <Spinner />
       </div>
@@ -355,26 +373,14 @@ function PlayerArea(props: {
 }) {
   const { view, actions } = props;
   const canAddFiles = window.desktopBridge !== undefined;
-  const [dragging, setDragging] = useState(false);
   const hintId = useId();
-  const onDragOver = (event: DragEvent<HTMLDivElement>) => {
-    if (!canAddFiles || !event.dataTransfer.types.includes("Files")) return;
-    event.preventDefault();
-    setDragging(true);
-  };
-  const onDrop = (event: DragEvent<HTMLDivElement>) => {
-    setDragging(false);
-    if (!canAddFiles) return;
-    event.preventDefault();
-    actions.addFiles([...event.dataTransfer.files]);
-  };
   switch (view._tag) {
     case "loading":
       return (
         <div
           role="status"
           aria-label="Loading the edit"
-          className="flex aspect-video max-h-[50vh] items-center justify-center rounded-md bg-muted/40"
+          className="flex aspect-video max-h-[50vh] min-h-0 items-center justify-center rounded-md bg-muted/40"
         >
           <Spinner />
         </div>
@@ -389,13 +395,7 @@ function PlayerArea(props: {
       );
     case "empty":
       return (
-        <div
-          className="rounded-md data-[dragging=true]:ring-2 data-[dragging=true]:ring-ring"
-          data-dragging={dragging}
-          onDragOver={onDragOver}
-          onDragLeave={() => setDragging(false)}
-          onDrop={onDrop}
-        >
+        <div className="flex min-h-0 flex-col rounded-md">
           <PlayerMessage
             icon={<FilmIcon />}
             title="No clips yet"
@@ -735,7 +735,36 @@ export default function EditorPanel(props: {
   );
   const setSource = useEditPlayerStore((state) => state.setSource);
   const actions = useAssetsActions(projectRef);
-  const [tab, setTab] = useState<EditorTab>("assets");
+  const [tab, setTab] = useState<EditorTab>("versions");
+  const [panelHeight, setPanelHeight] = useState<number | null>(null);
+  const observePanel = (element: HTMLDivElement | null) =>
+    element === null
+      ? undefined
+      : observeResize(element, () => setPanelHeight(element.clientHeight));
+  const tabsRoom = panelHeight === null ? undefined : tabsRoomPx(panelHeight);
+  const canAddFiles = window.desktopBridge !== undefined;
+  const [dragging, setDragging] = useState(false);
+  const acceptsDrop = (event: DragEvent<HTMLDivElement>) =>
+    canAddFiles && event.dataTransfer.types.includes("Files");
+  const onDragOver = (event: DragEvent<HTMLDivElement>) => {
+    if (!acceptsDrop(event)) return;
+    event.preventDefault();
+    setDragging(true);
+  };
+  const onDragLeave = (event: DragEvent<HTMLDivElement>) => {
+    // Moving onto a child fires a leave too; only leaving the panel ends the drag.
+    if (event.relatedTarget instanceof Node && event.currentTarget.contains(event.relatedTarget)) {
+      return;
+    }
+    setDragging(false);
+  };
+  const onDrop = (event: DragEvent<HTMLDivElement>) => {
+    setDragging(false);
+    // The Media list imports its own drops.
+    if (!acceptsDrop(event) || event.defaultPrevented) return;
+    event.preventDefault();
+    actions.addFiles([...event.dataTransfer.files]);
+  };
   const view = playerViewOf(edit, library, source);
 
   const showEdit = () => {
@@ -781,7 +810,26 @@ export default function EditorPanel(props: {
   );
 
   return (
-    <div className="flex h-full min-h-0 flex-col gap-2 p-2" data-testid="editor-panel">
+    <div
+      ref={observePanel}
+      className="relative flex h-full min-h-0 flex-col gap-2 p-2"
+      data-testid="editor-panel"
+      data-dragging={dragging}
+      onDragOver={onDragOver}
+      onDragLeave={onDragLeave}
+      onDrop={onDrop}
+    >
+      {dragging ? (
+        <div
+          aria-hidden
+          className="pointer-events-none absolute inset-1 z-20 flex items-center justify-center rounded-md border-2 border-dashed border-ring bg-background/85 p-4 text-center text-sm font-medium"
+        >
+          {DROP_OVERLAY_TEXT}
+        </div>
+      ) : null}
+      <div role="status" aria-live="polite" className="sr-only">
+        {dragging ? DROP_OVERLAY_TEXT : ""}
+      </div>
       <SpeechModelPrompt projectRef={projectRef} />
       <div className="flex min-h-7 items-center justify-between gap-2">
         <div className="flex min-w-0 items-center gap-2 text-sm">
@@ -803,7 +851,7 @@ export default function EditorPanel(props: {
                 Previewing v{previewingVersion}
               </span>
               <Button size="compact" variant="ghost" onClick={showEdit}>
-                Back to current
+                Back to main
               </Button>
             </>
           ) : null}
@@ -815,7 +863,10 @@ export default function EditorPanel(props: {
         ) : null}
       </div>
       <RefusedChangeNotice snapshot={edit._tag === "ready" ? edit.snapshot : null} />
-      <PlayerArea projectRef={projectRef} view={view} actions={actions} />
+      {/* The player shrinks, letterboxed, so the tabs below keep their room. */}
+      <div className="flex min-h-24 shrink flex-col" data-testid="editor-player-area">
+        <PlayerArea projectRef={projectRef} view={view} actions={actions} />
+      </div>
       <HistoryCleanupBanner
         projectRef={projectRef}
         snapshot={edit._tag === "ready" ? edit.snapshot : null}
@@ -843,6 +894,7 @@ export default function EditorPanel(props: {
         aria-labelledby="editor-tab-transcript"
         hidden={tab !== "transcript"}
         className="min-h-0 flex-1"
+        style={{ minHeight: tabsRoom }}
       >
         {view._tag === "play-timeline" ? (
           <TimelineTranscriptTab
@@ -860,10 +912,11 @@ export default function EditorPanel(props: {
       </div>
       <div
         role="tabpanel"
-        id="editor-tabpanel-assets"
-        aria-labelledby="editor-tab-assets"
-        hidden={tab !== "assets"}
+        id="editor-tabpanel-media"
+        aria-labelledby="editor-tab-media"
+        hidden={tab !== "media"}
         className="min-h-0 flex-1"
+        style={{ minHeight: tabsRoom }}
       >
         <AssetsTab
           projectRef={projectRef}
@@ -879,6 +932,7 @@ export default function EditorPanel(props: {
         aria-labelledby="editor-tab-versions"
         hidden={tab !== "versions"}
         className="min-h-0 flex-1"
+        style={{ minHeight: tabsRoom }}
       >
         <VersionsTab
           projectRef={projectRef}
@@ -901,6 +955,9 @@ export default function EditorPanel(props: {
           projectRef={projectRef}
           mediaById={mediaById}
           editing={editing}
+          minAbovePx={
+            tabsRoom === undefined ? undefined : ABOVE_CHROME_PX + PLAYER_MIN_PX + tabsRoom
+          }
         />
       )}
       <ImportDialog

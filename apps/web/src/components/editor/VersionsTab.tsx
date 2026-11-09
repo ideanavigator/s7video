@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: MIT
 /**
  * The Editor panel's Versions tab (S7V-069): every version of the project's edit, newest first,
- * shared by all its chats. A row can be previewed (read only), named, made current again (which
- * adds a new version, so nothing is lost) or deleted.
+ * shared by all its chats. The newest is Main (S7V-076). Another row can be previewed (read only),
+ * named, made main again (which adds a new version, so nothing is lost) or deleted.
  */
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import {
@@ -82,7 +82,7 @@ function VersionRow(props: VersionsListProps & { readonly version: EditVersion }
         version.tag,
         spokenAuthor[version.author],
         when,
-        version.current ? "current" : undefined,
+        version.current ? "main" : undefined,
         previewing ? "previewing" : undefined,
       ]
         .filter(Boolean)
@@ -97,7 +97,7 @@ function VersionRow(props: VersionsListProps & { readonly version: EditVersion }
         )}
         {version.current && (
           <Badge variant="info" size="sm">
-            Current
+            Main
           </Badge>
         )}
         {previewing && (
@@ -109,32 +109,42 @@ function VersionRow(props: VersionsListProps & { readonly version: EditVersion }
           {authorWords[version.author]} · {when}
         </span>
       </div>
-      <div className="line-clamp-3 min-w-0 text-xs text-muted-foreground">{summary}</div>
-      <div className="flex flex-wrap items-center gap-1">
-        {!version.current && (
-          <Button
-            size="xs"
-            variant="outline"
-            disabled={previewing}
-            onClick={() => props.onPreview(version)}
-          >
-            Preview
+      {/* Actions share the summary's line, so the tab shows four versions at 1440x900 (S7V-076). */}
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+        <div className="line-clamp-2 min-w-0 flex-1 basis-48 text-xs text-muted-foreground">
+          {summary}
+        </div>
+        <div className="flex shrink-0 flex-wrap items-center gap-1">
+          {!version.current && (
+            <Button
+              size="xs"
+              variant="outline"
+              disabled={previewing}
+              onClick={() => props.onPreview(version)}
+            >
+              Preview
+            </Button>
+          )}
+          <Button size="xs" variant="ghost" onClick={() => props.onTag(version)}>
+            {version.tag === undefined ? "Name…" : "Rename…"}
           </Button>
-        )}
-        <Button size="xs" variant="ghost" onClick={() => props.onTag(version)}>
-          {version.tag === undefined ? "Name…" : "Rename…"}
-        </Button>
-        {!version.current && (
-          <>
-            <Button size="xs" variant="ghost" onClick={() => props.onRestore(version)}>
-              Make current
-            </Button>
-            <Button size="xs" variant="ghost" onClick={() => props.onDelete(version)}>
-              Delete
-            </Button>
-          </>
-        )}
-        {props.renderChatLink(version)}
+          {!version.current && (
+            <>
+              <Button
+                size="xs"
+                variant="ghost"
+                aria-label={`Make main, version ${version.n}`}
+                onClick={() => props.onRestore(version)}
+              >
+                Make main
+              </Button>
+              <Button size="xs" variant="ghost" onClick={() => props.onDelete(version)}>
+                Delete
+              </Button>
+            </>
+          )}
+          {props.renderChatLink(version)}
+        </div>
       </div>
     </div>
   );
@@ -166,7 +176,7 @@ function VersionsList(props: VersionsListProps) {
             <HistoryIcon />
           </EmptyMedia>
           <EmptyTitle>No versions yet</EmptyTitle>
-          <EmptyDescription>Ask the assistant for a change, or import a clip.</EmptyDescription>
+          <EmptyDescription>Ask the assistant for a change, or drop a video here.</EmptyDescription>
         </EmptyHeader>
       </Empty>
     );
@@ -315,7 +325,7 @@ export function VersionsTab(props: {
     if (result._tag === "Failure") {
       toastManager.add({
         type: "error",
-        title: `Couldn't make v${version.n} current`,
+        title: `Couldn't make v${version.n} main`,
         description: messageOf(squashAtomCommandFailure(result), "Try again."),
       });
       return;
@@ -326,7 +336,7 @@ export function VersionsTab(props: {
   const remove = async (version: EditVersion) => {
     const confirmed =
       (await requestConfirmDialog(
-        `Delete v${version.n}${version.tag === undefined ? "" : ` "${version.tag}"`}? Your clips in Assets are not touched.`,
+        `Delete v${version.n}${version.tag === undefined ? "" : ` "${version.tag}"`}? Your clips in Media are not touched.`,
         { variant: "destructive" },
       )) ?? false;
     if (!confirmed) return;
