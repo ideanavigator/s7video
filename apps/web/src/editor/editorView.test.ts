@@ -106,4 +106,91 @@ describe("playerViewOf", () => {
     ).toEqual({ _tag: "unavailable", message: "Not a video project." });
     expect(playerViewOf(cut, { _tag: "unavailable" }, EDIT)._tag).toBe("unavailable");
   });
+
+  it("should pick EditPlayer for one source and MultiClipPlayer for several", () => {
+    const media = library([asset(), asset({ id: "broll", label: "broll.mov" })]);
+    expect(playerViewOf(cut, media, EDIT)._tag).toBe("play");
+    const layouts: ReadonlyArray<EditDocument["tracks"][number]["items"]> = [
+      // Two sources.
+      [
+        { id: "a", media: "clip", start: 0, duration: 30, in: 0 },
+        { id: "b", media: "broll", start: 30, duration: 30, in: 0 },
+      ],
+      // One source with a gap.
+      [
+        { id: "a", media: "clip", start: 0, duration: 30, in: 0 },
+        { id: "b", media: "clip", start: 45, duration: 30, in: 90 },
+      ],
+      // One source, reordered.
+      [
+        { id: "a", media: "clip", start: 0, duration: 30, in: 90 },
+        { id: "b", media: "clip", start: 30, duration: 30, in: 0 },
+      ],
+    ];
+    for (const items of layouts) {
+      const view = playerViewOf(edit([{ kind: "video", id: "v1", items }] as never), media, EDIT);
+      expect(view._tag).toBe("play-timeline");
+    }
+    const view = playerViewOf(
+      edit([{ kind: "video", id: "v1", items: layouts[0]! }] as never),
+      library([asset({ proxy: { status: "ready" } })]),
+      EDIT,
+    );
+    expect(view).toMatchObject({
+      _tag: "play-timeline",
+      sources: [
+        { mediaId: "clip", asset: { id: "clip" }, label: "interview.mov", variant: "proxy" },
+        { mediaId: "broll", asset: undefined, label: "a clip", variant: "original" },
+      ],
+    });
+  });
+
+  it("names a clip the library lacks by the file the edit records, never its id", () => {
+    const base = edit([
+      {
+        kind: "video",
+        id: "v1",
+        items: [
+          { id: "a", media: "clip", start: 0, duration: 30, in: 0 },
+          { id: "b", media: "m-7f3a", start: 30, duration: 30, in: 0 },
+        ],
+      },
+    ] as never);
+    if (base._tag !== "ready") throw new Error("edit not ready");
+    const withMedia: ProjectEditState = {
+      ...base,
+      snapshot: {
+        ...base.snapshot,
+        document: {
+          ...base.snapshot.document,
+          media: [{ id: "m-7f3a", kind: "video", path: "assets/Beach take 2.mov" } as never],
+        },
+      },
+    };
+    const view = playerViewOf(withMedia, library([asset()]), EDIT);
+    expect(view._tag === "play-timeline" && view.sources[1]!.label).toBe("Beach take 2.mov");
+  });
+
+  // S7V-069: a previewed version plays its own document, read only.
+  it("plays a previewed version's document, and shows its removed clip as missing", () => {
+    if (cut._tag !== "ready") throw new Error("edit not ready");
+    const older: EditDocument = {
+      ...cut.snapshot.document,
+      tracks: [
+        {
+          kind: "video",
+          id: "v1",
+          items: [{ id: "a", media: "clip", start: 0, duration: 60, in: 30 }],
+        },
+      ],
+    };
+    const view = playerViewOf(cut, library([asset()]), { kind: "version", n: 2, document: older });
+    expect(view._tag === "play" && view.plan.segments).toEqual([
+      { sourceStart: 30, sourceEnd: 90, timelineStart: 0 },
+    ]);
+    const gone = playerViewOf(cut, library([]), { kind: "version", n: 2, document: older });
+    expect(gone._tag === "play-timeline" && gone.sources.map((source) => source.asset)).toEqual([
+      undefined,
+    ]);
+  });
 });

@@ -44,6 +44,8 @@ export function useProactivePanels(input: {
   readonly pullRequestsSurfaceAvailable: boolean;
   readonly visiblePullRequestCount: number;
   readonly onDiffPanelOpen: (() => void) | undefined;
+  /** The thread's project is a video project: an active Editor keeps the panel (S7V-076). */
+  readonly keepEditor?: boolean;
 }) {
   const {
     threadRef,
@@ -63,6 +65,7 @@ export function useProactivePanels(input: {
     pullRequestsSurfaceAvailable,
     visiblePullRequestCount,
     onDiffPanelOpen,
+    keepEditor = false,
   } = input;
   const proactivePanelObservationRef = useRef<ReturnType<
     typeof observeProactivePanelUserChoice
@@ -106,6 +109,7 @@ export function useProactivePanels(input: {
         pullRequestSurface(linkedThreadPullRequest),
         userActionRevision,
         true,
+        keepEditor,
       );
     }
     if (!clientSettingsHydrated) return;
@@ -129,6 +133,8 @@ export function useProactivePanels(input: {
           threadRef,
           { id: "pull-requests", kind: "pull-requests" },
           userActionRevision,
+          false,
+          keepEditor,
         );
       } else if (
         !followSelectedPullRequest &&
@@ -139,6 +145,8 @@ export function useProactivePanels(input: {
           threadRef,
           pullRequestSurface(linkedThreadPullRequest),
           userActionRevision,
+          false,
+          keepEditor,
         );
       }
     }
@@ -181,6 +189,8 @@ export function useProactivePanels(input: {
         threadRef,
         { kind: "diff", turnId: newlyCompletedTurnId },
         userActionRevision,
+        false,
+        keepEditor,
       )
     ) {
       return;
@@ -194,6 +204,7 @@ export function useProactivePanels(input: {
     clientSettingsHydrated,
     hasLinkedPullRequestDetail,
     isGitRepo,
+    keepEditor,
     latestRunSettled,
     linkedThreadPullRequest,
     onDiffPanelOpen,

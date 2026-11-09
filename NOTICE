@@ -12,8 +12,15 @@ This product is built on the following open-source project:
 s7video started as a fork of T3 Code. Files that came from T3 Code remain under T3 Code's copyright
 and the MIT License; what the fork changed is recorded in docs/FORK.md.
 
-Planned: OpenCut (https://github.com/OpenCut-app/OpenCut, MIT License). No OpenCut code is included
-yet. When some is, it is credited here with its copyright line.
+It also includes code adapted from:
+
+  OpenCut classic (timeline ruler intervals, snapping and track layout constants; the timeline
+  editing controllers: resize, element interaction, group move, group resize and placement)
+  https://github.com/opencut-app/opencut-classic (commit cf5e79e9)
+  Copyright 2025-2026 OpenCut
+  Licensed under the MIT License
+  (apps/web/src/components/editor/timeline/vendor/opencut/LICENSE.opencut,
+  apps/web/src/components/editor/timeline/controllers/LICENSE.opencut)
 
 Proprietary component
 

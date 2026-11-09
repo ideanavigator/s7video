@@ -15,6 +15,7 @@ import {
   SilenceCutError,
   SilenceDetectResult,
 } from "@t3tools/contracts";
+import { hasLinkedAudio } from "@t3tools/shared/editWordCuts";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -38,6 +39,8 @@ export interface RemoveSilencesInput {
   readonly minGapSeconds?: number;
   /** Clip-frame ranges (the transcript's frames) that must keep playing. */
   readonly keep?: ReadonlyArray<FrameRange>;
+  /** The chat reply asking, so its changes make one version (S7V-069). */
+  readonly reply?: EditDocumentService.EditReply | undefined;
 }
 
 export interface RemoveSilencesResult {
@@ -136,28 +139,6 @@ function placement(document: EditDocument, media: EditMedia) {
   };
 }
 
-/** Sound linked to the clip's video items would fall out of step, so it is refused for now. */
-function hasLinkedAudio(document: EditDocument, media: EditMedia) {
-  const links = new Set(
-    document.tracks.flatMap((track) =>
-      track.kind === "video"
-        ? track.items.flatMap((item) =>
-            item.media === media.id && item.linkId !== undefined ? [item.linkId] : [],
-          )
-        : [],
-    ),
-  );
-  return document.tracks.some(
-    (track) =>
-      track.kind !== "video" &&
-      track.items.some(
-        (item) =>
-          ("media" in item && item.media === media.id) ||
-          ("linkId" in item && item.linkId !== undefined && links.has(item.linkId)),
-      ),
-  );
-}
-
 const make = Effect.gen(function* () {
   const edits = yield* EditDocumentService.EditDocumentService;
   const engine = yield* EngineService.EngineService;
@@ -240,7 +221,7 @@ const make = Effect.gen(function* () {
     if (mediaFrames === undefined || !media.probe.hasAudio) {
       return yield* refuse("media", `${media.id} has no sound to find pauses in.`);
     }
-    if (hasLinkedAudio(document, media)) {
+    if (hasLinkedAudio(document, media.id)) {
       return yield* refuse(
         "linked-audio",
         `${media.id} has linked sound on another track; silence removal cannot cut it yet.`,
@@ -346,7 +327,12 @@ const make = Effect.gen(function* () {
           start: target.start,
         },
       ],
-      { origin: "agent", baseRevision: revision },
+      {
+        origin: "agent",
+        baseRevision: revision,
+        reply: input.reply,
+        summary: `Removed ${summary.removedSeconds} s of silence in ${plan.cuts} cuts`,
+      },
     );
     return { ...summary, revision: after.revision, changed: after.revision !== revision };
   });

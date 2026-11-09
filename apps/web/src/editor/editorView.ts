@@ -3,7 +3,14 @@
 /** What the Editor panel's player shows for the project's edit and media (S7V-029). */
 import type { MediaAsset, MediaLibrarySnapshot, MediaVariant } from "@t3tools/contracts";
 
-import { clipPlaybackPlan, editPlaybackPlan, type PlaybackPlan } from "./editPlayback";
+import {
+  clipPlaybackPlan,
+  editPlaybackPlan,
+  editTimelinePlan,
+  type PlaybackPlan,
+  playsAsSingleSource,
+  type TimelinePlan,
+} from "./editPlayback";
 import type { PlayerSource, ProjectEditState } from "./editStore";
 import type { MediaLibraryState } from "../state/media";
 
@@ -22,7 +29,27 @@ export type PlayerView =
       readonly variant: Extract<MediaVariant, "original" | "proxy">;
       /** `edit` plays the cut; `clip` a whole clip, picked in Assets or not on the timeline yet. */
       readonly mode: "edit" | "clip";
+    }
+  /** The edit from several clips, or with gaps or reordered parts, on the player clock (S7V-039). */
+  | {
+      readonly _tag: "play-timeline";
+      readonly plan: TimelinePlan;
+      /** One entry per media id the plan uses, in first-use order. */
+      readonly sources: ReadonlyArray<TimelineSourceView>;
     };
+
+export interface TimelineSourceView {
+  readonly mediaId: string;
+  /** Undefined when the edit names media the library does not have. */
+  readonly asset: MediaAsset | undefined;
+  /** The library's label, or the file name the edit records; never an internal id. */
+  readonly label: string;
+  readonly variant: Extract<MediaVariant, "original" | "proxy">;
+}
+
+const variantOf = (asset: MediaAsset): Extract<MediaVariant, "original" | "proxy"> =>
+  // The proxy seeks fast enough to skip cuts cleanly; the original is used until it is ready.
+  asset.proxy.status === "ready" ? "proxy" : "original";
 
 const playAsset = (asset: MediaAsset, plan: PlaybackPlan, mode: "edit" | "clip"): PlayerView => {
   if (asset.state === "missing") return { _tag: "missing", asset };
@@ -30,8 +57,7 @@ const playAsset = (asset: MediaAsset, plan: PlaybackPlan, mode: "edit" | "clip")
     _tag: "play",
     plan,
     asset,
-    // The proxy seeks fast enough to skip cuts cleanly; the original is used until it is ready.
-    variant: asset.proxy.status === "ready" ? "proxy" : "original",
+    variant: variantOf(asset),
     mode,
   };
 };
@@ -64,11 +90,32 @@ export function playerViewOf(
     if (view !== null) return view;
   }
 
-  const document = edit.snapshot.document;
-  const plan = editPlaybackPlan(document);
+  const document = source.kind === "version" ? source.document : edit.snapshot.document;
+  const timeline = editTimelinePlan(document);
+  // One source laid end to end keeps Engine A's player; any other layout plays on the clock.
+  const plan =
+    timeline === null || playsAsSingleSource(timeline) ? editPlaybackPlan(document) : null;
   if (plan !== null) {
     const asset = assetOf(plan.mediaId);
     if (asset !== undefined) return playAsset(asset, plan, "edit");
+  }
+  // A version's clip may have left Assets since: the clock player shows it as missing.
+  if (timeline !== null && (plan === null || source.kind === "version")) {
+    return {
+      _tag: "play-timeline",
+      plan: timeline,
+      sources: timeline.mediaIds.map((mediaId) => {
+        const asset = assetOf(mediaId);
+        const recorded = document.media.find((entry) => entry.id === mediaId);
+        const file = (recorded?.path ?? recorded?.reference)?.split(/[\\/]/u).at(-1);
+        return {
+          mediaId,
+          asset,
+          label: asset?.label ?? (file || "a clip"),
+          variant: asset === undefined ? "original" : variantOf(asset),
+        };
+      }),
+    };
   }
   if (document.tracks.some((track) => track.kind === "video")) return { _tag: "all-cut" };
   const firstVideo = snapshot.items.find((item) => item.hasVideo);

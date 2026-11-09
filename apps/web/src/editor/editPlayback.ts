@@ -1,9 +1,9 @@
 // SPDX-FileCopyrightText: 2026 s7video contributors
 // SPDX-License-Identifier: MIT
 /**
- * How the Editor player plays an edit (S7V-029): the kept parts of one source clip, in order, as
- * frame ranges at the document fps. The player plays a range and seeks over the gap to the next.
- * Frames are integers; times are seconds in the source file.
+ * How the Editor player plays an edit, in integer frames at the document fps. Engine A (S7V-029):
+ * the kept parts of one source, packed. The timeline plan (S7V-039): every item of the first
+ * video track at its own `start`, with gaps and several sources, as export renders them.
  */
 import type { EditCanvas, EditDocument, EditRational } from "@t3tools/contracts";
 
@@ -180,4 +180,137 @@ export function formatPlaybackClock(frame: number, fps: EditRational): string {
   return hours > 0
     ? `${hours}:${String(minutes).padStart(2, "0")}:${seconds}`
     : `${minutes}:${seconds}`;
+}
+
+/**
+ * One item of the first video track as the multi-clip player plays it (S7V-039): edit frames
+ * `[start, end)` show source frames from `in` of `mediaId`, at the document fps.
+ */
+export interface TimelineSegment {
+  readonly mediaId: string;
+  readonly start: number;
+  readonly end: number;
+  readonly in: number;
+  /** Plays silent: the item or its track is muted, as export renders it. */
+  readonly muted: boolean;
+}
+
+/**
+ * The edit's first video track in timeline order (S7V-039). Edit frames between segments (and
+ * before the first) are black and silent, as in export (`plan_segments` in export.py).
+ */
+export interface TimelinePlan {
+  readonly fps: EditRational;
+  /** Sorted by `start`, never overlapping. */
+  readonly segments: ReadonlyArray<TimelineSegment>;
+  /** The end of the last segment: the exported length. */
+  readonly durationFrames: number;
+  /** Every media id the segments use, in first-use order. */
+  readonly mediaIds: ReadonlyArray<string>;
+  readonly canvas?: EditCanvas;
+}
+
+/** The parts of either plan the timeline needs to map player frames (`editFrames.ts`). */
+export type PlayerFramePlan = Pick<PlaybackPlan | TimelinePlan, "durationFrames">;
+
+/**
+ * The first video track at its item starts, gaps included. Back-to-back items that continue the
+ * same source merge into one segment, so the player plays straight through them. `null` when the
+ * edit has no video item.
+ */
+export function editTimelinePlan(document: EditDocument): TimelinePlan | null {
+  const track = document.tracks.find((entry) => entry.kind === "video");
+  if (track === undefined || track.kind !== "video" || track.items.length === 0) return null;
+  const items = [...track.items].sort((left, right) => left.start - right.start);
+  const segments: TimelineSegment[] = [];
+  for (const item of items) {
+    const last = segments.at(-1);
+    // Validation rejects overlaps; a stray one plays the later item from where the earlier ends.
+    const start = Math.max(item.start, last?.end ?? 0);
+    const end = item.start + item.duration;
+    if (end <= start) continue;
+    const segment: TimelineSegment = {
+      mediaId: item.media,
+      start,
+      end,
+      in: item.in + (start - item.start),
+      muted: item.muted === true || track.muted === true,
+    };
+    if (
+      last !== undefined &&
+      last.end === segment.start &&
+      last.mediaId === segment.mediaId &&
+      last.in + (last.end - last.start) === segment.in &&
+      last.muted === segment.muted
+    ) {
+      segments[segments.length - 1] = { ...last, end: segment.end };
+    } else {
+      segments.push(segment);
+    }
+  }
+  if (segments.length === 0) return null;
+  return {
+    fps: document.fps,
+    segments,
+    durationFrames: segments.at(-1)!.end,
+    mediaIds: [...new Set(segments.map((segment) => segment.mediaId))],
+    ...(document.canvas === undefined ? {} : { canvas: document.canvas }),
+  };
+}
+
+/**
+ * True when the Engine A player plays `plan` exactly: one source, laid end to end from frame 0,
+ * moving forward through it, and never muted. Its packed frames then equal the item starts, so
+ * single-source edits keep Engine A's player (S7V-039 AC-7).
+ */
+export function playsAsSingleSource(plan: TimelinePlan): boolean {
+  if (plan.mediaIds.length !== 1) return false;
+  let at = 0;
+  let sourceAt = 0;
+  for (const segment of plan.segments) {
+    if (segment.start !== at || segment.in < sourceAt || segment.muted) return false;
+    at = segment.end;
+    sourceAt = segment.in + segment.end - segment.start;
+  }
+  return true;
+}
+
+/** The segment showing edit frame `frame`, or -1 in a gap or past the end. Binary search. */
+export function timelineSegmentAt(segments: ReadonlyArray<TimelineSegment>, frame: number): number {
+  let low = 0;
+  let high = segments.length - 1;
+  while (low <= high) {
+    const middle = (low + high) >> 1;
+    const segment = segments[middle]!;
+    if (frame < segment.start) high = middle - 1;
+    else if (frame >= segment.end) low = middle + 1;
+    else return middle;
+  }
+  return -1;
+}
+
+/** The first segment starting at or after edit frame `frame`, or -1 when none does. */
+export function nextTimelineSegmentFrom(
+  segments: ReadonlyArray<TimelineSegment>,
+  frame: number,
+): number {
+  let low = 0;
+  let high = segments.length;
+  while (low < high) {
+    const middle = (low + high) >> 1;
+    if (segments[middle]!.start < frame) low = middle + 1;
+    else high = middle;
+  }
+  return low < segments.length ? low : -1;
+}
+
+/** The source frame of `segment` at edit frame `frame`, clamped into the segment. */
+export function sourceFrameInSegment(segment: TimelineSegment, frame: number): number {
+  const offset = Math.max(0, Math.min(frame, segment.end - 1) - segment.start);
+  return segment.in + offset;
+}
+
+/** The edit frame showing source frame `frame` of `segment` (it may fall outside the segment). */
+export function editFrameInSegment(segment: TimelineSegment, sourceFrame: number): number {
+  return segment.start + sourceFrame - segment.in;
 }

@@ -522,6 +522,109 @@ describe.skipIf(!realEngineAvailable)("EngineService with the real engine", () =
     }).pipe(Effect.scoped, Effect.provide(realLayer())),
   );
 
+  it.live("runs waveform and filmstrip as one media-data job with progress 0 to 1", () =>
+    Effect.gen(function* () {
+      const engine = yield* EngineService.EngineService;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "engine-data-" });
+      const clip = path.join(directory, "talk.mp4");
+      NodeChildProcess.execFileSync(toolPath("ffmpeg")!, [
+        "-v",
+        "error",
+        "-f",
+        "lavfi",
+        "-i",
+        "testsrc2=s=320x180:r=30:d=6",
+        "-f",
+        "lavfi",
+        "-i",
+        "sine=f=440:r=48000:d=6",
+        "-c:v",
+        "mpeg4",
+        "-c:a",
+        "aac",
+        clip,
+      ]);
+      const events: EngineJobsEvent[] = [];
+      yield* engine.subscribeJobs.pipe(
+        Stream.runForEach((event) => Effect.sync(() => events.push(event))),
+        Effect.forkScoped,
+      );
+      const steps: string[] = [];
+      let jobId: EngineJobId | undefined;
+      yield* engine.mediaData({
+        projectId: ProjectId.make("project-data"),
+        peaks: { path: clip, outputDir: path.join(directory, "peaks") },
+        filmstrip: {
+          path: clip,
+          outputDir: path.join(directory, "filmstrip"),
+          rate: { num: 30, den: 1 },
+        },
+        onStart: (id) => Effect.sync(() => void (jobId = id)),
+        onStep: (step) => Effect.sync(() => void steps.push(step)),
+      });
+      expect(steps).toEqual(["peaks", "filmstrip"]);
+      expect(yield* fileSystem.exists(path.join(directory, "peaks", "index.json"))).toBe(true);
+      expect(yield* fileSystem.exists(path.join(directory, "filmstrip", "1s-1.jpg"))).toBe(true);
+      const ours = events.flatMap((event) =>
+        event.type === "updated" && event.job.id === jobId ? [event.job] : [],
+      );
+      expect(ours[0]).toMatchObject({ kind: "media-data", progress: 0, state: "running" });
+      expect(ours.at(-1)).toMatchObject({ state: "succeeded", progress: 1 });
+      const progress = ours.map((job) => job.progress);
+      expect(progress).toEqual([...progress].sort((a, b) => a - b));
+      // The filmstrip step reports into the upper part of the bar, after the waveform's share.
+      expect(ours.some((job) => job.stage === "picture strip" && job.progress > 0.1)).toBe(true);
+    }).pipe(Effect.scoped, Effect.provide(realLayer())),
+  );
+
+  it.live("cancels a media-data job within 1 s and leaves no index", () =>
+    Effect.gen(function* () {
+      const engine = yield* EngineService.EngineService;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "engine-data-" });
+      const clip = path.join(directory, "long.mp4");
+      NodeChildProcess.execFileSync(toolPath("ffmpeg")!, [
+        "-v",
+        "error",
+        "-f",
+        "lavfi",
+        "-i",
+        "testsrc2=s=1280x720:r=30:d=120",
+        "-c:v",
+        "mpeg4",
+        "-q:v",
+        "8",
+        clip,
+      ]);
+      const progressed = yield* Deferred.make<EngineJobId>();
+      yield* engine.subscribeJobs.pipe(
+        Stream.runForEach((event) =>
+          event.type === "updated" && event.job.kind === "media-data" && event.job.progress > 0
+            ? Deferred.succeed(progressed, event.job.id)
+            : Effect.void,
+        ),
+        Effect.forkScoped,
+      );
+      const output = path.join(directory, "filmstrip");
+      const job = yield* engine
+        .mediaData({
+          projectId: ProjectId.make("project-data"),
+          filmstrip: { path: clip, outputDir: output, rate: { num: 30, den: 1 } },
+        })
+        .pipe(Effect.flip, Effect.forkChild);
+      const jobId = yield* Deferred.await(progressed);
+      const before = yield* Clock.currentTimeMillis;
+      expect(yield* engine.cancelJob(jobId)).toBe(true);
+      const error = yield* Fiber.join(job);
+      expect((yield* Clock.currentTimeMillis) - before).toBeLessThan(1_000);
+      expect(error.reason).toBe("cancelled");
+      expect(yield* fileSystem.readDirectory(output)).toEqual([]);
+    }).pipe(Effect.scoped, Effect.provide(realLayer())),
+  );
+
   it.live("probes and grabs a frame as a PNG path, logging to the engine folder", () =>
     Effect.gen(function* () {
       const engine = yield* EngineService.EngineService;

@@ -29,6 +29,7 @@ import {
   pickProjectFavicon,
   probeRemoteEditors,
   readMedia,
+  revealWindow,
 } from "./window.ts";
 
 const readySecondaryConfig: DesktopBackendManager.DesktopBackendStartConfig = {
@@ -321,4 +322,26 @@ it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
       assert.include(editors, "vscode");
       assert.include(editors, "webstorm");
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+// S7V-074: the renderer calls this only on a notification click, a user action.
+it.effect("a notification click reveals the main window with a focus steal", () =>
+  Effect.gen(function* () {
+    const reveals: unknown[] = [];
+    const main = { webContents: { id: 1 } } as unknown as Electron.BrowserWindow;
+    const reveal = (senderId: number) =>
+      revealWindow.handler(undefined, { sender: { id: senderId } }).pipe(
+        Effect.provide(
+          Layer.mock(ElectronWindow.ElectronWindow)({
+            main: Effect.succeedSome(main),
+            reveal: (_window, options) => Effect.sync(() => reveals.push(options)),
+          }),
+        ),
+      );
+
+    yield* reveal(2);
+    assert.deepEqual(reveals, []);
+    yield* reveal(1);
+    assert.deepEqual(reveals, [{ steal: true }]);
+  }),
 );

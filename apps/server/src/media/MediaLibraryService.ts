@@ -1,10 +1,10 @@
 // SPDX-FileCopyrightText: 2026 s7video contributors
 // SPDX-License-Identifier: MIT
 /**
- * A project's media (S7V-025). Import probes and fingerprints a file, copies it into `assets/` or
- * records where it is, and puts it in `edit.json` through EditDocumentService. Thumbnails and
- * proxies go to the ignored `.s7cache/`; proxy and copy progress live here, never in `edit.json`.
- * The asset route asks `resolveVariant` before it serves a byte, so only recorded media is served.
+ * A project's media (S7V-025): import puts a file in `edit.json` (copied or by reference).
+ * Thumbnails, proxies, waveforms and filmstrips go to the ignored `.s7cache/` by sha256; job and
+ * copy progress live here, never in `edit.json`. The asset route asks `resolveVariant` before
+ * it serves a byte, so only recorded media is served.
  */
 import {
   EditConflict,
@@ -16,6 +16,11 @@ import {
   type EditRational,
   type EngineJobId,
   type MediaAsset,
+  type MediaDataPart,
+  type MediaDataPartName,
+  type MediaDataState,
+  MediaFilmstripIndex,
+  MediaPeaksIndex,
   type MediaImportInput,
   type MediaImportPlan,
   type MediaImportPlanInput,
@@ -78,7 +83,12 @@ export class MediaLibraryService extends Context.Service<
     ) => Effect.Effect<MediaImportPlan, MediaLibraryError>;
     /** `label` names a file stored under another name (a chat attachment's id). */
     readonly import: (
-      input: MediaImportInput & { readonly origin?: EditOrigin; readonly label?: string },
+      input: MediaImportInput & {
+        readonly origin?: EditOrigin;
+        readonly label?: string;
+        /** The chat reply importing, so its changes make one version (S7V-069). */
+        readonly reply?: EditDocumentService.EditReply | undefined;
+      },
     ) => Effect.Effect<MediaImportResult, MediaLibraryError>;
     /** Points a media at a moved original; refused unless the fingerprint matches. */
     readonly relink: (
@@ -89,11 +99,15 @@ export class MediaLibraryService extends Context.Service<
     readonly subscribe: (
       projectId: ProjectId,
     ) => Stream.Stream<MediaLibrarySnapshot, MediaLibraryError>;
-    /** The file behind one variant of a media recorded in that project's `edit.json`, if any. */
+    /**
+     * The file behind one variant of a media recorded in that project's `edit.json`, if any.
+     * `peaks` and `filmstrip` need a `part` (one file of many); the other variants refuse one.
+     */
     readonly resolveVariant: (
       projectId: ProjectId,
       mediaId: string,
       variant: MediaVariant,
+      part?: MediaDataPartName,
     ) => Effect.Effect<Option.Option<ResolvedMediaVariant>>;
   }
 >()("t3/media/MediaLibraryService") {}
@@ -180,6 +194,26 @@ export const mediaIdFor = (fileName: string, taken: ReadonlySet<string>) => {
   }
 };
 
+const decodePeaksIndex = Schema.decodeUnknownOption(Schema.fromJsonString(MediaPeaksIndex));
+const decodeFilmstripIndex = Schema.decodeUnknownOption(Schema.fromJsonString(MediaFilmstripIndex));
+const MEDIA_DATA_INDEX = "index.json";
+
+/** The file a `part` names inside its variant's folder (`MediaDataPartName`). */
+const mediaDataFile = (variant: "peaks" | "filmstrip", part: string) => {
+  if (part === "index") return MEDIA_DATA_INDEX;
+  if (variant === "peaks" && /^p[1-9][0-9]*$/u.test(part)) return `${part.slice(1)}.f32`;
+  if (variant === "filmstrip" && /^f[1-9][0-9]*s-[1-9][0-9]*$/u.test(part)) {
+    return `${part.slice(1)}.jpg`;
+  }
+  return undefined;
+};
+
+interface MediaDataRun {
+  readonly status: "preparing" | "failed";
+  readonly jobId?: EngineJobId;
+  readonly progress?: number;
+}
+
 interface ProxyRun {
   readonly status: "preparing" | "failed";
   readonly jobId?: EngineJobId;
@@ -211,9 +245,21 @@ const make = Effect.fn("MediaLibraryService.make")(function* (options: MediaLibr
   /** Media whose proxy need this server run has already judged. */
   const proxyChecked = new Set<string>();
 
+  /** Media-data jobs by the same key; finished data is its index files in `.s7cache/`. */
+  const mediaDataRuns = new Map<string, MediaDataRun>();
+  const mediaDataJobs = new Map<EngineJobId, { key: string; projectId: ProjectId }>();
+  const mediaDataClaims = new Set<string>();
+  const mediaDataChecked = new Set<string>();
+
   yield* engine.subscribeJobs.pipe(
     Stream.runForEach((event) => {
       if (event.type !== "updated" || event.job.state !== "running") return Effect.void;
+      const data = mediaDataJobs.get(event.job.id);
+      const dataRun = data && mediaDataRuns.get(data.key);
+      if (data && dataRun?.status === "preparing") {
+        mediaDataRuns.set(data.key, { ...dataRun, progress: event.job.progress });
+        return notify(data.projectId);
+      }
       const owner = proxyJobs.get(event.job.id);
       const run = owner && proxyRuns.get(owner.key);
       if (!owner || run?.status !== "preparing") return Effect.void;
@@ -243,11 +289,21 @@ const make = Effect.fn("MediaLibraryService.make")(function* (options: MediaLibr
     projectId: ProjectId,
     origin: EditOrigin,
     build: (document: EditDocument) => ReadonlyArray<EditOp>,
+    version: {
+      readonly summary: () => string;
+      readonly reply?: EditDocumentService.EditReply | undefined;
+    },
   ) {
     for (let attempt = 1; ; attempt += 1) {
       const snapshot = yield* readDocument(projectId);
+      const ops = build(snapshot.document);
       const result = yield* edits
-        .apply(projectId, build(snapshot.document), { origin, baseRevision: snapshot.revision })
+        .apply(projectId, ops, {
+          origin,
+          baseRevision: snapshot.revision,
+          reply: version.reply,
+          summary: version.summary(),
+        })
         .pipe(
           Effect.asSome,
           Effect.catchIf(
@@ -263,6 +319,9 @@ const make = Effect.fn("MediaLibraryService.make")(function* (options: MediaLibr
   const cachePaths = (root: string, sha256: string) => ({
     thumbnail: path.join(root, CACHE_DIR, "thumbs", `${sha256}.jpg`),
     proxy: path.join(root, CACHE_DIR, "proxies", `${sha256}.mp4`),
+    /** Folders: `index.json` plus one file per level or sheet, written by the engine. */
+    peaks: path.join(root, CACHE_DIR, "peaks", sha256),
+    filmstrip: path.join(root, CACHE_DIR, "filmstrip", sha256),
   });
 
   const originalPath = (root: string, media: EditMedia) =>
@@ -318,6 +377,55 @@ const make = Effect.fn("MediaLibraryService.make")(function* (options: MediaLibr
     return { status: ready ? "ready" : "none" } satisfies MediaProxyState;
   });
 
+  /** Whether a finished index of the current version is there; it is written last. */
+  const mediaDataReady = Effect.fnUntraced(function* (
+    root: string,
+    sha256: string,
+    variant: "peaks" | "filmstrip",
+  ) {
+    const file = path.join(cachePaths(root, sha256)[variant], MEDIA_DATA_INDEX);
+    const text = yield* fileSystem.readFileString(file).pipe(Effect.option);
+    if (Option.isNone(text)) return false;
+    return variant === "peaks"
+      ? Option.isSome(decodePeaksIndex(text.value))
+      : Option.isSome(decodeFilmstripIndex(text.value));
+  });
+
+  /** Which media data this media can have at all: no sound has no waveform, no picture no strip. */
+  const mediaDataWants = (media: Pick<EditMedia, "kind" | "probe">) => ({
+    peaks: media.probe.hasAudio,
+    filmstrip: media.kind === "video" && media.probe.hasVideo && media.probe.fps !== undefined,
+  });
+
+  const mediaDataState = Effect.fnUntraced(function* (
+    projectId: ProjectId,
+    root: string,
+    media: EditMedia,
+  ) {
+    const sha256 = media.fingerprint.sha256;
+    const wants = mediaDataWants(media);
+    const part = (wanted: boolean, ready: boolean): MediaDataPart =>
+      !wanted ? "none" : ready ? "ready" : "pending";
+    const peaks = part(wants.peaks, wants.peaks && (yield* mediaDataReady(root, sha256, "peaks")));
+    const filmstrip = part(
+      wants.filmstrip,
+      wants.filmstrip && (yield* mediaDataReady(root, sha256, "filmstrip")),
+    );
+    const run = mediaDataRuns.get(`${projectId}\0${sha256}`);
+    if (run !== undefined) {
+      return {
+        status: run.status,
+        ...(run.jobId === undefined ? {} : { jobId: run.jobId }),
+        ...(run.progress === undefined ? {} : { progress: run.progress }),
+        peaks,
+        filmstrip,
+      } satisfies MediaDataState;
+    }
+    const pending = peaks === "pending" || filmstrip === "pending";
+    const status = pending || (peaks === "none" && filmstrip === "none") ? "none" : "ready";
+    return { status, peaks, filmstrip } satisfies MediaDataState;
+  });
+
   const assetOf = Effect.fnUntraced(function* (
     projectId: ProjectId,
     root: string,
@@ -348,6 +456,7 @@ const make = Effect.fn("MediaLibraryService.make")(function* (options: MediaLibr
       hasAudio: probe.hasAudio,
       hasThumbnail: Option.isSome(yield* isFile(cache.thumbnail)),
       proxy: yield* proxyState(projectId, root, media.fingerprint.sha256),
+      mediaData: yield* mediaDataState(projectId, root, media),
     } satisfies MediaAsset;
   });
 
@@ -390,14 +499,36 @@ const make = Effect.fn("MediaLibraryService.make")(function* (options: MediaLibr
     }
   });
 
+  /** Media from before S7V-035, or whose job was cut short, get their data on the first list. */
+  const ensureMediaData = Effect.fnUntraced(function* (
+    projectId: ProjectId,
+    root: string,
+    media: EditMedia,
+  ) {
+    const key = `${projectId}\0${media.fingerprint.sha256}`;
+    if (mediaDataChecked.has(key)) return;
+    mediaDataChecked.add(key);
+    const source = originalPath(root, media);
+    if (source === undefined || !(yield* isPresent(root, media))) {
+      mediaDataChecked.delete(key);
+      return;
+    }
+    yield* startMediaData(projectId, root, source, media);
+  });
+
   const list: MediaLibraryService["Service"]["list"] = Effect.fn("MediaLibraryService.list")(
     function* (projectId) {
       const { document } = yield* readDocument(projectId);
       const snapshot = yield* snapshotOf(projectId, document);
       const root = yield* projectRoot(projectId);
-      yield* Effect.forEach(document.media, (media) => ensureProxy(projectId, root, media), {
-        discard: true,
-      }).pipe(Effect.ignore, Effect.forkIn(serviceScope));
+      yield* Effect.forEach(
+        document.media,
+        (media) =>
+          ensureProxy(projectId, root, media).pipe(
+            Effect.andThen(ensureMediaData(projectId, root, media)),
+          ),
+        { discard: true },
+      ).pipe(Effect.ignore, Effect.forkIn(serviceScope));
       return snapshot;
     },
   );
@@ -611,6 +742,73 @@ const make = Effect.fn("MediaLibraryService.make")(function* (options: MediaLibr
     return yield* Deferred.await(started);
   });
 
+  /**
+   * Starts the waveform and filmstrip job in the background when either is missing; a finished
+   * index for this fingerprint is reused and starts no decode. One job per media at a time.
+   * The filmstrip reads the proxy when there is one (frame N of the proxy is frame N).
+   */
+  const startMediaData = Effect.fnUntraced(function* (
+    projectId: ProjectId,
+    root: string,
+    source: string,
+    media: Pick<EditMedia, "kind" | "probe" | "fingerprint">,
+  ) {
+    const sha256 = media.fingerprint.sha256;
+    const key = `${projectId}\0${sha256}`;
+    if (mediaDataClaims.has(key)) return;
+    mediaDataClaims.add(key);
+    const wants = mediaDataWants(media);
+    const cache = cachePaths(root, sha256);
+    const peaks = wants.peaks && !(yield* mediaDataReady(root, sha256, "peaks"));
+    const fps = media.probe.fps;
+    const filmstrip =
+      wants.filmstrip && fps !== undefined && !(yield* mediaDataReady(root, sha256, "filmstrip"));
+    if (!peaks && !filmstrip) {
+      mediaDataClaims.delete(key);
+      return;
+    }
+    const pictures = Option.isSome(yield* isFile(cache.proxy)) ? cache.proxy : source;
+    // Settles once the job has its id (or failed before it began), so the caller sees it listed.
+    const started = yield* Deferred.make<void>();
+    mediaDataRuns.set(key, { status: "preparing", progress: 0 });
+    yield* engine
+      .mediaData({
+        projectId,
+        ...(peaks ? { peaks: { path: source, outputDir: cache.peaks } } : {}),
+        ...(filmstrip && fps !== undefined
+          ? { filmstrip: { path: pictures, outputDir: cache.filmstrip, rate: fps } }
+          : {}),
+        onStart: (jobId) =>
+          Effect.suspend(() => {
+            mediaDataRuns.set(key, { status: "preparing", jobId, progress: 0 });
+            mediaDataJobs.set(jobId, { key, projectId });
+            return Deferred.succeed(started, undefined).pipe(Effect.andThen(notify(projectId)));
+          }),
+        onStep: () => notify(projectId),
+      })
+      .pipe(
+        Effect.exit,
+        Effect.flatMap((exit) =>
+          Effect.suspend(() => {
+            const jobId = mediaDataRuns.get(key)?.jobId;
+            if (jobId !== undefined) mediaDataJobs.delete(jobId);
+            const cancelled =
+              exit._tag === "Failure" &&
+              (Cause.hasInterrupts(exit.cause) ||
+                exit.cause.reasons.some(
+                  (reason) => Cause.isFailReason(reason) && reason.error.reason === "cancelled",
+                ));
+            if (exit._tag === "Success" || cancelled) mediaDataRuns.delete(key);
+            else mediaDataRuns.set(key, { status: "failed" });
+            mediaDataClaims.delete(key);
+            return Deferred.succeed(started, undefined).pipe(Effect.andThen(notify(projectId)));
+          }),
+        ),
+        Effect.forkIn(serviceScope),
+      );
+    yield* Deferred.await(started);
+  });
+
   const sourceFile = Effect.fnUntraced(function* (sourcePath: string) {
     if (!path.isAbsolute(sourcePath)) {
       return yield* fail("not-found", "Give the file's full path.");
@@ -683,6 +881,7 @@ const make = Effect.fn("MediaLibraryService.make")(function* (options: MediaLibr
       // Importing again retries a thumbnail or proxy that failed or was cut short.
       proxyChecked.add(`${input.projectId}\0${fingerprint.sha256}`);
       const source = originalPath(root, existing) ?? real;
+      mediaDataChecked.add(`${input.projectId}\0${fingerprint.sha256}`);
       const [, retried] = yield* Effect.all(
         [
           thumbnailInBackground(input.projectId, root, source, fingerprint.sha256, probe),
@@ -690,6 +889,7 @@ const make = Effect.fn("MediaLibraryService.make")(function* (options: MediaLibr
         ],
         { concurrency: 2 },
       );
+      yield* startMediaData(input.projectId, root, source, existing);
       return { mediaId: existing.id, ...(retried === undefined ? {} : { jobId: retried }) };
     }
     const label =
@@ -716,10 +916,16 @@ const make = Effect.fn("MediaLibraryService.make")(function* (options: MediaLibr
     let mediaId = "";
     // Marked before the edit lands: the list that edit triggers must not probe the file again.
     proxyChecked.add(`${input.projectId}\0${fingerprint.sha256}`);
-    yield* applyWith(input.projectId, input.origin ?? "import", (document) => {
-      mediaId = existing?.id ?? mediaIdFor(label, allIds(document));
-      return [{ _tag: "putMedia", media: { id: mediaId, ...media } }];
-    }).pipe(
+    mediaDataChecked.add(`${input.projectId}\0${fingerprint.sha256}`);
+    yield* applyWith(
+      input.projectId,
+      input.origin ?? "import",
+      (document) => {
+        mediaId = existing?.id ?? mediaIdFor(label, allIds(document));
+        return [{ _tag: "putMedia", media: { id: mediaId, ...media } }];
+      },
+      { summary: () => `Imported ${label}`, reply: input.reply },
+    ).pipe(
       Effect.tapError(() =>
         location.path !== undefined && !inAssets
           ? fileSystem.remove(path.join(root, location.path), { force: true }).pipe(Effect.ignore)
@@ -737,6 +943,7 @@ const make = Effect.fn("MediaLibraryService.make")(function* (options: MediaLibr
       ],
       { concurrency: 2 },
     );
+    yield* startMediaData(input.projectId, root, readable, media);
     return { mediaId, ...(jobId === undefined ? {} : { jobId }) } satisfies MediaImportResult;
   });
 
@@ -769,15 +976,21 @@ const make = Effect.fn("MediaLibraryService.make")(function* (options: MediaLibr
         ...(media.label === undefined ? {} : { label: media.label }),
         ...(media.metadata === undefined ? {} : { metadata: media.metadata }),
       };
-      yield* applyWith(input.projectId, "import", () => [{ _tag: "putMedia", media: relinked }]);
+      yield* applyWith(input.projectId, "import", () => [{ _tag: "putMedia", media: relinked }], {
+        summary: () => `Found the moved file for ${media.label ?? media.id}`,
+      });
       return { mediaId: media.id };
     },
   );
 
   const resolveVariant: MediaLibraryService["Service"]["resolveVariant"] = Effect.fn(
     "MediaLibraryService.resolveVariant",
-  )(function* (projectId, mediaId, variant) {
+  )(function* (projectId, mediaId, variant, part) {
     const none = Option.none<ResolvedMediaVariant>();
+    const isData = variant === "peaks" || variant === "filmstrip";
+    if (isData !== (part !== undefined)) return none;
+    const dataFile = isData && part !== undefined ? mediaDataFile(variant, part) : undefined;
+    if (isData && dataFile === undefined) return none;
     const snapshot = yield* edits.read(projectId).pipe(Effect.option);
     if (Option.isNone(snapshot)) return none;
     const media = snapshot.value.document.media.find((entry) => entry.id === mediaId);
@@ -791,7 +1004,9 @@ const make = Effect.fn("MediaLibraryService.make")(function* (options: MediaLibr
           ? cache.proxy
           : variant === "thumbnail"
             ? cache.thumbnail
-            : undefined;
+            : isData && dataFile !== undefined
+              ? path.join(cache[variant], dataFile)
+              : undefined;
     if (candidate === undefined) return none;
     const real = yield* fileSystem.realPath(candidate).pipe(Effect.option);
     if (Option.isNone(real)) return none;
@@ -802,14 +1017,20 @@ const make = Effect.fn("MediaLibraryService.make")(function* (options: MediaLibr
         ? media.path === undefined
           ? undefined
           : root.value
-        : path.join(root.value, CACHE_DIR);
+        : isData
+          ? cache[variant]
+          : path.join(root.value, CACHE_DIR);
     if (mustBeUnder !== undefined && !real.value.startsWith(mustBeUnder + path.sep)) return none;
     const mimeType =
-      variant === "thumbnail"
+      variant === "thumbnail" || dataFile?.endsWith(".jpg")
         ? "image/jpeg"
-        : variant === "proxy"
-          ? "video/mp4"
-          : MEDIA_MIME_TYPES[path.extname(real.value).toLowerCase()];
+        : dataFile === MEDIA_DATA_INDEX
+          ? "application/json"
+          : dataFile?.endsWith(".f32")
+            ? "application/octet-stream"
+            : variant === "proxy"
+              ? "video/mp4"
+              : MEDIA_MIME_TYPES[path.extname(real.value).toLowerCase()];
     return mimeType === undefined ? none : Option.some({ path: real.value, mimeType });
   });
 

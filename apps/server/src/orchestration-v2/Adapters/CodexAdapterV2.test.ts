@@ -1698,6 +1698,97 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     ),
   );
 
+  it.effect("registers no direct wait server for a video project (S7V-072)", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const scenario = "video-mcp-servers";
+      yield* (yield* McpProviderSessions.McpProviderSessions).set({
+        environmentId: EnvironmentId.make("environment-codex-mcp"),
+        threadId: ThreadId.make(`thread-${scenario}`),
+        providerSessionId: `provider-session-${scenario}`,
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        endpoint: "http://127.0.0.1:43123/mcp",
+        authorizationHeader: "Bearer secret-codex-token",
+        browserToolsAvailable: true,
+        capabilities: new Set(["orchestration", "video"]),
+      });
+      const requests: Array<unknown> = [];
+      yield* makeCodexReplayHarness(
+        makeCodexReplayTranscript({
+          scenario,
+          // Video threads need Codex 0.159 or later and load the built-in skills first.
+          entries: (() => {
+            const [initialize, initializeResult, initialized, ...thread] = codexReplayPreamble({
+              nativeThreadId: "video-mcp-thread",
+              nativeTurnId: "unused",
+              prompt: "unused",
+            });
+            return [
+              initialize!,
+              {
+                ...initializeResult!,
+                frame: {
+                  id: 1,
+                  result: {
+                    userAgent: "s7video/0.166.0",
+                    codexHome: "/tmp/codex-home",
+                    platformFamily: "unix",
+                    platformOs: "macos",
+                  },
+                },
+              } as CodexReplay.CodexAppServerReplayEntry,
+              initialized!,
+              {
+                type: "expect_outbound",
+                label: "skills/extraRoots/set",
+                frame: {
+                  id: 2,
+                  method: "skills/extraRoots/set",
+                  params: {
+                    extraRoots: [path.resolve(import.meta.dirname, "../../../skills/skills")],
+                  },
+                },
+              },
+              {
+                type: "emit_inbound",
+                label: "skills/extraRoots/set",
+                frame: { id: 2, result: {} },
+              },
+              ...thread.slice(0, 2).map((entry) => withReplayRequestId(entry, 3)),
+            ] satisfies Array<CodexReplay.CodexAppServerReplayEntry>;
+          })(),
+        }),
+        () => Effect.void,
+        (method, params) =>
+          Effect.sync(() => {
+            if (method === "thread/start") requests.push(params);
+          }),
+      );
+      assert.deepEqual(requests, [
+        {
+          cwd: "/workspace",
+          model: "gpt-5.4",
+          config: {
+            "tools.update_plan.enabled": true,
+            mcp_optional_startup_grace_ms: 10_000,
+            "shell_environment_policy.set.T3CODE_THREAD_ID": `thread-${scenario}`,
+            "mcp_servers.t3-code": {
+              url: "http://127.0.0.1:43123/mcp",
+              tool_timeout_sec: 3_900,
+              http_headers: { Authorization: "Bearer secret-codex-token" },
+              disabled_tools: ["t3_thread_wait"],
+            },
+          },
+        },
+      ]);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
+  );
+
   // regression: #15839 launch-arg MCP servers survive the thread's t3-code server
   it.effect("replays historical and dotted MCP config while enforcing other thread config", () =>
     Effect.gen(function* () {

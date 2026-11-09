@@ -2,6 +2,7 @@ import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretReso
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
+  AuthFilesystemWriteScope,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   AuthSessionId,
@@ -27,6 +28,7 @@ import * as Deferred from "effect/Deferred";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
@@ -58,6 +60,7 @@ import * as EnvironmentTheme from "./environmentTheme.ts";
 import * as GitWorkflowService from "./git/GitWorkflowService.ts";
 import * as HostResources from "./resourceTelemetry/HostResources.ts";
 import * as ManagedProjectFolders from "./project/ManagedProjectFolders.ts";
+import { layerEditTest } from "./edit/editHarness.testkit.ts";
 import * as ScratchThreadPromotion from "./project/ScratchThreadPromotion.ts";
 import * as McpAppRequests from "./mcpApps/McpAppRequests.ts";
 import * as ModelManifest from "./provider/ModelManifest.ts";
@@ -72,6 +75,7 @@ import * as ProcessDiagnostics from "./diagnostics/ProcessDiagnostics.ts";
 import * as ProcessResourceMonitor from "./diagnostics/ProcessResourceMonitor.ts";
 import * as ProjectCloneTracker from "./project/ProjectCloneTracker.ts";
 import * as EngineService from "./engine/EngineService.ts";
+import * as CaptionStillsService from "./export/CaptionStillsService.ts";
 import * as ExportService from "./export/ExportService.ts";
 import * as TranscriptService from "./transcript/TranscriptService.ts";
 import * as MediaLibraryService from "./media/MediaLibraryService.ts";
@@ -576,6 +580,7 @@ const layerUnusedConfigRpcServices = Layer.mergeAll(
   Layer.mock(MediaLibraryService.MediaLibraryService)({}),
   Layer.mock(EngineService.EngineService)({}),
   Layer.mock(ExportService.ExportService)({}),
+  Layer.mock(CaptionStillsService.CaptionStillsService)({}),
   Layer.mock(TranscriptService.TranscriptService)({}),
   Layer.mock(ProjectService.ProjectService)({}),
   Layer.mock(EditDocumentService.EditDocumentService)({}),
@@ -1150,6 +1155,123 @@ it.effect("edit.apply refuses a media entry from a client, so it cannot point at
         Layer.fresh(layerConfigSources),
         Layer.mock(PreviewAutomationBroker.PreviewAutomationBroker)({}),
         Layer.mock(ServerBrowser.ServerBrowser)({}),
+      ),
+    ),
+    Effect.scoped,
+  ),
+);
+
+// S7V-054: `projects.writeFile` needs only filesystem write; an edit.json it writes with a file
+// from elsewhere on the Mac is refused on the next read, so the server never uses that file.
+it.effect("projects.writeFile with write-only scope cannot add outside media", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const baseDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "s7v-ws-edit-" });
+    const outsideDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "s7v-ws-outside-" });
+    const browser = yield* ServerBrowser.ServerBrowser;
+    yield* Effect.gen(function* () {
+      const folders = yield* ManagedProjectFolders.ManagedProjectFolders;
+      const edits = yield* EditDocumentService.EditDocumentService;
+      const created = yield* folders.createNamedProject({ name: "Write only" });
+      const reads: string[] = [];
+      const scopes = [AuthOrchestrationReadScope, AuthFilesystemWriteScope] as const;
+      const services = Layer.mergeAll(
+        layerUnusedConfigRpcServices,
+        Layer.succeed(EditDocumentService.EditDocumentService, edits),
+        // Upstream's writeFile, reduced to its effect: the file lands in the project.
+        Layer.mock(WorkspaceFileSystem.WorkspaceFileSystem)({
+          writeFile: (input) =>
+            fileSystem
+              .writeFileString(`${input.cwd}/${input.relativePath}`, input.contents)
+              .pipe(Effect.as({ relativePath: input.relativePath }), Effect.orDie),
+          readFile: (input) =>
+            Effect.sync(() => reads.push(input.relativePath)).pipe(
+              Effect.andThen(Effect.die("read")),
+            ),
+        }),
+        Layer.mock(ExternalLauncher.ExternalLauncher)({}),
+        Layer.mock(ProviderRegistry.ProviderRegistry)({}),
+        Layer.mock(UsageLimitSources.UsageLimitSources)({}),
+        Layer.mock(RemoteOpenTargets.RemoteOpenTargets)({}),
+        Layer.mock(DirectEndpoints.DirectEndpoints)({}),
+        Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({ namedProjectsRoot: "/unused" }),
+        Layer.mock(ScratchThreadPromotion.ScratchThreadPromotion)({}),
+        Layer.mock(ServerEnvironment.ServerEnvironment)({}),
+        Layer.mock(EnvironmentAuth.EnvironmentAuth)({}),
+      );
+      const client = yield* RpcTest.makeClient(WsRpcGroup).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            layerWsRpc(
+              {
+                sessionId: AuthSessionId.make("write-only"),
+                subject: "write-only",
+                method: "browser-session-cookie",
+                scopes,
+              },
+              {},
+              browser,
+              () => Effect.void,
+            ).pipe(Layer.provide(services)),
+            RpcAuthorization.layer(scopes),
+          ),
+        ),
+      );
+      const projectId = created.projectId;
+      // One change through the service first, so the refusal restores it from .s7history/.
+      const initial = yield* edits.read(projectId);
+      yield* edits.apply(
+        projectId,
+        [{ _tag: "setMarkers", markers: [{ id: "m1", start: 15, duration: 0, label: "Intro" }] }],
+        {
+          origin: "timeline",
+          baseRevision: initial.revision,
+        },
+      );
+      const opened = yield* client[WS_METHODS.editGet]({ projectId });
+      assert.isAbove(opened.revision, 0);
+      const secret = `${outsideDir}/voice-memo.m4a`;
+      yield* fileSystem.writeFileString(secret, "private");
+      const outside = {
+        ...opened.document,
+        media: [
+          {
+            id: "memo",
+            kind: "audio",
+            reference: secret,
+            fingerprint: { sha256: "0".repeat(64), size: 7 },
+            probe: { hasVideo: false, hasAudio: true },
+          },
+        ],
+      };
+      yield* client[WS_METHODS.projectsWriteFile]({
+        cwd: created.workspaceRoot,
+        relativePath: "edit.json",
+        contents: JSON.stringify(outside),
+      });
+      const refused = yield* client[WS_METHODS.editGet]({ projectId }).pipe(Effect.flip);
+      assert.deepInclude(refused, {
+        _tag: "EditUnavailableError",
+        reason: "outside-change-refused",
+      });
+      const read = yield* client[WS_METHODS.projectsReadFile]({
+        cwd: created.workspaceRoot,
+        relativePath: "edit.json",
+      }).pipe(Effect.flip);
+      assert.strictEqual(read._tag, "EnvironmentAuthorizationError");
+      assert.include(refused.message, "last saved version");
+      const next = yield* client[WS_METHODS.editGet]({ projectId });
+      assert.deepEqual(next.document, opened.document);
+      assert.strictEqual(next.revision, opened.revision);
+      assert.isEmpty(reads);
+    }).pipe(Effect.provide(layerEditTest(baseDir)));
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        Layer.fresh(layerConfigSources),
+        Layer.mock(PreviewAutomationBroker.PreviewAutomationBroker)({}),
+        Layer.mock(ServerBrowser.ServerBrowser)({}),
+        NodeServices.layer,
       ),
     ),
     Effect.scoped,

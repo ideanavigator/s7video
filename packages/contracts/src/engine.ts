@@ -142,6 +142,65 @@ export type MediaProxyInput = typeof MediaProxyInput.Type;
 export const MediaProxyResult = Schema.Struct({ path: Schema.String });
 export type MediaProxyResult = typeof MediaProxyResult.Type;
 
+/** `media.peaks` (S7V-035): a waveform mip written into `outputDir`, which the server chooses. */
+export const MediaPeaksInput = Schema.Struct({
+  path: TrimmedNonEmptyString,
+  outputDir: TrimmedNonEmptyString,
+  /** Samples per peak, ascending, each dividing the next. Default 256, 1,024, 4,096, 16,384. */
+  levels: Schema.optional(Schema.Array(PositiveInt)),
+});
+export type MediaPeaksInput = typeof MediaPeaksInput.Type;
+
+export const MediaPeaksLevel = Schema.Struct({
+  samplesPerPeak: PositiveInt,
+  count: NonNegativeInt,
+  /** A file in `outputDir`: `count` little-endian float32 `[min, max]` pairs. */
+  file: TrimmedNonEmptyString,
+});
+export type MediaPeaksLevel = typeof MediaPeaksLevel.Type;
+
+/** `audio: false` is the "no audio" marker: no levels, nothing to draw. */
+export const MediaPeaksResult = Schema.Struct({
+  audio: Schema.Boolean,
+  sampleRate: PositiveInt,
+  durationSamples: Schema.optional(NonNegativeInt),
+  offsetSamples: Schema.optional(Schema.Int),
+  levels: Schema.Array(MediaPeaksLevel),
+});
+export type MediaPeaksResult = typeof MediaPeaksResult.Type;
+
+/** `media.filmstrip` (S7V-035): JPEG sprite sheets per level, written into `outputDir`. */
+export const MediaFilmstripInput = Schema.Struct({
+  path: TrimmedNonEmptyString,
+  outputDir: TrimmedNonEmptyString,
+  /** The rate tile frames are counted at: the media's own frame rate. */
+  rate: EngineRational,
+  /** Seconds per tile. Default 16, 4 and 1. */
+  levels: Schema.optional(Schema.Array(PositiveInt)),
+  tileHeight: Schema.optional(Schema.Int.check(Schema.isBetween({ minimum: 16, maximum: 360 }))),
+});
+export type MediaFilmstripInput = typeof MediaFilmstripInput.Type;
+
+export const MediaFilmstripLevelSummary = Schema.Struct({
+  level: TrimmedNonEmptyString,
+  secondsPerTile: PositiveInt,
+  framesPerTile: PositiveInt,
+  sheets: Schema.Array(TrimmedNonEmptyString),
+  count: NonNegativeInt,
+});
+
+export const MediaFilmstripResult = Schema.Struct({
+  rate: EngineRational,
+  tileWidth: PositiveInt,
+  tileHeight: PositiveInt,
+  columns: PositiveInt,
+  rows: PositiveInt,
+  /** The index file in `outputDir` that maps every tile to its frame. */
+  index: TrimmedNonEmptyString,
+  levels: Schema.Array(MediaFilmstripLevelSummary),
+});
+export type MediaFilmstripResult = typeof MediaFilmstripResult.Type;
+
 export const EngineJobCancelResult = Schema.Struct({ cancelled: Schema.Boolean });
 
 /** `export.render`'s reply: the finished MP4 (S7V-028). Loudness is null for a silent export. */
@@ -168,6 +227,8 @@ export const ENGINE_RESPONSE_SCHEMAS = {
   "media.thumbnail": MediaThumbnailResult,
   "media.keyframes": MediaKeyframesResult,
   "media.proxy": MediaProxyResult,
+  "media.peaks": MediaPeaksResult,
+  "media.filmstrip": MediaFilmstripResult,
   "job.cancel": EngineJobCancelResult,
   "export.render": ExportRenderResult,
 } as const;
@@ -405,6 +466,49 @@ export class ExportStartError extends Schema.TaggedError<ExportStartError>()("Ex
     return this.reason === "no-transcript"
       ? "Transcribe the clip first, or export without captions."
       : "Could not create the project's exports folder.";
+  }
+}
+
+/**
+ * `captions.render`: the export's caption chunks, each naming a transparent PNG still in
+ * `cacheDir/<folder>/` (S7V-075). `drawn` counts the stills drawn by this call; the rest were cached.
+ */
+export const CaptionsRenderResult = Schema.Struct({
+  width: PositiveInt,
+  height: PositiveInt,
+  folder: TrimmedNonEmptyString,
+  drawn: NonNegativeInt,
+  chunks: Schema.Array(
+    Schema.Struct({ start: NonNegativeInt, end: NonNegativeInt, png: TrimmedNonEmptyString }),
+  ),
+});
+export type CaptionsRenderResult = typeof CaptionsRenderResult.Type;
+
+/**
+ * `captions.stills`: the captions the export burns in (the caption items, or the transcripts when
+ * there are none), in timeline frames (`end` exclusive), each naming one of `stills`, a PNG of the
+ * whole canvas drawn by the export's own renderer, base64. `missing` names the clips with sound
+ * whose transcript can't be read, so their captions can't follow the edit.
+ */
+export const CaptionStillsResult = Schema.Struct({
+  key: Schema.String,
+  width: PositiveInt,
+  height: PositiveInt,
+  chunks: Schema.Array(
+    Schema.Struct({ start: NonNegativeInt, end: NonNegativeInt, still: NonNegativeInt }),
+  ),
+  stills: Schema.Array(Schema.String),
+  missing: Schema.Array(Schema.String),
+});
+export type CaptionStillsResult = typeof CaptionStillsResult.Type;
+
+/** "Add captions" refused (S7V-075): a clip on the video track has no transcript, or none has sound. */
+export class CaptionsError extends Schema.TaggedError<CaptionsError>()("CaptionsError", {
+  reason: Schema.Literals(["no-transcript", "no-clips"]),
+  detail: Schema.String,
+}) {
+  override get message(): string {
+    return this.detail;
   }
 }
 

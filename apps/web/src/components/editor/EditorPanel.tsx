@@ -1,13 +1,16 @@
 // SPDX-FileCopyrightText: 2026 s7video contributors
 // SPDX-License-Identifier: MIT
 /**
- * The Editor right-panel kind (S7V-029): the player over the project's edit, with Transcript and
- * Assets tabs below and Export in the header. The panel belongs to a thread; the edit belongs to
+ * The Editor right-panel kind (S7V-029): the player over the project's edit, with Versions
+ * (S7V-069), Transcript and Media tabs below and Export in the header. A video dropped anywhere on
+ * it is imported (S7V-076). The panel belongs to a thread; the edit belongs to
  * the project, so every thread of a project shows the same edit.
  */
 import { scopedProjectKey } from "@t3tools/client-runtime/environment";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import {
+  type EditOp,
+  type EditSnapshot,
   type EngineJobId,
   type EnvironmentId,
   ExportStartError,
@@ -16,42 +19,81 @@ import {
 } from "@t3tools/contracts";
 import { ClapperboardIcon, FilmIcon, PlusIcon, TriangleAlertIcon, UploadIcon } from "lucide-react";
 import * as Schema from "effect/Schema";
-import { useId, useState, type DragEvent, type ReactNode } from "react";
+import { useEffect, useId, useState, type DragEvent, type ReactNode } from "react";
 
 import { useAssetUrlState } from "../../assets/assetUrls";
 import {
   editEnvironment,
   rememberedPlayerFrame,
   rememberPlayerFrame,
+  requestPlayerSeek,
   selectPlayerSource,
+  subscribePlayerFrame,
   useEditPlayerStore,
   useProjectExport,
   useProjectEdit,
 } from "../../editor/editStore";
-import { editPlaybackPlan } from "../../editor/editPlayback";
-import { playerViewOf, type PlayerView } from "../../editor/editorView";
-import type { TranscriptPlayback } from "../../editor/transcriptModel";
+import {
+  editPlaybackPlan,
+  type PlayerFramePlan,
+  type TimelinePlan,
+} from "../../editor/editPlayback";
+import { playerViewOf, type PlayerView, type TimelineSourceView } from "../../editor/editorView";
+import {
+  timelineTranscriptPlayback,
+  timelineTranscriptSegment,
+  type TranscriptPlayback,
+} from "../../editor/transcriptModel";
+import { useStableCallback } from "../../hooks/useStableCallback";
+import { observeResize } from "../../lib/observeResize";
 import { useMediaLibrary, type MediaLibraryState } from "../../state/media";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { Alert, AlertAction, AlertDescription } from "../ui/alert";
 import { Button } from "../ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "../ui/empty";
 import { Spinner } from "../ui/spinner";
 import { toastManager } from "../ui/toast";
 import { BROWSER_ADD_MEDIA_HINT } from "./addMediaHint";
 import { AssetsTab, useAssetsActions } from "./AssetsTab";
+import { CaptionOverlay } from "./CaptionOverlay";
 import { EditPlayer } from "./EditPlayer";
+import { HistoryCleanupBanner } from "./HistoryCleanupBanner";
 import { ImportDialog } from "./ImportDialog";
+import { MultiClipPlayer, type MultiClipSource } from "./MultiClipPlayer";
 import { SpeechModelPrompt } from "./SpeechModelPrompt";
-import { TranscriptTab } from "./TranscriptTab";
+import { applyOutcomeOfError, stepOutcomeOfError } from "../../editor/timelineEditing";
+import { editFrameToPlayerFrame } from "./timeline/editFrames";
+import type { TimelineEditing } from "./timeline/Timeline";
+import type { EditApplyOutcome, TimelineNotice } from "./timeline/timelineEditor";
+import { TimelinePane } from "./timeline/TimelinePane";
+import { type TranscriptEditing, TranscriptTab } from "./TranscriptTab";
+import { VersionsTab } from "./VersionsTab";
 
-type EditorTab = "transcript" | "assets";
+type EditorTab = "versions" | "transcript" | "media";
 
 const MAX_AUTOMATIC_RETRIES = 1;
 
 const TABS: ReadonlyArray<{ readonly id: EditorTab; readonly label: string }> = [
+  { id: "versions", label: "Versions" },
   { id: "transcript", label: "Transcript" },
-  { id: "assets", label: "Assets" },
+  { id: "media", label: "Media" },
 ];
+
+export const DROP_OVERLAY_TEXT = "Drop to add to this project. Nothing is uploaded.";
+
+/** One version row with its gap (`VersionsTab`), for the room the tabs keep (S7V-076). */
+const VERSION_ROW_PX = 62;
+/** The player, letterboxed, never gets shorter than this. */
+const PLAYER_MIN_PX = 96;
+/** Padding, header, tab bar and gaps above the timeline. */
+const ABOVE_CHROME_PX = 124;
+
+/**
+ * The room the tabs keep before the player shrinks: two version rows in a short panel, up to four
+ * in a 900 px window. Beyond that the player takes its full size and the tabs the rest.
+ */
+const tabsRoomPx = (panelHeight: number): number =>
+  Math.min(4 * VERSION_ROW_PX, Math.max(2 * VERSION_ROW_PX, panelHeight - 592)) + 8;
 
 function PlayerMessage(props: {
   readonly icon: ReactNode;
@@ -62,7 +104,7 @@ function PlayerMessage(props: {
   readonly children?: ReactNode;
 }) {
   return (
-    <div className="flex aspect-video max-h-[50vh] items-center rounded-md bg-muted/40">
+    <div className="flex aspect-video max-h-[50vh] min-h-0 items-center overflow-y-auto rounded-md bg-muted/40">
       <Empty>
         <EmptyHeader>
           <EmptyMedia variant="icon">{props.icon}</EmptyMedia>
@@ -128,7 +170,7 @@ function PlayingSource(props: {
       <div
         role="status"
         aria-label="Loading video"
-        className="flex aspect-video max-h-[50vh] items-center justify-center rounded-md bg-muted/40"
+        className="flex aspect-video max-h-[50vh] min-h-0 items-center justify-center rounded-md bg-muted/40"
       >
         <Spinner />
       </div>
@@ -144,6 +186,7 @@ function PlayingSource(props: {
       startFrame={rememberedPlayerFrame(projectKey)}
       onPositionChange={(frame) => rememberPlayerFrame(projectKey, frame)}
       onPlayingChange={setPlaying}
+      overlay={view.mode === "edit" ? <CaptionOverlay projectRef={projectRef} /> : null}
       // A source that loaded earns its quiet retry back, for the next URL expiry.
       onLoaded={() => setErrors(0)}
       onError={() => {
@@ -156,6 +199,173 @@ function PlayingSource(props: {
   );
 }
 
+/** Resolves one source's URL for the multi-clip player; renders nothing. */
+function SourceUrl(props: {
+  readonly projectRef: ScopedProjectRef;
+  readonly mediaId: string;
+  readonly variant: TimelineSourceView["variant"];
+  readonly attempt: number;
+  readonly onChange: (mediaId: string, url: string | null, failed: boolean) => void;
+}) {
+  const { mediaId, onChange } = props;
+  const state = useAssetUrlState(
+    props.projectRef.environmentId,
+    {
+      _tag: "project-media",
+      projectId: props.projectRef.projectId,
+      mediaId,
+      variant: props.variant,
+    },
+    // A new revision mints a fresh URL, so an expired one recovers on retry.
+    String(props.attempt),
+  );
+  const url = state._tag === "Success" ? state.url : null;
+  const failed = state._tag === "Failure";
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- one hook per source cannot run in a loop, so each source reports its URL up to the player
+  useEffect(() => onChange(mediaId, url, failed), [mediaId, url, failed, onChange]);
+  return null;
+}
+
+interface SourceAttempts {
+  readonly attempt: number;
+  readonly errors: number;
+}
+
+/** The edit on the player clock: each source with its own URL, retry and missing state. */
+function PlayingTimeline(props: {
+  readonly projectRef: ScopedProjectRef;
+  readonly view: Extract<PlayerView, { _tag: "play-timeline" }>;
+  readonly actions: ReturnType<typeof useAssetsActions>;
+}) {
+  const { projectRef, view, actions } = props;
+  const projectKey = scopedProjectKey(projectRef);
+  const [playing, setPlaying] = useState(false);
+  const [attempts, setAttempts] = useState<ReadonlyMap<string, SourceAttempts>>(new Map());
+  const [urls, setUrls] = useState<ReadonlyMap<string, { url: string | null; failed: boolean }>>(
+    new Map(),
+  );
+  // A proxy that finishes mid-playback takes over at the next pause, as in Engine A's player.
+  const [variants, setVariants] = useState(
+    () => new Map(view.sources.map((source) => [source.mediaId, source.variant])),
+  );
+  const changed = view.sources.some((source) => variants.get(source.mediaId) !== source.variant);
+  if (changed && !playing) {
+    setVariants(new Map(view.sources.map((source) => [source.mediaId, source.variant])));
+  }
+  const attemptsOf = (mediaId: string) => attempts.get(mediaId) ?? { attempt: 0, errors: 0 };
+  const onUrl = useStableCallback((mediaId: string, url: string | null, failed: boolean) => {
+    setUrls((current) => {
+      const before = current.get(mediaId);
+      if (before?.url === url && before.failed === failed) return current;
+      return new Map(current).set(mediaId, { url, failed });
+    });
+  });
+  const retry = (mediaId: string) =>
+    setAttempts((current) =>
+      new Map(current).set(mediaId, { attempt: attemptsOf(mediaId).attempt + 1, errors: 0 }),
+    );
+  const onSourceError = (mediaId: string) => {
+    const { attempt, errors } = attemptsOf(mediaId);
+    // One quiet retry covers an expired URL; a second failure marks the source failed.
+    setAttempts((current) =>
+      new Map(current).set(mediaId, {
+        attempt: errors < MAX_AUTOMATIC_RETRIES ? attempt + 1 : attempt,
+        errors: errors + 1,
+      }),
+    );
+  };
+
+  const sources = new Map<string, MultiClipSource>();
+  for (const source of view.sources) {
+    const { label } = source;
+    const resolved = urls.get(source.mediaId);
+    if (source.asset === undefined || source.asset.state === "missing") {
+      sources.set(source.mediaId, { label, url: null, status: "missing" });
+    } else if (resolved?.failed || attemptsOf(source.mediaId).errors > MAX_AUTOMATIC_RETRIES) {
+      sources.set(source.mediaId, { label, url: null, status: "failed" });
+    } else if (resolved !== undefined && resolved.url !== null) {
+      sources.set(source.mediaId, { label, url: resolved.url, status: "ready" });
+    } else {
+      sources.set(source.mediaId, { label, url: null, status: "loading" });
+    }
+  }
+  const stableSources = useStableSources(sources);
+  const firstLabel = view.sources[0]?.label ?? "the edit";
+
+  return (
+    <>
+      {view.sources.map((source) =>
+        source.asset === undefined || source.asset.state === "missing" ? null : (
+          <SourceUrl
+            key={source.mediaId}
+            projectRef={projectRef}
+            mediaId={source.mediaId}
+            variant={variants.get(source.mediaId) ?? source.variant}
+            attempt={attemptsOf(source.mediaId).attempt}
+            onChange={onUrl}
+          />
+        ),
+      )}
+      <MultiClipPlayer
+        projectKey={projectKey}
+        plan={view.plan}
+        sources={stableSources}
+        label={
+          view.sources.length > 1 ? `${firstLabel} and ${view.sources.length - 1} more` : firstLabel
+        }
+        startFrame={rememberedPlayerFrame(projectKey)}
+        onPositionChange={(frame) => rememberPlayerFrame(projectKey, frame)}
+        onPlayingChange={setPlaying}
+        onSourceError={onSourceError}
+        overlay={<CaptionOverlay projectRef={projectRef} />}
+        renderSourceProblem={(mediaId) => {
+          const source = view.sources.find((entry) => entry.mediaId === mediaId);
+          const status = sources.get(mediaId)?.status;
+          if (status === "failed") {
+            return (
+              <Button size="sm" variant="outline" onClick={() => retry(mediaId)}>
+                Retry
+              </Button>
+            );
+          }
+          const asset = source?.asset;
+          if (asset === undefined) return null;
+          return (
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={window.desktopBridge === undefined}
+              onClick={() => void actions.relinkItem(asset)}
+            >
+              Find file…
+            </Button>
+          );
+        }}
+      />
+    </>
+  );
+}
+
+/** The same map object while its entries are equal, so the player's effect runs only on change. */
+function useStableSources(
+  next: ReadonlyMap<string, MultiClipSource>,
+): ReadonlyMap<string, MultiClipSource> {
+  const [kept, setKept] = useState(next);
+  const same =
+    kept.size === next.size &&
+    [...next].every(([mediaId, source]) => {
+      const other = kept.get(mediaId);
+      return (
+        other !== undefined &&
+        other.url === source.url &&
+        other.status === source.status &&
+        other.label === source.label
+      );
+    });
+  if (!same) setKept(next);
+  return same ? kept : next;
+}
+
 function PlayerArea(props: {
   readonly projectRef: ScopedProjectRef;
   readonly view: PlayerView;
@@ -163,26 +373,14 @@ function PlayerArea(props: {
 }) {
   const { view, actions } = props;
   const canAddFiles = window.desktopBridge !== undefined;
-  const [dragging, setDragging] = useState(false);
   const hintId = useId();
-  const onDragOver = (event: DragEvent<HTMLDivElement>) => {
-    if (!canAddFiles || !event.dataTransfer.types.includes("Files")) return;
-    event.preventDefault();
-    setDragging(true);
-  };
-  const onDrop = (event: DragEvent<HTMLDivElement>) => {
-    setDragging(false);
-    if (!canAddFiles) return;
-    event.preventDefault();
-    actions.addFiles([...event.dataTransfer.files]);
-  };
   switch (view._tag) {
     case "loading":
       return (
         <div
           role="status"
           aria-label="Loading the edit"
-          className="flex aspect-video max-h-[50vh] items-center justify-center rounded-md bg-muted/40"
+          className="flex aspect-video max-h-[50vh] min-h-0 items-center justify-center rounded-md bg-muted/40"
         >
           <Spinner />
         </div>
@@ -197,13 +395,7 @@ function PlayerArea(props: {
       );
     case "empty":
       return (
-        <div
-          className="rounded-md data-[dragging=true]:ring-2 data-[dragging=true]:ring-ring"
-          data-dragging={dragging}
-          onDragOver={onDragOver}
-          onDragLeave={() => setDragging(false)}
-          onDrop={onDrop}
-        >
+        <div className="flex min-h-0 flex-col rounded-md">
           <PlayerMessage
             icon={<FilmIcon />}
             title="No clips yet"
@@ -250,6 +442,15 @@ function PlayerArea(props: {
           </Button>
         </PlayerMessage>
       );
+    case "play-timeline":
+      return (
+        <PlayingTimeline
+          key="timeline"
+          projectRef={props.projectRef}
+          view={view}
+          actions={actions}
+        />
+      );
     case "play":
       return (
         <PlayingSource
@@ -291,6 +492,39 @@ function transcriptSourceOf(
     default:
       return { mediaId: null, playback: null };
   }
+}
+
+/**
+ * The Transcript tab over a multi-clip edit: the words of the clip on screen. It re-renders only
+ * when the playhead crosses into another item, never per frame.
+ */
+function TimelineTranscriptTab(props: {
+  readonly projectRef: ScopedProjectRef;
+  readonly plan: TimelinePlan;
+  readonly editing: TranscriptEditing | undefined;
+}) {
+  const { plan } = props;
+  const projectKey = scopedProjectKey(props.projectRef);
+  const [segment, setSegment] = useState(() =>
+    timelineTranscriptSegment(plan, rememberedPlayerFrame(projectKey)),
+  );
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- follows the player clock (outside React) to switch clips at a join
+  useEffect(
+    () =>
+      subscribePlayerFrame(projectKey, (frame) => {
+        const next = timelineTranscriptSegment(plan, frame);
+        setSegment((current) => (current === next ? current : next));
+      }),
+    [projectKey, plan],
+  );
+  const index = Math.min(segment, plan.segments.length - 1);
+  return (
+    <TranscriptTab
+      projectRef={props.projectRef}
+      editing={props.editing}
+      {...timelineTranscriptPlayback(plan, index)}
+    />
+  );
 }
 
 const isExportStartError = Schema.is(ExportStartError);
@@ -401,6 +635,91 @@ function ExportButton(props: { readonly projectRef: ScopedProjectRef }) {
   );
 }
 
+/** The notice when the edit changed under a gesture (S7V-034 AC-7). */
+export const CHANGED_ELSEWHERE_NOTICE = "The assistant changed the edit; try again.";
+
+function showTimelineNotice(notice: TimelineNotice) {
+  if (notice.kind === "changed-elsewhere") {
+    toastManager.add({ type: "info", title: CHANGED_ELSEWHERE_NOTICE });
+  } else {
+    toastManager.add({ type: "error", title: notice.title, description: notice.message });
+  }
+}
+
+/** `edit.apply` as an edit outcome, for the timeline and the transcript alike. */
+function useEditApply(projectRef: ScopedProjectRef, origin: "timeline" | "transcript") {
+  const apply = useAtomCommand(editEnvironment.apply, { reportFailure: false });
+  const { environmentId, projectId } = projectRef;
+  return async (ops: ReadonlyArray<EditOp>, baseRevision: number): Promise<EditApplyOutcome> => {
+    const result = await apply({
+      environmentId,
+      input: { projectId, baseRevision, origin, ops: [...ops] },
+    });
+    return result._tag === "Success"
+      ? { _tag: "applied", revision: result.value.revision }
+      : applyOutcomeOfError(squashAtomCommandFailure(result));
+  };
+}
+
+/** Timeline edits go through `edit.apply`/`undo`/`redo`, origin `timeline` (S7V-034). */
+function useTimelineEditing(
+  projectRef: ScopedProjectRef,
+  snapshot: EditSnapshot | null,
+  enabled: boolean,
+): TimelineEditing | undefined {
+  const apply = useEditApply(projectRef, "timeline");
+  const undo = useAtomCommand(editEnvironment.undo, { reportFailure: false });
+  const redo = useAtomCommand(editEnvironment.redo, { reportFailure: false });
+  const { environmentId, projectId } = projectRef;
+  if (snapshot === null || !enabled) return undefined;
+  const step = async (run: typeof undo) => {
+    const result = await run({ environmentId, input: { projectId } });
+    return result._tag === "Success"
+      ? ({ _tag: "applied", revision: result.value.revision } as const)
+      : stepOutcomeOfError(squashAtomCommandFailure(result));
+  };
+  return {
+    revision: snapshot.revision,
+    canUndo: snapshot.canUndo,
+    canRedo: snapshot.canRedo,
+    actions: {
+      apply,
+      undo: () => step(undo),
+      redo: () => step(redo),
+      notify: showTimelineNotice,
+    },
+  };
+}
+
+/** Text edits from the Transcript tab, origin `transcript` (S7V-038), on the edit as it plays. */
+function useTranscriptEditing(
+  projectRef: ScopedProjectRef,
+  snapshot: EditSnapshot | null,
+  enabled: boolean,
+): TranscriptEditing | undefined {
+  const apply = useEditApply(projectRef, "transcript");
+  if (snapshot === null || !enabled) return undefined;
+  return { document: snapshot.document, revision: snapshot.revision, apply };
+}
+
+/** Why an outside change to the edit was not kept (S7V-054), until dismissed or the next change. */
+function RefusedChangeNotice(props: { readonly snapshot: EditSnapshot | null }) {
+  const [dismissed, setDismissed] = useState<EditSnapshot | null>(null);
+  const { snapshot } = props;
+  if (snapshot?.notice === undefined || snapshot === dismissed) return null;
+  return (
+    <Alert variant="warning" role="status">
+      <TriangleAlertIcon aria-hidden />
+      <AlertDescription>{snapshot.notice}</AlertDescription>
+      <AlertAction>
+        <Button size="compact" variant="ghost" onClick={() => setDismissed(snapshot)}>
+          Dismiss
+        </Button>
+      </AlertAction>
+    </Alert>
+  );
+}
+
 export default function EditorPanel(props: {
   readonly environmentId: EnvironmentId;
   readonly projectId: ProjectId;
@@ -417,7 +736,36 @@ export default function EditorPanel(props: {
   );
   const setSource = useEditPlayerStore((state) => state.setSource);
   const actions = useAssetsActions(projectRef);
-  const [tab, setTab] = useState<EditorTab>("assets");
+  const [tab, setTab] = useState<EditorTab>("versions");
+  const [panelHeight, setPanelHeight] = useState<number | null>(null);
+  const observePanel = (element: HTMLDivElement | null) =>
+    element === null
+      ? undefined
+      : observeResize(element, () => setPanelHeight(element.clientHeight));
+  const tabsRoom = panelHeight === null ? undefined : tabsRoomPx(panelHeight);
+  const canAddFiles = window.desktopBridge !== undefined;
+  const [dragging, setDragging] = useState(false);
+  const acceptsDrop = (event: DragEvent<HTMLDivElement>) =>
+    canAddFiles && event.dataTransfer.types.includes("Files");
+  const onDragOver = (event: DragEvent<HTMLDivElement>) => {
+    if (!acceptsDrop(event)) return;
+    event.preventDefault();
+    setDragging(true);
+  };
+  const onDragLeave = (event: DragEvent<HTMLDivElement>) => {
+    // Moving onto a child fires a leave too; only leaving the panel ends the drag.
+    if (event.relatedTarget instanceof Node && event.currentTarget.contains(event.relatedTarget)) {
+      return;
+    }
+    setDragging(false);
+  };
+  const onDrop = (event: DragEvent<HTMLDivElement>) => {
+    setDragging(false);
+    // The Media list imports its own drops.
+    if (!acceptsDrop(event) || event.defaultPrevented) return;
+    event.preventDefault();
+    actions.addFiles([...event.dataTransfer.files]);
+  };
   const view = playerViewOf(edit, library, source);
 
   const showEdit = () => {
@@ -425,8 +773,69 @@ export default function EditorPanel(props: {
     setSource(projectKey, { kind: "edit" });
   };
 
+  const previewingClip = view._tag === "play" && view.mode === "clip";
+  const previewingVersion = source.kind === "version" ? source.n : null;
+  const playingPlan: PlayerFramePlan | null =
+    previewingVersion !== null
+      ? null
+      : view._tag === "play-timeline"
+        ? view.plan
+        : view._tag === "play" && view.mode === "edit"
+          ? view.plan
+          : null;
+  // A click while a clip previews goes back to the edit, at the clicked frame. A frame past the
+  // edit's end moves only the timeline's playhead.
+  const seekFromTimeline = (editFrame: number) => {
+    if (source.kind !== "edit") {
+      rememberPlayerFrame(projectKey, editFrame);
+      setSource(projectKey, { kind: "edit" });
+      return;
+    }
+    const frame = editFrameToPlayerFrame(editFrame, playingPlan);
+    if (frame === null) return;
+    rememberPlayerFrame(projectKey, frame);
+    requestPlayerSeek(projectKey, frame);
+  };
+  // While vN previews, the timeline still shows the main edit: it is read-only, and a press goes back to main.
+  const editing = useTimelineEditing(
+    projectRef,
+    edit._tag === "ready" ? edit.snapshot : null,
+    previewingVersion === null,
+  );
+  // Words are edited only on the edit itself: not while a clip or an older version is previewed.
+  const transcriptEditing = useTranscriptEditing(
+    projectRef,
+    edit._tag === "ready" ? edit.snapshot : null,
+    source.kind === "edit" &&
+      (view._tag === "play-timeline" ||
+        view._tag === "all-cut" ||
+        (view._tag === "play" && view.mode === "edit")),
+  );
+  const mediaById = new Map(
+    library._tag === "ready" ? library.snapshot.items.map((item) => [item.id, item] as const) : [],
+  );
+
   return (
-    <div className="flex h-full min-h-0 flex-col gap-2 p-2" data-testid="editor-panel">
+    <div
+      ref={observePanel}
+      className="relative flex h-full min-h-0 flex-col gap-2 p-2"
+      data-testid="editor-panel"
+      data-dragging={dragging}
+      onDragOver={onDragOver}
+      onDragLeave={onDragLeave}
+      onDrop={onDrop}
+    >
+      {dragging ? (
+        <div
+          aria-hidden
+          className="pointer-events-none absolute inset-1 z-20 flex items-center justify-center rounded-md border-2 border-dashed border-ring bg-background/85 p-4 text-center text-sm font-medium"
+        >
+          {DROP_OVERLAY_TEXT}
+        </div>
+      ) : null}
+      <div role="status" aria-live="polite" className="sr-only">
+        {dragging ? DROP_OVERLAY_TEXT : ""}
+      </div>
       <SpeechModelPrompt projectRef={projectRef} />
       <div className="flex min-h-7 items-center justify-between gap-2">
         <div className="flex min-w-0 items-center gap-2 text-sm">
@@ -441,17 +850,33 @@ export default function EditorPanel(props: {
                 </Button>
               ) : null}
             </>
-          ) : view._tag === "play" && view.plan.otherClipItems > 0 ? (
-            <span className="min-w-0 truncate text-muted-foreground">
-              Plays {view.asset.label} only; other clips play in a later version.
-            </span>
+          ) : null}
+          {previewingVersion !== null ? (
+            <>
+              <span role="status" className="min-w-0 truncate text-muted-foreground">
+                Previewing v{previewingVersion}
+              </span>
+              <Button size="compact" variant="ghost" onClick={showEdit}>
+                Back to main
+              </Button>
+            </>
           ) : null}
         </div>
-        {edit._tag === "ready" && view._tag === "play" && view.mode === "edit" ? (
+        {edit._tag === "ready" &&
+        previewingVersion === null &&
+        (view._tag === "play-timeline" || (view._tag === "play" && view.mode === "edit")) ? (
           <ExportButton projectRef={projectRef} />
         ) : null}
       </div>
-      <PlayerArea projectRef={projectRef} view={view} actions={actions} />
+      <RefusedChangeNotice snapshot={edit._tag === "ready" ? edit.snapshot : null} />
+      {/* The player shrinks, letterboxed, so the tabs below keep their room. */}
+      <div className="flex min-h-24 shrink flex-col" data-testid="editor-player-area">
+        <PlayerArea projectRef={projectRef} view={view} actions={actions} />
+      </div>
+      <HistoryCleanupBanner
+        projectRef={projectRef}
+        snapshot={edit._tag === "ready" ? edit.snapshot : null}
+      />
       <div role="tablist" aria-label="Editor views" className="flex shrink-0 gap-1 border-b">
         {TABS.map((entry) => (
           <button
@@ -468,22 +893,36 @@ export default function EditorPanel(props: {
           </button>
         ))}
       </div>
-      {/* Both tabs stay mounted, so each keeps its scroll position. */}
+      {/* Every tab stays mounted, so each keeps its scroll position. */}
       <div
         role="tabpanel"
         id="editor-tabpanel-transcript"
         aria-labelledby="editor-tab-transcript"
         hidden={tab !== "transcript"}
         className="min-h-0 flex-1"
+        style={{ minHeight: tabsRoom }}
       >
-        <TranscriptTab projectRef={projectRef} {...transcriptSourceOf(view, library, edit)} />
+        {view._tag === "play-timeline" ? (
+          <TimelineTranscriptTab
+            projectRef={projectRef}
+            plan={view.plan}
+            editing={transcriptEditing}
+          />
+        ) : (
+          <TranscriptTab
+            projectRef={projectRef}
+            editing={transcriptEditing}
+            {...transcriptSourceOf(view, library, edit)}
+          />
+        )}
       </div>
       <div
         role="tabpanel"
-        id="editor-tabpanel-assets"
-        aria-labelledby="editor-tab-assets"
-        hidden={tab !== "assets"}
+        id="editor-tabpanel-media"
+        aria-labelledby="editor-tab-media"
+        hidden={tab !== "media"}
         className="min-h-0 flex-1"
+        style={{ minHeight: tabsRoom }}
       >
         <AssetsTab
           projectRef={projectRef}
@@ -493,6 +932,40 @@ export default function EditorPanel(props: {
           }}
         />
       </div>
+      <div
+        role="tabpanel"
+        id="editor-tabpanel-versions"
+        aria-labelledby="editor-tab-versions"
+        hidden={tab !== "versions"}
+        className="min-h-0 flex-1"
+        style={{ minHeight: tabsRoom }}
+      >
+        <VersionsTab
+          projectRef={projectRef}
+          previewing={previewingVersion}
+          onPreview={(n, document) => {
+            rememberPlayerFrame(projectKey, 0);
+            setSource(projectKey, { kind: "version", n, document });
+          }}
+          onShowCurrent={showEdit}
+        />
+      </div>
+      {edit._tag === "unavailable" ? null : (
+        <TimelinePane
+          projectKey={projectKey}
+          document={edit._tag === "ready" ? edit.snapshot.document : null}
+          playheadVisible={!previewingClip && previewingVersion === null}
+          initialFrame={rememberedPlayerFrame(projectKey)}
+          onSeek={seekFromTimeline}
+          plan={playingPlan}
+          projectRef={projectRef}
+          mediaById={mediaById}
+          editing={editing}
+          minAbovePx={
+            tabsRoom === undefined ? undefined : ABOVE_CHROME_PX + PLAYER_MIN_PX + tabsRoom
+          }
+        />
+      )}
       <ImportDialog
         request={actions.request}
         onConfirm={(mode) => void actions.confirmImport(mode)}

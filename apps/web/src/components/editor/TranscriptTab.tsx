@@ -2,15 +2,30 @@
 // SPDX-License-Identifier: MIT
 /**
  * The Editor panel's Transcript tab (S7V-030): every word of the playing clip, the spoken one
- * highlighted, click or Enter to seek, cut words struck through. Read-only; editing by text is
- * S7V-038. Starting a transcription asks for the speech model first when it is missing (S7V-026).
+ * highlighted, click or Enter to seek, cut words struck through. Selected words can be cut or
+ * restored through `edit.apply` (S7V-038). Transcribing asks for the speech model first (S7V-026).
  */
 import { LegendList } from "@legendapp/list/react";
 import { scopedProjectKey } from "@t3tools/client-runtime/environment";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import type { ScopedProjectRef, TranscribeModel, TranscribeModelsStatus } from "@t3tools/contracts";
+import type {
+  EditDocument,
+  EditOp,
+  ScopedProjectRef,
+  TranscribeModel,
+  TranscribeModelsStatus,
+} from "@t3tools/contracts";
+import { keptSpansOf, type WordEdit } from "@t3tools/shared/editWordCuts";
 import { AudioLinesIcon, FileTextIcon, TriangleAlertIcon } from "lucide-react";
-import { useEffect, useId, useRef, useState, type KeyboardEvent, type MouseEvent } from "react";
+import {
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  type KeyboardEvent,
+  type MouseEvent,
+  type PointerEvent,
+} from "react";
 
 import {
   anySpeechModelReady,
@@ -25,17 +40,38 @@ import {
   buildTranscriptModel,
   samePlayback,
   seekFrameOfWord,
+  selectionSummary,
+  selectionToOps,
   type TranscriptModel,
   type TranscriptPlayback,
   type TranscriptRow,
+  type TranscriptSelection,
+  withPendingEdit,
 } from "../../editor/transcriptModel";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { Button } from "../ui/button";
+import { Kbd } from "../ui/kbd";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "../ui/empty";
 import { Spinner } from "../ui/spinner";
 import { type FoundModel, ModelDownloadDialog } from "./ModelDownloadDialog";
 import { createTranscriptMarks, type TranscriptMarks } from "./transcriptMarks";
+import type { EditApplyOutcome } from "./timeline/timelineEditor";
 import { commandErrorMessage, engineErrorReason, useModelDownload } from "./useModelDownload";
+
+/** Text edits go through `edit.apply` with origin `transcript`, as the timeline's do (S7V-038). */
+export interface TranscriptEditing {
+  readonly document: EditDocument;
+  readonly revision: number;
+  readonly apply: (ops: ReadonlyArray<EditOp>, baseRevision: number) => Promise<EditApplyOutcome>;
+}
+
+/** Text edits refuse a clip whose sound is on its own track, as silence removal does. */
+export const LINKED_AUDIO_NOTICE =
+  "This clip's sound is on its own track, so words can't be cut here yet.";
+
+/** Shown when the edit changed between the selection and the cut (S7V-038 AC-6). */
+export const TRANSCRIPT_CONFLICT_NOTICE =
+  "The agent just changed this edit. Your selection was kept; try again.";
 
 export interface TranscriptTabProps {
   readonly projectRef: ScopedProjectRef;
@@ -43,6 +79,8 @@ export interface TranscriptTabProps {
   readonly mediaId: string | null;
   /** The player's rate and kept ranges; null when nothing plays and nothing is cut. */
   readonly playback: TranscriptPlayback | null;
+  /** Present when the words can be edited: the edit plays, and no clip or version is previewed. */
+  readonly editing?: TranscriptEditing | undefined;
 }
 
 function Message(props: {
@@ -183,7 +221,7 @@ function TranscribePrompt(props: {
 }
 
 const WORD_CLASS =
-  "cursor-pointer rounded-sm px-0.5 hover:bg-accent data-[removed]:text-muted-foreground data-[removed]:line-through data-[current]:bg-primary/20 data-[current]:text-foreground group-focus-visible/transcript:data-[active]:ring-2 group-focus-visible/transcript:data-[active]:ring-ring group-focus-visible/transcript:data-[active]:ring-inset";
+  "cursor-pointer rounded-sm px-0.5 hover:bg-accent data-[selected]:bg-primary/30 data-[selected]:text-foreground data-[selected]:ring-1 data-[selected]:ring-primary data-[selected]:ring-inset data-[selected]:data-[current]:bg-primary/30 data-[selected]:data-[removed]:text-foreground data-[removed]:text-muted-foreground data-[removed]:line-through data-[current]:bg-primary/20 data-[current]:text-foreground group-focus-visible/transcript:data-[active]:ring-2 group-focus-visible/transcript:data-[active]:ring-ring group-focus-visible/transcript:data-[active]:ring-inset";
 
 function Row(props: {
   readonly row: TranscriptRow;
@@ -224,16 +262,57 @@ function Row(props: {
   );
 }
 
+const secondsOf = (frames: number, fps: TranscriptPlayback["fps"]) =>
+  ((frames * fps.den) / fps.num).toFixed(1);
+
+const countWords = (count: number) => (count === 1 ? "1 word" : `${count} words`);
+
+/** The note when a restore also brought back the pauses beside the words. */
+export const RESTORED_PAUSE_NOTE =
+  "Also brought back the pause beside these words; use Undo to go back exactly.";
+
+/** The note when a cut took more than the selection, so the video doesn't flicker. */
+function widenedNote(
+  model: TranscriptModel,
+  edit: Extract<WordEdit, { _tag: "cut" }>,
+  fps: TranscriptPlayback["fps"],
+): string | null {
+  const { widenedFrames, widenedWords } = edit.cut;
+  if (widenedFrames === 0) return null;
+  if (widenedWords.length > 0) {
+    const text = widenedWords.map((index) => model.words[index]?.text ?? "").join(" ");
+    return `Also cut “${text}” so the video doesn't flicker.`;
+  }
+  return `Also cut ${secondsOf(widenedFrames, fps)} s between these words so the video doesn't flicker.`;
+}
+
 function TranscriptWords(props: {
   readonly projectKey: string;
+  readonly mediaId: string;
   readonly model: TranscriptModel;
   readonly playback: TranscriptPlayback | null;
+  readonly editing: TranscriptEditing | undefined;
 }) {
-  const { projectKey, model, playback } = props;
+  const { projectKey, mediaId, playback, editing } = props;
   const segments = playback?.segments ?? null;
   const idPrefix = `${useId()}w`;
   const [marks] = useState(() => createTranscriptMarks(idPrefix));
   const [announcement, setAnnouncement] = useState("");
+  // The selection the action bar offers; the words' marks follow it outside React.
+  const [selected, setSelected] = useState<TranscriptSelection | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  // A text edit on its way, shown at once; dropped when the new edit arrives or the apply fails.
+  const [pending, setPending] = useState<{
+    readonly edit: WordEdit;
+    readonly model: TranscriptModel;
+  } | null>(null);
+  if (pending !== null && pending.model !== props.model) setPending(null);
+  const model = pending === null ? props.model : withPendingEdit(props.model, pending.edit);
+  const editable =
+    editing !== undefined &&
+    playback !== null &&
+    playback.fps.num * editing.document.fps.den === editing.document.fps.num * playback.fps.den;
+  const listRoot = useRef<HTMLElement | null>(null);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- hands the model to the highlight, which runs outside React from the player's frame listener
   useEffect(() => {
@@ -258,10 +337,114 @@ function TranscriptWords(props: {
     );
   };
 
+  const select = (anchor: number, focus: number) => {
+    marks.setSelection(anchor, focus);
+    setSelected({ first: Math.min(anchor, focus), last: Math.max(anchor, focus) });
+    setNotice(null);
+  };
+  const clearSelection = () => {
+    marks.clearSelection();
+    setSelected(null);
+  };
+
+  const run = async (action: "cut" | "restore", selection: TranscriptSelection) => {
+    if (!editable || editing === undefined || pending !== null) return;
+    const edit = selectionToOps(model, selection, editing.document, mediaId, action);
+    if (edit._tag === "linked-audio") {
+      setNotice(LINKED_AUDIO_NOTICE);
+      return;
+    }
+    if (edit._tag === "nothing") {
+      setNotice(action === "cut" ? "Those words are already cut." : "Those words already play.");
+      return;
+    }
+    setPending({ edit, model: props.model });
+    setNotice(null);
+    listRoot.current?.focus({ preventScroll: true });
+    const outcome = await editing.apply(edit.ops, editing.revision);
+    if (outcome._tag !== "applied" || outcome.revision === editing.revision) setPending(null);
+    switch (outcome._tag) {
+      case "applied": {
+        clearSelection();
+        const count = edit._tag === "cut" ? edit.cut.words.length : edit.restore.words.length;
+        const note =
+          edit._tag === "cut"
+            ? playback === null
+              ? null
+              : widenedNote(model, edit, playback.fps)
+            : edit.restore.pauseFrames > 0
+              ? RESTORED_PAUSE_NOTE
+              : null;
+        setNotice(note);
+        setAnnouncement(
+          `${edit._tag === "cut" ? "Cut" : "Restored"} ${countWords(count)}.${note === null ? "" : ` ${note}`}`,
+        );
+        return;
+      }
+      case "conflict":
+        setNotice(TRANSCRIPT_CONFLICT_NOTICE);
+        return;
+      case "refused":
+      case "failed":
+        setNotice(outcome.message);
+        return;
+    }
+  };
+
+  // What plays is read from the edit, not the struck marks: a reused clip can play a word in
+  // another part of the timeline while it shows struck here.
+  const kept = editing === undefined ? undefined : keptSpansOf(editing.document, mediaId);
+
+  /** Cut when a selected word plays, else restore. */
+  const cutOrRestore = (selection: TranscriptSelection) => {
+    const { kept: playing } = selectionSummary(model, selection, kept);
+    void run(playing > 0 ? "cut" : "restore", selection);
+  };
+
+  const wordIndexOf = (target: EventTarget | null) => {
+    const element = target instanceof Element ? target.closest("[data-word]") : null;
+    const index = Number(element?.getAttribute("data-word") ?? Number.NaN);
+    return Number.isInteger(index) ? index : null;
+  };
+
+  // A press on a word starts a drag selection; without a move it is a click, which seeks.
+  const drag = useRef<{ anchor: number; moved: boolean } | null>(null);
+  const dragged = useRef(false);
+
   const onClick = (event: MouseEvent<HTMLDivElement>) => {
-    const target = event.target instanceof Element ? event.target.closest("[data-word]") : null;
-    const index = Number(target?.getAttribute("data-word") ?? Number.NaN);
-    if (Number.isInteger(index)) activate(index);
+    if (dragged.current) {
+      dragged.current = false;
+      return;
+    }
+    const index = wordIndexOf(event.target);
+    if (index === null) return;
+    if (event.shiftKey && editable) {
+      const from = marks.selection()?.anchor ?? marks.active();
+      select(from === -1 ? index : from, index);
+      marks.setActive(index);
+      return;
+    }
+    if (selected !== null) clearSelection();
+    activate(index);
+  };
+
+  const onPointerMove = (event: PointerEvent<HTMLDivElement>) => {
+    const current = drag.current;
+    if (current === null || (event.buttons & 1) === 0) return;
+    const index = wordIndexOf(event.target);
+    if (index === null || (index === current.anchor && !current.moved)) return;
+    current.moved = true;
+    marks.setSelection(current.anchor, index);
+  };
+
+  const endDrag = () => {
+    const current = drag.current;
+    drag.current = null;
+    const selection = marks.selection();
+    if (current?.moved !== true || selection === null) return;
+    dragged.current = true;
+    select(selection.anchor, selection.focus);
+    marks.setActive(selection.focus);
   };
 
   const firstVisibleWord = (root: HTMLElement) => {
@@ -304,9 +487,13 @@ function TranscriptWords(props: {
     }
     const last = model.words.length - 1;
     const active = Math.max(0, marks.active());
+    const extend = event.shiftKey && editable;
     const move = (index: number) => {
       event.preventDefault();
-      marks.setActive(Math.max(0, Math.min(last, index)));
+      const next = Math.max(0, Math.min(last, index));
+      if (extend) select(marks.selection()?.anchor ?? active, next);
+      else if (selected !== null) clearSelection();
+      marks.setActive(next);
     };
     switch (event.key) {
       case "ArrowRight":
@@ -326,6 +513,18 @@ function TranscriptWords(props: {
         event.preventDefault();
         activate(active);
         return;
+      case "Escape":
+        if (selected !== null) {
+          event.preventDefault();
+          clearSelection();
+        }
+        return;
+      case "Delete":
+      case "Backspace":
+        if (!editable || marks.active() === -1) return;
+        event.preventDefault();
+        cutOrRestore(selected ?? { first: active, last: active });
+        return;
       case "PageUp":
       case "PageDown":
         marks.noteUserScroll();
@@ -334,32 +533,88 @@ function TranscriptWords(props: {
   };
 
   const allCut = model.words.length > 0 && model.removedCount === model.words.length;
+  const summary = selected === null || !editable ? null : selectionSummary(model, selected, kept);
 
   return (
     <div className="flex h-full min-h-0 flex-col">
       {allCut ? (
         <p className="shrink-0 px-3 py-2 text-muted-foreground text-sm">
-          Every word was cut, so nothing plays. Ask the agent to restore a part.
+          {editable
+            ? "Every word was cut, so nothing plays. Select words and choose Restore to bring them back."
+            : "Every word was cut, so nothing plays. Ask the agent to restore a part."}
         </p>
       ) : null}
+      {summary !== null && selected !== null && summary.kept + summary.removed > 0 ? (
+        <div
+          role="toolbar"
+          aria-label="Selected words"
+          className="flex shrink-0 items-center gap-2 border-b px-3 py-1.5"
+        >
+          <span className="min-w-0 flex-1 truncate text-muted-foreground text-xs">
+            {countWords(summary.kept + summary.removed)} selected
+          </span>
+          {summary.kept > 0 ? (
+            <Button
+              size="compact"
+              variant="outline"
+              disabled={pending !== null}
+              aria-keyshortcuts="Delete Backspace"
+              onClick={() => void run("cut", selected)}
+            >
+              Cut <Kbd aria-hidden>⌫</Kbd>
+            </Button>
+          ) : null}
+          {summary.removed > 0 ? (
+            <Button
+              size="compact"
+              variant="outline"
+              disabled={pending !== null}
+              aria-keyshortcuts={summary.kept > 0 ? undefined : "Delete Backspace"}
+              onClick={() => void run("restore", selected)}
+            >
+              Restore {summary.kept > 0 ? null : <Kbd aria-hidden>⌫</Kbd>}
+            </Button>
+          ) : null}
+        </div>
+      ) : null}
+      {notice === null ? null : (
+        <p role="status" className="shrink-0 px-3 py-1.5 text-muted-foreground text-xs">
+          {notice}
+        </p>
+      )}
       <div
-        ref={(element) => marks.attachRoot(element)}
+        ref={(element) => {
+          listRoot.current = element;
+          marks.attachRoot(element);
+        }}
         role="listbox"
         aria-label="Transcript"
+        aria-multiselectable={editable ? true : undefined}
         aria-describedby={`${idPrefix}-help`}
         tabIndex={0}
-        className="group/transcript min-h-0 flex-1 outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+        className="group/transcript min-h-0 flex-1 select-none outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
         onClick={onClick}
         onFocus={onFocus}
         onKeyDown={onKeyDown}
         onWheel={() => marks.noteUserScroll()}
         onTouchMove={() => marks.noteUserScroll()}
-        onPointerDown={() => {
+        onPointerDown={(event) => {
           pointerFocus.current = true;
           marks.noteUserScroll();
+          dragged.current = false;
+          const index = wordIndexOf(event.target);
+          drag.current =
+            editable && event.button === 0 && !event.shiftKey && index !== null
+              ? { anchor: index, moved: false }
+              : null;
         }}
+        onPointerMove={onPointerMove}
         onPointerUp={() => {
           pointerFocus.current = false;
+          endDrag();
+        }}
+        onPointerCancel={() => {
+          drag.current = null;
         }}
       >
         <LegendList<TranscriptRow>
@@ -375,7 +630,9 @@ function TranscriptWords(props: {
         />
       </div>
       <p id={`${idPrefix}-help`} className="sr-only">
-        Arrow keys move between words; Enter plays from the word.
+        {editable
+          ? "Arrow keys move between words; Enter plays from the word. Shift with the arrow keys selects words; Delete cuts them, or restores cut ones."
+          : "Arrow keys move between words; Enter plays from the word."}
       </p>
       <p role="status" className="sr-only">
         {announcement}
@@ -385,7 +642,7 @@ function TranscriptWords(props: {
 }
 
 export function TranscriptTab(props: TranscriptTabProps) {
-  const { projectRef, mediaId } = props;
+  const { projectRef, mediaId, editing } = props;
   const state = useMediaTranscript(projectRef, mediaId);
   // Kept while the frames played stay the same, so the model and its rows are not rebuilt.
   const [playback, setPlayback] = useState(props.playback);
@@ -435,8 +692,10 @@ export function TranscriptTab(props: TranscriptTabProps) {
   return (
     <TranscriptWords
       projectKey={scopedProjectKey(projectRef)}
+      mediaId={mediaId}
       model={buildTranscriptModel(transcript, playback)}
       playback={playback}
+      editing={editing}
     />
   );
 }

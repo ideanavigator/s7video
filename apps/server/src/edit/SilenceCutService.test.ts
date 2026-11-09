@@ -24,7 +24,7 @@ import * as EngineService from "../engine/EngineService.ts";
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as TranscriptService from "../transcript/TranscriptService.ts";
 import * as EditDocumentService from "./EditDocumentService.ts";
-import { git, layerEditTest } from "./editHarness.testkit.ts";
+import { historyLog, layerEditTest } from "./editHarness.testkit.ts";
 import * as SilenceCutService from "./SilenceCutService.ts";
 
 const FRAMES = 300;
@@ -224,14 +224,14 @@ describe("SilenceCutService", () => {
           ],
         );
         const afterCut = readEdit(root);
-        const checkpoints = git(root, "for-each-ref").trim();
+        const checkpoints = historyLog(root);
 
         // AC-8: the same request again changes no byte and records no checkpoint.
         const again = yield* silences.removeSilences({ projectId });
         assert.isFalse(again.changed);
         assert.strictEqual(again.revision, first.revision);
         assert.strictEqual(readEdit(root), afterCut);
-        assert.strictEqual(git(root, "for-each-ref").trim(), checkpoints);
+        assert.deepEqual(historyLog(root), checkpoints);
 
         // AC-7: one undo brings the previous edit back byte for byte; the media is untouched.
         yield* edits.undo(projectId);

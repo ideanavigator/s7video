@@ -59,6 +59,10 @@ export const DesktopConfig = Config.all({
   appImagePath: trimmedString("APPIMAGE"),
   disableAutoUpdate: optionalBoolean("T3CODE_DISABLE_AUTO_UPDATE"),
   mockUpdates: optionalBoolean("T3CODE_DESKTOP_MOCK_UPDATES"),
+  // s7video (S7V-074): set by scripts/dev-electron.mjs when its watcher relaunches the app.
+  devRestart: optionalBoolean("S7VIDEO_DESKTOP_DEV_RESTART"),
+  // s7video (S7V-073): set by scripts/dev-runner.ts for dev apps in a linked git worktree.
+  devProfileDirectory: trimmedString("S7VIDEO_DESKTOP_DEV_PROFILE_DIR"),
   mockUpdateServerPort: Config.Port("T3CODE_DESKTOP_MOCK_UPDATE_SERVER_PORT").pipe(
     Config.withDefault(3000),
   ),

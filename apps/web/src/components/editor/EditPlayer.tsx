@@ -26,14 +26,16 @@ export interface EditPlayerProps {
   /** The first frame decoded, so the source plays. */
   readonly onLoaded?: (() => void) | undefined;
   readonly onError: () => void;
+  /** Drawn over the video inside the canvas: the edit's captions (S7V-075). */
+  readonly overlay?: ReactNode;
 }
 
 /**
  * An edit plays inside its canvas, filled and cropped from the centre as export renders it
  * (S7V-061), with black bars in the 16:9 frame around any other shape. A raw clip plays whole.
  */
-function CanvasFrame(props: {
-  readonly canvas: PlaybackPlan["canvas"];
+export function CanvasFrame(props: {
+  readonly canvas: PlaybackPlan["canvas"] | undefined;
   readonly children: ReactNode;
 }) {
   const { canvas } = props;
@@ -45,7 +47,7 @@ function CanvasFrame(props: {
     <div className="absolute inset-0 flex items-center justify-center [container-type:size]">
       <div
         data-canvas={`${canvas.width}x${canvas.height}`}
-        className="overflow-hidden"
+        className="relative overflow-hidden"
         style={{
           aspectRatio: `${canvas.width} / ${canvas.height}`,
           width: `min(100cqw, ${ratio} * 100cqh)`,
@@ -149,7 +151,7 @@ export function EditPlayer(props: EditPlayerProps) {
       className="flex min-h-0 flex-col gap-1.5 outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
       onKeyDown={onKeyDown}
     >
-      <div className="relative flex aspect-video max-h-[50vh] w-full items-center justify-center overflow-hidden rounded-md bg-black">
+      <div className="relative flex aspect-video max-h-[50vh] min-h-0 w-full items-center justify-center overflow-hidden rounded-md bg-black">
         <CanvasFrame canvas={plan.canvas}>
           <video
             ref={attachVideo}
@@ -180,6 +182,7 @@ export function EditPlayer(props: EditPlayerProps) {
             onError={props.onError}
             onClick={togglePlay}
           />
+          {props.overlay}
         </CanvasFrame>
       </div>
       <div className="flex items-center gap-1 px-1">

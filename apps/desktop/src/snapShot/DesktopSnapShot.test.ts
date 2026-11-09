@@ -1330,6 +1330,63 @@ it("does not let a failed transition fail landing or capture completion", async 
   }
 });
 
+// S7V-074: no always-on-top overlay may outlive its capture.
+it("snapshot overlay is disposed on time-out", async () => {
+  flashWindows.length = 0;
+  vi.useFakeTimers();
+  const transition = new SnapShotTransition({ alwaysOnTopLevel: "pop-up-menu" });
+  try {
+    await transition.begin(
+      "capture-1",
+      { x: 100, y: 50, width: 900, height: 600 },
+      "data:image/png;base64,",
+      true,
+    );
+    assert.isAbove(flashWindows.length, 0);
+    for (const window of flashWindows) {
+      assert.isTrue(window.options.alwaysOnTop);
+      assert.isFalse(window.destroyed);
+    }
+
+    await vi.advanceTimersByTimeAsync(6_000);
+
+    for (const window of flashWindows) {
+      assert.isTrue(window.destroyed);
+    }
+  } finally {
+    vi.useRealTimers();
+    transition.dispose();
+  }
+});
+
+it("snapshot overlay is disposed when the capture fails", async () => {
+  flashWindows.length = 0;
+  transitionSnapshotMock.mockRejectedValueOnce(new Error("snapshot decode failed"));
+  const transition = new SnapShotTransition({ alwaysOnTopLevel: "pop-up-menu" });
+  try {
+    let failed = false;
+    await transition
+      .begin(
+        "capture-1",
+        { x: 100, y: 50, width: 900, height: 600 },
+        "data:image/png;base64,",
+        true,
+      )
+      .catch(() => {
+        failed = true;
+      });
+
+    assert.isTrue(failed);
+    assert.isAbove(flashWindows.length, 0);
+    for (const window of flashWindows) {
+      assert.isTrue(window.destroyed);
+      assert.strictEqual(window.showCount, 0);
+    }
+  } finally {
+    transition.dispose();
+  }
+});
+
 it.each(["client", "frame"] as const)(
   "maps KDE %s accessibility coordinates into the decorated screenshot",
   async (rootArea) => {

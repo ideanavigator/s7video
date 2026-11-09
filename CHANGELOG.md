@@ -61,6 +61,26 @@ from; the per-ticket entries and how this file is compiled are in
 - Ask the assistant to remove the silences and it cuts the pauses between your sentences without
   clipping words. It leaves in pauses with laughter or music, keeps any pause you ask for, and says
   how much it removed. Undo brings the previous edit back. (S7V-027)
+- The Editor panel now shows a CapCut-style timeline with video, caption, sound effect, music and
+  overlay rows. It follows playback, jumps where you click, and zooms around the pointer, and it
+  stays smooth with a thousand cuts. (S7V-033)
+- Clips on the timeline show their sound as a waveform and their picture as a strip of frames. They
+  are prepared in the background right after import, even for long recordings. (S7V-035)
+- One edit can now use several clips. The player plays straight across the joins, and the export
+  matches. (S7V-039)
+- Each change you or the assistant make becomes a numbered version in the Editor's Versions tab.
+  Name any version, watch it in the player, or make it current again without losing anything after
+  it. (S7V-069)
+- When a project's history grows large, s7video asks whether to keep only recent versions or remove
+  all old ones, says how much space that frees, and never touches your footage. (S7V-050)
+- Drag, trim, split and delete clips on the timeline, with snapping to the playhead and other
+  clips. Undo and redo cover your changes and the assistant's in one history. (S7V-034)
+- Select words in the transcript and delete them to cut that part of the video, or restore
+  struck-through words to bring them back. The timeline and player follow, and undo works.
+  (S7V-038)
+- "Add captions" now adds captions to the edit: a Captions row on the timeline and captions over
+  the player, exactly as they will export. They follow your cuts, and one undo removes them.
+  (S7V-075)
 
 ### Changed
 
@@ -77,6 +97,17 @@ from; the per-ticket entries and how this file is compiled are in
   (S7V-017)
 - Removing silences from a long recording answers at once: the clip's sound is measured once while
   its words are found, and reused every time you cut. (S7V-055)
+- Undo works on any Mac: the edit's undo history is kept by s7video itself in the project, so undo
+  and redo need no extra tools, and saving each step is faster. (S7V-051)
+- No install prompts on a fresh Mac: s7video works without Apple's coding tools and never asks to
+  install them. Coder features that need git appear only when git is installed, and new projects no
+  longer record your name and computer name. (S7V-052)
+- In a video project the assistant is offered only its video-editing tools, and none of the coding,
+  pull-request, browser or device tools it inherited. Each reply sends about 95% less tool setup
+  text. Other projects are unchanged. (S7V-072)
+- Video projects open with the Editor beside the chat. Its first list shows your versions, newest
+  marked Main, and you can make any older one main again. Drop a video anywhere on the Editor to
+  add it. The Editor stays open after the assistant edits. (S7V-076)
 
 ### Removed
 
@@ -91,6 +122,14 @@ from; the per-ticket entries and how this file is compiled are in
 
 ### Fixed
 
+- While you look at an older version, the timeline only lets you look: a drag, trim, split or
+  delete no longer changes your main edit, and a click on the timeline takes you back to it.
+  Version messages say "main", like the Versions tab. (S7V-087)
+- For developers: a dev desktop app started from a linked git worktree keeps its own Electron
+  profile in that worktree's dev home, so it no longer hands off to, or focuses, another
+  checkout's app. The main checkout keeps its `s7video-dev` profile. (S7V-073)
+- s7video no longer jumps in front of other apps by itself. It comes forward only when you click
+  it, its Dock icon or a notification. (S7V-074)
 - Asking to keep a pause that was already cut now gets a plain answer and a hint to undo, and a
   short pause you keep stays short (about a third of a second). (S7V-056)
 - In the browser, the greyed-out Add media button and the empty Assets list and player now explain
@@ -126,5 +165,8 @@ from; the per-ticket entries and how this file is compiled are in
 
 - No visible change: reusing a speech model from another app's download folder now accepts only
   files inside that model's own folder, never a file a stray link points to. (S7V-068)
+- If an assistant changes your edit without the app's video tools, the change is kept only if it
+  is valid and adds no file from outside your project; otherwise your edit goes back to its last
+  saved version and you see why. (S7V-054)
 
 [Unreleased]: https://github.com/ideanavigator/s7video/commits/main

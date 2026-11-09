@@ -12,6 +12,7 @@ import {
   EngineJobsCancelResult,
   EngineJobsEvent,
   EngineJobsSubscribeInput,
+  CaptionStillsResult,
   ExportStartError,
   ExportStartInput,
   ExportStartResult,
@@ -378,9 +379,17 @@ import {
 import {
   EditApplyInput,
   EditOpError,
+  EditHistoryCleanInput,
+  EditHistoryCleanResult,
   EditProjectInput,
   EditSnapshot,
   EditUnavailableError,
+  EditVersion,
+  EditVersionGetResult,
+  EditVersionInput,
+  EditVersionRestoreInput,
+  EditVersionTagInput,
+  EditVersionsResult,
 } from "./editOps.ts";
 import {
   StorageCleanupReport,
@@ -641,6 +650,8 @@ export const WS_METHODS = {
   engineJobsCancel: "engine.jobs.cancel",
   exportStart: "export.start",
   exportStatus: "export.status",
+  // Caption stills for the player (S7V-075)
+  captionsStills: "captions.stills",
 
   // Edit document (S7V-024)
   editGet: "edit.get",
@@ -648,6 +659,14 @@ export const WS_METHODS = {
   editSubscribe: "edit.subscribe",
   editUndo: "edit.undo",
   editRedo: "edit.redo",
+  // Edit versions (S7V-069)
+  editVersions: "edit.versions",
+  editVersionGet: "edit.versionGet",
+  editVersionTag: "edit.versionTag",
+  editVersionRestore: "edit.versionRestore",
+  editVersionDelete: "edit.versionDelete",
+  editHistoryClean: "edit.historyClean",
+  editHistoryDismiss: "edit.historyDismiss",
   transcriptGet: "transcript.get",
   transcribeRun: "transcribe.run",
   transcribeModelsStatus: "transcribe.models.status",
@@ -2034,6 +2053,12 @@ const WsExportStatusRpc = Rpc.make(WS_METHODS.exportStatus, {
   error: EnvironmentAuthorizationError,
 });
 
+const WsCaptionsStillsRpc = Rpc.make(WS_METHODS.captionsStills, {
+  payload: EditProjectInput,
+  success: CaptionStillsResult,
+  error: Schema.Union([EditUnavailableError, EngineError, EnvironmentAuthorizationError]),
+});
+
 const EditRpcError = Schema.Union([EditUnavailableError, EnvironmentAuthorizationError]);
 const WsEditGetRpc = Rpc.make(WS_METHODS.editGet, {
   payload: EditProjectInput,
@@ -2063,6 +2088,41 @@ const WsEditUndoRpc = Rpc.make(WS_METHODS.editUndo, {
   error: EditRpcError,
 });
 const WsEditRedoRpc = Rpc.make(WS_METHODS.editRedo, {
+  payload: EditProjectInput,
+  success: EditSnapshot,
+  error: EditRpcError,
+});
+const WsEditVersionsRpc = Rpc.make(WS_METHODS.editVersions, {
+  payload: EditProjectInput,
+  success: EditVersionsResult,
+  error: EditRpcError,
+});
+const WsEditVersionGetRpc = Rpc.make(WS_METHODS.editVersionGet, {
+  payload: EditVersionInput,
+  success: EditVersionGetResult,
+  error: EditRpcError,
+});
+const WsEditVersionTagRpc = Rpc.make(WS_METHODS.editVersionTag, {
+  payload: EditVersionTagInput,
+  success: EditVersion,
+  error: EditRpcError,
+});
+const WsEditVersionRestoreRpc = Rpc.make(WS_METHODS.editVersionRestore, {
+  payload: EditVersionRestoreInput,
+  success: EditSnapshot,
+  error: Schema.Union([EditUnavailableError, EditConflict, EnvironmentAuthorizationError]),
+});
+const WsEditVersionDeleteRpc = Rpc.make(WS_METHODS.editVersionDelete, {
+  payload: EditVersionInput,
+  success: EditVersionsResult,
+  error: EditRpcError,
+});
+const WsEditHistoryCleanRpc = Rpc.make(WS_METHODS.editHistoryClean, {
+  payload: EditHistoryCleanInput,
+  success: EditHistoryCleanResult,
+  error: EditRpcError,
+});
+const WsEditHistoryDismissRpc = Rpc.make(WS_METHODS.editHistoryDismiss, {
   payload: EditProjectInput,
   success: EditSnapshot,
   error: EditRpcError,
@@ -2344,11 +2404,19 @@ export const WsRpcGroup = RpcGroup.make(
   WsEngineJobsCancelRpc,
   WsExportStartRpc,
   WsExportStatusRpc,
+  WsCaptionsStillsRpc,
   WsEditGetRpc,
   WsEditApplyRpc,
   WsEditSubscribeRpc,
   WsEditUndoRpc,
   WsEditRedoRpc,
+  WsEditVersionsRpc,
+  WsEditVersionGetRpc,
+  WsEditVersionTagRpc,
+  WsEditVersionRestoreRpc,
+  WsEditVersionDeleteRpc,
+  WsEditHistoryCleanRpc,
+  WsEditHistoryDismissRpc,
   WsTranscriptGetRpc,
   WsTranscribeRunRpc,
   WsTranscribeModelsStatusRpc,

@@ -7,6 +7,8 @@ import { assert, describe, it } from "@effect/vitest";
 import {
   EngineError,
   EngineJobId,
+  type MediaFilmstripInput,
+  type MediaPeaksInput,
   type MediaProbeResult,
   type MediaProxyInput,
   type ProjectId,
@@ -22,12 +24,19 @@ import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
+import * as NodeZlib from "node:zlib";
 
 import { ASSET_ROUTE_PREFIX, issueAssetUrl, resolveAsset } from "../assets/AssetAccess.ts";
 import * as NativeAppIconResolver from "../assets/NativeAppIconResolver.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as EditDocumentService from "../edit/EditDocumentService.ts";
-import { git, isIgnored, layerEditTest } from "../edit/editHarness.testkit.ts";
+import {
+  git,
+  historyLog,
+  historyObjects,
+  isIgnored,
+  layerEditTest,
+} from "../edit/editHarness.testkit.ts";
 import * as EngineService from "../engine/EngineService.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
@@ -64,6 +73,12 @@ const videoProbe = (path: string): MediaProbeResult => ({
   audio: null,
 });
 
+/** A clip with sound under its picture, as camera files have. */
+const talkingProbe = (path: string): MediaProbeResult => ({
+  ...videoProbe(path),
+  audio: { ...audioProbe(path).audio!, codec: "aac", durationSamples: 480_000 },
+});
+
 const audioProbe = (path: string): MediaProbeResult => ({
   path,
   container: "wav",
@@ -92,6 +107,9 @@ interface FakeEngine {
   readonly probed: Array<string>;
   /** When set, probing `path` settles `seen`. */
   probeWatch?: { readonly path: string; readonly seen: Deferred.Deferred<void> };
+  /** Media-data jobs asked for; each writes its index files unless `mediaDataOutcome` says no. */
+  readonly mediaData: Array<{ peaks?: MediaPeaksInput; filmstrip?: MediaFilmstripInput }>;
+  mediaDataOutcome?: Deferred.Deferred<"succeed" | "cancelled" | "failed">;
   /** When set, a thumbnail signals `started`, then waits for `release` (or fails when told). */
   thumbnailHold?: {
     readonly started: Deferred.Deferred<void>;
@@ -113,7 +131,11 @@ const layerFakeEngine = (fake: FakeEngine) =>
             rpcMessage: "ffprobe could not read the media",
           });
         }
-        return path.endsWith(".wav") ? audioProbe(path) : videoProbe(path);
+        return path.endsWith(".wav")
+          ? audioProbe(path)
+          : NodePath.basename(path).startsWith("talk")
+            ? talkingProbe(path)
+            : videoProbe(path);
       }),
     thumbnail: ({ outputPath }) =>
       Effect.gen(function* () {
@@ -150,8 +172,58 @@ const layerFakeEngine = (fake: FakeEngine) =>
         NodeFS.writeFileSync(input.outputPath, "proxy");
         return { path: input.outputPath };
       }),
+    mediaData: ({ onStart, onStep, projectId: _projectId, ...input }) =>
+      Effect.gen(function* () {
+        fake.mediaData.push(input);
+        if (onStart) yield* onStart(EngineJobId.make(`media-data-${fake.mediaData.length}`));
+        if (fake.mediaDataOutcome !== undefined) {
+          const outcome = yield* Deferred.await(fake.mediaDataOutcome);
+          if (outcome !== "succeed") {
+            return yield* new EngineError({
+              reason: outcome === "cancelled" ? "cancelled" : "rpc_error",
+              method: "media.filmstrip",
+            });
+          }
+        }
+        if (input.peaks) {
+          writeIndex(input.peaks.outputDir, peaksIndex);
+          if (onStep) yield* onStep("peaks");
+        }
+        if (input.filmstrip) {
+          writeIndex(input.filmstrip.outputDir, filmstripIndex);
+          if (onStep) yield* onStep("filmstrip");
+        }
+      }),
     subscribeJobs: Stream.never,
   });
+
+const peaksIndex = {
+  version: 1,
+  audio: true,
+  sampleRate: 48_000,
+  channels: 1,
+  durationSamples: 480_000,
+  offsetSamples: 0,
+  levels: [{ samplesPerPeak: 256, count: 1875, file: "256.f32" }],
+};
+
+const filmstripIndex = {
+  version: 1,
+  video: true,
+  rate: { num: 30, den: 1 },
+  tileWidth: 160,
+  tileHeight: 90,
+  columns: 10,
+  rows: 10,
+  levels: [
+    { level: "16s", secondsPerTile: 16, framesPerTile: 480, sheets: ["16s-1.jpg"], frames: [0] },
+  ],
+};
+
+const writeIndex = (folder: string, index: object) => {
+  NodeFS.mkdirSync(folder, { recursive: true });
+  NodeFS.writeFileSync(NodePath.join(folder, "index.json"), JSON.stringify(index));
+};
 
 const layerAssetRoute = Layer.mergeAll(
   ServerSecretStore.layer,
@@ -187,6 +259,7 @@ const withLibrary = <A, E, R>(
       proxyOutcome: yield* Deferred.make<"succeed" | "cancelled" | "failed">(),
       proxies: [],
       probed: [],
+      mediaData: [],
     };
     const layer = MediaLibraryService.layerWith(options).pipe(
       Layer.provide(layerFakeEngine(fake)),
@@ -1051,6 +1124,260 @@ describe("MediaLibraryService", () => {
         // While it runs, a list does not start another either.
         yield* library.list(projectId);
         assert.equal(fake.proxies.length, 2);
+      }),
+    ),
+  );
+
+  it.effect("import starts one media-data job by fingerprint, and a re-import reuses it", () =>
+    withLibrary(({ projectId, root, desktop, library, fake }) =>
+      Effect.gen(function* () {
+        const clip = writeClip(desktop, "talk.mp4", 11);
+        yield* library.import({ projectId, sourcePath: clip, mode: "reference" });
+        const sha = (editJson(root).media[0]!.fingerprint as { sha256: string }).sha256;
+        assert.equal(fake.mediaData.length, 1);
+        assert.deepEqual(fake.mediaData[0], {
+          peaks: { path: clip, outputDir: NodePath.join(root, ".s7cache", "peaks", sha) },
+          filmstrip: {
+            path: clip,
+            outputDir: NodePath.join(root, ".s7cache", "filmstrip", sha),
+            rate: { num: 30, den: 1 },
+          },
+        });
+        const ready = yield* library.subscribe(projectId).pipe(
+          Stream.map((snapshot) => snapshot.items[0]!.mediaData),
+          Stream.filter((state) => state?.status === "ready"),
+          Stream.runHead,
+        );
+        assert.deepEqual(Option.getOrUndefined(ready), {
+          status: "ready",
+          peaks: "ready",
+          filmstrip: "ready",
+        });
+        // Cache files stay out of git, and so out of every checkpoint.
+        assert.isTrue(isIgnored(root, `.s7cache/peaks/${sha}/index.json`));
+        assert.isTrue(isIgnored(root, `.s7cache/filmstrip/${sha}/index.json`));
+        assert.notInclude(git(root, "ls-files"), ".s7cache");
+
+        // The same file again: the cache is reused and nothing is decoded.
+        yield* library.import({ projectId, sourcePath: clip, mode: "copy" });
+        yield* library.list(projectId);
+        assert.equal(fake.mediaData.length, 1);
+        // An index of another version is not reused.
+        writeIndex(NodePath.join(root, ".s7cache", "peaks", sha), { ...peaksIndex, version: 2 });
+        assert.equal((yield* library.list(projectId)).items[0]!.mediaData?.peaks, "pending");
+        yield* library.import({ projectId, sourcePath: clip, mode: "reference" });
+        assert.equal(fake.mediaData.length, 2);
+        assert.deepEqual(Object.keys(fake.mediaData[1]!), ["peaks"]);
+        // A replaced file has a new fingerprint and gets its own data.
+        yield* library.import({
+          projectId,
+          sourcePath: writeClip(desktop, "talk-2.mp4", 12),
+          mode: "reference",
+        });
+        assert.equal(fake.mediaData.length, 3);
+        assert.notInclude(fake.mediaData[2]!.peaks!.outputDir, sha);
+      }),
+    ),
+  );
+
+  it.effect("media data never enters edit history after 5 imports and 5 edits", () =>
+    withLibrary(({ projectId, root, desktop, library, edits }) =>
+      Effect.gen(function* () {
+        for (let index = 1; index <= 5; index += 1) {
+          yield* library.import({
+            projectId,
+            sourcePath: writeClip(desktop, `talk-${index}.mp4`, 20 + index),
+            mode: index % 2 === 0 ? "copy" : "reference",
+          });
+        }
+        const sizes = [1080, 1920, 1080, 1350, 1080];
+        for (const [index, height] of sizes.entries()) {
+          const current = yield* edits.read(projectId);
+          yield* edits.apply(
+            projectId,
+            [{ _tag: "setCanvas", canvas: { width: 1080 + index * 2, height } }],
+            { origin: "agent", baseRevision: current.revision },
+          );
+        }
+        yield* library.subscribe(projectId).pipe(
+          Stream.filter((snapshot) =>
+            snapshot.items.every((item) => item.mediaData?.status === "ready"),
+          ),
+          Stream.runHead,
+        );
+        const cache = NodePath.join(root, ".s7cache");
+        assert.equal(NodeFS.readdirSync(NodePath.join(cache, "peaks")).length, 5);
+        assert.equal(NodeFS.readdirSync(NodePath.join(cache, "filmstrip")).length, 5);
+        assert.notInclude(git(root, "ls-files"), ".s7cache");
+        // Not in any commit of the edit history either.
+        assert.notInclude(git(root, "log", "--all", "--name-only", "--format="), ".s7cache");
+        // The S7V-051 store: every step names only the edit and its project file, and every object
+        // is one of those texts, never cache bytes.
+        const history = NodePath.join(root, ".s7history");
+        assert.deepEqual(NodeFS.readdirSync(history).toSorted(), ["log.json", "objects"]);
+        const log = historyLog(root)!;
+        assert.isAtLeast(log.entries.length, 10);
+        for (const entry of log.entries) {
+          assert.deepEqual(Object.keys(entry.files).toSorted(), ["edit.json", "project.json"]);
+        }
+        const objects = historyObjects(root);
+        assert.isAbove(objects.length, 0);
+        for (const object of objects) {
+          const text = NodeZlib.gunzipSync(
+            NodeFS.readFileSync(NodePath.join(history, "objects", object)),
+          ).toString("utf8");
+          const parsed = JSON.parse(text) as Record<string, unknown>;
+          assert.isTrue("tracks" in parsed || "revision" in parsed, object);
+          assert.isBelow(text.length, 64 * 1024, object);
+        }
+      }),
+    ),
+  );
+
+  it.effect("audio-only media gets no filmstrip, and video without sound no waveform", () =>
+    withLibrary(({ projectId, desktop, library, fake }) =>
+      Effect.gen(function* () {
+        yield* library.import({
+          projectId,
+          sourcePath: writeClip(desktop, "music.wav", 13),
+          mode: "reference",
+        });
+        yield* library.import({
+          projectId,
+          sourcePath: writeClip(desktop, "cam.mp4", 14),
+          mode: "reference",
+        });
+        assert.deepEqual(
+          fake.mediaData.map((job) => Object.keys(job)),
+          [["peaks"], ["filmstrip"]],
+        );
+        const { items } = yield* library.list(projectId);
+        assert.deepEqual(
+          items.map((item) => [item.id, item.mediaData]),
+          [
+            ["music", { status: "ready", peaks: "ready", filmstrip: "none" }],
+            ["cam", { status: "ready", peaks: "none", filmstrip: "ready" }],
+          ],
+        );
+      }),
+    ),
+  );
+
+  it.effect("media data shows its job while preparing, and failed or cancelled after", () =>
+    withLibrary(({ projectId, desktop, library, fake }) =>
+      Effect.gen(function* () {
+        fake.mediaDataOutcome = yield* Deferred.make<"succeed" | "cancelled" | "failed">();
+        const clip = writeClip(desktop, "talk.mp4", 15);
+        yield* library.import({ projectId, sourcePath: clip, mode: "reference" });
+        assert.deepEqual((yield* library.list(projectId)).items[0]!.mediaData, {
+          status: "preparing",
+          jobId: EngineJobId.make("media-data-1"),
+          progress: 0,
+          peaks: "pending",
+          filmstrip: "pending",
+        });
+        yield* Deferred.succeed(fake.mediaDataOutcome, "failed");
+        const failed = yield* library.subscribe(projectId).pipe(
+          Stream.map((snapshot) => snapshot.items[0]!.mediaData?.status),
+          Stream.filter((status) => status === "failed"),
+          Stream.runHead,
+        );
+        assert.equal(Option.getOrUndefined(failed), "failed");
+
+        // Importing again retries it; a cancelled job is simply not there.
+        fake.mediaDataOutcome = yield* Deferred.make<"succeed" | "cancelled" | "failed">();
+        yield* library.import({ projectId, sourcePath: clip, mode: "reference" });
+        assert.equal(fake.mediaData.length, 2);
+        yield* Deferred.succeed(fake.mediaDataOutcome, "cancelled");
+        const settled = yield* library.subscribe(projectId).pipe(
+          Stream.map((snapshot) => snapshot.items[0]!.mediaData?.status),
+          Stream.filter((status) => status !== "preparing"),
+          Stream.runHead,
+        );
+        assert.equal(Option.getOrUndefined(settled), "none");
+      }),
+    ),
+  );
+
+  it.effect("media from before media data gets it on the first list", () =>
+    withLibrary(({ projectId, desktop, library, edits, fake }) =>
+      Effect.gen(function* () {
+        const other = writeClip(desktop, "talk-old.mp4", 16);
+        const { sha256, size } = yield* MediaFiles.fingerprint(other);
+        const current = yield* edits.read(projectId);
+        yield* edits.apply(
+          projectId,
+          [
+            {
+              _tag: "putMedia",
+              media: {
+                id: "old",
+                kind: "video",
+                reference: other,
+                fingerprint: { sha256, size },
+                probe: toEditProbe(talkingProbe(other), { num: 30, den: 1 }),
+              },
+            },
+          ],
+          { origin: "import", baseRevision: current.revision },
+        );
+        const ready = yield* library.subscribe(projectId).pipe(
+          Stream.filter((snapshot) => snapshot.items[0]?.mediaData?.status === "ready"),
+          Stream.runHead,
+        );
+        assert.isTrue(Option.isSome(ready));
+        assert.equal(fake.mediaData.length, 1);
+        assert.equal(fake.mediaData[0]!.peaks!.path, other);
+      }),
+    ),
+  );
+
+  it.effect("serves media-data files by part, only from that media's cache folder", () =>
+    withLibrary(({ projectId, root, desktop, library }) =>
+      Effect.gen(function* () {
+        yield* library.import({
+          projectId,
+          sourcePath: writeClip(desktop, "talk.mp4", 17),
+          mode: "reference",
+        });
+        yield* library.subscribe(projectId).pipe(
+          Stream.filter((snapshot) => snapshot.items[0]?.mediaData?.status === "ready"),
+          Stream.runHead,
+        );
+        const sha = (editJson(root).media[0]!.fingerprint as { sha256: string }).sha256;
+        const peaksDir = NodePath.join(root, ".s7cache", "peaks", sha);
+        const stripDir = NodePath.join(root, ".s7cache", "filmstrip", sha);
+        NodeFS.writeFileSync(NodePath.join(peaksDir, "256.f32"), Buffer.alloc(16));
+        NodeFS.writeFileSync(NodePath.join(stripDir, "16s-1.jpg"), Buffer.from([0xff, 0xd8]));
+        const resolve = (variant: "peaks" | "filmstrip" | "original", part?: string) =>
+          library
+            .resolveVariant(projectId, "talk", variant, part)
+            .pipe(Effect.map(Option.getOrUndefined));
+        assert.deepEqual(yield* resolve("peaks", "index"), {
+          path: NodePath.join(peaksDir, "index.json"),
+          mimeType: "application/json",
+        });
+        assert.deepEqual(yield* resolve("peaks", "p256"), {
+          path: NodePath.join(peaksDir, "256.f32"),
+          mimeType: "application/octet-stream",
+        });
+        assert.deepEqual(yield* resolve("filmstrip", "f16s-1"), {
+          path: NodePath.join(stripDir, "16s-1.jpg"),
+          mimeType: "image/jpeg",
+        });
+        // A part is required for media data and refused for anything else; unknown parts fail.
+        assert.isUndefined(yield* resolve("peaks"));
+        assert.isDefined(yield* resolve("original"));
+        assert.isUndefined(yield* resolve("original", "index"));
+        assert.isUndefined(yield* resolve("peaks", "p1024"));
+        assert.isUndefined(yield* resolve("peaks", "f16s-1"));
+        assert.isUndefined(yield* resolve("filmstrip", "../../edit"));
+        // A level swapped for a symlink out of the cache is not served.
+        const secret = NodePath.join(desktop, "secret.f32");
+        NodeFS.writeFileSync(secret, "private");
+        NodeFS.rmSync(NodePath.join(peaksDir, "256.f32"));
+        NodeFS.symlinkSync(secret, NodePath.join(peaksDir, "256.f32"));
+        assert.isUndefined(yield* resolve("peaks", "p256"));
       }),
     ),
   );

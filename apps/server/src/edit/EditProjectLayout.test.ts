@@ -43,6 +43,8 @@ describe("EditProjectLayout", () => {
           "exports/final.mp4",
           "clip-at-root.mp4",
           "notes.txt",
+          ".s7history/log.json",
+          ".s7history/objects/ab.json.gz",
         ];
         const tracked = [
           "edit.json",
@@ -54,6 +56,13 @@ describe("EditProjectLayout", () => {
         ];
         for (const file of ignored) assert.isTrue(isIgnored(root, file), file);
         for (const file of tracked) assert.isFalse(isIgnored(root, file), file);
+        // The media guard checks TRACKED_PATHS without git, so it must cover what git tracks.
+        for (const file of tracked) {
+          const covered = EditProjectLayout.TRACKED_PATHS.some((entry) =>
+            entry.endsWith("/") ? file.startsWith(entry) : file === entry,
+          );
+          assert.isTrue(covered, file);
+        }
         assert.strictEqual(
           NodeFS.readFileSync(NodePath.join(root, ".gitignore"), "utf8"),
           EditProjectLayout.WHITELIST_GITIGNORE,
@@ -96,6 +105,30 @@ describe("EditProjectLayout", () => {
           yield* favicons.resolvePath(root),
           NodePath.join(root, "assets", "icon.svg"),
         );
+      }),
+    ),
+  );
+
+  // S7V-072: a video project hides every coding tool, so another tool's project.json must not count.
+  it.effect("counts a folder as a video project only when project.json says edit-project", () =>
+    withRoot((root) =>
+      Effect.gen(function* () {
+        const layout = yield* EditProjectLayout.EditProjectLayout;
+        const isVideoProject = EditProjectLayout.isVideoProjectFolder(
+          yield* FileSystem.FileSystem.pipe(Effect.provide(NodeServices.layer)),
+        );
+        assert.isFalse(yield* isVideoProject(root));
+        yield* layout.ensure(root);
+        assert.isTrue(yield* isVideoProject(root));
+        const projectFile = NodePath.join(root, EditProjectLayout.PROJECT_FILE);
+        // A later version or extra keys still count: only the format decides.
+        NodeFS.writeFileSync(projectFile, '{"format":"edit-project","version":99,"extra":1}');
+        assert.isTrue(yield* isVideoProject(root));
+        for (const other of ['{"name":"app","targets":{}}', "{}", "not json", "[]"]) {
+          NodeFS.writeFileSync(projectFile, other);
+          assert.isFalse(yield* isVideoProject(root), other);
+        }
+        assert.isTrue(yield* layout.isEditProject(root));
       }),
     ),
   );

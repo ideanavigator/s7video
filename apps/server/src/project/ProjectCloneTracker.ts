@@ -31,6 +31,7 @@ import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
 import * as SourceControlRepositoryService from "../sourceControl/SourceControlRepositoryService.ts";
+import { SystemGit } from "../vcs/SystemGit.ts";
 
 export class ProjectCloneTracker extends Context.Service<
   ProjectCloneTracker,
@@ -93,6 +94,7 @@ interface TrackedClone {
 /** @public */
 export const make = Effect.gen(function* () {
   const repositories = yield* SourceControlRepositoryService.SourceControlRepositoryService;
+  const systemGit = yield* SystemGit;
   const clones = yield* Ref.make(new Map<ProjectId, TrackedClone>());
   const changes = yield* PubSub.unbounded<ReadonlyArray<ProjectCloneSnapshot>>();
   const retentionFibers = new Map<ProjectId, Fiber.Fiber<unknown, never>>();
@@ -268,6 +270,13 @@ export const make = Effect.gen(function* () {
 
   const start: ProjectCloneTracker["Service"]["start"] = Effect.fn("ProjectCloneTracker.start")(
     function* (input, hooks) {
+      if (!(yield* systemGit.refresh).available) {
+        return yield* new SourceControlRepositoryError({
+          operation: "cloneRepository",
+          provider: input.provider ?? SourceControlProviderKind.make("unknown"),
+          detail: "Git is not installed on this Mac.",
+        });
+      }
       const prepared = yield* repositories.prepareClone(input);
       const startedAt = yield* nowIso;
       const snapshot: ProjectCloneSnapshot = {

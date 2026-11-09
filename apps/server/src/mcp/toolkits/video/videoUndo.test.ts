@@ -16,6 +16,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 import { McpSchema, McpServer } from "effect/ai";
+import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
@@ -27,6 +28,7 @@ import * as MediaLibraryService from "../../../media/MediaLibraryService.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as ManagedProjectFolders from "../../../project/ManagedProjectFolders.ts";
 import * as TranscriptService from "../../../transcript/TranscriptService.ts";
+import * as CaptionTrackService from "../../../edit/CaptionTrackService.ts";
 import * as SilenceCutService from "../../../edit/SilenceCutService.ts";
 import * as McpHttpServer from "../../McpHttpServer.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
@@ -200,6 +202,7 @@ const withProject = <A, E>(
       }),
       Layer.mock(ExportService.ExportService)({}),
       Layer.mock(MediaLibraryService.MediaLibraryService)({}),
+      CaptionTrackService.layer,
       silences === "real"
         ? SilenceCutService.layer.pipe(Layer.provideMerge(spokenClip))
         : Layer.mergeAll(
@@ -460,8 +463,10 @@ describe("video_undo and video_redo", () => {
           ["video_remove_silences", {}],
           ["video_export", {}],
           ["video_canvas", { ratio: "1:1" }],
+          ["video_assemble", { items: [{ mediaId: "cam", in: 0, duration: 30 }] }],
           ["video_import", { path: NodePath.join(root, "clip.mp4") }],
           ["video_transcribe", { media: "cam" }],
+          ["video_add_captions", {}],
         ];
         for (const [tool, args] of changing) {
           const result = yield* call(tool, args);
@@ -474,6 +479,64 @@ describe("video_undo and video_redo", () => {
         for (const tool of ["video_edit_read", "video_job_status"]) {
           expect((yield* call(tool)).isError, tool).toBe(false);
         }
+      }),
+    ),
+  );
+
+  // S7V-075: captions are one assistant version; undo removes the track and redo puts it back.
+  it.effect("video_add_captions adds the caption track as one undoable step", () =>
+    withProject(({ root, thread, edits, call }) =>
+      Effect.gen(function* () {
+        const clip = Buffer.from("a talking-head clip");
+        NodeFS.mkdirSync(NodePath.join(root, "assets"), { recursive: true });
+        NodeFS.writeFileSync(NodePath.join(root, "assets", "cam.mp4"), clip);
+        const sha256 = NodeCrypto.createHash("sha256").update(clip).digest("hex");
+        const cache = NodePath.join(root, ".s7cache", "transcripts");
+        NodeFS.mkdirSync(cache, { recursive: true });
+        NodeFS.writeFileSync(
+          NodePath.join(cache, `${sha256}.json`),
+          JSON.stringify({
+            transcriptVersion: 1,
+            mediaFingerprint: { sha256, size: clip.length },
+            model: "test",
+            revision: "test",
+            fps: { num: 30, den: 1 },
+            durationFrames: 900,
+            words: [
+              { text: "Hello", startFrame: 10, endFrame: 20, confidence: 1, speaker: "S1" },
+              { text: "there.", startFrame: 22, endFrame: 30, confidence: 1, speaker: "S1" },
+              { text: "Gone", startFrame: 100, endFrame: 110, confidence: 1, speaker: "S1" },
+            ],
+            createdAt: "2026-11-09T00:00:00.000Z",
+          }),
+        );
+        const initial = yield* edits.read(thread.projectId);
+        yield* edits.apply(thread.projectId, [...setup, keep([[0, 60]])], {
+          origin: "agent",
+          baseRevision: initial.revision,
+        });
+        const before = readFile(root, "edit.json");
+
+        const added = yield* call("video_add_captions");
+        expect(added.isError).toBe(false);
+        expect(textOf(added).join("")).toContain("Added 1 captions to the edit.");
+        const captioned = readFile(root, "edit.json");
+        const track = JSON.parse(captioned).tracks.find(
+          (entry: { kind: string }) => entry.kind === "caption",
+        );
+        expect(track.items.map((item: { text: string }) => item.text)).toEqual(["Hello there."]);
+        // No video file is made: captions live in the edit (AC-1).
+        const exportsDir = NodePath.join(root, "exports");
+        const made = NodeFS.existsSync(exportsDir) ? NodeFS.readdirSync(exportsDir) : [];
+        expect(made.filter((name) => name.endsWith(".mp4"))).toEqual([]);
+        const [newest] = yield* edits.versions(thread.projectId);
+        expect(newest!.changes).toEqual(["Added captions"]);
+        expect(newest!.author).toBe("assistant");
+
+        expect((yield* call("video_undo")).isError).toBe(false);
+        expect(readFile(root, "edit.json")).toBe(before);
+        expect((yield* call("video_redo")).isError).toBe(false);
+        expect(readFile(root, "edit.json")).toBe(captioned);
       }),
     ),
   );
@@ -505,6 +568,155 @@ describe("video_undo and video_redo", () => {
         expect(readFile(root, "edit.json")).toBe(before);
         const refused = yield* call("video_canvas", { ratio: "21:9" }).pipe(Effect.flip);
         expect(String(refused)).toMatch(/ratio/u);
+      }),
+    ),
+  );
+
+  // S7V-039: several clips in one edit, in order, as one undoable step.
+  it.effect("should insert items in order for video_assemble", () =>
+    withProject(({ root, thread, edits, call }) =>
+      Effect.gen(function* () {
+        NodeFS.mkdirSync(NodePath.join(root, "assets"), { recursive: true });
+        NodeFS.writeFileSync(NodePath.join(root, "assets", "cam.mp4"), "cam");
+        NodeFS.writeFileSync(NodePath.join(root, "assets", "broll.mp4"), "broll");
+        const initial = yield* edits.read(thread.projectId);
+        const ready = yield* edits.apply(
+          thread.projectId,
+          [
+            ...setup,
+            { _tag: "putMedia", media: { ...media, id: "broll", path: "assets/broll.mp4" } },
+            keep([[0, 30]]),
+          ],
+          { origin: "agent", baseRevision: initial.revision },
+        );
+        const before = readFile(root, "edit.json");
+
+        const result = yield* call("video_assemble", {
+          items: [
+            { mediaId: "broll", in: 100, duration: 20 },
+            { mediaId: "cam", in: 300, duration: 10 },
+            { mediaId: "broll", in: 0, duration: 15 },
+          ],
+        });
+        expect(result.isError, textOf(result).join("")).toBe(false);
+        const after = yield* edits.read(thread.projectId);
+        expect(after.revision).toBe(ready.revision + 1);
+        const { itemIds } = result.structuredContent as { itemIds: string[] };
+        expect(result.structuredContent).toEqual({ revision: after.revision, itemIds });
+        const track = after.document.tracks[0]!;
+        const placed =
+          track.kind === "video"
+            ? track.items.map((item) => [item.media, item.start, item.duration, item.in])
+            : [];
+        expect(placed).toEqual([
+          ["cam", 0, 30, 0],
+          ["broll", 30, 20, 100],
+          ["cam", 50, 10, 300],
+          ["broll", 60, 15, 0],
+        ]);
+        expect(after.document.tracks[0]!.items.slice(1).map((item) => item.id)).toEqual(itemIds);
+
+        // `at` inserts mid-track and pushes later items right.
+        const inserted = yield* call("video_assemble", {
+          items: [{ mediaId: "cam", in: 500, duration: 5 }],
+          at: 30,
+        });
+        expect(inserted.isError, textOf(inserted).join("")).toBe(false);
+        const moved = yield* edits.read(thread.projectId);
+        expect(moved.document.tracks[0]!.items.map((item) => item.start)).toEqual([
+          0, 30, 35, 55, 65,
+        ]);
+
+        // One undo per call.
+        yield* call("video_undo");
+        yield* call("video_undo");
+        expect(readFile(root, "edit.json")).toBe(before);
+
+        // `at` inside an item is refused and changes nothing.
+        const inside = yield* call("video_assemble", {
+          items: [{ mediaId: "cam", in: 0, duration: 5 }],
+          at: 12,
+        });
+        expect(textOf(inside).join("")).toBe(
+          "at must be where a video item starts, or the end of the edit (frame 30).",
+        );
+        expect(readFile(root, "edit.json")).toBe(before);
+
+        // S7V-034: a mid-edit `at` moves every later item on every track in step, caption words
+        // and markers included; an item running across `at` is refused.
+        const captioned = yield* edits.read(thread.projectId);
+        yield* edits.apply(
+          thread.projectId,
+          [
+            {
+              _tag: "addTrack",
+              track: {
+                kind: "caption",
+                id: "C1",
+                items: [
+                  {
+                    id: "cap",
+                    start: 20,
+                    duration: 10,
+                    text: "hi",
+                    words: [{ text: "hi", start: 22, duration: 4 }],
+                  },
+                ],
+              },
+            },
+            { _tag: "setMarkers", markers: [{ id: "mk", start: 25, duration: 0, label: "Hook" }] },
+          ],
+          { origin: "agent", baseRevision: captioned.revision },
+        );
+        const withCaption = readFile(root, "edit.json");
+        const shifted = yield* call("video_assemble", {
+          items: [{ mediaId: "cam", in: 0, duration: 5 }],
+          at: 0,
+        });
+        expect(shifted.isError, textOf(shifted).join("")).toBe(false);
+        const afterShift = (yield* edits.read(thread.projectId)).document;
+        expect(afterShift.tracks.map((entry) => entry.items.map((item) => item.start))).toEqual([
+          [0, 5],
+          [25],
+        ]);
+        expect(afterShift.tracks[1]!.items[0]).toMatchObject({
+          words: [{ text: "hi", start: 27, duration: 4 }],
+        });
+        expect(afterShift.markers).toEqual([{ id: "mk", start: 30, duration: 0, label: "Hook" }]);
+        yield* call("video_undo");
+        expect(readFile(root, "edit.json")).toBe(withCaption);
+        const uncut = yield* edits.read(thread.projectId);
+        const videoId = uncut.document.tracks[0]!.items[0]!.id;
+        yield* edits.apply(
+          thread.projectId,
+          [{ _tag: "splitItem", itemId: videoId, atFrame: 25 }],
+          {
+            origin: "agent",
+            baseRevision: uncut.revision,
+          },
+        );
+        const cut = readFile(root, "edit.json");
+        const across = yield* call("video_assemble", {
+          items: [{ mediaId: "cam", in: 0, duration: 5 }],
+          at: 25,
+        });
+        expect(textOf(across).join("")).toBe(
+          `"cap" runs across frame 25, so clips can't be added there. Pick a frame where it has ended, or the end (frame 30).`,
+        );
+        expect(readFile(root, "edit.json")).toBe(cut);
+        yield* call("video_undo");
+        yield* call("video_undo");
+
+        for (const [items, message] of [
+          [[{ mediaId: "nope", in: 0, duration: 5 }], "There is no file at nope"],
+          [[{ mediaId: "cam", in: 890, duration: 30 }], ""],
+          [[], "at least one"],
+        ] as const) {
+          const refused = yield* call("video_assemble", { items });
+          expect(refused.isError, JSON.stringify(items)).toBe(true);
+          expect(textOf(refused).join("")).toContain(message);
+        }
+        expect(readFile(root, "edit.json")).toBe(before);
       }),
     ),
   );

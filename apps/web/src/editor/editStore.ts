@@ -14,7 +14,10 @@ import {
   createEnvironmentRpcSubscriptionAtomFamily,
 } from "@t3tools/client-runtime/state/runtime";
 import {
+  type CaptionStillsResult,
+  type EditDocument,
   type EditSnapshot,
+  type EditVersion,
   type EngineJob,
   type EnvironmentId,
   type ExportStatus,
@@ -32,6 +35,7 @@ import { create } from "zustand";
 import { connectionAtomRuntime } from "../connection/runtime";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentServerConfigsAtom } from "../state/server";
+import { captionStillsSignature } from "./captionStills";
 import { acceptNewerSnapshot, applyJobsEvent, followExportJob } from "./editStreams";
 
 export const editEnvironment = {
@@ -53,6 +57,19 @@ export const editEnvironment = {
           },
         ),
       ),
+  }),
+  /** Timeline gestures (S7V-034): one batch per gesture, with the revision it started from. */
+  apply: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "environment-data:edit:apply",
+    tag: WS_METHODS.editApply,
+  }),
+  undo: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "environment-data:edit:undo",
+    tag: WS_METHODS.editUndo,
+  }),
+  redo: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "environment-data:edit:redo",
+    tag: WS_METHODS.editRedo,
   }),
   exportStart: createEnvironmentRpcCommand(connectionAtomRuntime, {
     label: "environment-data:export:start",
@@ -82,6 +99,30 @@ export const editEnvironment = {
   modelsDismiss: createEnvironmentRpcCommand(connectionAtomRuntime, {
     label: "environment-data:transcribe:models-dismiss",
     tag: WS_METHODS.transcribeModelsDismiss,
+  }),
+  versionGet: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "environment-data:edit:version-get",
+    tag: WS_METHODS.editVersionGet,
+  }),
+  versionTag: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "environment-data:edit:version-tag",
+    tag: WS_METHODS.editVersionTag,
+  }),
+  versionRestore: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "environment-data:edit:version-restore",
+    tag: WS_METHODS.editVersionRestore,
+  }),
+  versionDelete: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "environment-data:edit:version-delete",
+    tag: WS_METHODS.editVersionDelete,
+  }),
+  historyClean: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "environment-data:edit:history-clean",
+    tag: WS_METHODS.editHistoryClean,
+  }),
+  historyDismiss: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "environment-data:edit:history-dismiss",
+    tag: WS_METHODS.editHistoryDismiss,
   }),
 };
 
@@ -128,6 +169,62 @@ export function useProjectEdit(ref: ScopedProjectRef): ProjectEditState {
   return useAtomValue(projectEditAtom(scopedProjectKey(ref)));
 }
 
+/**
+ * Whether the project is a video project: its edit loads (S7V-076). A project without one fails
+ * fast with `not-an-edit-project`; null (a draft, no project) subscribes to nothing.
+ */
+export function useIsVideoProject(ref: ScopedProjectRef | null): boolean {
+  return useAtomValue(projectEditAtom(ref === null ? "" : scopedProjectKey(ref)))._tag === "ready";
+}
+
+/** The edit as last read, for a click handler; loading unless something keeps it subscribed. */
+export function readProjectEdit(ref: ScopedProjectRef): ProjectEditState {
+  return appAtomRegistry.get(projectEditAtom(scopedProjectKey(ref)));
+}
+
+/** Bumped after a tag or delete here, which changes the list but not the edit. */
+const versionsBumpAtom = Atom.family((_key: string) => Atom.make(0).pipe(Atom.keepAlive));
+
+/** Any change to the edit, from any chat or the Editor, refetches the version list (S7V-069). */
+const versionsTriggerAtom = Atom.family((key: string) =>
+  Atom.make((get) => {
+    const edit = get(projectEditAtom(key));
+    const at = edit._tag === "ready" ? `${edit.snapshot.revision}:${edit.snapshot.version}` : "";
+    return `${at}:${get(versionsBumpAtom(key))}`;
+  }).pipe(Atom.withLabel(`web-edit-versions-trigger:${key}`)),
+);
+
+const versionsQuery = createEnvironmentRpcQueryAtomFamily(connectionAtomRuntime, {
+  label: "environment-data:edit:versions",
+  tag: WS_METHODS.editVersions,
+  refreshTrigger: ({ environmentId, input }) =>
+    versionsTriggerAtom(scopedProjectKey({ environmentId, projectId: input.projectId })),
+});
+
+export type ProjectVersionsState =
+  | { readonly _tag: "loading" }
+  | { readonly _tag: "ready"; readonly versions: ReadonlyArray<EditVersion> }
+  | { readonly _tag: "unavailable"; readonly message: string };
+
+const VERSIONS_LOADING: ProjectVersionsState = { _tag: "loading" };
+
+/** The project's versions, newest first, refetched whenever its edit changes. */
+export function useProjectVersions(ref: ScopedProjectRef): ProjectVersionsState {
+  const result = useAtomValue(
+    versionsQuery({ environmentId: ref.environmentId, input: { projectId: ref.projectId } }),
+  );
+  if (AsyncResult.isSuccess(result)) return { _tag: "ready", versions: result.value.versions };
+  if (AsyncResult.isFailure(result)) {
+    return { _tag: "unavailable", message: unavailableMessage(result.cause) };
+  }
+  return VERSIONS_LOADING;
+}
+
+export function refreshProjectVersions(ref: ScopedProjectRef): void {
+  const bump = versionsBumpAtom(scopedProjectKey(ref));
+  appAtomRegistry.set(bump, appAtomRegistry.get(bump) + 1);
+}
+
 const NO_JOBS: ReadonlyMap<string, EngineJob> = new Map();
 
 const environmentJobsAtom = Atom.family((environmentId: EnvironmentId) =>
@@ -158,6 +255,44 @@ const finishedTranscriptionsAtom = Atom.family((key: string) => {
     return finished;
   }).pipe(Atom.withLabel(`web-finished-transcriptions:${key}`));
 });
+
+/** Refetches the caption stills only when the captions' look or timing changes (S7V-075). */
+const captionStillsTriggerAtom = Atom.family((key: string) => {
+  const [environmentId, projectId] = JSON.parse(key) as [EnvironmentId, string];
+  return Atom.make((get) => {
+    const edit = get(
+      projectEditAtom(scopedProjectKey({ environmentId, projectId: projectId as ProjectId })),
+    );
+    const transcriptions = get(finishedTranscriptionsAtom(key));
+    return edit._tag === "ready"
+      ? captionStillsSignature(edit.snapshot.document, transcriptions)
+      : "";
+  }).pipe(Atom.withLabel(`web-caption-stills-trigger:${key}`));
+});
+
+const captionStillsQuery = createEnvironmentRpcQueryAtomFamily(connectionAtomRuntime, {
+  label: "environment-data:captions:stills",
+  tag: WS_METHODS.captionsStills,
+  refreshTrigger: ({ environmentId, input }) =>
+    captionStillsTriggerAtom(JSON.stringify([environmentId, input.projectId])),
+});
+
+export type CaptionStillsState =
+  | { readonly _tag: "none" }
+  /** `updating`: new stills are being drawn; these are the previous ones until they arrive. */
+  | { readonly _tag: "ready"; readonly stills: CaptionStillsResult; readonly updating: boolean };
+
+const NO_CAPTION_STILLS: CaptionStillsState = { _tag: "none" };
+
+/** The edit's caption stills, drawn by the export's renderer, for the player's overlay. */
+export function useCaptionStills(ref: ScopedProjectRef): CaptionStillsState {
+  const result = useAtomValue(
+    captionStillsQuery({ environmentId: ref.environmentId, input: { projectId: ref.projectId } }),
+  );
+  const value = AsyncResult.value(result);
+  if (value._tag === "None") return NO_CAPTION_STILLS;
+  return { _tag: "ready", stills: value.value, updating: result.waiting };
+}
 
 const transcriptQuery = createEnvironmentRpcQueryAtomFamily(connectionAtomRuntime, {
   label: "environment-data:transcript:get",
@@ -332,7 +467,9 @@ export function useProjectExport(
 
 export type PlayerSource =
   | { readonly kind: "edit" }
-  | { readonly kind: "clip"; readonly mediaId: string };
+  | { readonly kind: "clip"; readonly mediaId: string }
+  /** A saved version, read only (S7V-069): nothing is written while it plays. */
+  | { readonly kind: "version"; readonly n: number; readonly document: EditDocument };
 
 const EDIT_SOURCE: PlayerSource = { kind: "edit" };
 

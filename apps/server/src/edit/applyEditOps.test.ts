@@ -162,6 +162,111 @@ describe("applyEditOps", () => {
     expect(items(gap)).toEqual([{ id: "v2", start: 50, duration: 90, in: 210 }]);
   });
 
+  it("restores a range beside its neighbours and keeps manual moves (S7V-038)", () => {
+    // Three parts, then the last moved to the front by hand: [200,300) [0,90) [120,180).
+    const cut = run([
+      keep([
+        [0, 90],
+        [120, 60],
+        [200, 100],
+      ]),
+      { _tag: "moveItem", itemId: "v3", start: 0 },
+      { _tag: "moveItem", itemId: "v1", start: 100 },
+      { _tag: "moveItem", itemId: "v2", start: 190 },
+    ]);
+    expect(items(cut)).toEqual([
+      { id: "v3", start: 0, duration: 100, in: 200 },
+      { id: "v1", start: 100, duration: 90, in: 0 },
+      { id: "v2", start: 190, duration: 60, in: 120 },
+    ]);
+    // [90,120) joins v1 and v2, which sit side by side; v3 stays first.
+    const joined = run(
+      [{ _tag: "restoreRange", trackId: "V1", mediaId: "cam", range: { in: 90, duration: 30 } }],
+      cut,
+    );
+    expect(items(joined)).toEqual([
+      { id: "v3", start: 0, duration: 100, in: 200 },
+      { id: "v1", start: 100, duration: 180, in: 0 },
+    ]);
+    // [180,200) grows v2's end: nothing after it on the track, v3 does not move.
+    const grown = run(
+      [{ _tag: "restoreRange", trackId: "V1", mediaId: "cam", range: { in: 170, duration: 40 } }],
+      cut,
+    );
+    expect(items(grown)).toEqual([
+      { id: "v3", start: 0, duration: 100, in: 200 },
+      { id: "v1", start: 100, duration: 90, in: 0 },
+      { id: "v2", start: 190, duration: 80, in: 120 },
+    ]);
+    // [300,320) has v3 before it in the source: v3 grows and the rest moves right by 20.
+    const tail = run(
+      [{ _tag: "restoreRange", trackId: "V1", mediaId: "cam", range: { in: 300, duration: 20 } }],
+      cut,
+    );
+    expect(items(tail)).toEqual([
+      { id: "v3", start: 0, duration: 120, in: 200 },
+      { id: "v1", start: 120, duration: 90, in: 0 },
+      { id: "v2", start: 210, duration: 60, in: 120 },
+    ]);
+  });
+
+  it("undoes a split and ripple delete exactly with restoreRange", () => {
+    const start = run([
+      keep([[0, 300]]),
+      { _tag: "setItemProps", itemId: "v1", props: { gainDb: -2 } },
+      {
+        _tag: "insertItem",
+        trackId: "V1",
+        item: { media: "cam", start: 400, duration: 50, in: 600 },
+      },
+    ]);
+    const cut = run(
+      [
+        { _tag: "splitItem", itemId: "v1", atFrame: 150, newItemId: "vt1" },
+        { _tag: "splitItem", itemId: "v1", atFrame: 100, newItemId: "vt2" },
+        { _tag: "deleteItem", itemIds: ["vt2"], ripple: true },
+      ],
+      start,
+    );
+    expect(items(cut)).toEqual([
+      { id: "v1", start: 0, duration: 100, in: 0 },
+      { id: "vt1", start: 100, duration: 150, in: 150 },
+      { id: "v2", start: 350, duration: 50, in: 600 },
+    ]);
+    const restored = run(
+      [{ _tag: "restoreRange", trackId: "V1", mediaId: "cam", range: { in: 100, duration: 50 } }],
+      cut,
+    );
+    expect(restored).toEqual(start);
+  });
+
+  it("restores a part with no source neighbour after the part before it", () => {
+    const cut = run([
+      keep([
+        [0, 50],
+        [300, 50],
+      ]),
+      { _tag: "setItemProps", itemId: "v1", props: { gainDb: -4 } },
+    ]);
+    const restored = run(
+      [{ _tag: "restoreRange", trackId: "V1", mediaId: "cam", range: { in: 100, duration: 40 } }],
+      cut,
+    );
+    expect(items(restored)).toEqual([
+      { id: "v1", start: 0, duration: 50, in: 0 },
+      { id: "v3", start: 50, duration: 40, in: 100 },
+      { id: "v2", start: 90, duration: 50, in: 300 },
+    ]);
+    expect(restored.tracks[0]!.items[1]).toMatchObject({ gainDb: -4 });
+    // With nothing of the clip left, the part goes at the start.
+    const empty = run([{ _tag: "deleteItem", itemIds: ["v1", "v2"], ripple: true }], cut);
+    const back = run(
+      [{ _tag: "restoreRange", trackId: "V1", mediaId: "cam", range: { in: 0, duration: 50 } }],
+      empty,
+    );
+    expect(items(back)).toEqual([{ id: "v1", start: 0, duration: 50, in: 0 }]);
+  });
+
   it("splits caption words between the two halves", () => {
     const document = run([
       {
@@ -267,5 +372,216 @@ describe("applyEditOps", () => {
     const frozen = structuredClone(base);
     run([keep([[0, 10]]), { _tag: "setCaptionStyle", trackId: "C1", style: "s7-box" }], frozen);
     expect(frozen).toEqual(base);
+  });
+
+  describe("linked items (S7V-034)", () => {
+    // A video item with its audio on an sfx track, linked; one unlinked video item after them.
+    const linked: EditDocument = {
+      ...base,
+      media: [
+        ...base.media,
+        {
+          id: "mic",
+          kind: "audio",
+          path: "assets/mic.wav",
+          fingerprint: { sha256: "ef".repeat(32), size: 10 },
+          probe: { durationFrames: 1000, hasVideo: false, hasAudio: true },
+        },
+      ],
+      tracks: [
+        {
+          kind: "video",
+          id: "V1",
+          items: [
+            { id: "v1", media: "cam", start: 0, duration: 100, in: 0, linkId: "L1" },
+            { id: "v2", media: "cam", start: 100, duration: 50, in: 300 },
+          ],
+        },
+        { kind: "caption", id: "C1", items: [] },
+        {
+          kind: "sfx",
+          id: "A1",
+          items: [{ id: "a1", media: "mic", start: 0, duration: 100, in: 0, linkId: "L1" }],
+        },
+      ],
+    };
+
+    it("moves linked items by the same frames, each on its own track", () => {
+      const moved = run([{ _tag: "moveItem", itemId: "v1", start: 200 }], linked);
+      expect(items(moved)).toEqual([
+        { id: "v2", start: 100, duration: 50, in: 300 },
+        { id: "v1", start: 200, duration: 100, in: 0 },
+      ]);
+      expect(items(moved, "A1")).toEqual([{ id: "a1", start: 200, duration: 100, in: 0 }]);
+    });
+
+    it("trims linked items on the same edge by the same frames", () => {
+      const trimmed = run(
+        [
+          { _tag: "trimItem", itemId: "a1", edge: "start", frame: 10 },
+          { _tag: "trimItem", itemId: "v1", edge: "end", frame: 90 },
+        ],
+        linked,
+      );
+      expect(items(trimmed)[0]).toEqual({ id: "v1", start: 10, duration: 80, in: 10 });
+      expect(items(trimmed, "A1")).toEqual([{ id: "a1", start: 10, duration: 80, in: 10 }]);
+    });
+
+    it("splits linked items together, and links the right-hand parts to each other", () => {
+      const result = applyEditOps(linked, [
+        { _tag: "splitItem", itemId: "v1", atFrame: 40, newItemId: "v1b" },
+      ]);
+      if (result._tag === "failed") throw new Error(result.error.explanation);
+      const [video, , audio] = result.document.tracks;
+      expect(video!.items.slice(0, 2)).toMatchObject([
+        { id: "v1", start: 0, duration: 40, in: 0, linkId: "L1" },
+        { id: "v1b", start: 40, duration: 60, in: 40, linkId: "link1" },
+      ]);
+      expect(audio!.items).toMatchObject([
+        { start: 0, duration: 40, in: 0, linkId: "L1" },
+        { start: 40, duration: 60, in: 40, linkId: "link1" },
+      ]);
+      expect(validateEditDocument(result.document).ok).toBe(true);
+      // The new parts move together, apart from the left halves.
+      const audioRight = audio!.items[1]!.id;
+      const moved = run([{ _tag: "moveItem", itemId: "v1b", start: 400 }], result.document);
+      expect(items(moved, "A1")).toEqual([
+        { id: "a1", start: 0, duration: 40, in: 0 },
+        { id: audioRight, start: 400, duration: 60, in: 40 },
+      ]);
+    });
+
+    it("gives every split's right-hand parts their own short link id, 20 splits deep", () => {
+      let document = linked;
+      for (let index = 0; index < 20; index++) {
+        // Split the rightmost linked video part again, as split-split-delete does.
+        const video = document.tracks[0]!.items.filter((item) => "linkId" in item && item.linkId);
+        const last = video.at(-1)!;
+        document = run(
+          [
+            {
+              _tag: "splitItem",
+              itemId: last.id,
+              atFrame: last.start + 1,
+            },
+          ],
+          document,
+        );
+      }
+      const groups = new Map<string, string[]>();
+      for (const track of document.tracks) {
+        for (const item of track.items) {
+          if (!("linkId" in item) || item.linkId === undefined) continue;
+          expect(item.linkId.length).toBeLessThanOrEqual(64);
+          groups.set(item.linkId, [...(groups.get(item.linkId) ?? []), track.id]);
+        }
+      }
+      // 21 groups, each one video part and its audio part: none merged, none truncated.
+      expect(groups.size).toBe(21);
+      for (const tracks of groups.values()) expect(tracks.toSorted()).toEqual(["A1", "V1"]);
+      // Deleting one piece takes only its own linked part.
+      const someLink = [...groups.keys()][5]!;
+      const piece = document.tracks[0]!.items.find(
+        (item) => "linkId" in item && item.linkId === someLink,
+      )!;
+      const after = run([{ _tag: "deleteItem", itemIds: [piece.id], ripple: false }], document);
+      expect(after.tracks[0]!.items.length).toBe(document.tracks[0]!.items.length - 1);
+      expect(after.tracks[2]!.items.length).toBe(document.tracks[2]!.items.length - 1);
+    });
+
+    it("deletes linked items together, and ripple closes each track's gap", () => {
+      const gap = run([{ _tag: "deleteItem", itemIds: ["v1"], ripple: false }], linked);
+      expect(items(gap)).toEqual([{ id: "v2", start: 100, duration: 50, in: 300 }]);
+      expect(items(gap, "A1")).toEqual([]);
+      const rippled = run([{ _tag: "deleteItem", itemIds: ["a1", "v1"], ripple: true }], linked);
+      expect(items(rippled)).toEqual([{ id: "v2", start: 0, duration: 50, in: 300 }]);
+      expect(items(rippled, "A1")).toEqual([]);
+    });
+
+    it("refuses a linked trim that would read before the linked item's media", () => {
+      const later = structuredClone(linked) as unknown as {
+        tracks: Array<{ items: Array<Record<string, unknown>> }>;
+      };
+      Object.assign(later.tracks[0]!.items[0]!, { start: 50, duration: 50, in: 20 });
+      Object.assign(later.tracks[2]!.items[0]!, { start: 50, duration: 50, in: 0 });
+      // v1 can start 20 frames earlier; its linked a1 cannot start before its media.
+      const result = applyEditOps(later as unknown as EditDocument, [
+        { _tag: "trimItem", itemId: "v1", edge: "start", frame: 30 },
+      ]);
+      expect(result).toMatchObject({ _tag: "failed", error: { itemId: "a1" } });
+    });
+  });
+
+  describe("caption words follow their caption (S7V-034)", () => {
+    const captioned = run([
+      {
+        _tag: "setCaptions",
+        trackId: "C1",
+        captions: [
+          {
+            start: 0,
+            duration: 30,
+            text: "one two three",
+            words: [
+              { text: "one", start: 0, duration: 10 },
+              { text: "two", start: 10, duration: 10 },
+              { text: "three", start: 20, duration: 10 },
+            ],
+          },
+          {
+            start: 40,
+            duration: 10,
+            text: "four",
+            words: [{ text: "four", start: 40, duration: 10 }],
+          },
+        ],
+      },
+    ]);
+
+    it("moves a caption's words with it", () => {
+      const moved = run([{ _tag: "moveItem", itemId: "c1", start: 100 }], captioned);
+      expect(moved.tracks[1]!.items[1]).toMatchObject({
+        id: "c1",
+        start: 100,
+        words: [
+          { text: "one", start: 100 },
+          { text: "two", start: 110 },
+          { text: "three", start: 120 },
+        ],
+      });
+    });
+
+    it("drops and shortens words a trim cuts, and the text follows", () => {
+      const trimmed = run(
+        [
+          { _tag: "trimItem", itemId: "c1", edge: "start", frame: 15 },
+          { _tag: "trimItem", itemId: "c1", edge: "end", frame: 22 },
+        ],
+        captioned,
+      );
+      expect(trimmed.tracks[1]!.items[0]).toEqual({
+        id: "c1",
+        start: 15,
+        duration: 7,
+        text: "two three",
+        words: [
+          { text: "two", start: 15, duration: 5 },
+          { text: "three", start: 20, duration: 2 },
+        ],
+      });
+    });
+
+    it("shifts later captions' words on a ripple delete", () => {
+      const rippled = run([{ _tag: "deleteItem", itemIds: ["c1"], ripple: true }], captioned);
+      expect(rippled.tracks[1]!.items).toEqual([
+        {
+          id: "c2",
+          start: 10,
+          duration: 10,
+          text: "four",
+          words: [{ text: "four", start: 10, duration: 10 }],
+        },
+      ]);
+    });
   });
 });

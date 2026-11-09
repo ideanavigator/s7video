@@ -128,6 +128,7 @@ import {
   useOpenInPreferredEditor,
   usePreferredEditor,
 } from "../editorPreferences";
+import { openMediaLinkInEditor } from "../editor/clipLinks";
 import { openInEditorMenuLabel } from "../editorLabels";
 import { resolveDiffThemeName } from "../lib/diffRendering";
 import { RenderErrorBoundary } from "./RenderErrorBoundary";
@@ -796,6 +797,7 @@ function useChatMarkdownState({
   };
   const openFileInPanel = (fileLinkMeta: MarkdownFileLinkMeta, panelPath: string) => {
     if (!threadRef) return;
+    if (openMediaLinkInEditor(threadRef, panelPath)) return;
     // Every open supersedes pending lookups, including synchronous opens.
     const isLatestLookup = claimWorkspaceBasenameLookup();
     const openAt = (path: string) =>
@@ -869,7 +871,10 @@ function useChatMarkdownState({
         onOpenInPanel={(path) => openFileInPanel(fileLinkMeta, path)}
         onOpenMedia={
           threadRef && canPreviewMedia
-            ? () => openMarkdownMedia(mediaPath, fileLinkMeta.filePath)
+            ? () => {
+                if (openMediaLinkInEditor(threadRef, fileLinkMeta.filePath)) return;
+                openMarkdownMedia(mediaPath, fileLinkMeta.filePath);
+              }
             : undefined
         }
         openInEditorMenuLabel={preferredEditorMenuLabel}

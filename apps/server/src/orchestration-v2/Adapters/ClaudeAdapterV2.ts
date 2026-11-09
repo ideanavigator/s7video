@@ -1434,6 +1434,16 @@ export function claudeToolSearchOverride(value: string | undefined): "true" | un
   return clamped > 0 && clamped < 100 ? "true" : undefined;
 }
 
+// s7video (S7V-072): a video project's thread has only video tools, so it defers them unless the
+// user's own setting turns tool search off: a falsy value, or auto:N with N clamped to 100.
+export function videoToolSearchOverride(value: string | undefined): "true" | undefined {
+  if (value === undefined) return "true";
+  if (["false", "0", "no", "off"].includes(value.trim().toLowerCase())) return undefined;
+  if (!value.startsWith("auto:")) return "true";
+  const percent = parseClaudeInteger(value.slice("auto:".length));
+  return !Number.isNaN(percent) && percent >= 100 ? undefined : "true";
+}
+
 // Claude Code 2.1.310's integer parsing for auto:N. Scientific notation counts only when it is an
 // integer, grouped digits (1_000, 1,000, or 1 000) are joined, and anything else uses parseInt.
 const CLAUDE_SCIENTIFIC_INTEGER = /^[+-]?(\d+(\.\d*)?|\.\d+)[eE][+-]?\d+$/;
@@ -1551,8 +1561,10 @@ export function makeClaudeQueryOptions(input: {
           ...compactQuerySettings,
           env: { ...compactQuerySettings?.env, ENABLE_TOOL_SEARCH: input.toolSearchOverride },
         } as ClaudeSdkSettings);
-  const deviceInstructions = input.mcpServers !== undefined && input.deviceToolsAvailable === true;
   const videoInstructions = input.mcpServers !== undefined && input.videoToolsAvailable === true;
+  // s7video (S7V-072): a video project hides every non-video tool, so text about them goes too.
+  const deviceInstructions =
+    input.mcpServers !== undefined && input.deviceToolsAvailable === true && !videoInstructions;
   const subagentContext = [
     ...(deviceInstructions ? [T3_CODE_DEVICE_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH] : []),
     ...(videoInstructions ? [T3_CODE_VIDEO_EDIT_INSTRUCTIONS_WITH_TOOL_SEARCH] : []),
@@ -1619,12 +1631,13 @@ export function makeClaudeQueryOptions(input: {
         buildRuntimeInstructions({ harness: "Claude Code" }) +
           (input.mcpServers === undefined
             ? ""
-            : T3_CODE_ORCHESTRATION_INSTRUCTIONS +
-              CLAUDE_BACKGROUND_WAIT_INSTRUCTIONS +
-              (deviceInstructions
-                ? `\n${T3_CODE_DEVICE_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH}\n`
-                : "") +
-              (videoInstructions ? `\n${T3_CODE_VIDEO_EDIT_INSTRUCTIONS_WITH_TOOL_SEARCH}\n` : "")),
+            : videoInstructions
+              ? `\n\n${T3_CODE_VIDEO_EDIT_INSTRUCTIONS_WITH_TOOL_SEARCH}\n`
+              : T3_CODE_ORCHESTRATION_INSTRUCTIONS +
+                CLAUDE_BACKGROUND_WAIT_INSTRUCTIONS +
+                (deviceInstructions
+                  ? `\n${T3_CODE_DEVICE_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH}\n`
+                  : "")),
         ...launchAppendSystemPrompt,
       ].join("\n\n"),
     },
@@ -4699,28 +4712,29 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
   // Settings env beats the process env, --settings over local over project over user, and a local
   // file an older Claude Code left in cwd applies under the root one. resolveSettings reads local
   // from cwd only.
-  const resolveToolSearchOverride = Effect.fn("ClaudeAdapterV2.resolveToolSearchOverride")(
-    function* (cwd: string | null, launchArgSettings: ClaudeSdkSettings | undefined) {
-      const launchValue = launchArgSettings?.env?.ENABLE_TOOL_SEARCH;
-      if (typeof launchValue === "string") return claudeToolSearchOverride(launchValue);
-      const localDirectory = cwd === null ? null : yield* localSettingsDirectory(cwd);
-      const settingsFiles = [
-        ...(cwd === null || localDirectory === null
-          ? []
-          : [
-              path.join(localDirectory, ".claude", "settings.local.json"),
-              ...(localDirectory === cwd ? [] : [path.join(cwd, ".claude", "settings.local.json")]),
-              path.join(cwd, ".claude", "settings.json"),
-            ]),
-        path.join(homePath, "settings.json"),
-      ];
-      for (const settingsFile of settingsFiles) {
-        const value = yield* readToolSearchSetting(settingsFile);
-        if (value !== undefined) return claudeToolSearchOverride(value);
-      }
-      return claudeToolSearchOverride(adapterOptions.environment.ENABLE_TOOL_SEARCH);
-    },
-  );
+  const resolveToolSearchSetting = Effect.fn("ClaudeAdapterV2.resolveToolSearchSetting")(function* (
+    cwd: string | null,
+    launchArgSettings: ClaudeSdkSettings | undefined,
+  ) {
+    const launchValue = launchArgSettings?.env?.ENABLE_TOOL_SEARCH;
+    if (typeof launchValue === "string") return launchValue;
+    const localDirectory = cwd === null ? null : yield* localSettingsDirectory(cwd);
+    const settingsFiles = [
+      ...(cwd === null || localDirectory === null
+        ? []
+        : [
+            path.join(localDirectory, ".claude", "settings.local.json"),
+            ...(localDirectory === cwd ? [] : [path.join(cwd, ".claude", "settings.local.json")]),
+            path.join(cwd, ".claude", "settings.json"),
+          ]),
+      path.join(homePath, "settings.json"),
+    ];
+    for (const settingsFile of settingsFiles) {
+      const value = yield* readToolSearchSetting(settingsFile);
+      if (value !== undefined) return value;
+    }
+    return adapterOptions.environment.ENABLE_TOOL_SEARCH;
+  });
 
   // Built-in skills come with the video tools (S7V-023 gating), so only video threads load them.
   const builtInPluginDirs = (
@@ -10380,10 +10394,14 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             turnInput.nativeThreadHasTurns ?? turnInput.providerTurnOrdinal > 1;
           const shouldResume =
             resumeSessionAt !== undefined || openedWithResume || hasPersistedProviderTurn;
-          const toolSearchOverride = yield* resolveToolSearchOverride(
+          const toolSearchSetting = yield* resolveToolSearchSetting(
             turnInput.runtimePolicy.cwd,
             launchArgSettings,
           );
+          const toolSearchOverride =
+            mcpSession?.capabilities?.has("video") === true
+              ? videoToolSearchOverride(toolSearchSetting)
+              : claudeToolSearchOverride(toolSearchSetting);
           const queryOptions = makeClaudeQueryOptions({
             modelSelection: turnInput.modelSelection,
             nativeThreadId,

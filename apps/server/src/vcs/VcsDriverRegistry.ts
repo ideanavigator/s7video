@@ -10,6 +10,7 @@ import * as Path from "effect/Path";
 import type { VcsDriverKind, VcsError, VcsRepositoryIdentity } from "@t3tools/contracts";
 import { VcsUnsupportedOperationError } from "@t3tools/contracts";
 import * as GitVcsDriver from "./GitVcsDriver.ts";
+import { SystemGit } from "./SystemGit.ts";
 import * as VcsProjectConfig from "./VcsProjectConfig.ts";
 import * as VcsDriver from "./VcsDriver.ts";
 
@@ -62,6 +63,7 @@ export const make = Effect.gen(function* () {
   const path = yield* Path.Path;
   const projectConfig = yield* VcsProjectConfig.VcsProjectConfig;
   const git = yield* GitVcsDriver.makeVcsDriver;
+  const systemGit = yield* SystemGit;
   const drivers: Partial<Record<VcsDriverKind, VcsDriver.VcsDriver["Service"]>> = {
     git,
   };
@@ -101,6 +103,8 @@ export const make = Effect.gen(function* () {
     readonly requestedKind: VcsDriverKind | "auto";
   }) {
     const requestedKind = input.requestedKind;
+    // Without a real git (S7V-052) nothing is a git repository, so no git process is started.
+    if (!(yield* systemGit.status).available) return null;
 
     if (requestedKind !== "auto" && requestedKind !== "unknown") {
       const driver = yield* get(requestedKind);
@@ -181,6 +185,13 @@ export const make = Effect.gen(function* () {
       }
 
       const requestedKind = input.requestedKind ?? "auto";
+      if (!(yield* systemGit.status).available) {
+        return yield* new VcsUnsupportedOperationError({
+          operation: "VcsDriverRegistry.resolve",
+          kind: requestedKind === "auto" ? "unknown" : requestedKind,
+          detail: "Git is not installed on this Mac.",
+        });
+      }
       return yield* new VcsUnsupportedOperationError({
         operation: "VcsDriverRegistry.resolve",
         kind: requestedKind === "auto" ? "unknown" : requestedKind,

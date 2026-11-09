@@ -17,6 +17,9 @@ const { workspaceSearch, filesystemMetadata } = vi.hoisted(() => ({
   filesystemMetadata: vi.fn(),
 }));
 const parsedSources = vi.hoisted(() => [] as string[]);
+// S7V-076: a link to a clip in Media plays in the Editor; every other link opens as before.
+const clipLinks = vi.hoisted(() => ({ open: vi.fn((_ref: unknown, _path: string) => false) }));
+vi.mock(import("../editor/clipLinks"), () => ({ openMediaLinkInEditor: clipLinks.open }));
 vi.mock(import("mdast-util-from-markdown"), async (original) => {
   const actual = await original();
   return {
@@ -358,6 +361,42 @@ describe("ChatMarkdown workspace file opens", () => {
 
     expect(openFile).toHaveBeenCalledExactlyOnceWith(threadRef, "/elsewhere/b.md", 9);
     expect(workspaceSearch).toHaveBeenCalledOnce();
+  });
+});
+
+describe("ChatMarkdown links in a video project (S7V-076)", () => {
+  const threadRef = {
+    environmentId: EnvironmentId.make("workspace"),
+    threadId: ThreadId.make("thread"),
+  };
+
+  it("link to a Media clip plays in the Editor", async () => {
+    setup();
+    clipLinks.open.mockReset().mockImplementation((_ref, path) => path === "assets/take-2.mov");
+    using openFile = vi
+      .spyOn(useRightPanelStore.getState(), "openFile")
+      .mockImplementation(() => {});
+    await using screen = await renderText("[take 2](assets/take-2.mov)", {
+      cwd: "/Users/me/Videos/Charger",
+      threadRef,
+    });
+    await act(async () => screen.container.querySelector("a")!.click());
+    expect(clipLinks.open).toHaveBeenCalledWith(threadRef, "assets/take-2.mov");
+    expect(openFile).not.toHaveBeenCalled();
+  });
+
+  it("link to a non-media file still opens the file viewer", async () => {
+    setup();
+    clipLinks.open.mockReset().mockReturnValue(false);
+    using openFile = vi
+      .spyOn(useRightPanelStore.getState(), "openFile")
+      .mockImplementation(() => {});
+    await using screen = await renderText("[notes](notes.txt)", {
+      cwd: "/Users/me/Videos/Charger",
+      threadRef,
+    });
+    await act(async () => screen.container.querySelector("a")!.click());
+    expect(openFile).toHaveBeenCalledExactlyOnceWith(threadRef, "notes.txt", undefined);
   });
 });
 

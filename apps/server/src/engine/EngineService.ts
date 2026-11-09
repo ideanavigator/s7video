@@ -6,6 +6,8 @@
 import {
   EngineError,
   EngineJobCancelResult,
+  MediaFilmstripResult,
+  MediaPeaksResult,
   EnginePingResult,
   MediaFrameResult,
   MediaKeyframesResult,
@@ -16,8 +18,10 @@ import {
   type EngineJobId,
   type EngineJobsEvent,
   type EngineTool,
+  type MediaFilmstripInput,
   type MediaFrameInput,
   type MediaKeyframesInput,
+  type MediaPeaksInput,
   type MediaProbeInput,
   type MediaProxyInput,
   type MediaThumbnailInput,
@@ -76,6 +80,16 @@ export interface EngineJobInput<A> {
   readonly onStart?: (jobId: EngineJobId) => Effect.Effect<void>;
 }
 
+/** The waveform and filmstrip of one media as one job; either step may be left out. */
+export interface MediaDataJobInput {
+  readonly projectId: ProjectId;
+  readonly peaks?: MediaPeaksInput;
+  readonly filmstrip?: MediaFilmstripInput;
+  readonly onStart?: (jobId: EngineJobId) => Effect.Effect<void>;
+  /** After each step's files are in place, so the waveform can show before the filmstrip. */
+  readonly onStep?: (step: "peaks" | "filmstrip") => Effect.Effect<void>;
+}
+
 export interface EngineStatus {
   readonly pid: number | undefined;
   readonly starts: number;
@@ -89,11 +103,15 @@ export class EngineService extends Context.Service<
     readonly probe: (input: MediaProbeInput) => Effect.Effect<MediaProbeResult, EngineError>;
     /** Writes the frame as a PNG; `outputDir` defaults to the service's scratch folder. */
     readonly frame: (input: MediaFrameInput) => Effect.Effect<MediaFrameResult, EngineError>;
-    /** Any quick engine method, with the quick-call timeout; for the engine's other services. */
+    /**
+     * Any quick engine method, with the quick-call timeout unless the caller gives a longer one
+     * for a call whose work grows with its input; for the engine's other services.
+     */
     readonly call: <A>(
       method: string,
       params: Readonly<Record<string, unknown>>,
       success: Schema.Decoder<A>,
+      timeout?: Duration.Input,
     ) => Effect.Effect<A, EngineError>;
     readonly thumbnail: (
       input: MediaThumbnailInput,
@@ -108,6 +126,11 @@ export class EngineService extends Context.Service<
           readonly projectId: ProjectId;
         },
     ) => Effect.Effect<MediaProxyResult, EngineError>;
+    /**
+     * `media.peaks` then `media.filmstrip` as one `media-data` job of `projectId` (S7V-035): one
+     * job id, progress 0..1 across both steps, and one cancel that stops whichever step runs.
+     */
+    readonly mediaData: (input: MediaDataJobInput) => Effect.Effect<void, EngineError>;
     /** A long engine method as a job: progress on `subscribeJobs`, stoppable with `cancelJob`. */
     readonly runJob: <A>(input: EngineJobInput<A>) => Effect.Effect<A, EngineError>;
     /**
@@ -129,6 +152,8 @@ const CANCEL_TIMEOUT = "5 seconds";
 const JOB_FAILED = "The video job failed. Try again; if it keeps failing, restart s7video.";
 const HEALTH_TIMEOUT = "5 seconds";
 const TRANSCRIBE_IDLE_UNLOAD_MINUTES = 10;
+/** The waveform's share of a media-data job's progress: decoding sound is the quick part. */
+const PEAKS_SHARE = 0.1;
 
 interface Running {
   readonly process: EngineProcess.EngineProcess;
@@ -147,6 +172,10 @@ const make = Effect.fn("EngineService.make")(function* (options: EngineServiceOp
   const startLock = yield* Semaphore.make(1);
   const scratchDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "engine-frames-" });
   let current: Running | undefined;
+  /** Jobs made of several engine calls: the slice of 0..1 the running step reports into. */
+  const stepSpans = new Map<EngineJobId, { from: number; span: number }>();
+  /** Cancels that may arrive between two steps, when no engine call holds the job id. */
+  const cancelRequested = new Set<EngineJobId>();
   let starts = 0;
   let lastStartupMs: number | undefined;
 
@@ -187,8 +216,12 @@ const make = Effect.fn("EngineService.make")(function* (options: EngineServiceOp
       }),
       logFile: path.join(config.engineLogsDir, "engine.log"),
       startTimeout: options.startTimeout ?? START_TIMEOUT,
-      onProgress: (progress) =>
-        jobs.progress(progress.jobId as EngineJobId, progress.progress, progress.stage),
+      onProgress: (progress) => {
+        const jobId = progress.jobId as EngineJobId;
+        const step = stepSpans.get(jobId);
+        const value = step ? step.from + progress.progress * step.span : progress.progress;
+        return jobs.progress(jobId, value, progress.stage);
+      },
       ...(options.signalGroup ? { signalGroup: options.signalGroup } : {}),
     }).pipe(
       Scope.provide(scope),
@@ -287,11 +320,14 @@ const make = Effect.fn("EngineService.make")(function* (options: EngineServiceOp
   });
 
   const cancelJob = Effect.fn("EngineService.cancelJob")(function* (jobId: EngineJobId) {
-    if (!(yield* jobs.isRunning(jobId)) || !current?.process.client.isOpen()) return false;
+    if (!(yield* jobs.isRunning(jobId))) return false;
+    const stepped = stepSpans.has(jobId);
+    if (stepped) cancelRequested.add(jobId);
+    if (!current?.process.client.isOpen()) return stepped;
     const result = yield* current.process.client
       .call("job.cancel", { jobId }, EngineJobCancelResult, CANCEL_TIMEOUT)
       .pipe(Effect.option);
-    return result._tag === "Some" && result.value.cancelled;
+    return (result._tag === "Some" && result.value.cancelled) || stepped;
   });
 
   const runJob = Effect.fn("EngineService.runJob")(function* <A>(input: EngineJobInput<A>) {
@@ -311,7 +347,10 @@ const make = Effect.fn("EngineService.make")(function* (options: EngineServiceOp
   });
 
   const runStartedJob = <A>(jobId: EngineJobId, input: EngineJobInput<A>) =>
-    call(input.method, { ...input.params, jobId }, input.success, undefined).pipe(
+    settleJob(jobId, call(input.method, { ...input.params, jobId }, input.success, undefined));
+
+  const settleJob = <A>(jobId: EngineJobId, work: Effect.Effect<A, EngineError>) =>
+    work.pipe(
       Effect.onExit((exit) => {
         if (Exit.isSuccess(exit)) return jobs.finish(jobId, "succeeded");
         if (Cause.hasInterrupts(exit.cause)) {
@@ -332,7 +371,11 @@ const make = Effect.fn("EngineService.make")(function* (options: EngineServiceOp
     method: string,
     params: Readonly<Record<string, unknown>>,
     success: Schema.Decoder<A>,
-  ) => call(method, params, success, callTimeout).pipe(Effect.withSpan(`EngineService.${method}`));
+    timeout?: Duration.Input,
+  ) =>
+    call(method, params, success, timeout ?? callTimeout).pipe(
+      Effect.withSpan(`EngineService.${method}`),
+    );
 
   const proxy = Effect.fn("EngineService.proxy")(function* (
     input: MediaProxyInput &
@@ -351,6 +394,62 @@ const make = Effect.fn("EngineService.make")(function* (options: EngineServiceOp
     });
   });
 
+  const mediaData = Effect.fn("EngineService.mediaData")(function* (input: MediaDataJobInput) {
+    const steps = [
+      ...(input.peaks
+        ? [
+            {
+              name: "peaks" as const,
+              method: "media.peaks",
+              params: input.peaks,
+              success: MediaPeaksResult,
+            },
+          ]
+        : []),
+      ...(input.filmstrip
+        ? [
+            {
+              name: "filmstrip" as const,
+              method: "media.filmstrip",
+              params: input.filmstrip,
+              success: MediaFilmstripResult,
+            },
+          ]
+        : []),
+    ] as const;
+    if (steps.length === 0) return;
+    const shares = steps.length === 1 ? [1] : [PEAKS_SHARE, 1 - PEAKS_SHARE];
+    const jobId = yield* jobs.start("media-data", input.projectId);
+    stepSpans.set(jobId, { from: 0, span: shares[0]! });
+    if (input.onStart) yield* input.onStart(jobId);
+    const work = Effect.gen(function* () {
+      let from = 0;
+      for (const [index, step] of steps.entries()) {
+        if (cancelRequested.has(jobId)) {
+          return yield* new EngineError({ reason: "cancelled", method: step.method });
+        }
+        const span = shares[index]!;
+        stepSpans.set(jobId, { from, span });
+        yield* call(
+          step.method,
+          { ...step.params, jobId },
+          step.success as Schema.Decoder<unknown>,
+          undefined,
+        );
+        from += span;
+        if (input.onStep) yield* input.onStep(step.name);
+      }
+    });
+    yield* settleJob(jobId, work).pipe(
+      Effect.ensuring(
+        Effect.sync(() => {
+          stepSpans.delete(jobId);
+          cancelRequested.delete(jobId);
+        }),
+      ),
+    );
+  });
+
   return EngineService.of({
     ping,
     probe,
@@ -359,6 +458,7 @@ const make = Effect.fn("EngineService.make")(function* (options: EngineServiceOp
     thumbnail,
     keyframes,
     proxy,
+    mediaData,
     runJob,
     startJob,
     cancelJob,

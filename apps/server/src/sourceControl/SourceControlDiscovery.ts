@@ -9,6 +9,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
 import * as ServerConfig from "../config.ts";
+import { SystemGit } from "../vcs/SystemGit.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import {
   detailFromCause,
@@ -73,14 +74,26 @@ export const make = Effect.gen(function* () {
   const config = yield* ServerConfig.ServerConfig;
   const process = yield* VcsProcess.VcsProcess;
   const sourceControlProviders = yield* SourceControlProviderRegistry.SourceControlProviderRegistry;
+  const systemGit = yield* SystemGit;
 
   const probe = <Kind extends VcsDriverKind>(
     input: VcsProbe & { readonly kind: Kind },
   ): Effect.Effect<DiscoveryProbeResult<Kind>> => {
     const executable = input.executable;
     const versionArgs = input.versionArgs;
+    const missing = (detail: Option.Option<string>, installHint: string) =>
+      ({
+        kind: input.kind,
+        label: input.label,
+        executable,
+        implemented: input.implemented,
+        status: "missing" as const,
+        version: Option.none<string>(),
+        installHint,
+        detail,
+      }) satisfies DiscoveryProbeResult<Kind>;
 
-    return process
+    const run = process
       .run({
         operation: "source-control.discovery.probe",
         command: executable,
@@ -109,19 +122,17 @@ export const make = Effect.gen(function* () {
         Effect.catch((cause) =>
           Effect.gen(function* () {
             const installHint = yield* unavailableInstallHint(executable, input.installHint, cause);
-            return {
-              kind: input.kind,
-              label: input.label,
-              executable,
-              implemented: input.implemented,
-              status: "missing" as const,
-              version: Option.none<string>(),
-              installHint,
-              detail: detailFromCause(cause),
-            } satisfies DiscoveryProbeResult<Kind>;
+            return missing(detailFromCause(cause), installHint);
           }),
         ),
       );
+    if (executable !== "git") return run;
+    // `git --version` would be Apple's stub on a Mac without the developer tools (S7V-052).
+    return systemGit.status.pipe(
+      Effect.flatMap((status) =>
+        status.available ? run : Effect.succeed(missing(Option.none(), input.installHint)),
+      ),
+    );
   };
 
   return SourceControlDiscovery.of({

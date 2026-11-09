@@ -147,6 +147,7 @@ describe("DesktopLaunchLinks", () => {
       const quit = vi.fn();
       const listeners = new Map<string, (...args: unknown[]) => void>();
       const revealed = Promise.withResolvers<unknown>();
+      const revealOptions: unknown[] = [];
       const window = { id: 1 };
       const electronApp = {
         quit: Effect.sync(quit),
@@ -157,7 +158,11 @@ describe("DesktopLaunchLinks", () => {
       } as unknown as ElectronApp.ElectronApp["Service"];
       const electronWindow = {
         currentMainOrFirst: Effect.succeedSome(window),
-        reveal: (value: unknown) => Effect.sync(() => revealed.resolve(value)),
+        reveal: (value: unknown, options: unknown) =>
+          Effect.sync(() => {
+            revealOptions.push(options);
+            revealed.resolve(value);
+          }),
       } as unknown as ElectronWindow.ElectronWindow["Service"];
 
       return Effect.gen(function* () {
@@ -168,6 +173,8 @@ describe("DesktopLaunchLinks", () => {
         assert.equal(quit.mock.calls.length, 0);
         if (entry === "after configure") listeners.get("second-instance")!({}, ["t3"]);
         assert.strictEqual(yield* Effect.promise(() => revealed.promise), window);
+        // A second launch is a user action, so it may take focus (S7V-074).
+        assert.deepEqual(revealOptions, [{ steal: true }]);
       }).pipe(
         Effect.scoped,
         Effect.provide(
@@ -260,7 +267,7 @@ it.effect(
   "provider auth deep links navigate and reveal the running desktop without handling auth callbacks",
   () => {
     const listeners = new Map<string, (...args: unknown[]) => void>();
-    const revealed = Promise.withResolvers<void>();
+    const revealed = Promise.withResolvers<unknown>();
     const loadURL = vi.fn(async (_url: string) => undefined);
     const window = { loadURL };
     const electronApp = {
@@ -271,7 +278,7 @@ it.effect(
     } as unknown as ElectronApp.ElectronApp["Service"];
     const electronWindow = {
       currentMainOrFirst: Effect.succeedSome(window),
-      reveal: () => Effect.sync(() => revealed.resolve()),
+      reveal: (_window: unknown, options: unknown) => Effect.sync(() => revealed.resolve(options)),
     } as unknown as ElectronWindow.ElectronWindow["Service"];
     return Effect.gen(function* () {
       const launchLinks = yield* DesktopLaunchLinks.DesktopLaunchLinks;
@@ -285,7 +292,8 @@ it.effect(
         "t3",
         "s7video-dev://app/settings/providers?instanceId=work&code=never-forward",
       ]);
-      yield* Effect.promise(() => revealed.promise);
+      // Returning from sign-in the user started may take focus (S7V-074).
+      assert.deepEqual(yield* Effect.promise(() => revealed.promise), { steal: true });
       assert.deepEqual(loadURL.mock.calls, [
         ["s7video-dev://app/settings/providers?instanceId=work"],
       ]);

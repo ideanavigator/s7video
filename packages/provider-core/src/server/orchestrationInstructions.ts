@@ -62,8 +62,9 @@ const videoEditInstructions = (loadTools: string) =>
 
 export const T3_CODE_VIDEO_EDIT_INSTRUCTIONS = videoEditInstructions("");
 
+/** Claude Code defers the video tools; one keyword query loads them all (S7V-072). */
 export const T3_CODE_VIDEO_EDIT_INSTRUCTIONS_WITH_TOOL_SEARCH = videoEditInstructions(
-  " (ToolSearch `select:mcp__t3-code__video_undo,mcp__t3-code__video_redo`)",
+  " (load them all with one ToolSearch: query `+video`, max_results 30)",
 );
 
 // ACP only: some ACP agents accept the injected MCP server but never expose
@@ -82,6 +83,8 @@ export interface T3AcpInstructionState {
   readonly interactionMode: ProviderInteractionMode;
   readonly hasT3Mcp: boolean;
   readonly hasDeviceTools: boolean;
+  /** s7video (S7V-054): the session holds the `video` capability. */
+  readonly hasVideoTools: boolean;
 }
 
 /** ACP lacks system/developer fields; inject context on first prompt and tool/mode changes. */
@@ -95,7 +98,8 @@ export function t3AcpPromptWithInstructions(input: {
   if (
     input.previousState?.interactionMode === input.state.interactionMode &&
     input.previousState.hasT3Mcp === input.state.hasT3Mcp &&
-    input.previousState.hasDeviceTools === input.state.hasDeviceTools
+    input.previousState.hasDeviceTools === input.state.hasDeviceTools &&
+    input.previousState.hasVideoTools === input.state.hasVideoTools
   ) {
     return input.prompt;
   }
@@ -107,6 +111,7 @@ export function t3AcpPromptWithInstructions(input: {
       ? [
           T3_CODE_BROWSER_TOOL_INSTRUCTIONS.trim(),
           ...(input.state.hasDeviceTools ? [T3_CODE_DEVICE_TOOL_INSTRUCTIONS] : []),
+          ...(input.state.hasVideoTools ? [T3_CODE_VIDEO_EDIT_INSTRUCTIONS] : []),
           T3_CODE_ORCHESTRATION_INSTRUCTIONS.trim(),
           T3_CODE_ACP_MCP_FALLBACK_INSTRUCTIONS,
         ]

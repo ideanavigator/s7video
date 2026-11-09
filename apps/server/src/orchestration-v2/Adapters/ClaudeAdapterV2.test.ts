@@ -82,6 +82,7 @@ import * as ServerConfig from "../../config.ts";
 import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
 import {
   T3_CODE_DEVICE_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH,
+  T3_CODE_ORCHESTRATION_INSTRUCTIONS,
   T3_CODE_VIDEO_EDIT_INSTRUCTIONS_WITH_TOOL_SEARCH,
 } from "@t3tools/provider-core/server/orchestrationInstructions";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
@@ -687,11 +688,30 @@ describe("ClaudeAdapterV2 video edit instructions", () => {
   it("tells a video session to undo with the video tools and how to load them", () => {
     const text = append({ mcp: true, videoToolsAvailable: true });
     assert.include(text, T3_CODE_VIDEO_EDIT_INSTRUCTIONS_WITH_TOOL_SEARCH);
-    assert.include(text, "select:mcp__t3-code__video_undo,mcp__t3-code__video_redo");
+    assert.include(text, "query `+video`");
     assert.isAtMost(
       Buffer.byteLength(T3_CODE_VIDEO_EDIT_INSTRUCTIONS_WITH_TOOL_SEARCH, "utf8"),
       250,
     );
+  });
+
+  // S7V-072: a video project hides every non-video tool, so no text may send the agent to one.
+  it("leaves out the text about hidden tools in a video session and keeps it elsewhere", () => {
+    const video = append({ mcp: true, videoToolsAvailable: true });
+    for (const hidden of [
+      T3_CODE_ORCHESTRATION_INSTRUCTIONS.trim(),
+      "delegate_task",
+      "html_preview",
+      "preview_",
+      "request_secret",
+      "t3_background_wait",
+      "t3_thread_launch",
+    ]) {
+      assert.notInclude(video, hidden);
+    }
+    const code = append({ mcp: true, videoToolsAvailable: false });
+    assert.include(code, T3_CODE_ORCHESTRATION_INSTRUCTIONS);
+    assert.include(code, "t3_background_wait");
   });
 
   it("leaves the video line out without the video capability or without T3 tools", () => {
@@ -777,11 +797,10 @@ describe("ClaudeAdapterV2 device instructions", () => {
       await subagentContext({ mcp: true, deviceToolsAvailable: false, videoToolsAvailable: true }),
       context(T3_CODE_VIDEO_EDIT_INSTRUCTIONS_WITH_TOOL_SEARCH),
     );
+    // A video project hides the device tools, so only the video line reaches the subagent.
     assert.deepEqual(
       await subagentContext({ mcp: true, deviceToolsAvailable: true, videoToolsAvailable: true }),
-      context(
-        `${T3_CODE_DEVICE_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH}\n\n${T3_CODE_VIDEO_EDIT_INSTRUCTIONS_WITH_TOOL_SEARCH}`,
-      ),
+      context(T3_CODE_VIDEO_EDIT_INSTRUCTIONS_WITH_TOOL_SEARCH),
     );
     assert.deepEqual(
       await subagentContext({ mcp: true, deviceToolsAvailable: false, videoToolsAvailable: false }),
@@ -1072,13 +1091,16 @@ describe("ClaudeAdapterV2 Auto-accept edits", () => {
 });
 
 describe("ClaudeAdapterV2 built-in skills (S7V-048)", () => {
-  const startSkillTurn = Effect.fnUntraced(function* (video: boolean) {
+  const startSkillTurn = Effect.fnUntraced(function* (video: boolean, userSettings?: string) {
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
     const attachmentsDir = yield* fileSystem.makeTempDirectoryScoped({
       prefix: "t3-claude-built-in-skills-",
     });
+    if (userSettings !== undefined) {
+      yield* fileSystem.writeFileString(path.join(attachmentsDir, "settings.json"), userSettings);
+    }
     const threadId = ThreadId.make(`thread-claude-built-in-skills-${video}`);
     yield* mcpSessions.set({
       environmentId: EnvironmentId.make("environment-built-in-skills"),
@@ -1178,6 +1200,43 @@ describe("ClaudeAdapterV2 built-in skills (S7V-048)", () => {
       ),
     ),
   );
+
+  // S7V-072: a video project's thread has only video tools, so it defers them.
+  const toolSearch = (video: boolean, userSettings?: string) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { options } = yield* startSkillTurn(video, userSettings);
+        const settings = options?.settings;
+        return typeof settings === "object" ? settings.env?.ENABLE_TOOL_SEARCH : undefined;
+      }),
+    );
+
+  it.effect("defers MCP tools in video threads unless the user turned tool search off", () =>
+    Effect.gen(function* () {
+      assert.equal(yield* toolSearch(true), "true");
+      assert.equal(yield* toolSearch(true, '{"env":{"ENABLE_TOOL_SEARCH":"auto:50"}}'), "true");
+      for (const off of ["false", "auto:100", "auto:1e2"]) {
+        assert.isUndefined(yield* toolSearch(true, `{"env":{"ENABLE_TOOL_SEARCH":"${off}"}}`), off);
+      }
+      // Other threads resolve tool search as before.
+      assert.isUndefined(yield* toolSearch(false));
+      assert.equal(yield* toolSearch(false, '{"env":{"ENABLE_TOOL_SEARCH":"auto"}}'), "true");
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
+  );
+
+  it("reads only an explicit off as the user's choice", () => {
+    const override = ClaudeAdapterV2.videoToolSearchOverride;
+    for (const value of [undefined, "true", "auto", "auto:0", "auto:99", "auto:x", "1"]) {
+      assert.equal(override(value), "true", String(value));
+    }
+    for (const value of ["false", "FALSE", "0", "off", "auto:100", "auto:250", "auto:1_000"]) {
+      assert.isUndefined(override(value), value);
+    }
+  });
 });
 
 describe("ClaudeAdapterV2 append-system-prompt-file launch argument", () => {

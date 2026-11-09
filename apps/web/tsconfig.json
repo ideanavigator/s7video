@@ -36,6 +36,7 @@
     "../../scripts/lib/public-config.ts",
     "../../scripts/lib/third-party-licenses.ts",
     "../../scripts/lib/brand-config.ts",
-    "../../scripts/lib/test-media.ts"
+    "../../scripts/lib/test-media.ts",
+    "../../fixtures/media/synth.ts"
   ]
 }

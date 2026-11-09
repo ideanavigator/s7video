@@ -7,6 +7,8 @@ type ChatRightPanelProps = Omit<RightPanelTabsProps, "mode" | "inlineSize" | "ma
   readonly maximized: boolean;
   readonly workspaceLayoutElement: HTMLElement | null;
   readonly widthStorageKey: string;
+  /** Default width as a share of the workspace, until the user resizes (S7V-076). */
+  readonly defaultWidthFraction?: number | undefined;
   readonly sheetAnimationDurationMs: number;
   readonly onCloseSheet: () => void;
 };
@@ -21,6 +23,7 @@ export function ChatRightPanel(props: ChatRightPanelProps) {
     sheet,
     workspaceLayoutElement,
     widthStorageKey,
+    defaultWidthFraction,
     sheetAnimationDurationMs,
     onCloseSheet,
     maximized,
@@ -30,6 +33,7 @@ export function ChatRightPanel(props: ChatRightPanelProps) {
   const inlineSize = usePreviewPanelInlineSize({
     container: workspaceLayoutElement,
     widthStorageKey,
+    defaultWidthFraction,
   });
   if (!sheet) {
     return <RightPanelTabs {...tabs} mode="inline" maximized={maximized} inlineSize={inlineSize} />;

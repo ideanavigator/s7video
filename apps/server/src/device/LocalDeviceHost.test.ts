@@ -1,5 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as NodePath from "@effect/platform-node/NodePath";
+import { XcodeGitLocation } from "@t3tools/shared/shell";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -603,3 +604,21 @@ it.effect(
       expect(yield* fs.exists(`${baseDir}/tools`)).toBe(false);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
+
+// S7V-052: `/usr/bin/xcrun` is Apple's stub on a Mac without the developer tools.
+describe("iOS Simulator availability", () => {
+  const iosReason = (developerGit: string | undefined) =>
+    LocalDeviceHost.__testing.platformReason("ios").pipe(
+      Effect.provideService(HostProcess.Platform, "darwin"),
+      Effect.provideService(XcodeGitLocation, () => developerGit),
+      Effect.provideService(FileSystem.FileSystem, FileSystem.makeNoop({})),
+      Effect.provide(NodePath.layerPosix),
+    );
+
+  it.effect("is unavailable without a developer folder, so the xcrun stub never runs", () =>
+    Effect.gen(function* () {
+      expect(yield* iosReason(undefined)).toBe("Xcode command line tools were not found.");
+      expect(yield* iosReason("/Applications/Xcode.app/Contents/Developer/usr/bin/git")).toBeNull();
+    }),
+  );
+});

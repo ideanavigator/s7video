@@ -98,6 +98,8 @@ export interface ThreadRightPanelState {
   dismissedDeviceSurfaceIds?: string[];
   maximized?: true;
   proactiveDiffTurnId?: RunId;
+  /** The Editor was opened for this thread by default once (S7V-076); later choices are the user's. */
+  editorOpenedByDefault?: true;
 }
 
 export interface ThreadPanelVisibility {
@@ -123,6 +125,8 @@ interface RightPanelStoreState {
       | { kind: "diff"; turnId: RunId },
     expectedUserActionRevision: number,
     activateExisting?: boolean,
+    /** In a video project, an active Editor keeps the panel (S7V-076). */
+    keepEditor?: boolean,
   ) => boolean;
   open: (
     ref: ScopedThreadRef,
@@ -130,6 +134,8 @@ interface RightPanelStoreState {
   ) => void;
   openSideChat: (ref: ScopedThreadRef, threadId: ThreadId) => void;
   openEditor: (ref: ScopedThreadRef, projectId: string) => void;
+  /** Opens the Editor in a video project's thread the user has never arranged (S7V-076). */
+  openEditorByDefault: (ref: ScopedThreadRef, projectId: string) => void;
   openDevice: (ref: ScopedThreadRef, target: DeviceTabTarget, automatic?: boolean) => void;
   renameDevice: (ref: ScopedThreadRef, surfaceId: string, title: string) => void;
   openBrowser: (ref: ScopedThreadRef, tabId: string | null) => void;
@@ -331,7 +337,8 @@ const updateThreadStateMap = (
     next.activeSurfaceId === null &&
     next.surfaces.length === 0 &&
     !next.dismissedDeviceSurfaceIds?.length &&
-    next.proactiveDiffTurnId === undefined
+    next.proactiveDiffTurnId === undefined &&
+    next.editorOpenedByDefault === undefined
   ) {
     if (!(threadKey in byThreadKey)) return byThreadKey;
     const { [threadKey]: _removed, ...rest } = byThreadKey;
@@ -616,6 +623,9 @@ export function migratePersistedRightPanelState(persistedState: unknown): {
                       }
                     : {}),
                   ...(validThreadState?.maximized === true ? { maximized: true as const } : {}),
+                  ...(validThreadState?.editorOpenedByDefault === true
+                    ? { editorOpenedByDefault: true as const }
+                    : {}),
                 },
               ];
             }),
@@ -665,21 +675,30 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
         }));
         return revision;
       },
-      openProactive: (ref, request, expectedUserActionRevision, activateExisting = false) => {
+      openProactive: (
+        ref,
+        request,
+        expectedUserActionRevision,
+        activateExisting = false,
+        keepEditor = false,
+      ) => {
         let opened = false;
         set((state) => {
           const threadKey = scopedThreadKey(ref);
+          const activePanel = selectActiveRightPanel(state.byThreadKey, ref);
+          // In a video project a proactive panel never hides the Editor (S7V-076).
+          const editorActive = keepEditor && activePanel === "editor";
           if (request.kind === "diff") {
             const current = selectThreadRightPanelState(state.byThreadKey, ref);
             if (current.proactiveDiffTurnId === request.turnId) return state;
-            const activePanel = selectActiveRightPanel(state.byThreadKey, ref);
             const pullRequestActive =
               activePanel === "pull-request" || activePanel === "pull-requests";
             opened =
               (state.userActionRevisionByThreadKey[threadKey] ?? 0) ===
                 expectedUserActionRevision &&
               activePanel !== "diff" &&
-              !pullRequestActive;
+              !pullRequestActive &&
+              !editorActive;
             // Record the offer even when refused, so a revisit does not retry this turn.
             return automaticUpdate(state, threadKey, (thread) => ({
               ...(opened ? upsertSurface(thread, singletonSurface("diff")) : thread),
@@ -687,7 +706,8 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
             }));
           }
           if (
-            (state.userActionRevisionByThreadKey[threadKey] ?? 0) !== expectedUserActionRevision
+            (state.userActionRevisionByThreadKey[threadKey] ?? 0) !== expectedUserActionRevision ||
+            editorActive
           ) {
             return state;
           }
@@ -756,6 +776,22 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
             return upsertSurface({ ...current, surfaces }, surface);
           }),
         ),
+      openEditorByDefault: (ref, projectId) =>
+        set((state) => {
+          const threadKey = scopedThreadKey(ref);
+          // Any saved panel state or panel choice this session means the user arranged the thread.
+          if (
+            threadKey in state.byThreadKey ||
+            threadKey in state.threadPanelVisibilityByThreadKey ||
+            (state.userActionRevisionByThreadKey[threadKey] ?? 0) !== 0
+          ) {
+            return state;
+          }
+          return automaticUpdate(state, threadKey, (current) => ({
+            ...upsertSurface(current, editorSurface(projectId)),
+            editorOpenedByDefault: true,
+          }));
+        }),
       renameDevice: (ref, surfaceId, title) =>
         set((state) =>
           userAction(state, scopedThreadKey(ref), (current) => ({

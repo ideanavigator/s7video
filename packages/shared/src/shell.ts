@@ -9,6 +9,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
 
 import type { ShellEnvironmentPatch } from "@t3tools/contracts";
 import * as HostProcess from "./HostProcess.ts";
@@ -752,36 +753,124 @@ export function npmShimExecutable(
 
 export type XcodeGitLocator = (env: NodeJS.ProcessEnv) => string | undefined;
 
-// xcrun honors DEVELOPER_DIR and the `xcode-select` choice, as the shim does.
-function locateXcodeGitWithXcrun(env: NodeJS.ProcessEnv): string | undefined {
-  try {
-    const located = NodeChildProcess.execFileSync("/usr/bin/xcrun", ["--find", "git"], {
-      encoding: "utf8",
-      env,
-      timeout: 5_000,
-      stdio: ["ignore", "pipe", "ignore"],
-    }).trim();
-    return NodePath.isAbsolute(located) ? located : undefined;
-  } catch {
-    return undefined;
+/** File checks the macOS git probe uses; plain reads, so they never start Apple's stub. */
+export interface SystemGitFileSystem {
+  readonly isExecutableFile: (filePath: string) => boolean;
+  /** The target of a symlink, or undefined when it is missing or not a link. */
+  readonly readLink: (filePath: string) => string | undefined;
+}
+
+const nodeSystemGitFileSystem: SystemGitFileSystem = {
+  isExecutableFile: (filePath) => isFileSync(filePath) && canExecuteFile(filePath),
+  readLink: (filePath) => {
+    try {
+      return NodeFS.readlinkSync(filePath);
+    } catch {
+      return undefined;
+    }
+  },
+};
+
+const XCODE_SELECT_LINK = "/var/db/xcode_select_link";
+const COMMAND_LINE_TOOLS_DIR = "/Library/Developer/CommandLineTools";
+const XCODE_DEVELOPER_DIR = "/Applications/Xcode.app/Contents/Developer";
+
+/**
+ * The git inside the macOS developer folders, found without starting any process (S7V-052):
+ * `$DEVELOPER_DIR`, the `xcode-select` link, Command Line Tools, then Xcode. Running
+ * `/usr/bin/git` or `xcrun` instead opens the "install developer tools" dialog when none exist.
+ */
+export function locateDeveloperGit(
+  env: NodeJS.ProcessEnv,
+  fileSystem: SystemGitFileSystem = nodeSystemGitFileSystem,
+): string | undefined {
+  const developerDirs: string[] = [];
+  const fromEnv = env.DEVELOPER_DIR?.trim();
+  if (fromEnv) developerDirs.push(fromEnv);
+  const selected = fileSystem.readLink(XCODE_SELECT_LINK);
+  if (selected) {
+    developerDirs.push(NodePath.posix.resolve(NodePath.posix.dirname(XCODE_SELECT_LINK), selected));
   }
+  developerDirs.push(COMMAND_LINE_TOOLS_DIR, XCODE_DEVELOPER_DIR);
+  for (const developerDir of developerDirs) {
+    const candidate = NodePath.posix.join(developerDir, "usr", "bin", "git");
+    if (fileSystem.isExecutableFile(candidate)) return candidate;
+  }
+  return undefined;
 }
 
 export const XcodeGitLocation = Context.Reference<XcodeGitLocator>(
   "@t3tools/shared/shell/XcodeGitLocation",
-  { defaultValue: () => locateXcodeGitWithXcrun },
+  { defaultValue: () => (env) => locateDeveloperGit(env) },
 );
 
 const MACOS_GIT_SHIM = "/usr/bin/git";
 
 /**
- * Skip the xcrun shim's per-spawn lookup only when git resolves to /usr/bin/git.
- * User-selected git on PATH still wins, children keep PATH, and lookup failures use `git`.
+ * Whether `filePath` is Apple's `/usr/bin/git` stub under any name: the same file by device and
+ * inode catches `/USR/BIN/git` on case-insensitive APFS and symlinks to it. A plain stat.
+ */
+export function isMacosGitStub(filePath: string): boolean {
+  if (filePath === MACOS_GIT_SHIM) return true;
+  try {
+    const stub = NodeFS.statSync(MACOS_GIT_SHIM);
+    const candidate = NodeFS.statSync(filePath);
+    return stub.dev === candidate.dev && stub.ino === candidate.ino;
+  } catch {
+    return false;
+  }
+}
+
+/** No real git on this Mac; the spawn is refused before it can reach Apple's stub. */
+export class GitUnavailableError extends Schema.TaggedError<GitUnavailableError>()(
+  "GitUnavailableError",
+  {},
+) {
+  override get message(): string {
+    return "Git is not installed on this Mac.";
+  }
+}
+
+/** Where git comes from on this host; `available: false` only on macOS without a real git. */
+export interface SystemGitLocation {
+  readonly available: boolean;
+  /** The git to run: a PATH git, a developer-folder git, or `"git"` off macOS; null when none. */
+  readonly path: string | null;
+  /** Whether children can run plain `git` from PATH (a user-chosen git, or not macOS). */
+  readonly fromPath: boolean;
+}
+
+/**
+ * Decides whether a real git exists, starting no process. On macOS a PATH git other than
+ * `/usr/bin/git` wins; otherwise the developer folders are checked. Off macOS git is assumed.
+ */
+export const locateSystemGit = Effect.fnUntraced(function* (
+  env: NodeJS.ProcessEnv,
+): Effect.fn.Return<SystemGitLocation> {
+  const platform = yield* HostProcess.Platform;
+  if (platform !== "darwin") return { available: true, path: "git", fromPath: true };
+  const resolveExecutable = yield* SpawnExecutableResolution;
+  const locateXcodeGit = yield* XcodeGitLocation;
+  const onPath = resolveExecutable("git", "darwin", env);
+  if (onPath !== undefined && !isMacosGitStub(onPath)) {
+    return { available: true, path: onPath, fromPath: true };
+  }
+  const located = locateXcodeGit(env);
+  if (located !== undefined && resolveExecutable(located, "darwin", env) !== undefined) {
+    return { available: true, path: located, fromPath: false };
+  }
+  return { available: false, path: null, fromPath: false };
+});
+
+/**
+ * macOS git without the stub: a user git on PATH runs as `git` (children keep PATH), otherwise
+ * the developer-folder git runs by path. With neither, fails with `GitUnavailableError` and
+ * spawns nothing. Hits are cached; misses are not, so installing the tools takes effect at once.
  */
 const resolveMacosGit = Effect.fnUntraced(function* (
   env: NodeJS.ProcessEnv,
   resolveExecutable: SpawnExecutableResolver,
-) {
+): Effect.fn.Return<string, GitUnavailableError> {
   const locateXcodeGit = yield* XcodeGitLocation;
   const cache = yield* CommandResolutionCache;
   const cacheKey = [
@@ -794,22 +883,22 @@ const resolveMacosGit = Effect.fnUntraced(function* (
   const nowNanos = yield* Clock.currentTimeNanos;
   const cached = cache.get(cacheKey);
   // An Xcode update or removal deletes the binary; look again instead of failing the spawn.
-  if (
-    cached !== undefined &&
-    cached.expiresAtNanos > nowNanos &&
-    (cached.resolvedPath === null ||
-      resolveExecutable(cached.resolvedPath, "darwin", env) !== undefined)
-  ) {
-    return cached.resolvedPath ?? "git";
+  // A cached `git` is only good while PATH still gives a git other than the stub.
+  const cachedCommand = cached?.resolvedPath;
+  if (cached !== undefined && cachedCommand != null && cached.expiresAtNanos > nowNanos) {
+    const found = resolveExecutable(cachedCommand, "darwin", env);
+    if (found !== undefined && !isMacosGitStub(found)) return cachedCommand;
   }
-  const located =
-    resolveExecutable("git", "darwin", env) === MACOS_GIT_SHIM ? locateXcodeGit(env) : undefined;
-  const realGit =
-    located !== undefined && resolveExecutable(located, "darwin", env) !== undefined
-      ? located
-      : null;
-  cacheCommandResolution(cache, cacheKey, realGit, nowNanos);
-  return realGit ?? "git";
+  const location = yield* locateSystemGit(env).pipe(
+    Effect.provideService(SpawnExecutableResolution, resolveExecutable),
+  );
+  if (!location.available || location.path === null) {
+    cache.delete(cacheKey);
+    return yield* new GitUnavailableError();
+  }
+  const command = location.fromPath ? "git" : location.path;
+  cacheCommandResolution(cache, cacheKey, command, nowNanos);
+  return command;
 });
 
 export interface SpawnCommandOptions extends CommandAvailabilityOptions {
@@ -817,11 +906,11 @@ export interface SpawnCommandOptions extends CommandAvailabilityOptions {
   readonly bypassNpmShim?: boolean;
 }
 
-export const resolveSpawnCommand = Effect.fnUntraced(function* (
+const resolveSpawnCommandWith = Effect.fnUntraced(function* (
   command: string,
   args: ReadonlyArray<string>,
   options: SpawnCommandOptions = {},
-): Effect.fn.Return<ResolvedSpawnCommand> {
+): Effect.fn.Return<ResolvedSpawnCommand, GitUnavailableError> {
   const platform = yield* HostProcess.Platform;
   const isMacosGit = platform === "darwin" && command === "git";
   if (platform !== "win32" && !isMacosGit) {
@@ -887,6 +976,33 @@ export const resolveSpawnCommand = Effect.fnUntraced(function* (
     shell: true,
   };
 });
+
+/** Only a command that may be `git` can fail: literal non-git commands keep a `never` error. */
+export type SpawnCommandError<C extends string> = string extends C
+  ? GitUnavailableError
+  : C extends "git"
+    ? GitUnavailableError
+    : never;
+
+/**
+ * The one entry for every spawn. On macOS `git` runs the real git or fails with
+ * `GitUnavailableError` (S7V-052); it never reaches Apple's `/usr/bin/git` stub or `xcrun`.
+ */
+export const resolveSpawnCommand = <const C extends string>(
+  command: C,
+  args: ReadonlyArray<string>,
+  options: SpawnCommandOptions = {},
+): Effect.Effect<
+  ResolvedSpawnCommand,
+  SpawnCommandError<C>,
+  Effect.Services<ReturnType<typeof resolveSpawnCommandWith>>
+> =>
+  // @effect-diagnostics-next-line unsafeEffectTypeAssertion:off - Only command === "git" can fail.
+  resolveSpawnCommandWith(command, args, options) as Effect.Effect<
+    ResolvedSpawnCommand,
+    SpawnCommandError<C>,
+    Effect.Services<ReturnType<typeof resolveSpawnCommandWith>>
+  >;
 
 export const isCommandAvailable = Effect.fn("shell.isCommandAvailable")(function* (
   command: string,

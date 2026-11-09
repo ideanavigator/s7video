@@ -4,6 +4,7 @@
 // edit service method, map its errors. The Editor panel reaches the same services directly.
 import {
   type EditDocument,
+  type EditOp,
   type EditSnapshot,
   type EngineError,
   type TranscriptError,
@@ -19,6 +20,7 @@ import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 
 import { CANVAS_FOR_RATIO } from "../../../edit/canvasForClip.ts";
+import * as CaptionTrackService from "../../../edit/CaptionTrackService.ts";
 import * as EditDocumentService from "../../../edit/EditDocumentService.ts";
 import * as SilenceCutService from "../../../edit/SilenceCutService.ts";
 import * as EngineService from "../../../engine/EngineService.ts";
@@ -125,6 +127,29 @@ const editSummary = ({ revision, document }: EditSnapshot) => {
 };
 
 /**
+ * S7V-050: one line on the result of a change that leaves the history past the cleanup size. No
+ * tool cleans it (PO 2026-11-07): the user chooses in the Editor panel's banner.
+ */
+export const cleanupHint = ({ versions, bytes }: { versions: number; bytes: number }) =>
+  `Cleanup due: ${versions} saved versions (${(bytes / (1024 * 1024)).toFixed(1)} MB). Once, end your reply asking if the user wants to keep only the last 20 or remove all old versions; they choose in the Editor panel.`;
+
+const cleanupOf = (snapshot: EditSnapshot) =>
+  snapshot.cleanup === undefined ? {} : { cleanup: cleanupHint(snapshot.cleanup) };
+
+/** The hint for a change made through another service (an import, a silence cut). */
+const cleanupAfterChange = Effect.fn("VideoHandlers.cleanupAfterChange")(function* (
+  project: VideoProject,
+  changed = true,
+) {
+  if (!changed) return {};
+  const edits = yield* EditDocumentService.EditDocumentService;
+  return yield* edits.read(project.projectId).pipe(
+    Effect.map(cleanupOf),
+    Effect.orElseSucceed(() => ({})),
+  );
+});
+
+/**
  * Plan mode is read-only: a tool that changes the edit or writes into the project (import,
  * transcribe, silence cut, export, undo, redo) refuses a plan-mode thread. `actsAsCaller` only
  * refuses read-only clients and dead callers.
@@ -163,7 +188,7 @@ const stepEdit = (direction: "undo" | "redo") =>
       yield* refusePlanMode(direction);
       const project = yield* callerProject();
       const edits = yield* EditDocumentService.EditDocumentService;
-      return yield* edits.step(project.projectId, direction).pipe(
+      return yield* edits.step(project.projectId, direction, { reply: project.reply }).pipe(
         Effect.map(({ snapshot, changed }) => ({
           revision: snapshot.revision,
           message: changed
@@ -214,12 +239,14 @@ const handlers = {
           sourcePath: file,
           mode: "copy",
           origin: "agent",
+          reply: project.reply,
           ...(label === undefined ? {} : { label }),
         })
         .pipe(Effect.mapError(libraryFailure));
       return {
         media: imported.mediaId,
         ...(imported.jobId === undefined ? {} : { jobId: imported.jobId }),
+        ...(yield* cleanupAfterChange(project)),
       };
     }),
   ),
@@ -452,11 +479,14 @@ const handlers = {
         .apply(project.projectId, [{ _tag: "setCanvas", canvas }], {
           origin: "agent",
           baseRevision: revision,
+          reply: project.reply,
+          summary: `Made the video ${shape}`,
         })
         .pipe(
           Effect.map((after) => ({
             revision: after.revision,
             message: `The video is now ${shape}. Say undo to put it back.`,
+            ...cleanupOf(after),
           })),
           Effect.mapError(
             (error) =>
@@ -496,6 +526,7 @@ const handlers = {
           ...(media === undefined ? {} : { media }),
           ...(minGapSeconds === undefined ? {} : { minGapSeconds }),
           ...(ranges === undefined ? {} : { keep: ranges }),
+          reply: project.reply,
         })
         .pipe(
           Effect.mapError((error) =>
@@ -510,7 +541,163 @@ const handlers = {
                     error._tag === "EditUnavailableError" ? error.explanation : error.message,
                 }),
           ),
+          Effect.flatMap((result) =>
+            cleanupAfterChange(project, result.changed).pipe(
+              Effect.map((hint) => ({ ...result, ...hint })),
+            ),
+          ),
         );
+    }),
+  ),
+  // Writes the edit (one checkpoint), so plan-mode and read-only callers are refused.
+  video_assemble: McpToolAccess.actsAsCaller(({ items, at }) =>
+    Effect.gen(function* () {
+      yield* refusePlanMode("assemble clips");
+      const project = yield* callerProject();
+      const { revision, document } = project.snapshot;
+      const invalid = (message: string) =>
+        new OrchestratorMcpFailure({ code: "invalid_request", message });
+      if (items.length === 0) return yield* invalid("Give at least one clip part to assemble.");
+      const track = document.tracks.find((entry) => entry.kind === "video");
+      if (track === undefined) return yield* invalid("This edit has no video track.");
+      const mediaIds: string[] = [];
+      for (const item of items) {
+        if (item.in < 0 || item.duration < 1) {
+          return yield* invalid("Each part needs in >= 0 and duration >= 1, in edit frames.");
+        }
+        // Scope check first: refuses anything outside the project, without saying whether it exists.
+        yield* resolveMedia(project, item.mediaId);
+        const media = document.media.find(
+          (entry) => entry.id === item.mediaId || entry.path === item.mediaId,
+        );
+        if (media === undefined) {
+          return yield* invalid(`${item.mediaId} is not in this edit's media. Import it first.`);
+        }
+        mediaIds.push(media.id);
+      }
+      const end = track.items.reduce((last, item) => Math.max(last, item.start + item.duration), 0);
+      const taken = new Set(document.tracks.flatMap((entry) => entry.items.map((item) => item.id)));
+      const itemIds: string[] = [];
+      for (let index = 0; itemIds.length < items.length; index++) {
+        const id = `asm${revision}-${index}`;
+        if (!taken.has(id)) itemIds.push(id);
+      }
+      const from = at ?? end;
+      const length = items.reduce((total, item) => total + item.duration, 0);
+      // Mid-edit inserts go only where a video item starts. Everything from there on, on every
+      // track, moves right by the inserted length (S7V-034): one moveItem per item, or per link
+      // group, since moveItem carries linked items; the inserts then fill the opened gap.
+      const shifts: EditOp[] = [];
+      if (from !== end) {
+        if (!track.items.some((item) => item.start === from)) {
+          return yield* invalid(
+            `at must be where a video item starts, or the end of the edit (frame ${end}).`,
+          );
+        }
+        const groups = new Map<string, Array<{ id: string; start: number; end: number }>>();
+        const kindOf = new Map<string, string>();
+        for (const entry of document.tracks) {
+          for (const item of entry.items) {
+            const linkId = "linkId" in item ? item.linkId : undefined;
+            const key = linkId === undefined ? `item:${item.id}` : `link:${linkId}`;
+            const group = groups.get(key) ?? [];
+            group.push({ id: item.id, start: item.start, end: item.start + item.duration });
+            groups.set(key, group);
+            kindOf.set(item.id, entry.kind);
+          }
+        }
+        for (const group of groups.values()) {
+          const first = group.reduce((low, member) => (member.start < low.start ? member : low));
+          if (first.start >= from) {
+            shifts.push({ _tag: "moveItem", itemId: first.id, start: first.start + length });
+            continue;
+          }
+          // A music bed plays on under the new clips; anything else cut by `at` would drift.
+          const across = group.find(
+            (member) => member.end > from && kindOf.get(member.id) !== "music",
+          );
+          if (across !== undefined) {
+            return yield* invalid(
+              `"${across.id}" runs across frame ${from}, so clips can't be added there. Pick a frame where it has ended, or the end (frame ${end}).`,
+            );
+          }
+        }
+        if (document.markers.some((marker) => marker.start >= from)) {
+          shifts.push({
+            _tag: "setMarkers",
+            markers: document.markers.map((marker) =>
+              marker.start >= from ? { ...marker, start: marker.start + length } : marker,
+            ),
+          });
+        }
+      }
+      let position = from;
+      const inserts = items.map((item, index) => {
+        const op = {
+          _tag: "insertItem" as const,
+          trackId: track.id,
+          item: {
+            id: itemIds[index]!,
+            media: mediaIds[index]!,
+            start: position,
+            duration: item.duration,
+            in: item.in,
+          },
+        };
+        position += item.duration;
+        return op;
+      });
+      const edits = yield* EditDocumentService.EditDocumentService;
+      return yield* edits
+        .apply(project.projectId, [...shifts, ...inserts], {
+          origin: "agent",
+          baseRevision: revision,
+          reply: project.reply,
+          summary: `Added ${count(items.length, "clip part")} to the timeline`,
+        })
+        .pipe(
+          Effect.map((after) => ({ revision: after.revision, itemIds, ...cleanupOf(after) })),
+          Effect.mapError(
+            (error) =>
+              new OrchestratorMcpFailure({
+                code:
+                  error._tag === "EditConflict" || error._tag === "EditValidationError"
+                    ? "invalid_request"
+                    : "orchestration_error",
+                message: error._tag === "EditUnavailableError" ? error.explanation : error.message,
+              }),
+          ),
+        );
+    }),
+  ),
+  // Writes the edit (one checkpoint), so plan-mode and read-only callers are refused.
+  video_add_captions: McpToolAccess.actsAsCaller(() =>
+    Effect.gen(function* () {
+      yield* refusePlanMode("add captions");
+      const project = yield* callerProject();
+      const captions = yield* CaptionTrackService.CaptionTrackService;
+      const result = yield* captions.addCaptions(project.projectId, { reply: project.reply }).pipe(
+        Effect.mapError(
+          (error) =>
+            new OrchestratorMcpFailure({
+              code:
+                error._tag === "CaptionsError" ||
+                error._tag === "EditConflict" ||
+                error._tag === "EditValidationError"
+                  ? "invalid_request"
+                  : "orchestration_error",
+              message: error._tag === "EditUnavailableError" ? error.explanation : error.message,
+            }),
+        ),
+      );
+      const hint = yield* cleanupAfterChange(project, result.changed);
+      return {
+        revision: result.revision,
+        message: result.changed
+          ? `Added ${result.captions} captions to the edit. They follow later cuts; say undo to remove them.`
+          : `The edit already has these ${result.captions} captions.`,
+        ...hint,
+      };
     }),
   ),
 } satisfies McpToolAccess.Handlers<typeof VideoToolkit.tools>;
@@ -528,6 +715,8 @@ export const layerStandard = McpToolAccess.toLayer(VideoStandardToolkit, {
   video_redo: handlers.video_redo,
   video_remove_silences: handlers.video_remove_silences,
   video_canvas: handlers.video_canvas,
+  video_assemble: handlers.video_assemble,
+  video_add_captions: handlers.video_add_captions,
 });
 
 export const layerFrame = McpToolAccess.toLayer(VideoFrameToolkit, {

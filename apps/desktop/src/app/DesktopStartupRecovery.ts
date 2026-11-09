@@ -273,8 +273,9 @@ export const listen: Effect.Effect<
         const action = STARTUP_RECOVERY_ACTIONS.find((name) => url === `${ACTION_ORIGIN}/${name}`);
         if (action !== undefined) runFork(runAction(action));
       });
+      // s7video (S7V-074): the recovery window opens on its own, so it must not steal focus.
       window.once("ready-to-show", () => {
-        if (!window.isDestroyed()) window.show();
+        if (!window.isDestroyed()) runFork(electronWindow.reveal(window));
       });
       window.once("closed", () => {
         runFork(

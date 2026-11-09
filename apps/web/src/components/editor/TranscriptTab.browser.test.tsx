@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: 2026 s7video contributors
 // SPDX-License-Identifier: MIT
 import {
+  type EditDocument,
+  type EditOp,
   EngineError,
   EngineJobId,
   type EngineJob,
@@ -82,7 +84,14 @@ vi.mock(import("../../state/use-atom-command"), () => ({
 
 import "../../index.css";
 
-import { TranscriptTab } from "./TranscriptTab";
+import type { EditApplyOutcome } from "./timeline/timelineEditor";
+import {
+  LINKED_AUDIO_NOTICE,
+  RESTORED_PAUSE_NOTE,
+  TRANSCRIPT_CONFLICT_NOTICE,
+  type TranscriptEditing,
+  TranscriptTab,
+} from "./TranscriptTab";
 
 const FPS = { num: 30, den: 1 };
 const environmentId = EnvironmentId.make("env-1");
@@ -162,19 +171,87 @@ const sized = () => {
 
 const renderTab = (
   playback: TranscriptPlayback | null,
-  options: { readonly onRender?: () => void } = {},
+  options: { readonly onRender?: () => void; readonly editing?: TranscriptEditing } = {},
 ) => {
-  const ui = (next: TranscriptPlayback | null) => (
+  const ui = (next: TranscriptPlayback | null, editing = options.editing) => (
     <Profiler id="transcript" onRender={() => options.onRender?.()}>
-      <TranscriptTab projectRef={projectRef} mediaId="clip-0" playback={next} />
+      <TranscriptTab projectRef={projectRef} mediaId="clip-0" playback={next} editing={editing} />
     </Profiler>
   );
   return render(ui(playback), { container: sized(), router: false }).then((screen) =>
     Object.assign(screen, {
-      setPlayback: (next: TranscriptPlayback | null) => screen.rerender(ui(next)),
+      setPlayback: (next: TranscriptPlayback | null, editing?: TranscriptEditing) =>
+        screen.rerender(ui(next, editing ?? options.editing)),
     }),
   );
 };
+
+/** An edit of clip-0 playing `ranges` end to end, at revision `revision`. */
+const editOf = (ranges: ReadonlyArray<readonly [number, number]>, frames: number): EditDocument => {
+  let start = 0;
+  return {
+    version: 1,
+    fps: FPS,
+    canvas: { width: 1080, height: 1920 },
+    media: [
+      {
+        id: "clip-0",
+        kind: "video",
+        path: "assets/clip.mov",
+        fingerprint: { sha256: "ab".repeat(32), size: 1 },
+        probe: { durationFrames: frames, hasVideo: true, hasAudio: true },
+      },
+    ],
+    tracks: [
+      {
+        kind: "video",
+        id: "V1",
+        items: ranges.map(([from, to], index) => {
+          const item = {
+            id: `v${index + 1}`,
+            media: "clip-0",
+            start,
+            duration: to - from,
+            in: from,
+          };
+          start += to - from;
+          return item;
+        }),
+      },
+    ],
+    markers: [],
+    metadata: {},
+  };
+};
+
+const editingOf = (
+  ranges: ReadonlyArray<readonly [number, number]>,
+  frames: number,
+  outcome: EditApplyOutcome = { _tag: "applied", revision: 8 },
+) => {
+  const apply = vi.fn(
+    async (_ops: ReadonlyArray<EditOp>, _baseRevision: number): Promise<EditApplyOutcome> =>
+      outcome,
+  );
+  return { editing: { document: editOf(ranges, frames), revision: 7, apply }, apply };
+};
+
+/** Presses on word `from`, moves over word `to` and lets go, as a mouse drag does. */
+const dragAcross = (from: string, to: string) => {
+  const options = { bubbles: true, button: 0, buttons: 1, isPrimary: true, pointerId: 1 };
+  const start = wordElement(from)!;
+  const end = wordElement(to)!;
+  start.dispatchEvent(new PointerEvent("pointerdown", options));
+  start.closest<HTMLElement>('[role="listbox"]')!.focus();
+  end.dispatchEvent(new PointerEvent("pointermove", options));
+  end.dispatchEvent(new PointerEvent("pointerup", { ...options, buttons: 0 }));
+  end.dispatchEvent(new MouseEvent("click", { bubbles: true, button: 0 }));
+};
+
+const selectedWords = () =>
+  [...document.querySelectorAll<HTMLElement>("[data-selected]")].map(
+    (element) => element.firstChild?.textContent,
+  );
 
 const listenForSeeks = () => {
   const seeks: number[] = [];
@@ -604,5 +681,293 @@ describe("TranscriptTab", () => {
       expect(contrast(removed.color, background())).toBeGreaterThanOrEqual(4.5);
     }
     document.documentElement.classList.remove("dark");
+  });
+
+  describe("text editing (S7V-038)", () => {
+    it("cuts dragged words with Delete through one apply on the rendered revision", async () => {
+      ready(SHORT);
+      const { editing, apply } = editingOf([[0, 62]], 62);
+      await using screen = await renderTab(wholeClip(62), { editing });
+      await expect.element(screen.getByRole("option", { name: "there" })).toBeVisible();
+      await act(() => dragAcross("there", "silence"));
+      expect(selectedWords()).toEqual(["there", "silence"]);
+      await expect
+        .element(screen.getByRole("option", { name: "silence" }))
+        .toHaveAttribute("aria-selected", "true");
+      await expect.element(screen.getByText("2 words selected")).toBeVisible();
+      await userEvent.keyboard("{Delete}");
+      expect(apply).toHaveBeenCalledOnce();
+      const [ops, baseRevision] = apply.mock.calls[0]!;
+      expect(baseRevision).toBe(7);
+      // From there's start (the 2-frame gap after hello has no room for air) to general's start - 3.
+      expect(ops).toEqual([
+        { _tag: "splitItem", itemId: "v1", atFrame: 37, newItemId: "vt1" },
+        { _tag: "splitItem", itemId: "v1", atFrame: 12, newItemId: "vt2" },
+        { _tag: "deleteItem", itemIds: ["vt2"], ripple: true },
+      ]);
+      // Struck at once, before the new edit arrives; then the edit keeps them struck.
+      await expect.poll(() => wordElement("there")?.hasAttribute("data-removed")).toBe(true);
+      await screen.setPlayback({
+        fps: FPS,
+        segments: segmentsOf([
+          [0, 12],
+          [37, 62],
+        ]),
+      });
+      expect(wordElement("silence")?.hasAttribute("data-removed")).toBe(true);
+      expect(wordElement("general")?.hasAttribute("data-removed")).toBe(false);
+      expect(selectedWords()).toEqual([]);
+    });
+
+    it("keeps a single click a seek, and selects by shift-click", async () => {
+      ready(SHORT);
+      using listener = listenForSeeks();
+      const { editing, apply } = editingOf([[0, 62]], 62);
+      await using screen = await renderTab(wholeClip(62), { editing });
+      await screen.getByRole("option", { name: "there" }).click();
+      expect(listener.seeks).toEqual([12]);
+      expect(selectedWords()).toEqual([]);
+      await userEvent.keyboard("{Shift>}");
+      await screen.getByRole("option", { name: "general" }).click();
+      await userEvent.keyboard("{/Shift}");
+      expect(listener.seeks).toEqual([12]);
+      expect(selectedWords()).toEqual(["there", "silence", "general"]);
+      await screen.getByRole("button", { name: /Cut/u }).click();
+      expect(apply).toHaveBeenCalledOnce();
+    });
+
+    it("restores struck words with the Restore button", async () => {
+      ready(SHORT);
+      // silence [24,36) is cut: the edit plays [0,22) and [40,62).
+      const { editing, apply } = editingOf(
+        [
+          [0, 22],
+          [40, 62],
+        ],
+        62,
+      );
+      await using screen = await renderTab({ fps: FPS, segments: SILENCE_CUT }, { editing });
+      await act(() => dragAcross("silence", "silence"));
+      // A press and release on one word is a click, which seeks and selects nothing.
+      expect(selectedWords()).toEqual([]);
+      await userEvent.keyboard("{Shift>}");
+      await screen.getByRole("option", { name: "silence (removed)" }).click();
+      await userEvent.keyboard("{/Shift}");
+      expect(screen.getByRole("button", { name: /Cut/u }).query()).toBeNull();
+      await screen.getByRole("button", { name: /Restore/u }).click();
+      expect(apply.mock.calls[0]![0]).toEqual([
+        { _tag: "restoreRange", trackId: "V1", mediaId: "clip-0", range: { in: 22, duration: 18 } },
+      ]);
+      // The frame after "silence"'s air was a pause: the tab says it came back too.
+      await expect.element(screen.getByText(RESTORED_PAUSE_NOTE).first()).toBeVisible();
+    });
+
+    it("should handle a stale revision: keeps the selection, rolls back and says so", async () => {
+      ready(SHORT);
+      const { editing } = editingOf([[0, 62]], 62, { _tag: "conflict" });
+      await using screen = await renderTab(wholeClip(62), { editing });
+      await act(() => dragAcross("there", "there"));
+      await userEvent.keyboard("{Shift>}");
+      await screen.getByRole("option", { name: "silence" }).click();
+      await userEvent.keyboard("{/Shift}");
+      await screen.getByRole("button", { name: /Cut/u }).click();
+      await expect.element(screen.getByText(TRANSCRIPT_CONFLICT_NOTICE)).toBeVisible();
+      expect(wordElement("silence")?.hasAttribute("data-removed")).toBe(false);
+      expect(selectedWords()).toEqual(["there", "silence"]);
+    });
+
+    it("says when a cut also takes a short leftover", async () => {
+      // An earlier cut ends at 11: cutting from two's air (13) would leave [11,13) alone.
+      ready([word("one", 0, 10), word("two", 20, 30), word("three", 40, 50)]);
+      const kept = [
+        [0, 10],
+        [11, 62],
+      ] as const;
+      const { editing, apply } = editingOf(kept, 62);
+      await using screen = await renderTab({ fps: FPS, segments: segmentsOf(kept) }, { editing });
+      await act(() => dragAcross("two", "three"));
+      await userEvent.keyboard("{Backspace}");
+      expect(apply.mock.calls[0]![0].at(-1)).toEqual({
+        _tag: "deleteItem",
+        itemIds: ["v2"],
+        ripple: true,
+      });
+      await expect
+        .element(screen.getByText(/Also cut 0\.1 s between these words/u).first())
+        .toBeVisible();
+    });
+
+    it("names and strikes an unselected word a cut also takes, and announces it", async () => {
+      // "so" plays alone in [9,18): cutting "really" would leave it under 0.3 s with no pause to
+      // give back, so it goes with the cut.
+      ready([word("so", 10, 14), word("really", 15, 40), word("fine", 60, 70)]);
+      const { editing, apply } = editingOf([[9, 100]], 100);
+      await using screen = await renderTab(
+        { fps: FPS, segments: segmentsOf([[9, 100]]) },
+        { editing },
+      );
+      await screen.getByRole("option", { name: "really" }).click();
+      await userEvent.keyboard("{Delete}");
+      expect(apply).toHaveBeenCalledOnce();
+      const note = "Also cut “so” so the video doesn't flicker.";
+      await expect.element(screen.getByText(note, { exact: true })).toBeVisible();
+      await expect.poll(() => wordElement("so")?.hasAttribute("data-removed")).toBe(true);
+      await expect.element(screen.getByRole("option", { name: "so (removed)" })).toBeVisible();
+      const statuses = [...screen.container.querySelectorAll('[role="status"]')].map(
+        (element) => element.textContent,
+      );
+      expect(statuses).toContain(`Cut 1 word. ${note}`);
+    });
+
+    it("refuses a text edit when the clip's sound is on its own track", async () => {
+      ready(SHORT);
+      const { editing, apply } = editingOf([[0, 62]], 62);
+      const document: EditDocument = {
+        ...editing.document,
+        tracks: [
+          ...editing.document.tracks,
+          {
+            kind: "sfx",
+            id: "A1",
+            items: [{ id: "a1", media: "clip-0", start: 0, duration: 62, in: 0 }],
+          } as unknown as EditDocument["tracks"][number],
+        ],
+      };
+      await using screen = await renderTab(wholeClip(62), { editing: { ...editing, document } });
+      await act(() => dragAcross("there", "silence"));
+      await userEvent.keyboard("{Delete}");
+      await expect.element(screen.getByText(LINKED_AUDIO_NOTICE)).toBeVisible();
+      expect(apply).not.toHaveBeenCalled();
+      expect(wordElement("there")?.hasAttribute("data-removed")).toBe(false);
+    });
+
+    it("cuts a struck word that plays in another part of the timeline", async () => {
+      // A reused clip: the tab shows only the part on screen, [0,22), so "general" shows struck,
+      // but the edit plays it elsewhere. The choice comes from the edit: Cut, not Restore.
+      ready(SHORT);
+      const { editing, apply } = editingOf([[0, 62]], 62);
+      await using screen = await renderTab(
+        { fps: FPS, segments: segmentsOf([[0, 22]]) },
+        { editing },
+      );
+      await expect.element(screen.getByRole("option", { name: "general (removed)" })).toBeVisible();
+      await act(() => dragAcross("silence", "general"));
+      await expect.element(screen.getByRole("button", { name: "Cut", exact: true })).toBeVisible();
+      expect(screen.getByRole("button", { name: /Restore/u }).query()).toBeNull();
+      await userEvent.keyboard("{Delete}");
+      expect(apply.mock.calls[0]![0].at(-1)).toMatchObject({ _tag: "deleteItem", ripple: true });
+    });
+
+    it("is keyboard only: shift+arrows select, Delete cuts, Backspace restores", async () => {
+      ready(SHORT);
+      const { editing, apply } = editingOf([[0, 62]], 62);
+      await using screen = await renderTab(wholeClip(62), { editing });
+      await expect.element(screen.getByRole("option", { name: "hello" })).toBeVisible();
+      await userEvent.tab();
+      await userEvent.keyboard("{ArrowRight}{Shift>}{ArrowRight}{/Shift}");
+      expect(selectedWords()).toEqual(["there", "silence"]);
+      await userEvent.keyboard("{Delete}");
+      expect(apply.mock.calls[0]![0].at(-1)).toMatchObject({ _tag: "deleteItem" });
+      const cut = editingOf(
+        [
+          [0, 12],
+          [37, 62],
+        ],
+        62,
+      );
+      await screen.setPlayback(
+        {
+          fps: FPS,
+          segments: segmentsOf([
+            [0, 12],
+            [37, 62],
+          ]),
+        },
+        cut.editing,
+      );
+      // VoiceOver reads the struck words as removed.
+      await expect.element(screen.getByRole("option", { name: "there (removed)" })).toBeVisible();
+      await userEvent.keyboard("{Shift>}{ArrowLeft}{/Shift}{Backspace}");
+      expect(cut.apply.mock.calls[0]![0]).toEqual([
+        { _tag: "restoreRange", trackId: "V1", mediaId: "clip-0", range: { in: 12, duration: 25 } },
+      ]);
+    });
+
+    it("selects nothing and offers no actions while the edit cannot be changed", async () => {
+      ready(SHORT);
+      await using screen = await renderTab(wholeClip(62));
+      await act(() => dragAcross("there", "silence"));
+      expect(selectedWords()).toEqual([]);
+      await userEvent.tab();
+      await userEvent.keyboard("{Shift>}{ArrowRight}{/Shift}{Delete}");
+      expect(selectedWords()).toEqual([]);
+      expect(screen.getByRole("toolbar").query()).toBeNull();
+    });
+
+    it("should handle a 30-minute transcript: 50 words in one apply, no long task", async () => {
+      // 30 minutes at 30 fps: 54,000 frames, 4,500 words.
+      ready(synthetic(4_500));
+      const frames = startOf(4_499) + 8;
+      const { editing, apply } = editingOf([[0, frames]], frames);
+      await using screen = await renderTab(wholeClip(frames), { editing });
+      await expect
+        .element(screen.getByRole("option", { name: "word0", exact: true }))
+        .toBeVisible();
+      const longTasks: number[] = [];
+      const observer = new PerformanceObserver((list) => {
+        for (const entry of list.getEntries()) longTasks.push(entry.duration);
+      });
+      observer.observe({ type: "longtask" });
+      await act(() => dragAcross("word2", "word51"));
+      expect(selectedWords()).toHaveLength(50);
+      await userEvent.keyboard("{Delete}");
+      await expect.poll(() => wordElement("word30")?.hasAttribute("data-removed")).toBe(true);
+      observer.disconnect();
+      expect(apply).toHaveBeenCalledOnce();
+      expect(longTasks.filter((duration) => duration > 50)).toEqual([]);
+    });
+
+    it("meets WCAG AA contrast for selected words in both themes", async () => {
+      ready(SHORT);
+      const { editing } = editingOf(
+        [
+          [0, 22],
+          [40, 62],
+        ],
+        62,
+      );
+      await using screen = await renderTab({ fps: FPS, segments: SILENCE_CUT }, { editing });
+      await expect.element(screen.getByRole("option", { name: "there" })).toBeVisible();
+      await act(() => dragAcross("there", "general"));
+      const canvas = document
+        .createElement("canvas")
+        .getContext("2d", { willReadFrequently: true })!;
+      const rgb = (color: string) => {
+        canvas.fillStyle = getComputedStyle(document.body).backgroundColor;
+        canvas.fillRect(0, 0, 1, 1);
+        canvas.fillStyle = color;
+        canvas.fillRect(0, 0, 1, 1);
+        return Array.from(canvas.getImageData(0, 0, 1, 1).data.slice(0, 3));
+      };
+      const luminance = (color: string) => {
+        const [r, g, b] = rgb(color).map((value) => {
+          const channel = value / 255;
+          return channel <= 0.040_45 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
+        });
+        return 0.2126 * r! + 0.7152 * g! + 0.0722 * b!;
+      };
+      const contrast = (first: string, second: string) => {
+        const [light, dark] = [luminance(first), luminance(second)].toSorted((a, b) => b - a);
+        return (light! + 0.05) / (dark! + 0.05);
+      };
+      for (const dark of [false, true]) {
+        document.documentElement.classList.toggle("dark", dark);
+        for (const text of ["there", "silence"]) {
+          const style = getComputedStyle(wordElement(text)!);
+          expect(contrast(style.color, style.backgroundColor)).toBeGreaterThanOrEqual(4.5);
+        }
+      }
+      document.documentElement.classList.remove("dark");
+    });
   });
 });

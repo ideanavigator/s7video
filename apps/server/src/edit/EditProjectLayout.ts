@@ -10,6 +10,7 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
@@ -20,6 +21,8 @@ const STYLES_DIR = "styles";
 const ASSETS_DIR = "assets";
 export const CACHE_DIR = ".s7cache";
 const EXPORTS_DIR = "exports";
+/** The edit history's own store (S7V-051); `/*` in the whitelist keeps it out of git. */
+export const HISTORY_DIR = ".s7history";
 
 /**
  * ADR-005's whitelist plus the scaffold's README and icon (PO, 2026-11-05). `/*` ignores the
@@ -41,6 +44,19 @@ export const WHITELIST_GITIGNORE = [
   "",
 ].join("\n");
 
+/**
+ * What the whitelist `.gitignore` keeps, so T3's turn checkpoints save it: root files, and folders
+ * ending in `/`. The media guard checks exactly these without asking git.
+ */
+export const TRACKED_PATHS: ReadonlyArray<string> = [
+  ".gitignore",
+  EDIT_FILE,
+  PROJECT_FILE,
+  "README.md",
+  `${ASSETS_DIR}/icon.svg`,
+  `${STYLES_DIR}/`,
+];
+
 const DEFAULT_EDIT_FPS: EditRational = { num: 30, den: 1 };
 const DEFAULT_EDIT_CANVAS: EditCanvas = { width: 1080, height: 1920 };
 
@@ -56,6 +72,12 @@ export const projectFileContents = (revision: number) =>
 
 export const editFileContents = (document: unknown) => `${JSON.stringify(document, null, 2)}\n`;
 
+/** The edit a new project starts with; an outside change to a project with no history goes back to it. */
+export const STARTING_EDIT = emptyEditDocument({
+  fps: DEFAULT_EDIT_FPS,
+  canvas: DEFAULT_EDIT_CANVAS,
+});
+
 export class EditLayoutError extends Schema.TaggedError<EditLayoutError>()("EditLayoutError", {
   cwd: Schema.String,
   cause: Schema.Defect(),
@@ -66,7 +88,7 @@ export class EditLayoutError extends Schema.TaggedError<EditLayoutError>()("Edit
 }
 
 /** Whether `cwd` holds an edit project: both `edit.json` and `project.json`. */
-export const isEditProjectFolder =
+const isEditProjectFolder =
   (fileSystem: FileSystem.FileSystem) =>
   (cwd: string): Effect.Effect<boolean> =>
     Effect.all([
@@ -74,6 +96,28 @@ export const isEditProjectFolder =
       fileSystem.exists(`${cwd}/${PROJECT_FILE}`),
     ]).pipe(
       Effect.map(([edit, project]) => edit && project),
+      Effect.orElseSucceed(() => false),
+    );
+
+const decodeProjectFormat = Schema.decodeUnknownOption(
+  Schema.fromJsonString(Schema.Struct({ format: Schema.Literal("edit-project") })),
+);
+
+/**
+ * Whether `cwd` is a video project, which gets the video tools and only them (S7V-072). Other tools
+ * use a root `project.json` too, so it must also say `"format": "edit-project"`.
+ */
+export const isVideoProjectFolder =
+  (fileSystem: FileSystem.FileSystem) =>
+  (cwd: string): Effect.Effect<boolean> =>
+    isEditProjectFolder(fileSystem)(cwd).pipe(
+      Effect.flatMap((present) =>
+        present
+          ? fileSystem
+              .readFileString(`${cwd}/${PROJECT_FILE}`)
+              .pipe(Effect.map((text) => Option.isSome(decodeProjectFormat(text))))
+          : Effect.succeed(false),
+      ),
       Effect.orElseSucceed(() => false),
     );
 
@@ -111,12 +155,7 @@ const make = Effect.gen(function* () {
       }
       const files: Array<readonly [string, string]> = [
         [".gitignore", WHITELIST_GITIGNORE],
-        [
-          EDIT_FILE,
-          editFileContents(
-            emptyEditDocument({ fps: DEFAULT_EDIT_FPS, canvas: DEFAULT_EDIT_CANVAS }),
-          ),
-        ],
+        [EDIT_FILE, editFileContents(STARTING_EDIT)],
         [PROJECT_FILE, projectFileContents(0)],
       ];
       const written: string[] = [];

@@ -17,6 +17,7 @@ import {
   type ExportStartResult,
   type ExportStatus,
 } from "@t3tools/contracts";
+import { captionMediaOf } from "@t3tools/shared/captionWords";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -78,13 +79,7 @@ export const transcriptMediaFor = (document: EditDocument, captions: boolean) =>
   if (document.tracks.some((track) => track.kind === "caption" && track.items.length > 0)) {
     return [];
   }
-  const video = document.tracks.find((track) => track.kind === "video");
-  const audible = new Set(
-    document.media.filter((entry) => entry.probe.hasAudio).map((entry) => entry.id),
-  );
-  return [...new Set(video?.items.map((item) => item.media) ?? [])].filter((media) =>
-    audible.has(media),
-  );
+  return captionMediaOf(document);
 };
 
 /** Local date and time to the minute, `yyyymmdd-hhmm`. */
@@ -151,6 +146,11 @@ const make = Effect.gen(function* () {
   const start: ExportService["Service"]["start"] = Effect.fn("ExportService.start")(
     function* (input) {
       const snapshot = yield* edits.read(input.projectId);
+      // S7V-050: a finished export marks its version, so cleanup keeps it.
+      const markExported =
+        snapshot.version === undefined
+          ? Effect.void
+          : edits.markExported(input.projectId, snapshot.version);
       const project = yield* projects
         .getById(input.projectId)
         .pipe(Effect.orElseSucceed(() => Option.none()));
@@ -221,20 +221,24 @@ const make = Effect.gen(function* () {
             return Exit.isFailure(exit) ? Deferred.failCause(started, exit.cause) : Effect.void;
           }
           if (Exit.isSuccess(exit)) {
-            return remember({
-              ...entry(jobId),
-              state: "succeeded",
-              result: {
-                path: relative,
-                durationFrames: exit.value.durationFrames,
-                fps: exit.value.fps,
-                width: exit.value.width,
-                height: exit.value.height,
-                captions: exit.value.captions,
-                lufs: exit.value.lufs,
-                truePeak: exit.value.truePeak,
-              },
-            });
+            return markExported.pipe(
+              Effect.andThen(
+                remember({
+                  ...entry(jobId),
+                  state: "succeeded",
+                  result: {
+                    path: relative,
+                    durationFrames: exit.value.durationFrames,
+                    fps: exit.value.fps,
+                    width: exit.value.width,
+                    height: exit.value.height,
+                    captions: exit.value.captions,
+                    lufs: exit.value.lufs,
+                    truePeak: exit.value.truePeak,
+                  },
+                }),
+              ),
+            );
           }
           const failure = exit.cause.reasons.find(Cause.isFailReason)?.error;
           if (failure?.reason === "cancelled")

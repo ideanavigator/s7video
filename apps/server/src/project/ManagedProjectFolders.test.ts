@@ -1,4 +1,5 @@
 import { assert, it } from "@effect/vitest";
+import { BRAND } from "@t3tools/shared/brand";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { CommandId, ProjectId, ThreadId, VcsProcessSpawnError } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
@@ -19,6 +20,7 @@ import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
+import * as SystemGit from "../vcs/SystemGit.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
@@ -56,6 +58,7 @@ interface HarnessOptions {
   readonly projects?: (
     real: ProjectService.ProjectService["Service"],
   ) => ProjectService.ProjectService["Service"];
+  readonly systemGit?: ReturnType<typeof SystemGit.layerFixed>;
 }
 
 const layer = (baseDir: string, options?: HarnessOptions) =>
@@ -76,6 +79,7 @@ const layer = (baseDir: string, options?: HarnessOptions) =>
     Layer.provideMerge(SqlitePersistence.layerMemory),
     Layer.provideMerge(ServerSettings.layerTest()),
     Layer.provideMerge(ServerConfig.layerTest(baseDir, baseDir)),
+    Layer.provideMerge(options?.systemGit ?? Layer.empty),
     Layer.provideMerge(NodeServices.layer),
   );
 
@@ -416,15 +420,23 @@ it.effect("keeps a named project and reports why when Git cannot commit", () =>
         const projects = yield* ProjectService.ProjectService;
         const fileSystem = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
+        // The commit identity is the app's own (S7V-052), so a refusing hook makes it fail.
+        const hooks = path.join(baseDir, "hooks");
+        yield* fileSystem.makeDirectory(hooks);
         yield* fileSystem.writeFileString(
-          path.join(baseDir, "no-identity.gitconfig"),
-          "[user]\n\tuseConfigOnly = true\n",
+          path.join(hooks, "pre-commit"),
+          "#!/bin/sh\necho 'commits are blocked here' >&2\nexit 1\n",
         );
-        process.env.GIT_CONFIG_GLOBAL = path.join(baseDir, "no-identity.gitconfig");
+        yield* fileSystem.chmod(path.join(hooks, "pre-commit"), 0o755);
+        yield* fileSystem.writeFileString(
+          path.join(baseDir, "blocked.gitconfig"),
+          `[core]\n\thooksPath = ${hooks}\n`,
+        );
+        process.env.GIT_CONFIG_GLOBAL = path.join(baseDir, "blocked.gitconfig");
 
         const result = yield* folders.createNamedProject({ name: "No Identity" });
 
-        assert.include(result.commitError ?? "", "no name or email");
+        assert.include(result.commitError ?? "", "commits are blocked here");
         assert.isTrue(Option.isSome(yield* projects.getById(result.projectId)));
         assert.isTrue(yield* fileSystem.exists(path.join(result.workspaceRoot, "README.md")));
         assert.isTrue(yield* fileSystem.exists(path.join(result.workspaceRoot, ".git")));
@@ -432,6 +444,78 @@ it.effect("keeps a named project and reports why when Git cannot commit", () =>
     ),
   ),
 );
+
+it.effect("first commit uses the s7video identity, not a guessed name and hostname", () =>
+  withScratch(({ baseDir }) =>
+    withGitEnv(
+      {},
+      Effect.gen(function* () {
+        const folders = yield* ManagedProjectFolders.ManagedProjectFolders;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        // No user.name or user.email anywhere, and git refuses to guess one from the hostname.
+        yield* fileSystem.writeFileString(
+          path.join(baseDir, "no-identity.gitconfig"),
+          "[user]\n\tuseConfigOnly = true\n",
+        );
+        process.env.GIT_CONFIG_GLOBAL = path.join(baseDir, "no-identity.gitconfig");
+
+        const result = yield* folders.createNamedProject({ name: "Brand Identity" });
+
+        assert.isUndefined(result.commitError);
+        const identity = `${BRAND.app.productName} <${BRAND.app.id}@users.noreply.github.com>`;
+        assert.equal(
+          yield* gitOutput(result.workspaceRoot, ["log", "--format=%an <%ae>|%cn <%ce>"]),
+          `${identity}|${identity}`,
+        );
+      }),
+    ),
+  ),
+);
+
+it.effect("scaffolds a project with no .git when git is missing", () => {
+  const spawns: string[] = [];
+  return withScratch(
+    ({ baseDir }) =>
+      Effect.gen(function* () {
+        const folders = yield* ManagedProjectFolders.ManagedProjectFolders;
+        const projects = yield* ProjectService.ProjectService;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+
+        const result = yield* folders.createNamedProject({ name: "No Git" });
+
+        assert.isUndefined(result.commitError);
+        assert.isTrue(Option.isSome(yield* projects.getById(result.projectId)));
+        for (const file of [
+          "README.md",
+          "assets/icon.svg",
+          "edit.json",
+          "project.json",
+          ".gitignore",
+        ]) {
+          assert.isTrue(yield* fileSystem.exists(path.join(result.workspaceRoot, file)), file);
+        }
+        assert.isFalse(yield* fileSystem.exists(path.join(result.workspaceRoot, ".git")));
+        assert.equal(
+          Option.getOrThrow(yield* folders.scratchRoot),
+          path.resolve(baseDir, "scratch"),
+        );
+        assert.deepEqual(spawns, []);
+      }),
+    {
+      systemGit: SystemGit.layerFixed({ available: false, path: null }),
+      // Any git driver call fails the test: none may run without git.
+      git: Layer.mock(GitVcsDriver.GitVcsDriver)({}),
+      vcsProcess: Layer.succeed(VcsProcess.VcsProcess, {
+        run: (input) =>
+          Effect.sync(() => spawns.push(input.command)).pipe(
+            Effect.andThen(Effect.die("no process may start without git")),
+          ),
+      }),
+    },
+  );
+});
 
 it.effect("keeps a folder that another project owns when the create conflicts", () =>
   withScratch(({ baseDir }) =>

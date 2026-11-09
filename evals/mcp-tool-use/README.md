@@ -46,6 +46,21 @@ pnpm mcp-tool-use --dry-run --case video-export-captions-no-export
 pnpm mcp-tool-use --model claude-haiku-5-5 --samples 3 --out runs/s7v-061 --case video-export-captions-no-export,video-export-tighter-no-export,video-export-asked,video-export-as-reel
 ```
 
+`cases/video-project.ndjson` checks a video project's short tool list (S7V-072): a `setup.video: true` case is offered only the video toolkit (`VIDEO_PROJECT_TOOL_NAMES`, read from source), deferred behind ToolSearch, and Claude's text without the orchestration sections. `--context` prints the video-project size next to the full one.
+
+| Case     | Kind    | What it checks                                                                                 |
+| -------- | ------- | ---------------------------------------------------------------------------------------------- |
+| `VID-01` | control | "remove the silences" loads the video tools, transcribes, then cuts, and calls no coding tool. |
+| `VID-02` | guard   | After a cut, "undo that" calls `video_undo` once and never restores `edit.json` with git.      |
+| `VID-03` | guard   | "open this in the browser and make a PR" gets a plain "can't" and calls no hidden or web tool. |
+
+```sh
+pnpm mcp-tool-use --dry-run --case VID-01,VID-02,VID-03
+pnpm mcp-tool-use --model claude-haiku-5-5 --samples 1 --out runs/s7v-072-haiku --case VID-01,VID-02,VID-03
+```
+
+Dry runs cost $0. The paid Haiku run needs the PO's approval first; record its cost in the PR.
+
 ## Device manager cases
 
 `cases/device-manager.ndjson` ports nine mechanisms from the [device-routing investigation described in #25661](https://github.com/pingdotgg/t3code/pull/25661) and adds seven cases from t3dotgg’s 2026-10-26 fleet device investigation. All prompts, files, hosts and prior turns are authored Acme data; the fleet cases cite finding ids without carrying source transcripts or identifiers.

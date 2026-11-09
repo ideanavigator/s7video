@@ -19,6 +19,7 @@ import * as Schema from "effect/Schema";
 import { McpSchema, Tool, Toolkit } from "effect/ai";
 
 import * as ServerConfig from "../../../config.ts";
+import * as CaptionTrackService from "../../../edit/CaptionTrackService.ts";
 import * as EditDocumentService from "../../../edit/EditDocumentService.ts";
 import * as SilenceCutService from "../../../edit/SilenceCutService.ts";
 import * as EngineService from "../../../engine/EngineService.ts";
@@ -187,7 +188,11 @@ const VideoTranscriptReadTool = Tool.make("video_transcript_read", {
 const VideoImportTool = Tool.make("video_import", {
   description: "Import a file the user shared into the video project.",
   parameters: Schema.Struct({ path: Schema.String }),
-  success: Schema.Struct({ media: Schema.String, jobId: Schema.optional(EngineJobId) }),
+  success: Schema.Struct({
+    media: Schema.String,
+    jobId: Schema.optional(EngineJobId),
+    cleanup: Schema.optional(Schema.String),
+  }),
   failure: OrchestratorMcpFailure,
   dependencies: [
     ...dependencies,
@@ -198,7 +203,9 @@ const VideoImportTool = Tool.make("video_import", {
   .annotate(Tool.Title, "Import clip")
   .annotateMerge(videoAnnotations(false));
 
-const EditStep = Schema.Struct({ revision: Schema.Int, message: Schema.String });
+/** `cleanup`: S7V-050's one-line hint, present when the history is due a cleanup question. */
+const Cleanup = Schema.optional(Schema.String);
+const EditStep = Schema.Struct({ revision: Schema.Int, message: Schema.String, cleanup: Cleanup });
 
 const VideoUndoTool = Tool.make("video_undo", {
   description: "Undo the last edit to this video project. Use this, not git.",
@@ -248,11 +255,44 @@ const VideoRemoveSilencesTool = Tool.make("video_remove_silences", {
     message: Schema.String,
     revision: Schema.Int,
     changed: Schema.Boolean,
+    cleanup: Cleanup,
   }),
   failure: OrchestratorMcpFailure,
   dependencies: [...dependencies, SilenceCutService.SilenceCutService],
 })
   .annotate(Tool.Title, "Remove silences")
+  .annotateMerge(videoAnnotations(false));
+
+// S7V-039: user-triggered only. Inserts the clips in order (one checkpoint), at `at` or after the
+// video track's last item, pushing later items right. Frames are edit frames.
+const VideoAssembleTool = Tool.make("video_assemble", {
+  description: "Add video clip parts in order, only if user asks.",
+  parameters: Schema.Struct({
+    items: Schema.Array(
+      Schema.Struct({ mediaId: Schema.String, in: Schema.Int, duration: Schema.Int }),
+    ),
+    at: Schema.optional(Schema.Int),
+  }),
+  success: Schema.Struct({
+    revision: Schema.Int,
+    itemIds: Schema.Array(Schema.String),
+    cleanup: Cleanup,
+  }),
+  failure: OrchestratorMcpFailure,
+  dependencies,
+})
+  .annotate(Tool.Title, "Assemble clips")
+  .annotateMerge(videoAnnotations(false));
+
+// S7V-075: user-triggered only. Writes the caption track from the clips' transcripts (one
+// checkpoint); later cuts rebuild it. A clip with no transcript is refused: transcribe it first.
+const VideoAddCaptionsTool = Tool.make("video_add_captions", {
+  description: "Add captions to the video edit only if user asks.",
+  success: EditStep,
+  failure: OrchestratorMcpFailure,
+  dependencies: [...dependencies, CaptionTrackService.CaptionTrackService],
+})
+  .annotate(Tool.Title, "Add captions")
   .annotateMerge(videoAnnotations(false));
 
 /** Tools that return JSON. A new tool goes here, with its handler in `handlers.ts`. */
@@ -269,11 +309,14 @@ export const VideoStandardToolkit = Toolkit.make(
   VideoRedoTool,
   VideoRemoveSilencesTool,
   VideoCanvasTool,
+  VideoAssembleTool,
+  VideoAddCaptionsTool,
 );
 
 /** `video_frame` returns image content, so it registers on its own (`registerVideoFrame`). */
 export const VideoFrameToolkit = Toolkit.make(VideoFrameTool);
 
+/** Every video tool. A video project's thread is offered these and nothing else (S7V-072). */
 export const VideoToolkit = Toolkit.make(
   VideoImportTool,
   VideoProbeTool,
@@ -287,5 +330,17 @@ export const VideoToolkit = Toolkit.make(
   VideoRedoTool,
   VideoRemoveSilencesTool,
   VideoCanvasTool,
+  VideoAssembleTool,
+  VideoAddCaptionsTool,
   VideoFrameTool,
+);
+
+/**
+ * s7video (S7V-072): the only tools a video project's thread is offered. Derived from the toolkits,
+ * so a tool added to them shows up there with no other change.
+ */
+export const VIDEO_PROJECT_TOOL_NAMES: ReadonlySet<string> = new Set(
+  [VideoToolkit, VideoStandardToolkit, VideoFrameToolkit].flatMap((toolkit) =>
+    Object.keys(toolkit.tools),
+  ),
 );

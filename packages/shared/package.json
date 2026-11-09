@@ -79,6 +79,14 @@
       "types": "./src/httpObservability.ts",
       "import": "./src/httpObservability.ts"
     },
+    "./captionWords": {
+      "types": "./src/captionWords.ts",
+      "import": "./src/captionWords.ts"
+    },
+    "./editWordCuts": {
+      "types": "./src/editWordCuts.ts",
+      "import": "./src/editWordCuts.ts"
+    },
     "./editor": {
       "types": "./src/editor.ts",
       "import": "./src/editor.ts"

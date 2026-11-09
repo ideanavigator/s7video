@@ -42,6 +42,7 @@ import { advertisedJsonSchema } from "./advertisedJsonSchema.ts";
 import * as McpHttpServer from "./McpHttpServer.ts";
 import * as McpToolAccess from "./McpToolAccess.ts";
 import * as McpToolAccessTestkit from "./McpToolAccess.testkit.ts";
+import * as McpToolsTestkit from "./McpTools.testkit.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as McpSessionRegistry from "./McpSessionRegistry.ts";
 import * as OrchestratorMcpService from "./OrchestratorMcpService.ts";
@@ -49,6 +50,7 @@ import * as PreviewAutomationBroker from "./PreviewAutomationBroker.ts";
 import { OrchestratorToolkit } from "./toolkits/orchestrator/tools.ts";
 import { PreviewToolkit } from "./toolkits/preview/tools.ts";
 import { ProjectToolkit } from "./toolkits/project/tools.ts";
+import { VIDEO_PROJECT_TOOL_NAMES } from "./toolkits/video/tools.ts";
 
 const environmentId = EnvironmentId.make("environment-mcp-test");
 const threadId = ThreadId.make("thread-mcp-test");
@@ -1411,4 +1413,186 @@ it.effect(
         expect(yield* start("root/default")).toBe(400);
       }),
     ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+// s7video (S7V-072): a video project's thread sees only the video toolkit, and every other caller
+// sees what it did before.
+it.effect("lists only video tools to a video project and the usual tools to everyone else", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const thread = (
+        token: string,
+        capabilities: ReadonlyArray<McpInvocationContext.McpCapability>,
+        subagent = false,
+      ): McpInvocationContext.McpInvocationScope => ({
+        environmentId,
+        requestNamespace: token,
+        thread: {
+          threadId: ThreadId.make(`thread-${token}`),
+          providerSessionId: token,
+          providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+          subagent,
+        },
+        client: undefined,
+        capabilities: new Set(capabilities),
+        issuedAt: 1,
+      });
+      const code = ["orchestration", "worktree", "pull-requests", "preview", "device"] as const;
+      const scopes = new Map<string, McpInvocationContext.McpInvocationScope>([
+        ["video", thread("video", [...code, "video"])],
+        ["videoChild", thread("videoChild", [...code, "video"], true)],
+        ["code", thread("code", code)],
+        ["codeChild", thread("codeChild", code, true)],
+        [
+          "oauth",
+          {
+            environmentId,
+            requestNamespace: "oauth",
+            thread: undefined,
+            client: { sessionId: "oauth", label: "Outside client", access: "full-access" },
+            capabilities: new Set(["orchestration", "worktree", "pull-requests"]),
+            issuedAt: 1,
+          },
+        ],
+        [
+          "linked",
+          {
+            environmentId,
+            requestNamespace: "linked",
+            thread: undefined,
+            client: { sessionId: "linked", label: "Peer", access: "full-access", linked: true },
+            capabilities: new Set(["orchestration", "worktree", "pull-requests"]),
+            issuedAt: 1,
+          },
+        ],
+      ]);
+      const serverLayer = McpHttpServer.layerTools.pipe(
+        Layer.provide(McpToolsTestkit.toolHandlerServices),
+        Layer.provideMerge(
+          McpHttpServer.layerMcpTransport.pipe(
+            Layer.provide(ServerSettings.layerTest({ linkedEnvironmentsEnabled: true })),
+          ),
+        ),
+        Layer.provide(
+          Layer.mock(McpSessionRegistry.McpSessionRegistry)({
+            resolve: (token) => {
+              const scope = scopes.get(token);
+              return Effect.succeed(
+                scope?.thread === undefined
+                  ? undefined
+                  : (scope as McpInvocationContext.McpThreadInvocationScope),
+              );
+            },
+          }),
+        ),
+        Layer.provide(
+          Layer.succeed(McpHttpServer.McpClientAuthenticator, {
+            authenticate: (request) =>
+              Effect.succeed(
+                scopes.get(request.headers.authorization?.replace(/^Bearer /, "") ?? ""),
+              ),
+          }),
+        ),
+      );
+      yield* HttpRouter.serve(serverLayer, { disableListenLog: true, disableLogger: true }).pipe(
+        Layer.build,
+      );
+      const httpClient = yield* HttpClient.HttpClient;
+      const session = (token: string) =>
+        Effect.gen(function* () {
+          const headers = {
+            accept: "application/json, text/event-stream",
+            authorization: `Bearer ${token}`,
+          };
+          const initialize = yield* httpClient.post("/mcp", {
+            headers,
+            body: HttpBody.text(
+              `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"probe","version":"1.0.0"}}}`,
+              "application/json",
+            ),
+          });
+          return (method: string, params: object) =>
+            httpClient
+              .post("/mcp", {
+                headers: {
+                  ...headers,
+                  "mcp-session-id": initialize.headers["mcp-session-id"]!,
+                  "mcp-protocol-version": "2025-06-18",
+                },
+                body: HttpBody.text(
+                  JSON.stringify({ jsonrpc: "2.0", id: 2, method, params }),
+                  "application/json",
+                ),
+              })
+              .pipe(Effect.flatMap((response) => response.json));
+        });
+      const listed = (token: string) =>
+        session(token).pipe(
+          Effect.flatMap((rpc) => rpc("tools/list", {})),
+          Effect.map((body) =>
+            (body as { result: { tools: ReadonlyArray<{ name: string }> } }).result.tools
+              .map((tool) => tool.name)
+              .toSorted(),
+          ),
+        );
+
+      const videoNames = [...VIDEO_PROJECT_TOOL_NAMES].toSorted();
+      expect(yield* listed("video")).toEqual(videoNames);
+      expect(yield* listed("videoChild")).toEqual(videoNames);
+
+      const registry = yield* Layer.build(
+        McpHttpServer.layerTools.pipe(
+          Layer.provideMerge(McpServer.McpServer.layer),
+          Layer.provide(McpToolsTestkit.toolHandlerServices),
+        ),
+      );
+      const registered = Context.get(registry, McpServer.McpServer).tools.map(
+        ({ tool }) => tool.name,
+      );
+      const codeTools = yield* listed("code");
+      expect(codeTools).toEqual(
+        registered.filter((name) => !VIDEO_PROJECT_TOOL_NAMES.has(name)).toSorted(),
+      );
+      const childTools = yield* listed("codeChild");
+      expect(childTools).toEqual(
+        codeTools.filter((name) => !["watch_pull_request", "unwatch_pull_request"].includes(name)),
+      );
+      expect(yield* listed("oauth")).toEqual(codeTools);
+      expect(yield* listed("linked")).toEqual(codeTools);
+
+      // A hidden tool called by name is refused before its handler runs, with a plain reason.
+      const videoRpc = yield* session("video");
+      for (const name of [
+        "delegate_task",
+        "preview_open",
+        "t3_project_list",
+        "device_screenshot",
+      ]) {
+        expect(yield* videoRpc("tools/call", { name, arguments: {} }), name).toEqual({
+          jsonrpc: "2.0",
+          id: 2,
+          error: { code: -32602, message: "That isn't available in a video project." },
+        });
+      }
+      // A code thread is still refused the video tools as unknown ones.
+      const codeRpc = yield* session("code");
+      expect(yield* codeRpc("tools/call", { name: "video_undo", arguments: {} })).toMatchObject({
+        error: { message: "Tool 'video_undo' not found" },
+      });
+      // Outside a video project t3_project_list reaches its handler: the empty mock fails inside
+      // it, which is a tool result, not a JSON-RPC "not found" or video refusal.
+      expect(
+        yield* codeRpc("tools/call", { name: "t3_project_list", arguments: {} }),
+      ).toStrictEqual({
+        jsonrpc: "2.0",
+        id: 2,
+        result: {
+          content: [
+            { type: "text", text: "Tool execution failed due to an internal server error." },
+          ],
+          isError: true,
+        },
+      });
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );

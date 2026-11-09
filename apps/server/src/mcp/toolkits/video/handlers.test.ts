@@ -19,6 +19,7 @@ import {
   type MediaProbeResult,
   ProjectId,
   ProviderInstanceId,
+  CaptionsError,
   SilenceCutError,
   ThreadId,
 } from "@t3tools/contracts";
@@ -39,6 +40,7 @@ import * as NodePath from "node:path";
 
 import * as ServerConfig from "../../../config.ts";
 import * as EditDocumentService from "../../../edit/EditDocumentService.ts";
+import * as CaptionTrackService from "../../../edit/CaptionTrackService.ts";
 import * as SilenceCutService from "../../../edit/SilenceCutService.ts";
 import * as EngineService from "../../../engine/EngineService.ts";
 import * as ExportService from "../../../export/ExportService.ts";
@@ -52,7 +54,13 @@ import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpSessionRegistry from "../../McpSessionRegistry.ts";
 import * as McpToolAccessTestkit from "../../McpToolAccess.testkit.ts";
 import { NOT_IN_PROJECT, NOT_SHARED } from "../../VideoProjectScope.ts";
-import { editDurationFrames, KEEP_FORMAT, KEEP_OVERLAP, NO_ROOM_TO_COPY } from "./handlers.ts";
+import {
+  cleanupHint,
+  editDurationFrames,
+  KEEP_FORMAT,
+  KEEP_OVERLAP,
+  NO_ROOM_TO_COPY,
+} from "./handlers.ts";
 import { VideoToolkit } from "./tools.ts";
 
 const environmentId = EnvironmentId.make("environment-video-test");
@@ -171,6 +179,8 @@ interface Fixture {
   onSubscribe: Effect.Effect<void>;
   /** Jobs that ended recently, as `EngineService.recentJobs` answers. */
   recent: Array<EngineJob>;
+  /** The history size the edit snapshot reports as due a cleanup question (S7V-050). */
+  cleanup: { versions: number; bytes: number } | undefined;
 }
 
 const makeFixture = (): Fixture => {
@@ -241,6 +251,7 @@ const makeFixture = (): Fixture => {
     diskShort: false,
     onSubscribe: Effect.void,
     recent: [],
+    cleanup: undefined,
   };
 };
 
@@ -309,6 +320,17 @@ const layerFor = (fixture: Fixture, cancelSignal: Deferred.Deferred<string>) => 
               });
         }),
     }),
+    Layer.mock(CaptionTrackService.CaptionTrackService)({
+      addCaptions: (projectId) =>
+        projectId === projectB
+          ? Effect.fail(
+              new CaptionsError({
+                reason: "no-transcript",
+                detail: "Transcribe the clip first: cam has no transcript.",
+              }),
+            )
+          : Effect.succeed({ revision: 9, captions: 12, changed: true }),
+    }),
     Layer.mock(MediaLibraryService.MediaLibraryService)({
       plan: (input) =>
         Effect.succeed(
@@ -376,6 +398,7 @@ const layerFor = (fixture: Fixture, cancelSignal: Deferred.Deferred<string>) => 
           document: fixture.documents.get(projectId) ?? documentWith([]),
           canUndo: true,
           canRedo: false,
+          ...(fixture.cleanup === undefined ? {} : { cleanup: fixture.cleanup }),
         } satisfies EditSnapshot),
     }),
     Layer.mock(EngineService.EngineService)({
@@ -509,6 +532,8 @@ describe("video toolkit", () => {
       Effect.sync(() => {
         const tools = server.tools.map(({ tool }) => tool);
         expect(tools.map((tool) => tool.name).toSorted()).toEqual([
+          "video_add_captions",
+          "video_assemble",
           "video_canvas",
           "video_edit_read",
           "video_export",
@@ -545,6 +570,7 @@ describe("video toolkit", () => {
         expect(described.video_redo).toMatch(/\bredo\b.*\bedit\b/iu);
         // S7V-027: user-triggered only; the agent never cuts silences on its own.
         expect(described.video_remove_silences).toContain("only if user asks");
+        expect(described.video_assemble).toContain("only if user asks");
       }),
     ),
   );
@@ -569,6 +595,28 @@ describe("video toolkit", () => {
           },
           { sourcePath: inProject, mode: "copy", origin: "agent", label: undefined },
         ]);
+      }),
+    ),
+  );
+
+  it.effect("a change past the history limit carries the cleanup hint (S7V-050)", () =>
+    withTools(({ fixture, call }) =>
+      Effect.gen(function* () {
+        fixture.cleanup = { versions: 62, bytes: 18 * 1024 * 1024 };
+        const hint = cleanupHint(fixture.cleanup);
+        expect(hint).toBe(
+          "Cleanup due: 62 saved versions (18.0 MB). Once, end your reply asking if the user wants to keep only the last 20 or remove all old versions; they choose in the Editor panel.",
+        );
+        const imported = yield* call(threadA, "video_import", { path: fixture.sharedInA });
+        expect(imported.structuredContent).toEqual({ media: "shared-sound", cleanup: hint });
+        const cut = yield* call(threadA, "video_remove_silences", {});
+        expect(cut.structuredContent).toMatchObject({ changed: true, cleanup: hint });
+        // Reads never carry it.
+        const read = yield* call(threadA, "video_edit_read", {});
+        expect(read.structuredContent).not.toHaveProperty("cleanup");
+        fixture.cleanup = undefined;
+        const below = yield* call(threadA, "video_remove_silences", {});
+        expect(below.structuredContent).not.toHaveProperty("cleanup");
       }),
     ),
   );
@@ -818,6 +866,8 @@ describe("video toolkit", () => {
               { fromFrame: 30, toFrame: 60 },
               { fromFrame: 90, toFrame: 120 },
             ],
+            // S7V-069: the reply calling the tool, so its changes make one version.
+            reply: { threadId: threadA, runId: "run:mcp-test" },
           },
         ]);
         for (const [keep, reason] of [
@@ -919,6 +969,8 @@ describe("video toolkit", () => {
           ["video_undo", {}],
           ["video_redo", {}],
           ["video_remove_silences", {}],
+          ["video_assemble", { items: [] }],
+          ["video_add_captions", {}],
         ] as const) {
           // A hidden tool is not callable at all: the server answers as for an unknown tool.
           const error = yield* call(threadA, tool, args, ["orchestration"]).pipe(Effect.flip);
@@ -930,6 +982,25 @@ describe("video toolkit", () => {
         expect(fixture.imports).toEqual([]);
       }),
     ),
+  );
+
+  it.effect(
+    "video_add_captions answers with the count, and refuses a clip with no transcript",
+    () =>
+      withTools(({ call }) =>
+        Effect.gen(function* () {
+          const added = yield* call(threadA, "video_add_captions", {});
+          expect(added.isError).toBe(false);
+          expect(added.structuredContent).toEqual({
+            revision: 9,
+            message:
+              "Added 12 captions to the edit. They follow later cuts; say undo to remove them.",
+          });
+          const refused = yield* call(threadB, "video_add_captions", {});
+          expect(refused.isError).toBe(true);
+          expect(textOf(refused)).toEqual(["Transcribe the clip first: cam has no transcript."]);
+        }),
+      ),
   );
 
   it.effect(
@@ -1293,6 +1364,8 @@ it.effect("should hide tools without the video capability", () =>
         });
 
       expect(yield* listed("videoToken")).toEqual([
+        "video_add_captions",
+        "video_assemble",
         "video_canvas",
         "video_edit_read",
         "video_export",

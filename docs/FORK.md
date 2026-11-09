@@ -243,7 +243,47 @@ New: `docs/engineering/` (standards), `docs/changelog/` (per-ticket entries), `d
 
 - **Every new named project is an edit project.** `ManagedProjectFolders.createNamedProject` adds `edit.json`, `project.json`, `styles/`, `assets/`, `.s7cache/` and `exports/`. It also adds a whitelist `.gitignore`, and commits those files with T3's starter `README.md` and `assets/icon.svg`. It only adds files: nothing of T3's scaffold is removed. Scratch projects and existing projects are not converted.
 - **What is tracked.** The whitelist ignores everything except `edit.json`, `project.json`, `.gitignore`, `styles/`, `README.md` and `assets/icon.svg`. As a result, T3's per-turn checkpoints, turn diffs and turn reverts in an edit project only see those files. Media, cache, exports and anything else an agent writes outside them never show in a diff and are never reverted.
-- **Edit undo is separate from turn reverts.** Edit undo (`edit.undo`) restores only `edit.json` (and bumps `project.json`) from refs under `refs/t3/edit/checkpoints/`. It restores the edit, not the library: a clip in the media list now stays there even when the restored edit is from before its import (S7V-059); with no such clip, the checkpoint's bytes are written unchanged. Media, track, item and marker ids share one namespace, so a kept clip whose id the restored edit uses for something else refuses that step (`library-conflict`) and history stays where it was; new clip ids are picked against every id in the edit. If a turn revert changes `edit.json`, the edit service records it as a new revision the next time the edit is read or changed.
+- **Edit undo is separate from turn reverts and needs no git (S7V-051).** Edit undo (`edit.undo`) restores only `edit.json` (and bumps `project.json`) from s7video's own store in `.s7history/` ([edit history](internals/edit-history.md)); T3's turn checkpoints, turn diffs and reverts still use git where it exists. Projects from before S7V-051 kept edit history in `.s7cache/edit-history.json` and refs under `refs/t3/edit/checkpoints/`; those are left in place and only read once for import. It restores the edit, not the library: a clip in the media list now stays there even when the restored edit is from before its import (S7V-059); with no such clip, the saved bytes are written unchanged. Media, track, item and marker ids share one namespace, so a kept clip whose id the restored edit uses for something else refuses that step (`library-conflict`) and history stays where it was; new clip ids are picked against every id in the edit. If a turn revert changes `edit.json`, the edit service records it as a new revision the next time the edit is read or changed.
+- **Old versions are cleaned only when the user says yes (S7V-050).** Past 50 saved versions or 200 MB the Editor panel asks, and the video tools' results carry a one-line hint so the agent asks in chat; there is no cleanup tool. "Keep recent" keeps the last 20 versions plus tagged, exported and current ones; "Remove all old versions" keeps the current, tagged and exported versions and starts undo again. Only where git works and the project folder is the repository's top level, it also deletes the pre-S7V-051 `refs/t3/edit/*` refs that `.s7cache/edit-history.json` names, that file, and runs plain `git gc` if a ref was deleted. T3's turn refs are never removed. Both RPCs (`edit.historyClean`, `edit.historyDismiss`) need operate scope ([edit history](internals/edit-history.md#cleanup-s7v-050)).
+- **Outside changes are checked (S7V-054).** An `edit.json` written outside the edit service (an agent's shell, a turn revert, `projects.writeFile`) is recorded only if it is valid and names no media file the last accepted edit did not, or is the exact text of an earlier step. Otherwise the last accepted edit is put back from `.s7history/`, the refused file is kept in `.s7history/refused/`, and the read fails with `outside-change-refused`; the Editor panel shows the reason once. ACP agents with video tools get the same "edit only with video_ tools" line as Claude and Codex.
+
+## Git is optional (S7V-052)
+
+On a Mac without Apple's developer tools, `/usr/bin/git` and `/usr/bin/xcrun` are stubs, and
+starting either opens the "install command line developer tools" dialog. s7video never starts them.
+
+- **The probe.** `locateSystemGit` (`packages/shared/src/shell.ts`) decides from PATH and the
+  developer folders (`$DEVELOPER_DIR`, the `/var/db/xcode_select_link` target, Command Line Tools,
+  Xcode) with plain file reads. A PATH git that is not the stub wins. The stub check compares device
+  and inode with `/usr/bin/git`, so a symlink to it or `/USR/BIN/git` on case-insensitive APFS
+  still counts as the stub. Upstream ran `xcrun --find git` and fell back to plain `git`, which is
+  the stub.
+- **The gate.** `resolveSpawnCommand("git")` fails with `GitUnavailableError` ("Git is not installed
+  on this Mac.") when the probe finds no git, so even a missed feature gate spawns nothing.
+  `processRunner`, `GitVcsDriverCore`, the ACP runtime, the external launcher and the provider and
+  text-generation spawns map it into their own errors.
+- **What hides.** `SystemGit` (`apps/server/src/vcs/SystemGit.ts`) caches the answer. Without git,
+  `VcsDriverRegistry` detects no repository, so turn checkpoints, turn diffs, reverts and git status
+  report "not a repository". Remote status polling, auto-pull, worktrees, clone, the composer's
+  `git check-ignore` and Settings → Source control's `git --version` probe are skipped. Clients read
+  `ServerConfig.systemGit`. With `false`, the branch toolbar (including the worktree option), the
+  diff panel's git views and the git actions, including "Initialize Git", are not shown.
+- **Projects without git.** A new named project gets no `.git`. Editing and undo do not need one
+  (S7V-051). With git, its first commit is made as s7video (`BRAND_COMMIT_IDENTITY`, the same as
+  checkpoints), never as a name and hostname git guessed.
+- **Installing the tools later.** A missing git is looked for again when a project is opened or
+  created, on every read of the cached "no", and every 5 seconds. When the answer changes, the
+  server sends a new config snapshot, so the git UI appears without a restart.
+- **iOS Simulators.** `/usr/bin/xcrun` is a stub as well, so the iOS platform counts as available
+  only when the probe finds a real developer folder (`LocalDeviceHost.platformReason`).
+- **Not covered.** The agent CLIs run git themselves: Claude Code runs `git ls-files` in the project
+  folder when it starts. On a clean Mac that is Apple's stub. A follow-up ticket handles it.
+- **Upstream files touched:** `shell.ts`, `processRunner.ts`, `GitVcsDriver.ts`,
+  `GitVcsDriverCore.ts`, `VcsDriverRegistry.ts`, `VcsStatusBroadcaster.ts`,
+  `serverRuntimeStartup.ts`, `SourceControlDiscovery.ts`, `WorkspaceEntries.ts`,
+  `ProjectCloneTracker.ts`, `ws.ts`, `server.ts`, `contracts/src/server.ts`, the error mapping in
+  `AcpSessionRuntime.ts`, `externalLauncher.ts`, `CodexAdapterV2.ts`, `CodexProvider.ts` and the two
+  text-generation files, and in the web `ChatView.tsx`, `DiffPanel.tsx` and `GitActionsControl.tsx`.
 
 ## HEIC decoding (S7V-014)
 
@@ -303,7 +343,52 @@ undo history. These upstream files have small, additive edits:
 - `provider/AgentContextBudget.test.ts` and `agentContextBudget.json` measure the video-on context
   as `claudeSystemAppendVideoBytes` and `codexAdditionalContextVideoBytes`.
 
-ACP agents do not get the line yet.
+- ACP agents (S7V-054): `T3AcpInstructionState` gains `hasVideoTools`, and
+  `t3AcpPromptWithInstructions` adds the line to the first prompt and again when the capability
+  changes; `packages/provider-acp/src/server/adapter.ts` sets it from the session's `video`
+  capability. ACP prompt text is not measured in `agentContextBudget.json`; the line adds 172 bytes
+  to a video session's first prompt.
+
+## Video projects list only video tools (S7V-072)
+
+A thread in a video project is offered only the video toolkit; every other caller (code threads,
+OAuth clients, linked environments, delegated children outside video projects) keeps exactly what
+upstream offers. **This hides tools per project kind. It removes no T3 code**: every upstream toolkit
+is still registered, and the removal rule (planning `tickets/README.md` §10) does not apply. These
+upstream files have small edits:
+
+- `mcp/McpHttpServer.ts`: `withVideoProjectVisibility` wraps `addTool` in `toolkitRegistration` and
+  `imageToolRegistration`, so every toolkit in `layerTools` is covered. A tool outside
+  `VIDEO_PROJECT_TOOL_NAMES` gets `hiddenInVideoProjects` on top of its own `EnabledWhen`, so a new
+  upstream toolkit is hidden in video projects by default. The library already refuses a call to a
+  hidden tool before its handler runs ("Tool 'x' not found"); `explainHiddenTools` in the auth
+  middleware rewrites that message, for video sessions only, to "That isn't available in a video
+  project."
+- `mcp/McpInvocationContext.ts`: the `hiddenInVideoProjects` predicate and the refusal message.
+- `mcp/toolkits/video/tools.ts`: `VIDEO_PROJECT_TOOL_NAMES`, derived from the video toolkits.
+- `edit/EditProjectLayout.ts`: `isVideoProjectFolder` also needs `project.json` to say
+  `"format": "edit-project"`, so a code repo with another tool's `project.json` (Nx) keeps its
+  coding tools. `orchestration-v2/ProviderSessionManager.ts` and `skills/BuiltInSkills.ts` use it.
+- `orchestration-v2/Adapters/ClaudeAdapterV2.ts`: a video thread's system append is the runtime text
+  and the video line only (no orchestration, background-wait or device text), and Claude Code runs
+  with `ENABLE_TOOL_SEARCH=true` unless the user's own setting turns tool search off
+  (`videoToolSearchOverride`). `resolveToolSearchOverride` became `resolveToolSearchSetting`, which
+  returns the raw value; non-video threads resolve it exactly as before.
+- `orchestration-v2/Adapters/CodexAdapterV2.ts`: video threads get no `t3-code-direct` server, since
+  its only tool, `t3_thread_wait`, is hidden.
+- `provider/CodexDeveloperInstructions.ts`: video threads get no orchestration sections and no
+  browser or device text.
+- `packages/provider-core/src/server/orchestrationInstructions.ts`: the Claude video line says how to
+  load every video tool with one ToolSearch query.
+- `provider/AgentContextBudget.test.ts` and `agentContextBudget.json`: `mcpToolListVideoJsonBytes`,
+  the video-project tool list, measured by evaluating each tool's `EnabledWhen` under a video-thread
+  scope. The handler mocks moved to `mcp/McpTools.testkit.ts`.
+- `evals/mcp-tool-use/run.ts`: `visibleT3Tools({ video: true })` offers only
+  `VIDEO_PROJECT_TOOL_NAMES`, and the context report prints a second line for a video project's
+  thread, so the eval measures what that thread is really offered.
+
+The ACP first-prompt text (`t3AcpPromptWithInstructions`) still carries the orchestration text; ACP
+gets the filtered list from the server.
 
 ## Built-in skills (S7V-048)
 
@@ -361,6 +446,19 @@ in `apps/web/src/components/editor/` and `apps/web/src/editor/`. These upstream 
   `engine.jobs.subscribe` to the subscriptions that resubscribe after a reconnect.
 - `apps/web/vite.config.ts` and `apps/web/tsconfig.json` add the `golden` browser project, which
   plays cached test clips in the real player (`pnpm test:golden`).
+- `themePalette.ts` exports `--track-overlay` with the other `--track-*` tokens, for the
+  timeline's overlay track (S7V-033).
+
+The Editor is the main view of a video project (S7V-076). These upstream files have small edits:
+
+- `rightPanelStore.ts` adds `openEditorByDefault` and the persisted `editorOpenedByDefault` marker,
+  and `openProactive` takes a `keepEditor` flag: in a video project a proactive panel never takes
+  the active tab from the Editor.
+- `ChatView.tsx` calls `useVideoProjectLayout` and passes the Editor's 60% default width.
+- `hooks/useProactivePanels.ts` passes whether the thread's project is a video project.
+- `ChatMarkdown.tsx` and `chat/ChatMarkdownMedia.tsx` send a link to a clip in Media to the
+  Editor's player (`openMediaLinkInEditor`) before opening the file viewer.
+- `chat/ChatRightPanel.tsx` and `hooks/usePreviewPanelInlineSize.ts` add `defaultWidthFraction`.
 
 ## Edit, export and transcription wiring (S7V-024 to S7V-028, S7V-046)
 
@@ -378,11 +476,70 @@ wire them in:
   `packages/contracts/src/index.ts` (re-exports of the new contract modules) are the biggest
   upstream-file changes, and the likeliest merge-conflict spots in an upstream merge.
 
+## Edit versions (S7V-069)
+
+Numbered versions of the edit live in `.s7history/log.json` ([edit history](internals/edit-history.md#versions-s7v-069)).
+The Versions tab (`components/editor/VersionsTab.tsx`) is new code. Upstream files get the same
+small wiring as the other `edit.*` methods: `edit.versions`, `edit.versionGet`, `edit.versionTag`,
+`edit.versionRestore` and `edit.versionDelete` in `contracts/rpc.ts`, `ws.ts`,
+`observability/RpcInstrumentation.ts`, `auth/RpcAuthorization.ts` (reads: read scope) and
+`contracts/clientRpcPermissions.ts` (tag, restore, delete: operate scope). No agent tools change.
+`RpcInstrumentation.ts` also puts `edit.historyClean` and `edit.historyDismiss` (S7V-050) in the
+`edit` group. The caption stills (S7V-075) get the same wiring: `captions.stills` in
+`contracts/rpc.ts`, a thin handler in `ws.ts`, read scope in `auth/RpcAuthorization.ts` and the
+`engine` group in `observability/RpcInstrumentation.ts`.
+
+## Media data assets (S7V-035)
+
+The timeline's waveform peaks and filmstrip tiles are files the media service writes per clip. They
+are served through the existing `project-media` asset route, so these upstream files have small,
+additive edits:
+
+- `contracts/assets.ts`: the `project-media` resource takes an optional `part`, which file of a
+  `peaks` or `filmstrip` variant; the server refuses it for the other variants.
+- `assets/AssetAccess.ts`: the token's claims carry the `part`, and both issuing and serving pass it
+  to `MediaLibraryService.resolveVariant`, so a token names one file and is re-checked on every
+  request as before.
+- `apps/web/src/assets/assetUrls.ts`: `useAssetUrlMinter` mints URLs on demand for code outside
+  React (the timeline's media-tiles worker); `refresh` mints a new token for an expired URL.
+
+## Window focus (S7V-074)
+
+**This changes upstream window behaviour on macOS**, so an upstream merge that touches window
+reveals needs a look. An automatic reveal (the first reveal after launch, the splash, the startup
+recovery window, a dev watcher restart) no longer pulls the app in front of the app the user is
+working in; only user actions take focus. These upstream desktop files have small edits:
+
+- `electron/ElectronWindow.ts`: `reveal` takes `{ steal }`. Without it, on macOS, when the app is
+  not active, a hidden window is shown inactive behind the frontmost app and `app.focus` is not
+  called. Other platforms are unchanged.
+- `window/DesktopWindow.ts`: `activate` (Dock, app menu, links, capture) and the reveal after a
+  sent action pass `steal: true`; a user reveal that arrives before the first reveal makes that one
+  take focus. The splash reveals through `reveal`. In development, DevTools open with
+  `activate: false`, and not again after a watcher restart.
+- `app/DesktopLaunchLinks.ts`, `ipc/methods/providerAuth.ts` (return from provider sign-in) and
+  `ipc/methods/window.ts` (`revealWindow`, a notification click) pass `steal: true`.
+- `app/DesktopStartupRecovery.ts`: the recovery window reveals through `reveal` instead of `show()`.
+- `scripts/dev-electron.mjs` sets `S7VIDEO_DESKTOP_DEV_RESTART=1` on a watcher relaunch;
+  `app/DesktopConfig.ts` reads it and `app/DesktopEnvironment.ts` exposes `isDevelopmentRestart`.
+
+## Dev profile per worktree (S7V-073)
+
+A desktop dev app started from a linked git worktree gets its own Electron profile, so it neither
+hands off to another checkout's app through the single-instance lock nor shares its storage. The
+main checkout keeps the shared `s7video-dev` profile, and packaged builds ignore the setting.
+
+- `scripts/dev-runner.ts`: in `dev:desktop` from a linked worktree, sets
+  `S7VIDEO_DESKTOP_DEV_PROFILE_DIR` to `<dev home>/electron-profile`.
+- `app/DesktopConfig.ts` reads it and `app/DesktopEnvironment.ts` exposes `devProfileDirectory`.
+- `app/DesktopUserData.ts`: `resolveUserDataPath` uses that folder for an unpackaged dev app, and
+  the branded profile folder otherwise.
+
 ## Licensing (S7V-004)
 
 `LICENSE` is T3 Code's MIT licence with a second line, `Copyright (c) 2026 s7video contributors`.
-`NOTICE` credits T3 Code, names OpenCut for when its code is used, and lists the Claude Agent SDK as
-the one proprietary part (ADR-002).
+`NOTICE` credits T3 Code and the OpenCut classic timeline code the timeline adapts (S7V-033), and
+lists the Claude Agent SDK as the one proprietary part (ADR-002).
 
 **REUSE without touching upstream files.** `pnpm reuse:lint` passes for every tracked file, but no
 T3 Code file gets an SPDX header. One catch-all `**` annotation in `REUSE.toml` gives every file

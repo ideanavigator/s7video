@@ -18,7 +18,7 @@ export function droppedMediaKind(file: Pick<File, "name" | "type">): DroppedKind
 }
 
 /**
- * Video and audio dropped in a video project's chat go to Assets by path (S7V-025); audio is also
+ * Video and audio dropped in a video project's chat go to Media by path (S7V-025); audio is also
  * attached for the agent. A failed import toasts with Retry and is never attached in its place
  * (S7V-071). Returns the files to attach; `onFirstMedia` opens the Editor (S7V-029).
  */
@@ -48,7 +48,7 @@ export function useChatMediaImport(
     const close = () => toastManager.close(id);
     const id = toastManager.add({
       type: "error",
-      title: `Couldn't add ${file.name} to Assets`,
+      title: `Couldn't add ${file.name} to Media`,
       // Audio stays attached for the agent; video does not, so say which.
       description:
         droppedMediaKind(file) === "audio"
@@ -76,7 +76,7 @@ export function useChatMediaImport(
     const firstMedia = await hasNoMedia(projectId);
     if (!(await importOne(projectId, file, sourcePath, mode))) return;
     if (firstMedia) onFirstMedia?.(projectId);
-    toastManager.add({ type: "success", title: "Added to Assets" });
+    toastManager.add({ type: "success", title: "Added to Media" });
   };
 
   return async (files: ReadonlyArray<File>): Promise<File[]> => {
@@ -98,7 +98,7 @@ export function useChatMediaImport(
     if (added > 0) {
       toastManager.add({
         type: "success",
-        title: added === 1 ? "Added to Assets" : `Added ${added} files to Assets`,
+        title: added === 1 ? "Added to Media" : `Added ${added} files to Media`,
       });
     }
     return files.filter((file) => droppedMediaKind(file) !== "video");

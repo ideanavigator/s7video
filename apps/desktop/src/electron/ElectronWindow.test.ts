@@ -10,6 +10,7 @@ import { beforeEach, vi } from "vite-plus/test";
 const {
   activateWindowsForegroundMock,
   appFocusMock,
+  appIsActiveMock,
   browserWindowMock,
   foregroundWindowMock,
   getAllWindowsMock,
@@ -23,6 +24,7 @@ const {
 } = vi.hoisted(() => ({
   activateWindowsForegroundMock: vi.fn(),
   appFocusMock: vi.fn(),
+  appIsActiveMock: vi.fn<() => boolean>(),
   browserWindowMock: vi.fn(function BrowserWindowMock() {}),
   foregroundWindowMock: vi.fn<() => bigint>(),
   getAllWindowsMock: vi.fn(),
@@ -48,6 +50,7 @@ vi.mock("./WindowsForegroundFocusThread.ts", () => ({
 vi.mock("electron", () => ({
   app: {
     focus: appFocusMock,
+    isActive: appIsActiveMock,
   },
   BrowserWindow: Object.assign(browserWindowMock, {
     getAllWindows: getAllWindowsMock,
@@ -61,6 +64,21 @@ const layerTestFor = (platform: NodeJS.Platform) =>
   ElectronWindow.layer.pipe(Layer.provide(Layer.succeed(HostProcess.Platform, platform)));
 
 const layerTest = layerTestFor("linux");
+
+function makeMacRevealWindow(visible: boolean) {
+  return {
+    id: 51,
+    isDestroyed: vi.fn(() => false),
+    isMinimized: vi.fn(() => false),
+    isVisible: vi.fn(() => visible),
+    show: vi.fn(),
+    showInactive: vi.fn(),
+    blur: vi.fn(),
+    moveTop: vi.fn(),
+    focus: vi.fn(),
+    restore: vi.fn(),
+  };
+}
 
 function makeWindowsRevealWindow() {
   return {
@@ -84,6 +102,7 @@ describe("ElectronWindow", () => {
   beforeEach(() => {
     activateWindowsForegroundMock.mockReset().mockResolvedValue(undefined);
     appFocusMock.mockReset();
+    appIsActiveMock.mockReset().mockReturnValue(false);
     browserWindowMock.mockReset();
     foregroundWindowMock.mockReset().mockReturnValue(0n);
     getAllWindowsMock.mockReset();
@@ -178,4 +197,77 @@ describe("ElectronWindow", () => {
       assert.isTrue(current._tag === "Some" && current.value === ordinary);
     }).pipe(Effect.provide(layerTest)),
   );
+
+  // S7V-074: s7video must never pull itself in front of the app the user is working in.
+  describe("darwin focus", () => {
+    const layerDarwin = layerTestFor("darwin");
+
+    it.effect("startup reveal on darwin does not steal focus", () =>
+      Effect.gen(function* () {
+        const window = makeMacRevealWindow(false);
+        const electronWindow = yield* ElectronWindow.ElectronWindow;
+        yield* electronWindow.reveal(window as unknown as Electron.BrowserWindow);
+
+        assert.deepEqual(appFocusMock.mock.calls, []);
+        assert.lengthOf(window.focus.mock.calls, 0);
+        assert.lengthOf(window.show.mock.calls, 0);
+      }).pipe(Effect.provide(layerDarwin)),
+    );
+
+    it.effect("startup reveal behind a frontmost app uses showInactive", () =>
+      Effect.gen(function* () {
+        const window = makeMacRevealWindow(false);
+        const electronWindow = yield* ElectronWindow.ElectronWindow;
+        yield* electronWindow.reveal(window as unknown as Electron.BrowserWindow, {
+          steal: false,
+        });
+
+        assert.lengthOf(window.showInactive.mock.calls, 1);
+        assert.lengthOf(window.blur.mock.calls, 1);
+        assert.lengthOf(window.focus.mock.calls, 0);
+        assert.lengthOf(appFocusMock.mock.calls, 0);
+      }).pipe(Effect.provide(layerDarwin)),
+    );
+
+    it.effect("an automatic reveal leaves a visible background window alone", () =>
+      Effect.gen(function* () {
+        const window = makeMacRevealWindow(true);
+        const electronWindow = yield* ElectronWindow.ElectronWindow;
+        yield* electronWindow.reveal(window as unknown as Electron.BrowserWindow);
+
+        assert.lengthOf(window.showInactive.mock.calls, 0);
+        assert.lengthOf(window.blur.mock.calls, 0);
+        assert.lengthOf(window.focus.mock.calls, 0);
+        assert.lengthOf(appFocusMock.mock.calls, 0);
+      }).pipe(Effect.provide(layerDarwin)),
+    );
+
+    it.effect("an automatic reveal while s7video is already active focuses without a steal", () =>
+      Effect.gen(function* () {
+        appIsActiveMock.mockReturnValue(true);
+        const window = makeMacRevealWindow(false);
+        const electronWindow = yield* ElectronWindow.ElectronWindow;
+        yield* electronWindow.reveal(window as unknown as Electron.BrowserWindow);
+
+        assert.lengthOf(window.show.mock.calls, 1);
+        assert.lengthOf(window.focus.mock.calls, 1);
+        assert.deepEqual(appFocusMock.mock.calls, []);
+      }).pipe(Effect.provide(layerDarwin)),
+    );
+
+    it.effect("user reveal on darwin still steals focus", () =>
+      Effect.gen(function* () {
+        const window = makeMacRevealWindow(false);
+        const electronWindow = yield* ElectronWindow.ElectronWindow;
+        yield* electronWindow.reveal(window as unknown as Electron.BrowserWindow, {
+          steal: true,
+        });
+
+        assert.deepEqual(appFocusMock.mock.calls, [[{ steal: true }]]);
+        assert.lengthOf(window.show.mock.calls, 1);
+        assert.lengthOf(window.focus.mock.calls, 1);
+        assert.lengthOf(window.showInactive.mock.calls, 0);
+      }).pipe(Effect.provide(layerDarwin)),
+    );
+  });
 });

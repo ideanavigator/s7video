@@ -28,6 +28,10 @@ Add `--browser` to open a browser automatically.
 Linked worktrees default to their own `.t3/userdata`, even when `S7VIDEO_HOME` is set.
 The main checkout defaults to `~/.s7video/dev`. An explicit `--home-dir` wins in both cases.
 The safe commands are `vp run dev --no-seed --home-dir "$PWD/.t3"` and the same for `dev:desktop`.
+In a linked worktree, `dev:desktop` also gets its own Electron profile, `<dev home>/electron-profile`
+(the dev runner passes it as `S7VIDEO_DESKTOP_DEV_PROFILE_DIR`), and with it its own single-instance
+lock, so it runs beside another checkout's dev app. The main checkout keeps the shared `s7video-dev`
+profile, with or without `--home-dir`. Packaged builds ignore the variable.
 The first start in a worktree seeds its empty database from a read-only copy of s7video's own
 `~/.s7video/userdata/statev2.sqlite` if the source is at most 500 MiB. Larger sources warn and dev
 starts with an empty database. `--no-seed` or `T3CODE_DEV_SEED=0` skips seeding. To copy a larger

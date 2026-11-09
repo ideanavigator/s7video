@@ -5,13 +5,22 @@
  * marked kept or removed by the edit, grouped into rows at long pauses, with O(log n) lookups for
  * the word on screen. Pure: no React, no DOM.
  */
-import type { EditRational, Transcript } from "@t3tools/contracts";
+import type { EditDocument, EditRational, Transcript } from "@t3tools/contracts";
+import {
+  type FrameSpan,
+  type WordEdit,
+  wordEditOps,
+  wordPlays,
+} from "@t3tools/shared/editWordCuts";
 
 import {
+  nextTimelineSegmentFrom,
   type PlaybackSegment,
   segmentIndexAt,
   sourceFrameOf,
   timelineFrameOf,
+  timelineSegmentAt,
+  type TimelinePlan,
 } from "./editPlayback";
 
 /** A pause longer than this starts a new paragraph (PO default, S7V-030 open question). */
@@ -29,6 +38,8 @@ export interface TranscriptModelWord {
   readonly end: number;
   /** Every frame of the word was cut. */
   readonly removed: boolean;
+  /** False when the transcript gives the word no frames: a text edit skips it (S7V-038). */
+  readonly timed: boolean;
 }
 
 /** One rendered row: words `[first, end)`. */
@@ -145,7 +156,7 @@ export function buildTranscriptModel(
     const end = Math.max(start + 1, convertFrame(word.endFrame, transcript.fps, fps, true));
     const removed = segments !== null && !isKept(segments, start, end);
     if (removed) removedCount += 1;
-    return { text: word.text, start, end, removed };
+    return { text: word.text, start, end, removed, timed: word.endFrame > word.startFrame };
   });
   const pauseFrames = (PARAGRAPH_PAUSE_SECONDS * fps.num) / fps.den;
   return { words, rows: splitRows(words, pauseFrames), removedCount };
@@ -207,4 +218,109 @@ export function rowOfWord(model: TranscriptModel, index: number): number {
     else high = middle - 1;
   }
   return low;
+}
+
+/**
+ * The clip whose words the Transcript tab shows at edit frame `frame` of a multi-clip edit
+ * (S7V-039): the one on screen, or in a gap the next one (the last one after the end).
+ */
+export function timelineTranscriptSegment(plan: TimelinePlan, frame: number): number {
+  const at = timelineSegmentAt(plan.segments, frame);
+  if (at !== -1) return at;
+  const next = nextTimelineSegmentFrom(plan.segments, frame);
+  return next === -1 ? plan.segments.length - 1 : next;
+}
+
+/**
+ * The Transcript tab's source for segment `index` of a multi-clip edit: that clip's words, kept
+ * where the edit plays them, mapped through each item's `in` and `start`. Every item of the clip
+ * counts when the edit uses it in source order; otherwise (a clip reused out of order) only the
+ * item on screen does, so each word maps to one edit frame.
+ */
+export function timelineTranscriptPlayback(
+  plan: TimelinePlan,
+  index: number,
+): { readonly mediaId: string; readonly playback: TranscriptPlayback } {
+  const current = plan.segments[index]!;
+  const own = plan.segments.filter((segment) => segment.mediaId === current.mediaId);
+  const inOrder = own.every(
+    (segment, at) =>
+      at === 0 || segment.in >= own[at - 1]!.in + own[at - 1]!.end - own[at - 1]!.start,
+  );
+  const used = inOrder ? own : [current];
+  return {
+    mediaId: current.mediaId,
+    playback: {
+      fps: plan.fps,
+      segments: used.map((segment) => ({
+        sourceStart: segment.in,
+        sourceEnd: segment.in + segment.end - segment.start,
+        timelineStart: segment.start,
+      })),
+    },
+  };
+}
+
+/** Words `first..last`, inclusive and in order, as the Transcript tab selects them (S7V-038). */
+export interface TranscriptSelection {
+  readonly first: number;
+  readonly last: number;
+}
+
+/**
+ * How many selected words play now, and how many were cut: what the action bar offers. With
+ * `kept` (`keptSpansOf` the edit), it reads the edit itself, so a word of a reused clip that plays
+ * in another part counts as playing even when it shows struck here.
+ */
+export function selectionSummary(
+  model: TranscriptModel,
+  selection: TranscriptSelection,
+  kept?: ReadonlyArray<FrameSpan>,
+) {
+  let playing = 0;
+  let removed = 0;
+  for (let index = selection.first; index <= selection.last; index += 1) {
+    const word = model.words[index];
+    if (word === undefined || !word.timed) continue;
+    const plays = kept === undefined ? !word.removed : wordPlays(kept, word);
+    if (plays) playing += 1;
+    else removed += 1;
+  }
+  return { kept: playing, removed };
+}
+
+/**
+ * A text edit as `edit.apply` ops (S7V-038): cut the selected words that play, or restore the
+ * selected words that were cut. The model's frames are at the document fps, as the player's are.
+ */
+export function selectionToOps(
+  model: TranscriptModel,
+  selection: TranscriptSelection,
+  document: EditDocument,
+  mediaId: string,
+  action: "cut" | "restore",
+): WordEdit {
+  const words = model.words.map((word) => ({
+    start: word.start,
+    end: word.timed ? word.end : word.start,
+  }));
+  return wordEditOps(document, mediaId, words, selection, action);
+}
+
+/**
+ * The model while a text edit is on its way: the words it cuts show struck, the words it restores
+ * show kept, until the new edit arrives.
+ */
+export function withPendingEdit(model: TranscriptModel, edit: WordEdit): TranscriptModel {
+  if (edit._tag !== "cut" && edit._tag !== "restore") return model;
+  const changed = new Set(edit._tag === "cut" ? edit.cut.words : edit.restore.words);
+  if (edit._tag === "cut") for (const index of edit.cut.widenedWords) changed.add(index);
+  const removed = edit._tag === "cut";
+  let removedCount = model.removedCount;
+  const words = model.words.map((word, index) => {
+    if (!changed.has(index) || word.removed === removed) return word;
+    removedCount += removed ? 1 : -1;
+    return { ...word, removed };
+  });
+  return { ...model, words, removedCount };
 }

@@ -13,6 +13,7 @@ import {
   AssetWorkspacePathValidationError,
   AssetWorkspaceResolutionError,
   AssetWorkspaceRootNormalizationError,
+  MediaDataPartName,
   MediaVariant,
   ProjectId,
   SOURCE_CONTROL_MEDIA_ASSET,
@@ -142,6 +143,7 @@ const AssetClaimsSchema = Schema.Union([
     projectId: ProjectId,
     mediaId: Schema.String,
     variant: MediaVariant,
+    part: Schema.optionalKey(MediaDataPartName),
     filePath: Schema.String,
     device: Schema.String,
     inode: Schema.String,
@@ -847,9 +849,9 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
       break;
     }
     case "project-media": {
-      const { projectId, mediaId, variant } = input.resource;
+      const { projectId, mediaId, variant, part } = input.resource;
       const library = yield* MediaLibraryService.MediaLibraryService;
-      const resolved = yield* library.resolveVariant(projectId, mediaId, variant);
+      const resolved = yield* library.resolveVariant(projectId, mediaId, variant, part);
       if (Option.isNone(resolved)) {
         return yield* new AssetWorkspaceAssetNotFoundError({ resource: input.resource });
       }
@@ -878,6 +880,7 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
         projectId,
         mediaId,
         variant,
+        ...(part === undefined ? {} : { part }),
         filePath,
         device: opened.device,
         inode: opened.inode,
@@ -1082,6 +1085,7 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
       claims.projectId,
       claims.mediaId,
       claims.variant,
+      claims.part,
     );
     if (Option.isNone(resolved) || resolved.value.path !== claims.filePath) return null;
     const file = yield* openMediaFile(claims.filePath, claims).pipe(
