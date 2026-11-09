@@ -98,6 +98,15 @@ const placementsOf = (document: EditDocument, media: string) =>
     .find((track) => track.kind === "video")!
     .items.filter((item) => item.media === media);
 
+type Span = readonly [number, number];
+
+/** Source frames `source` as `item`'s timeline frames, or none where it doesn't show them. */
+const pieceOf = (item: EditVideoItem, source: Span): Span | undefined => {
+  const low = Math.max(source[0], item.in);
+  const high = Math.min(source[1], item.in + item.duration);
+  return high <= low ? undefined : [low - item.in + item.start, high - item.in + item.start];
+};
+
 /** The clip and the source frames a word's text names (`b12` is b's frames 240-255). */
 const sourceOf = (text: string) => {
   const media = text[0]!;
@@ -137,35 +146,35 @@ const violations = (
       }
     }
   }
-  const shown = new Set(items.flatMap((item) => (item.words ?? []).map((word) => word.text)));
-  // What each word may still show: a readable clip's whole word (from its transcript); an
-  // unreadable clip's only the source frames its caption showed before the cut.
-  const candidates = new Map<string, { media: string; from: number; to: number }>();
+  // No placement of a word may be dropped while frames it showed still play and are free: a
+  // readable clip's every word in every item; an unreadable clip's each caption word, in the item it
+  // was in before the cut (by id), over the frames it showed there.
+  const free = (piece: Span) =>
+    !items.some((other) => other.start < piece[1] && piece[0] < other.start + other.duration);
   for (const [id, entry] of ALL) {
     if (unreadable.includes(id)) continue;
-    for (const word of entry.words) candidates.set(word.text, sourceOf(word.text));
+    for (const item of placementsOf(after, id)) {
+      for (const word of entry.words) {
+        const piece = pieceOf(item, [word.startFrame, word.endFrame]);
+        if (piece !== undefined && free(piece)) {
+          problems.push(`"${word.text}" in ${item.id} was dropped though ${piece} is free`);
+        }
+      }
+    }
   }
   for (const word of captionTrack(before).items.flatMap((item) => item.words ?? [])) {
     const media = word.text[0]!;
     if (!unreadable.includes(media)) continue;
-    const item = placementsOf(before, media).find(
+    const origin = placementsOf(before, media).find(
       (entry) =>
         entry.start <= word.start && word.start + word.duration <= entry.start + entry.duration,
     );
-    if (item === undefined) continue;
-    const from = word.start - item.start + item.in;
-    candidates.set(word.text, { media, from, to: from + word.duration });
-  }
-  for (const [text, source] of candidates) {
-    if (shown.has(text)) continue;
-    for (const item of placementsOf(after, source.media)) {
-      const low = Math.max(source.from, item.in);
-      const high = Math.min(source.to, item.in + item.duration);
-      if (high <= low) continue;
-      const from = low - item.in + item.start;
-      const to = high - item.in + item.start;
-      const taken = items.some((other) => other.start < to && from < other.start + other.duration);
-      if (!taken) problems.push(`"${text}" was dropped though ${from}-${to} plays and is free`);
+    const now = placementsOf(after, media).find((entry) => entry.id === origin?.id);
+    if (origin === undefined || now === undefined) continue;
+    const from = word.start - origin.start + origin.in;
+    const piece = pieceOf(now, [from, from + word.duration]);
+    if (piece !== undefined && free(piece)) {
+      problems.push(`"${word.text}" from ${origin.id} was dropped though ${piece} is free`);
     }
   }
   return problems;
@@ -270,7 +279,23 @@ describe("captions of an unreadable clip through a cut (S7V-075)", () => {
     expect(words.map((word) => word.text)).toContain("c0");
   });
 
-  it("keeps every carried caption in one item and drops no free word (500 seeds, 2-3 unreadable clips)", () => {
+  it("keeps both copies of a repeated part of an unreadable clip through an unrelated trim", () => {
+    // The reviewer's repeated hook: b's first 100 frames before and after a.
+    const before = captioned([
+      { id: "v1", media: "b", start: 0, duration: 100, in: 0 },
+      { id: "a1", media: "a", start: 100, duration: 100, in: 0 },
+      { id: "v2", media: "b", start: 200, duration: 100, in: 0 },
+    ]);
+    const { document, validation } = cut(before, [
+      { _tag: "trimItem", itemId: "a1", edge: "end", frame: 150 },
+    ]);
+    expect(validation.ok).toBe(true);
+    expect(violations(before, document, ["b"])).toEqual([]);
+    const copies = captionTrack(document).items.filter((item) => item.text.startsWith("b0"));
+    expect(copies.map((item) => item.start)).toEqual([0, 200]);
+  });
+
+  it("keeps every carried caption in one item and drops no free word (500 seeds, 2-3 unreadable clips, repeats)", () => {
     let state = 75;
     const random = () => {
       state = (state * 1103515245 + 12345) % 2 ** 31;
@@ -290,9 +315,18 @@ describe("captions of an unreadable clip through a cut (S7V-075)", () => {
       for (let index = 0; index < between(3, 7); index++) {
         const from = pick(MEDIA);
         const duration = between(30, 260);
-        items.push({ id: `v${index + 1}`, media: from, start: at, duration, in: sources[from]! });
+        // Now and then a clip's part is placed again (a repeated hook), from where it was before.
+        const repeat = random() < 0.25 ? Math.max(0, sources[from]! - between(0, 300)) : undefined;
+        items.push({
+          id: `v${index + 1}`,
+          media: from,
+          start: at,
+          duration,
+          in: repeat ?? sources[from]!,
+        });
         at += duration;
-        sources[from]! += duration + (random() < 0.5 ? 0 : between(0, 100));
+        if (repeat === undefined)
+          sources[from]! += duration + (random() < 0.5 ? 0 : between(0, 100));
       }
       let document = captioned(items);
       for (let move = 0; move < between(1, 4); move++) {

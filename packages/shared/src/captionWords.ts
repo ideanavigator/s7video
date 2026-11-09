@@ -258,29 +258,43 @@ const placementsOf = (document: EditDocument, media: string) =>
       in: item.in,
     }));
 
+/** Source frames `source` as timeline frames of `now`, or none where it doesn't show them. */
+function pieceIn(now: { start: number; end: number; in: number }, source: Span): Span | undefined {
+  const low = Math.max(source[0], now.in);
+  const high = Math.min(source[1], now.in + (now.end - now.start));
+  return high <= low ? undefined : [low - now.in + now.start, high - now.in + now.start];
+}
+
 /**
- * Where timeline frames `[from, to)` of `media` in `before` play in `after`, through the source
- * frames they show: the longest piece and the video item it lies in, or none when all were cut.
+ * Where timeline frames `[from, to)` of `media` in `before` play in `after`, and the video item
+ * they lie in. A word goes through the item it came from (same id) while that item still shows
+ * it; else (a split's new half, a delete) through the longest piece of another item of the clip
+ * that did not already show those frames, since such an item carries its own copy (a repeat).
  */
 function carrySpan(before: EditDocument, after: EditDocument, media: string, span: Span) {
-  let best: { readonly span: Span; readonly item: string } | undefined;
-  for (const old of placementsOf(before, media)) {
+  const beforeItems = placementsOf(before, media);
+  const afterItems = placementsOf(after, media);
+  let best: { readonly span: Span; readonly item: string; readonly own: boolean } | undefined;
+  for (const old of beforeItems) {
     const from = Math.max(span[0], old.start);
     const to = Math.min(span[1], old.end);
     if (to <= from) continue;
     const source: Span = [from - old.start + old.in, to - old.start + old.in];
-    for (const now of placementsOf(after, media)) {
-      const nowEnd = now.in + (now.end - now.start);
-      const low = Math.max(source[0], now.in);
-      const high = Math.min(source[1], nowEnd);
-      if (high <= low) continue;
-      const piece: Span = [low - now.in + now.start, high - now.in + now.start];
-      if (best === undefined || piece[1] - piece[0] > best.span[1] - best.span[0]) {
-        best = { span: piece, item: now.id };
+    const showedIt = new Set(
+      beforeItems.filter((item) => pieceIn(item, source) !== undefined).map((item) => item.id),
+    );
+    for (const now of afterItems) {
+      const own = now.id === old.id;
+      if (!own && showedIt.has(now.id)) continue;
+      const piece = pieceIn(now, source);
+      if (piece === undefined) continue;
+      const longer = best === undefined || piece[1] - piece[0] > best.span[1] - best.span[0];
+      if ((own && !best?.own) || (own === (best?.own ?? false) && longer)) {
+        best = { span: piece, item: now.id, own };
       }
     }
   }
-  return best;
+  return best === undefined ? undefined : { span: best.span, item: best.item };
 }
 
 /** `span` minus `blocked` (sorted or not): the free pieces, in order. */

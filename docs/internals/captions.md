@@ -42,7 +42,10 @@ worded from the caller's ops only, so a cut still reads "Cut words in the transc
   the cut moved the clip (a move shifts it; a trim, cut or delete clips or drops it). **Every
   carried caption lies inside one video item**, and its words map through that item: words that
   land in another item, or moved by another amount, start a new caption, so no caption spans a
-  hole or another clip. Only a word that would share a frame with another caption is dropped,
+  hole or another clip. A word goes through the item it came from (same id) while that item
+  still shows it; only a split's new half or a delete falls back to another item of the clip, and
+  never to one that showed those frames before, so a repeated part keeps both copies. Only a
+  word that would share a frame with another caption is dropped,
   so the track always validates (`captionCarry.test.ts`, 500 seeds with 2-3 unreadable clips). The player names the clip ("No transcript for …").
 - Undo, redo and "make current" restore whole documents, captions included; they never rebuild.
 - Caption rows are read-only on the timeline: a press on one seeks, and split and delete skip
