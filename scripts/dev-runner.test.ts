@@ -22,6 +22,7 @@ import { ChildProcessSpawner } from "effect/process";
 import {
   checkPortAvailabilityOnHosts,
   createDevRunnerEnv,
+  DESKTOP_DEV_PROFILE_DIR_NAME,
   DEFAULT_T3_HOME,
   findFirstAvailableOffset,
   resolveModePortOffsets,
@@ -534,10 +535,12 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
         (root) => Effect.sync(() => NodeFS.rmSync(root, { recursive: true, force: true })),
       );
 
-      const spawnedHome = (input: {
+      const spawnedEnv = (input: {
         readonly t3Home: string | undefined;
         readonly cwd: string;
         readonly ambientHome: string | undefined;
+        readonly mode?: "dev:server" | "dev:desktop";
+        readonly ambientEnv?: Record<string, string>;
       }) =>
         Effect.gen(function* () {
           let captured: Record<string, string | undefined> | undefined;
@@ -553,20 +556,99 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
             }),
           );
 
-          yield* runDevRunnerWithInput({ ...devServerInput, t3Home: input.t3Home }).pipe(
+          yield* runDevRunnerWithInput({
+            ...devServerInput,
+            mode: input.mode ?? devServerInput.mode,
+            t3Home: input.t3Home,
+          }).pipe(
             Effect.provide(Layer.mergeAll(emptyConfigLayer, netServiceLayer, spawnerLayer)),
             Effect.provideService(HostProcess.Platform, "linux"),
             Effect.provideService(HostProcess.WorkingDirectory, input.cwd),
             // No ~/.s7video here, so these runs never seed from this machine's install.
             Effect.provideService(HostProcess.HomeDirectory, input.cwd),
-            Effect.provideService(
-              HostProcess.Environment,
-              input.ambientHome === undefined ? {} : { S7VIDEO_HOME: input.ambientHome },
-            ),
+            Effect.provideService(HostProcess.Environment, {
+              ...input.ambientEnv,
+              ...(input.ambientHome === undefined ? {} : { S7VIDEO_HOME: input.ambientHome }),
+            }),
           );
 
-          return captured?.S7VIDEO_HOME;
+          return captured ?? {};
         });
+
+      const spawnedHome = (input: Parameters<typeof spawnedEnv>[0]) =>
+        spawnedEnv(input).pipe(Effect.map((env) => env.S7VIDEO_HOME));
+
+      // S7V-073: keyed on "linked worktree", never on --home-dir.
+      describe("dev runner sets the profile variable only in a linked worktree", () => {
+        const profileVariable = "S7VIDEO_DESKTOP_DEV_PROFILE_DIR";
+
+        it.effect("gives a linked worktree's desktop app a profile in its own dev home", () =>
+          Effect.gen(function* () {
+            const path = yield* Path.Path;
+            const first = yield* makeWorktree;
+            const second = yield* makeWorktree;
+            const profileOf = (cwd: string) =>
+              spawnedEnv({ t3Home: undefined, cwd, ambientHome: undefined, mode: "dev:desktop" });
+            const firstEnv = yield* profileOf(first);
+            const secondEnv = yield* profileOf(second);
+            assert.equal(
+              firstEnv[profileVariable],
+              path.join(path.resolve(first), ".s7video", DESKTOP_DEV_PROFILE_DIR_NAME),
+            );
+            assert.notEqual(firstEnv[profileVariable], secondEnv[profileVariable]);
+
+            // With the safe `--home-dir "$PWD/.t3"`, the profile follows that dev home.
+            const withHomeDir = yield* spawnedEnv({
+              t3Home: path.join(first, ".t3"),
+              cwd: first,
+              ambientHome: undefined,
+              mode: "dev:desktop",
+            });
+            assert.equal(
+              withHomeDir[profileVariable],
+              path.join(path.resolve(first), ".t3", DESKTOP_DEV_PROFILE_DIR_NAME),
+            );
+          }).pipe(Effect.scoped),
+        );
+
+        it.effect("never sets it for the main checkout, with or without --home-dir", () =>
+          Effect.gen(function* () {
+            const path = yield* Path.Path;
+            const mainCheckout = NodeFS.mkdtempSync(
+              NodePath.join(NodeOS.tmpdir(), "t3-devrunner-main-"),
+            );
+            NodeFS.mkdirSync(NodePath.join(mainCheckout, ".git"));
+            try {
+              for (const t3Home of [undefined, path.join(mainCheckout, ".t3")]) {
+                const env = yield* spawnedEnv({
+                  t3Home,
+                  cwd: mainCheckout,
+                  ambientHome: undefined,
+                  mode: "dev:desktop",
+                  // An inherited value (say, from an agent's shell) is dropped too.
+                  ambientEnv: { [profileVariable]: "/work/other/.s7video/electron-profile" },
+                });
+                assert.isUndefined(env[profileVariable]);
+              }
+            } finally {
+              NodeFS.rmSync(mainCheckout, { recursive: true, force: true });
+            }
+          }),
+        );
+
+        it.effect("leaves it out of non-desktop modes", () =>
+          Effect.gen(function* () {
+            const root = yield* makeWorktree;
+            const env = yield* spawnedEnv({
+              t3Home: undefined,
+              cwd: root,
+              ambientHome: undefined,
+              ambientEnv: { [profileVariable]: "/work/other/.s7video/electron-profile" },
+            });
+            assert.isUndefined(env[profileVariable]);
+          }).pipe(Effect.scoped),
+        );
+      });
 
       it.effect("prefers an explicit --home-dir over the worktree default", () =>
         Effect.gen(function* () {

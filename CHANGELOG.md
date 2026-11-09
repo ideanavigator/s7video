@@ -122,6 +122,9 @@ from; the per-ticket entries and how this file is compiled are in
 
 ### Fixed
 
+- For developers: a dev desktop app started from a linked git worktree keeps its own Electron
+  profile in that worktree's dev home, so it no longer hands off to, or focuses, another
+  checkout's app. The main checkout keeps its `s7video-dev` profile. (S7V-073)
 - s7video no longer jumps in front of other apps by itself. It comes forward only when you click
   it, its Dock icon or a notification. (S7V-074)
 - Asking to keep a pause that was already cut now gets a plain answer and a hint to undo, and a

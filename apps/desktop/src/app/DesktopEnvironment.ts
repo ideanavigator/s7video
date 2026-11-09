@@ -42,6 +42,8 @@ export class DesktopEnvironment extends Context.Service<
     readonly isDevelopment: boolean;
     /** True when the dev watcher relaunched the app after a rebuild (S7V-074). */
     readonly isDevelopmentRestart: boolean;
+    /** Electron profile folder for a dev app in a linked worktree (S7V-073); see DesktopUserData. */
+    readonly devProfileDirectory: Option.Option<string>;
     readonly appVersion: string;
     readonly appPath: string;
     readonly resourcesPath: string;
@@ -195,6 +197,7 @@ const make = Effect.fn("desktop.environment.make")(function* (
     isPackaged: input.isPackaged,
     isDevelopment,
     isDevelopmentRestart: isDevelopment && config.devRestart,
+    devProfileDirectory: config.devProfileDirectory,
     appVersion: input.appVersion,
     appPath: input.appPath,
     resourcesPath,

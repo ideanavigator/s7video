@@ -277,7 +277,12 @@ interface CreateDevRunnerEnvInput {
   readonly host: string | undefined;
   readonly port: number | undefined;
   readonly devUrl: URL | undefined;
+  /** True when the dev runner starts from a linked git worktree, not the main checkout (S7V-073). */
+  readonly linkedWorktree?: boolean;
 }
+
+/** Electron profile folder, under the dev home, for a desktop dev app in a linked worktree. */
+export const DESKTOP_DEV_PROFILE_DIR_NAME = "electron-profile";
 
 export const createDevRunnerEnv = Effect.fn("dev-runner.createDevRunnerEnv")(function* ({
   mode,
@@ -291,11 +296,13 @@ export const createDevRunnerEnv = Effect.fn("dev-runner.createDevRunnerEnv")(fun
   host,
   port,
   devUrl,
+  linkedWorktree,
 }: CreateDevRunnerEnvInput): Effect.fn.Return<NodeJS.ProcessEnv, never, Path.Path> {
   const serverPort = port ?? BASE_SERVER_PORT + serverOffset;
   const webPort = BASE_WEB_PORT + webOffset;
   const configuredBaseDir = t3Home?.trim() || undefined;
   const resolvedBaseDir = yield* resolveBaseDir(configuredBaseDir);
+  const path = yield* Path.Path;
   const isDesktopMode = mode === "dev:desktop";
 
   const output: NodeJS.ProcessEnv = {
@@ -310,6 +317,18 @@ export const createDevRunnerEnv = Effect.fn("dev-runner.createDevRunnerEnv")(fun
     output.S7VIDEO_HOME = resolvedBaseDir;
   } else {
     delete output.S7VIDEO_HOME;
+  }
+
+  // s7video (S7V-073): own Electron profile (and single-instance lock) per linked worktree.
+  // Keyed on the worktree, not --home-dir, so the main checkout keeps `s7video-dev`.
+  // Set here, it reaches `vp pack --watch` and every dev-electron.mjs relaunch.
+  if (isDesktopMode && linkedWorktree === true && output.S7VIDEO_HOME !== undefined) {
+    output.S7VIDEO_DESKTOP_DEV_PROFILE_DIR = path.join(
+      output.S7VIDEO_HOME,
+      DESKTOP_DEV_PROFILE_DIR_NAME,
+    );
+  } else {
+    delete output.S7VIDEO_DESKTOP_DEV_PROFILE_DIR;
   }
 
   // Managed T3 service shells leak launcher variables that make dev servers fail version checks.
@@ -729,6 +748,7 @@ export const runDevRunnerWithInput = Effect.fn("dev-runner.runDevRunnerWithInput
     host: input.host,
     port: input.port,
     devUrl: input.devUrl,
+    linkedWorktree: worktreePath !== undefined,
   });
 
   const selectionSuffix =
