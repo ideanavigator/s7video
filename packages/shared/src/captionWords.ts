@@ -244,3 +244,107 @@ export function sameCaptions(
     );
   });
 }
+
+type Span = readonly [start: number, end: number];
+
+/** `media`'s items on the first video track, as timeline start and source in. */
+const placementsOf = (document: EditDocument, media: string) =>
+  (firstVideoTrack(document)?.items ?? [])
+    .filter((item) => item.media === media)
+    .map((item) => ({ start: item.start, end: item.start + item.duration, in: item.in }));
+
+/**
+ * Where timeline frames `[from, to)` of `media` in `before` play in `after`, through the source
+ * frames they show: the longest piece, or none when the change cut them all.
+ */
+function carrySpan(before: EditDocument, after: EditDocument, media: string, span: Span) {
+  let best: Span | undefined;
+  for (const old of placementsOf(before, media)) {
+    const from = Math.max(span[0], old.start);
+    const to = Math.min(span[1], old.end);
+    if (to <= from) continue;
+    const source: Span = [from - old.start + old.in, to - old.start + old.in];
+    for (const now of placementsOf(after, media)) {
+      const nowEnd = now.in + (now.end - now.start);
+      const low = Math.max(source[0], now.in);
+      const high = Math.min(source[1], nowEnd);
+      if (high <= low) continue;
+      const piece: Span = [low - now.in + now.start, high - now.in + now.start];
+      if (best === undefined || piece[1] - piece[0] > best[1] - best[0]) best = piece;
+    }
+  }
+  return best;
+}
+
+/** `span` minus `blocked` (sorted or not): the free pieces, in order. */
+function freePieces(span: Span, blocked: ReadonlyArray<Span>): Span[] {
+  let pieces: Span[] = [span];
+  for (const [from, to] of blocked) {
+    pieces = pieces.flatMap(([start, end]): Span[] =>
+      to <= start || from >= end
+        ? [[start, end]]
+        : (
+            [
+              [start, Math.min(end, from)],
+              [Math.max(start, to), end],
+            ] satisfies Span[]
+          ).filter(([a, b]) => b > a),
+    );
+  }
+  return pieces;
+}
+
+/**
+ * The captions a rebuild keeps for clips whose transcript can't be read (S7V-075), carried from
+ * `before` to `after`: each word follows its source frames (a move shifts it, a trim or cut
+ * clips or drops it), and nothing may share a frame with `rebuilt` or another kept caption.
+ * Valid by construction: every caption has frames, and its words stay inside it.
+ */
+export function carryCaptions(
+  before: EditDocument,
+  after: EditDocument,
+  kept: ReadonlyArray<CaptionItemDraft & { readonly metadata?: unknown }>,
+  rebuilt: ReadonlyArray<CaptionItemDraft>,
+): CaptionItemDraft[] {
+  const blocked: Span[] = rebuilt.map((item) => [item.start, item.start + item.duration]);
+  const carried: CaptionItemDraft[] = [];
+  for (const item of [...kept].sort((a, b) => a.start - b.start)) {
+    const media = captionMediaOfItem(item);
+    if (media === undefined) continue;
+    const words = (item.words ?? [{ text: item.text, start: item.start, duration: item.duration }])
+      .map((word) => {
+        const span = carrySpan(before, after, media, [word.start, word.start + word.duration]);
+        return span === undefined ? undefined : { text: word.text, span };
+      })
+      .filter((word) => word !== undefined);
+    if (words.length === 0) continue;
+    const whole: Span = [
+      Math.min(...words.map((word) => word.span[0])),
+      Math.max(...words.map((word) => word.span[1])),
+    ];
+    // The free stretch holding the most words; words reaching into a taken frame are dropped.
+    const inside = freePieces(whole, blocked)
+      .map((piece) => words.filter((word) => word.span[0] >= piece[0] && word.span[1] <= piece[1]))
+      .sort((a, b) => b.length - a.length)[0];
+    if (inside === undefined || inside.length === 0) continue;
+    const start = Math.min(...inside.map((word) => word.span[0]));
+    const end = Math.max(...inside.map((word) => word.span[1]));
+    blocked.push([start, end]);
+    carried.push({
+      start,
+      duration: end - start,
+      text: inside.map((word) => word.text).join(" "),
+      ...(item.words === undefined
+        ? {}
+        : {
+            words: inside.map((word) => ({
+              text: word.text,
+              start: word.span[0],
+              duration: word.span[1] - word.span[0],
+            })),
+          }),
+      metadata: { s7: { media } },
+    });
+  }
+  return carried;
+}
