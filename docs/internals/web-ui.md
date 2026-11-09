@@ -74,3 +74,14 @@ that calls no hook. Lint misses some bailouts, notably `try` with `finally` and
 compiles every file and fails on any skip. Async handlers rarely need `try`: an
 atom command settles into a result, so cleanup can follow the `await`. `useStableCallback` still
 marks handlers that leave a large component, as described above.
+
+## Video-project layout
+
+A project is a video project when its edit loads (`useIsVideoProject`); the web app has no other
+signal. A thread there opens with the Editor in the right panel at 60% of the workspace, within the
+usual caps ([`videoProjectLayout.ts`](../../apps/web/src/editor/videoProjectLayout.ts)). The
+default applies only to a thread with no saved panel state, no hidden panel and no panel choice
+this session. It sets `editorOpenedByDefault`, which keeps the thread's entry after the user
+closes every tab, so a closed Editor stays closed after a reload. Proactive panels never take the
+active tab from the Editor, and a chat link to a clip in Media plays it in the Editor
+([`clipLinks.ts`](../../apps/web/src/editor/clipLinks.ts)). Other projects keep T3's layout.

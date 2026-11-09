@@ -21,6 +21,7 @@ import {
   type MediaTranscriptState,
   type ProjectEditState,
   type ProjectExport,
+  type ProjectVersionsState,
   subscribePlayerSeek,
   useEditPlayerStore,
 } from "../../editor/editStore";
@@ -34,6 +35,7 @@ const state = vi.hoisted(() => ({
   urlVariants: [] as Array<string | undefined>,
   transcriptMedia: [] as Array<string | null>,
   transcript: { _tag: "loading" } as MediaTranscriptState,
+  versions: { _tag: "loading" } as ProjectVersionsState,
 }));
 
 /** The export as the jobs stream would deliver it: setting it re-renders its readers. */
@@ -77,8 +79,8 @@ vi.mock(import("../../editor/editStore"), async (importOriginal) => ({
     return state.transcript;
   },
   useTranscriptionJobs: () => ({ transcribe: null, download: null }),
-  // The Versions tab (S7V-069) has its own tests; here it stays loading.
-  useProjectVersions: () => ({ _tag: "loading" }),
+  // The Versions tab (S7V-069) has its own tests; here it stays loading but for screenshots.
+  useProjectVersions: () => state.versions,
   // The caption overlay (S7V-075) has its own tests.
   useCaptionStills: () => ({ _tag: "none" }),
 }));
@@ -941,6 +943,85 @@ describe("EditorPanel", () => {
         description: "Not added: notes.txt",
       });
       expect(commands.plan).not.toHaveBeenCalled();
+    });
+
+    describe("screenshots for the UX review", () => {
+      const SHOTS = "../../../../../test-results/S7V-076";
+      const versions: ProjectVersionsState = {
+        _tag: "ready",
+        versions: [
+          {
+            n: 4,
+            revision: 5,
+            at: Date.UTC(2026, 10, 9, 10, 4),
+            author: "assistant",
+            changes: ["Removed 14.2 s of silence in 26 cuts"],
+            current: true,
+          },
+          {
+            n: 3,
+            revision: 4,
+            at: Date.UTC(2026, 10, 9, 10, 2),
+            author: "you",
+            tag: "tight cut",
+            changes: ["Trimmed the first clip"],
+            current: false,
+          },
+          {
+            n: 2,
+            revision: 3,
+            at: Date.UTC(2026, 10, 9, 9, 58),
+            author: "assistant",
+            changes: ["Added captions"],
+            current: false,
+          },
+        ],
+      };
+      /** The Editor at 60% of a row, beside a stand-in for the chat column. */
+      const layout = () =>
+        render(
+          <div className="flex h-screen w-screen bg-background text-foreground">
+            <div className="flex min-w-0 flex-1 items-center justify-center border-r text-sm text-muted-foreground">
+              Chat column (stand-in)
+            </div>
+            <div className="h-full" style={{ width: "60%" }}>
+              {panel()}
+            </div>
+          </div>,
+          { router: false },
+        );
+
+      it.each([
+        ["dark", 1440, 900],
+        ["light", 1440, 900],
+        ["dark", 1180, 760],
+        ["light", 1180, 760],
+      ] as const)(
+        "default layout, Versions with Main, drop overlay (%s, %i)",
+        async (theme, w, h) => {
+          await page.viewport(w, h);
+          document.documentElement.classList.toggle("dark", theme === "dark");
+          setState([asset("clip-0")], true);
+          state.versions = versions;
+          try {
+            using _desktop = withDesktop();
+            await using screen = await layout();
+            await expect.element(screen.getByText("Main", { exact: true })).toBeVisible();
+            await expect
+              .element(screen.getByRole("button", { name: "Make version 3 main" }))
+              .toBeVisible();
+            await page.screenshot({ path: `${SHOTS}/layout-versions-${theme}-${w}.png` });
+            await drag(await videoOf(screen), clip(), "dragover");
+            await expect
+              .element(screen.getByText(DROP_OVERLAY_TEXT, { exact: true }).first())
+              .toBeVisible();
+            await page.screenshot({ path: `${SHOTS}/drop-overlay-${theme}-${w}.png` });
+          } finally {
+            state.versions = { _tag: "loading" };
+            document.documentElement.classList.remove("dark");
+          }
+        },
+      );
     });
   });
 });
