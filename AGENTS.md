@@ -115,6 +115,9 @@ Never merge a sprint branch into `main` without the developer's approval.
   `~/.t3/userdata` into the new database. Never run `vp run migrate-dev-db`: it also reads `~/.t3`.
   Add other flags (such as `--browser`) after these. Build test data through the app or the
   replay provider. Read the real ports from the `[dev-runner]` line.
+  In a linked worktree, `dev:desktop` keeps its Electron profile in the dev home's
+  `electron-profile` folder, so it never hands off to another checkout's app. The main checkout
+  always uses the shared `s7video-dev` profile, with or without `--home-dir`.
 
 - Real agent turns cost money. Use the free `Replay (dev)` provider that `vp run dev` registers; the
   [test-app skill](.agents/skills/test-app/SKILL.md) shows how. Use a real provider only when
