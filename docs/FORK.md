@@ -489,6 +489,26 @@ small wiring as the other `edit.*` methods: `edit.versions`, `edit.versionGet`, 
 `contracts/rpc.ts`, a thin handler in `ws.ts`, read scope in `auth/RpcAuthorization.ts` and the
 `engine` group in `observability/RpcInstrumentation.ts`.
 
+## Edit control files are write-protected (S7V-077)
+
+Upstream's `projects.writeFile` writes any file in a known workspace. In a video project, it now
+refuses `edit.json` and `project.json` at the project's root and anything under `.s7history/`, so
+only the edit service changes them and S7V-054's outside-edit guard can trust the history. The check
+sits next to the `.git` refusal in `resolveWriteTarget` and works the same way: case-folded, and on
+both the real and the named path, so a link to one of these files is refused too. Upstream files
+with small, additive edits:
+
+- `apps/server/src/workspace/WorkspaceFileSystem.ts`: the check and `WorkspaceProtectedFileError`.
+- `packages/contracts/src/project.ts`: a `protected_file` failure.
+- `apps/server/src/ws.ts`: `projectFileFailureContext` maps the error to `protected_file` with the
+  plain message.
+- `apps/web/src/components/files/fileSaveSessions.ts`: a refused save shows that message in a toast.
+
+**Out of reach of this check:** the `vcs.*` RPCs (a git checkout or pull can rewrite `edit.json`)
+and `terminal.write` (a shell can write any file), as well as the agent's own file tools. They are
+not path-checked writes, and `.s7history/` is git-ignored, so they cannot be guarded by path. S7V-054
+already treats an `edit.json` change made through them as an outside edit.
+
 ## Media data assets (S7V-035)
 
 The timeline's waveform peaks and filmstrip tiles are files the media service writes per clip. They

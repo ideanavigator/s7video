@@ -1277,3 +1277,74 @@ it.effect("projects.writeFile with write-only scope cannot add outside media", (
     Effect.scoped,
   ),
 );
+
+// S7V-077: a refused write of an edit control file reaches the client as `protected_file` with the
+// plain message the file view shows.
+it.effect("projects.writeFile reports an edit control file as protected_file", () =>
+  Effect.gen(function* () {
+    const browser = yield* ServerBrowser.ServerBrowser;
+    const scopes = [AuthOrchestrationReadScope, AuthFilesystemWriteScope] as const;
+    const services = Layer.mergeAll(
+      layerUnusedConfigRpcServices,
+      Layer.mock(WorkspaceFileSystem.WorkspaceFileSystem)({
+        writeFile: (input) =>
+          Effect.fail(
+            new WorkspaceFileSystem.WorkspaceProtectedFileError({
+              workspaceRoot: input.cwd,
+              relativePath: input.relativePath,
+              resolvedPath: `${input.cwd}/edit.json`,
+            }),
+          ),
+      }),
+      Layer.mock(ExternalLauncher.ExternalLauncher)({}),
+      Layer.mock(ProviderRegistry.ProviderRegistry)({}),
+      Layer.mock(UsageLimitSources.UsageLimitSources)({}),
+      Layer.mock(RemoteOpenTargets.RemoteOpenTargets)({}),
+      Layer.mock(DirectEndpoints.DirectEndpoints)({}),
+      Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({ namedProjectsRoot: "/unused" }),
+      Layer.mock(ScratchThreadPromotion.ScratchThreadPromotion)({}),
+      Layer.mock(ServerEnvironment.ServerEnvironment)({}),
+      Layer.mock(EnvironmentAuth.EnvironmentAuth)({}),
+    );
+    const client = yield* RpcTest.makeClient(WsRpcGroup).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          layerWsRpc(
+            {
+              sessionId: AuthSessionId.make("write-only"),
+              subject: "write-only",
+              method: "browser-session-cookie",
+              scopes,
+            },
+            {},
+            browser,
+            () => Effect.void,
+          ).pipe(Layer.provide(services)),
+          RpcAuthorization.layer(scopes),
+        ),
+      ),
+    );
+    const error = yield* client[WS_METHODS.projectsWriteFile]({
+      cwd: "/projects/my-video",
+      relativePath: "EDIT.JSON",
+      contents: "x",
+    }).pipe(Effect.flip);
+    assert.deepInclude(error, {
+      _tag: "ProjectWriteFileError",
+      failure: "protected_file",
+      relativePath: "EDIT.JSON",
+      message:
+        "This file is managed by the Editor. Change your edit in the Editor or ask the assistant.",
+    });
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        Layer.fresh(layerConfigSources),
+        Layer.mock(PreviewAutomationBroker.PreviewAutomationBroker)({}),
+        Layer.mock(ServerBrowser.ServerBrowser)({}),
+        NodeServices.layer,
+      ),
+    ),
+    Effect.scoped,
+  ),
+);

@@ -455,6 +455,8 @@ export const ProjectFileFailure = Schema.Literals([
   "path_not_file",
   "binary_file",
   "operation_failed",
+  // A video project's edit, project or history file, which only the edit service writes (S7V-077).
+  "protected_file",
 ]);
 export type ProjectFileFailure = typeof ProjectFileFailure.Type;
 
