@@ -4,7 +4,8 @@
 
 Three FFmpeg runs, all cancellable and reporting progress:
 
-1. **measure**: the edit's audio mix alone through ``ebur128``, for its integrated loudness;
+1. **measure**: the edit's audio mix alone through ``ebur128``, for its integrated loudness (the
+   voice joined from the video track, plus sound effects and music, S7V-036 ``mix.py``);
 2. **render**: one pass that trims and joins the original sources frame-exactly, fades the audio
    for 10 ms on each side of every join (inside the kept range, so no cut moves), applies one fixed
    gain to −14 LUFS with a limiter only at the ceiling, burns the captions in with libass and
@@ -34,7 +35,7 @@ from fractions import Fraction
 from pathlib import Path
 from typing import Any
 
-from .. import captions_ass, captions_from_words, timebase
+from .. import captions_ass, captions_from_words, mix, timebase
 from ..edit_schema import validate_edit_document
 from ..ffmpeg import _tool_env, ffprobe_json, run_tool, tool_path
 from ..jobs import Cancelled, JobContext
@@ -135,10 +136,12 @@ class Plan:
     total_frames: int
     segments: list[Segment]
     sources: dict[str, Source] = field(default_factory=dict)
+    #: Sound effects and music that play, in track order (S7V-036).
+    audio: list[mix.AudioItem] = field(default_factory=list)
 
     def sample_at(self, frame: int) -> int:
         """The audio sample where timeline frame ``frame`` starts; cumulative, so it never drifts."""
-        return round(Fraction(frame) * SAMPLE_RATE / self.rate)
+        return mix.sample_at(frame, self.rate)
 
 
 def _unsupported(what: str) -> RpcError:
@@ -146,14 +149,15 @@ def _unsupported(what: str) -> RpcError:
 
 
 def plan_segments(edit: dict[str, Any], width: int, height: int) -> Plan:
-    """The output's segments from the edit's first video track, with black gaps between items."""
+    """The output's segments from the edit's first video track, with black gaps between items, and
+    the sound effect and music items that play over them."""
     rate = timebase.from_rational(edit["fps"])
     video_tracks = [track for track in edit["tracks"] if track["kind"] == "video"]
     for track in video_tracks[1:]:
         if track["items"] and not track.get("muted"):
             raise _unsupported("a second video track")
     for track in edit["tracks"]:
-        if track["kind"] in ("overlay", "sfx", "music") and track["items"] and not track.get("muted"):
+        if track["kind"] == "overlay" and track["items"] and not track.get("muted"):
             raise _unsupported(f"{track['kind']} tracks")
     items = sorted(video_tracks[0]["items"], key=lambda item: item["start"]) if video_tracks else []
     if not items:
@@ -179,7 +183,12 @@ def plan_segments(edit: dict[str, Any], width: int, height: int) -> Plan:
             )
         )
         at = item["start"] + item["duration"]
-    return Plan(rate, width, height, at, segments)
+    audio = mix.audio_items(edit, at)
+    for entry in audio:
+        source = media[entry.media]
+        if source["kind"] == "image" or not source["probe"].get("hasAudio"):
+            raise RpcError(INVALID_PARAMS, f'media "{entry.media}" on a sound track has no sound')
+    return Plan(rate, width, height, at, segments, audio=audio)
 
 
 def caption_items(edit: dict[str, Any]) -> list[dict[str, Any]]:
@@ -280,7 +289,8 @@ def _audio_chain(samples: int, segment: Segment) -> str:
 def build_graph(plan: Plan, inputs: list[Input], assignment: list[int | None], *, video: bool, ass_file: str | None) -> str:
     """The filter graph; ``video=False`` gives the audio mix alone, for the loudness measurement.
 
-    Outputs ``[vout]`` (when ``video``) and ``[amix]``, the mix before the loudness gain.
+    Outputs ``[vout]`` (when ``video``) and ``[amix]``, the mix before the loudness gain. Sound
+    effects and music read the inputs after ``inputs``, one each, in ``plan.audio`` order.
     """
     chains: list[str] = []
     uses: dict[int, list[int]] = {}
@@ -325,8 +335,9 @@ def build_graph(plan: Plan, inputs: list[Input], assignment: list[int | None], *
             )
         joined.append(f"[vs{position}][as{position}]" if video else f"[as{position}]")
     count = len(plan.segments)
+    voice = "[voice]" if plan.audio else "[amix]"
     if video:
-        chains.append(f"{''.join(joined)}concat=n={count}:v=1:a=1[vcat][amix]")
+        chains.append(f"{''.join(joined)}concat=n={count}:v=1:a=1[vcat]{voice}")
         captions = f"subtitles=filename={ass_file}:fontsdir=fonts," if ass_file else ""
         # concat hands out microsecond timestamps with no frame duration, and the MP4 muxer then
         # drops the last frame of some sources: renumber on the edit's own time base. The tags go
@@ -336,7 +347,9 @@ def build_graph(plan: Plan, inputs: list[Input], assignment: list[int | None], *
             "setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709:range=tv,format=yuv420p[vout]"
         )
     else:
-        chains.append(f"{''.join(joined)}concat=n={count}:v=0:a=1[amix]")
+        chains.append(f"{''.join(joined)}concat=n={count}:v=0:a=1{voice}")
+    if plan.audio:
+        chains += mix.mix_chains(plan.audio, len(inputs), plan.rate, plan.total_frames)
     return ";\n".join(chains)
 
 
@@ -566,6 +579,8 @@ def _render(params: dict[str, Any], job: JobContext) -> dict[str, Any]:
     input_args: list[str] = []
     for entry in inputs:
         input_args += ["-t", _seconds(entry.read_seconds), "-i", plan.sources[entry.media].path]
+    for item in plan.audio:
+        input_args += ["-t", _seconds(mix.read_seconds(item, plan.rate)), "-i", _media_path(media[item.media], project_dir)]
     total_seconds = Fraction(plan.total_frames) / plan.rate
     script_flag = "-/filter_complex" if caps.major >= 7 else "-filter_complex_script"
 

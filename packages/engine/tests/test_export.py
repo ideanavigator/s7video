@@ -269,8 +269,11 @@ def test_unsupported_tracks_fail_plainly(tmp_path: Path) -> None:
     source = tmp_path / "cam.mp4"
     source.write_bytes(b"x")
     edit = make_edit(source=source, ranges=[(0, 30)], fps=Fraction(30), duration_frames=300)
+    # S7V-036: sound effects and music are mixed (test_mix.py); overlays are still refused.
     edit["tracks"].append({"kind": "music", "id": "M1", "items": [{"id": "m", "media": "cam", "start": 0, "duration": 10, "in": 0}]})
-    with pytest.raises(rpc.RpcError, match="export cannot draw music tracks yet"):
+    assert len(export.plan_segments(edit, 1080, 1920).audio) == 1
+    edit["tracks"][-1] = {"kind": "overlay", "id": "O1", "items": [{"id": "o", "text": "hi", "start": 0, "duration": 10}]}
+    with pytest.raises(rpc.RpcError, match="export cannot draw overlay tracks yet"):
         export.plan_segments(edit, 1080, 1920)
     edit["tracks"].pop()
     edit["tracks"][0]["items"][0]["zoom"] = {"scale": 1.2, "anchorX": 0.5, "anchorY": 0.5, "rampFrames": 0}
@@ -391,6 +394,78 @@ def test_silent_source_stays_silent(tmp_path: Path) -> None:
     assert result["lufs"] is None or result["lufs"] < -50
     peak = max(abs(value) for value in decode_audio_mono(Path(result["path"])))
     assert peak < 0.01
+
+
+def _sound_file(path: Path, spec: str, seconds: float) -> Path:
+    """A synthetic sound (lavfi), never a library or client sound."""
+    assert FFMPEG is not None
+    subprocess.run([FFMPEG, "-v", "error", "-f", "lavfi", "-i", f"{spec}:d={seconds}", str(path)], check=True)
+    return path
+
+
+def _with_sound(edit: dict[str, Any], files: dict[str, Path], tracks: list[dict[str, Any]], frames: int = 900) -> dict[str, Any]:
+    for media_id, path in files.items():
+        edit["media"].append(
+            {
+                "id": media_id,
+                "kind": "audio",
+                "reference": str(path),
+                "fingerprint": {"sha256": "1" * 64, "size": path.stat().st_size},
+                "probe": {"hasVideo": False, "hasAudio": True, "durationFrames": frames},
+            }
+        )
+    edit["tracks"] += tracks
+    return edit
+
+
+@pytest.mark.usefixtures("tools")
+def test_sfx_and_music_tracks_are_rendered(tmp_path: Path) -> None:
+    source = coded_clip(tmp_path / "mute.mp4", "30", 4, audio=False)
+    tick = _sound_file(tmp_path / "tick.wav", "sine=f=1000:sample_rate=44100", 0.2)
+    bed = _sound_file(tmp_path / "bed.wav", "sine=f=220:sample_rate=48000", 5)
+    edit = _with_sound(
+        make_edit(source=source, ranges=[(0, 90)], fps=Fraction(30), duration_frames=120, width=W, height=H, has_audio=False),
+        {"tick": tick, "bed": bed},
+        [
+            {"kind": "sfx", "id": "S1", "items": [{"id": "s", "media": "tick", "start": 45, "duration": 6, "in": 0}]},
+            {
+                "kind": "music",
+                "id": "M1",
+                "duck": {"depthDb": -12, "attackFrames": 5, "releaseFrames": 12, "ranges": [{"start": 20, "end": 40}]},
+                "items": [{"id": "m", "media": "bed", "start": 0, "duration": 90, "in": 0, "gainDb": -18, "fadeInFrames": 15, "fadeOutFrames": 30}],
+            },
+        ],
+    )
+    result = run_export(edit, tmp_path / "out.mp4")
+    out = Path(result["path"])
+    assert frame_codes(out) == expected_codes([(0, 90)])
+    assert result["lufs"] is not None and abs(result["lufs"] + 14) <= 1.0
+    assert result["truePeak"] is not None and result["truePeak"] <= -1.0
+    audio = next(s for s in stream_info(out)["streams"] if s["codec_type"] == "audio")
+    assert abs(float(audio["duration"]) - 3.0) < 0.03
+    samples = decode_audio_mono(out)
+    onset = next(index for index, value in enumerate(samples) if abs(value) > 0.1)
+    assert abs(onset - 72_000) <= 1600  # frame 45 at 30 fps, within one frame
+
+
+@pytest.mark.usefixtures("tools")
+def test_silent_project_stays_silent(tmp_path: Path) -> None:
+    source = coded_clip(tmp_path / "mute.mp4", "30", 2, audio=False)
+    quiet = _sound_file(tmp_path / "quiet.wav", "anullsrc=r=48000:cl=stereo", 2)
+    edit = _with_sound(
+        make_edit(source=source, ranges=[(0, 60)], fps=Fraction(30), duration_frames=60, width=W, height=H, has_audio=False),
+        {"quiet": quiet},
+        [
+            {"kind": "sfx", "id": "S1", "items": [{"id": "s", "media": "quiet", "start": 10, "duration": 20, "in": 0}]},
+            {"kind": "music", "id": "M1", "items": [{"id": "m", "media": "quiet", "start": 0, "duration": 60, "in": 0, "gainDb": 12}]},
+        ],
+        frames=60,
+    )
+    result = run_export(edit, tmp_path / "out.mp4")
+    assert result["gainDb"] == 0.0
+    # ebur128 reports -70.0 LUFS, its absolute gate, when nothing is above it.
+    assert result["lufs"] is None or result["lufs"] <= -70.0
+    assert max(abs(value) for value in decode_audio_mono(Path(result["path"]))) < 1e-4
 
 
 @pytest.mark.usefixtures("tools")
