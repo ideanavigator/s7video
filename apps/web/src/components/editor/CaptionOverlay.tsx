@@ -6,12 +6,17 @@
  * frame clock outside React. The stills are fetched by key (S7V-079): while new ones are drawn or
  * fetched, the old ones stay, with a small note.
  */
+import { useAtomValue } from "@effect/atom-react";
 import { scopedProjectKey } from "@t3tools/client-runtime/environment";
 import type { CaptionStillsResult, ScopedProjectRef } from "@t3tools/contracts";
-import { useEffect, useState } from "react";
+import { useEffect, useSyncExternalStore } from "react";
 
 import { stillAt } from "../../editor/captionStills";
-import { forgetOtherCaptionStills, loadCaptionStills } from "../../editor/captionStillUrls";
+import {
+  captionStillCacheAtom,
+  type ShownCaptionStills,
+  settledCaptionStills,
+} from "../../editor/captionStillUrls";
 import {
   type CaptionStillsState,
   rememberedPlayerFrame,
@@ -22,35 +27,27 @@ import {
 } from "../../editor/editStore";
 import { usePreparedConnection } from "../../state/session";
 
-interface LoadedStills {
-  readonly stills: CaptionStillsResult;
-  readonly urls: ReadonlyArray<string | null>;
-}
-
-/** The newest reply whose stills have all been fetched; the one before it until then. */
-function useLoadedStills(
+/**
+ * The reply's stills when they have all loaded (at once when they are cached), else the newest
+ * reply shown before. The cache lives in a per-project atom, so it is freed once unused.
+ */
+function useShownStills(
   projectRef: ScopedProjectRef,
   projectKey: string,
   state: CaptionStillsState,
-): LoadedStills | null {
+): ShownCaptionStills | null {
   const connection = usePreparedConnection(projectRef.environmentId);
   const httpBaseUrl = connection._tag === "Some" ? connection.value.httpBaseUrl : null;
+  const cache = useAtomValue(captionStillCacheAtom(projectKey));
+  const snapshot = useSyncExternalStore(cache.subscribe, cache.snapshot);
   const stills = state._tag === "ready" ? state.stills : null;
-  const [loaded, setLoaded] = useState<LoadedStills | null>(null);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- fetches the reply's stills from the asset route into object URLs; only the newest reply may land
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- fetches the reply's stills from the asset route into the cache's object URLs; only the newest reply lands
   useEffect(() => {
     if (stills === null || httpBaseUrl === null) return;
-    let current = true;
-    void loadCaptionStills(projectKey, stills, httpBaseUrl).then((urls) => {
-      if (!current) return;
-      setLoaded({ stills, urls });
-      forgetOtherCaptionStills(projectKey, stills);
-    });
-    return () => {
-      current = false;
-    };
-  }, [projectKey, stills, httpBaseUrl]);
-  return loaded;
+    void cache.load(stills, httpBaseUrl);
+  }, [cache, stills, httpBaseUrl]);
+  const settled = stills === null ? null : settledCaptionStills(snapshot, stills);
+  return stills !== null && settled !== null ? { stills, urls: settled } : snapshot.shown;
 }
 
 /** Shows the edit's captions; nothing while a clip or a saved version plays. */
@@ -60,7 +57,7 @@ export function CaptionOverlay(props: { readonly projectRef: ScopedProjectRef })
     selectPlayerSource(state.sourceByProjectKey, projectKey),
   );
   const state = useCaptionStills(props.projectRef);
-  const loaded = useLoadedStills(props.projectRef, projectKey, state);
+  const loaded = useShownStills(props.projectRef, projectKey, state);
   if (source.kind !== "edit" || state._tag === "none") return null;
   const updating = state.updating || loaded?.stills !== state.stills;
   return (

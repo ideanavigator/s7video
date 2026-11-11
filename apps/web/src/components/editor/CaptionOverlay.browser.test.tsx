@@ -262,6 +262,37 @@ describe("CaptionOverlay", () => {
     expect(overlay().src).not.toBe(oldSecond);
   });
 
+  it("S7V-079: a remount with every still cached shows them at once, with no note", async () => {
+    using _route = mockRoute();
+    {
+      await using _first = await mountPlayer(1080, 1920);
+      await loaded();
+    }
+    expect(route.requests).toHaveLength(2);
+    publishPlayerFrame(projectKey, 5);
+    // Records every note ever added, even one removed again before the render settles.
+    const container = document.createElement("div");
+    const notes: string[] = [];
+    const collect = (records: ReadonlyArray<MutationRecord>) => {
+      for (const record of records) {
+        for (const node of record.addedNodes) {
+          if (node instanceof HTMLElement && node.textContent?.includes("Updating captions")) {
+            notes.push(node.textContent);
+          }
+        }
+      }
+    };
+    const observer = new MutationObserver(collect);
+    observer.observe(container, { childList: true, subtree: true });
+    await using _again = await render(player(1080, 1920), { container, router: false });
+    collect(observer.takeRecords());
+    observer.disconnect();
+    expect(notes).toEqual([]);
+    expect(overlay().hidden).toBe(false);
+    expect(overlay().src).toMatch(/^blob:/);
+    expect(route.requests).toHaveLength(2);
+  });
+
   it("hides a chunk whose still can't be fetched", async () => {
     using _route = mockRoute();
     stills.state = {
