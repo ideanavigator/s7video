@@ -1,0 +1,67 @@
+{
+  "clip": "talking-head-01",
+  "totalFrames": 2994,
+  "sfxWord": ["I'm", 42],
+  "duckRanges": [
+    [2, 377],
+    [385, 580],
+    [589, 1374],
+    [1383, 1586],
+    [1594, 1682],
+    [1691, 1870],
+    [1879, 1988],
+    [2021, 2179],
+    [2187, 2263],
+    [2272, 2438],
+    [2462, 2817],
+    [2825, 2956],
+    [2965, 2988]
+  ],
+  "duck": {
+    "attackFrames": 4,
+    "releaseFrames": 10
+  },
+  "levels": {
+    "voice": -20.9,
+    "click": -24.6,
+    "bed": -30.9,
+    "clickGainDb": -5.3,
+    "bedGainDb": -8.0
+  },
+  "measuredLufs": -20.8,
+  "gainDb": 6.8,
+  "lufs": -14.3,
+  "truePeak": -1.2,
+  "sfxOnsetFrames": 0.002,
+  "music": {
+    "gap": [1988, 2021],
+    "gapDb": -38.03,
+    "speech": [589, 1374],
+    "speechDb": -50.04
+  },
+  "gainSteadiness": {
+    "windows": 2658,
+    "minDb": 6.8,
+    "maxDb": 6.8
+  },
+  "summary": {
+    "format": "mov,mp4,m4a,3gp,3g2,mj2",
+    "video_codec": "h264",
+    "width": 360,
+    "height": 640,
+    "pix_fmt": "yuv420p",
+    "fps": "24000/1001",
+    "video_frames": 2994,
+    "duration_frames": 2994,
+    "color_range": "tv",
+    "color_space": "bt709",
+    "color_transfer": "bt709",
+    "color_primaries": "bt709",
+    "video_start_s": 0.0,
+    "audio_codec": "aac",
+    "audio_rate": 48000,
+    "audio_channels": 2,
+    "audio_start_s": 0.0,
+    "audio_duration_s": 124.875
+  }
+}
