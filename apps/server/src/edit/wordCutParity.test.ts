@@ -89,9 +89,9 @@ type Span = readonly [number, number];
 function framesOf(document: EditDocument): Map<number, number> {
   const frames = new Map<number, number>();
   for (const item of document.tracks.find((track) => track.id === "V1")!.items) {
-    if (item.media !== "cam" || !("in" in item)) continue;
+    if (!("in" in item) || item.media !== "cam" || item.in === undefined) continue;
     for (let offset = 0; offset < item.duration; offset++) {
-      frames.set(item.start + offset, item.in! + offset);
+      frames.set(item.start + offset, item.in + offset);
     }
   }
   return frames;
