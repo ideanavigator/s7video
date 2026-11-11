@@ -523,6 +523,16 @@ additive edits:
 - `apps/web/src/assets/assetUrls.ts`: `useAssetUrlMinter` mints URLs on demand for code outside
   React (the timeline's media-tiles worker); `refresh` mints a new token for an expired URL.
 
+## Caption stills by key (S7V-079)
+
+The player's caption stills are served by the existing asset route, so one upstream file has a
+small, additive edit:
+
+- `assets/AssetAccess.ts`: a `caption-stills` claim names a project and a look folder, so one
+  signed token covers that folder's stills; `issueCaptionStillsUrl` mints it for `captions.stills`.
+  Serving it calls `export/captionStillFile.ts` (new code), which re-resolves the project and
+  refuses anything but the engine's own file names and any link on the way.
+
 ## Window focus (S7V-074)
 
 **This changes upstream window behaviour on macOS**, so an upstream merge that touches window
