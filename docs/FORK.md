@@ -530,8 +530,9 @@ small, additive edit:
 
 - `assets/AssetAccess.ts`: a `caption-stills` claim names a project and a look folder, so one
   signed token covers that folder's stills; `issueCaptionStillsUrl` mints it for `captions.stills`.
-  Serving it calls `export/captionStillFile.ts` (new code), which re-resolves the project and
-  refuses anything but the engine's own file names and any link on the way.
+  Serving it calls `export/captionStillFile.ts` (new code), which re-resolves the project,
+  refuses anything but the engine's own file names, and opens the still with `openMediaFile`, as
+  `project-media-exact` does, so the response streams the checked descriptor.
 
 ## Window focus (S7V-074)
 

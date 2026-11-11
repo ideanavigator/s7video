@@ -76,17 +76,21 @@ band; the same ASS through the same libass is pixel-equal before scaling.
   names are 38.6 KB (`CaptionStillsService.test.ts`). The reply carries one signed asset URL for
   the look's folder (a `caption-stills` claim, minted by the same read-scope RPC), and a still is
   that URL plus its file name: one token, not one per still. The route serves only a 32-hex-digit
-  `.png` in the project's own `.s7cache/captions/<look>/`, and only when its real path is the named
-  one, so a link anywhere on the way is a 404 (`captionStillFile.ts`). The call's timeout grows with
-  the number of words.
+  `.png` in the project's own `.s7cache/captions/<look>/`, opened by its real path with
+  `openMediaFile` and streamed from that descriptor, so a link anywhere on the way, or one swapped
+  in later, is never read (`captionStillFile.ts`). The call's timeout grows with the number of
+  words.
 - `<look>/<text>` hashes everything a still's pixels depend on, so the web keeps each still by that
-  key as an object URL (`captionStillUrls.ts`): a cut fetches only the stills it makes new. The
-  token changes with each reply, so the HTTP cache alone can't do this. A still that fails to load
-  hides its chunk and is asked for again with the next reply.
+  key as an object URL (`captionStillUrls.ts`): a cut fetches only the stills it makes new, and a
+  remount shows cached stills on its first frame. The token changes with each reply, so the HTTP
+  cache alone can't do this. The cache is a per-project atom with the reply query's 5-minute idle
+  time; its finalizer revokes every URL, so a closed project frees its stills. A still that fails
+  to load hides its chunk and is asked for again with the next reply.
 - The web refetches only when the stills could change (`captionStillsSignature`: the captions,
   canvas, rate and end; with no caption items also the cut and finished transcriptions), keeps
   the previous stills with an "Updating captions…" note until the new ones are drawn and fetched,
-  and swaps the `<img>` from the player's frame clock outside React. A muted caption track has no stills, as it exports nothing.
+  and swaps the `<img>` from the player's frame clock outside React. A muted caption track has no
+  stills, as it exports nothing.
 - Golden `caption-overlay-parity` composites each still on the uncaptioned export and compares it
   with the captioned export at 9:16, 1:1 and 16:9.
 
