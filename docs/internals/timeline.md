@@ -116,7 +116,7 @@ with the rules in `packages/shared/src/editWordCuts.ts`, which silence removal a
   the server never allocates.
 - **`restoreRange` keeps the layout** (PO 2026-11-06): each missing part joins the item that plays
   its source neighbour and pushes later items on that track right. It no longer re-lays in source
-  order; `setKeepRanges` still does.
+  order; `setKeepRanges` still does, so only first placement and in-order clips use it.
 - **Restore is the inverse of a cut** when the gaps were not cut before: toward a kept word the
   whole gap comes back. After a silence cut, restoring a word also brings back the pauses beside
   it; the tab says so, and Undo gives the exact earlier edit.
@@ -127,6 +127,20 @@ with the rules in `packages/shared/src/editWordCuts.ts`, which silence removal a
   play a struck word elsewhere, so Cut or Restore is chosen from the edit's items.
 - **One click still seeks.** Selecting needs a drag or shift-click (or shift + arrows). The
   selection is set by attribute outside React, like the highlight, so a drag re-renders nothing.
+
+## Silence removal keeps manual moves (S7V-078)
+
+- **In source order, end to end** (no manual move): silence removal still sends one
+  `setKeepRanges`, so the bytes are what they always were and the goldens did not change. Pieces it
+  re-cuts get fresh ids without props, as before, and other clips on the track do not move.
+- **Otherwise** (a move, a gap, a source played twice) it cuts each piece where it sits with
+  `cutRangesOps`, the many-range form of the text cut: split + one ripple delete, in one change.
+  Order and gaps stay, and later items on the track, other clips included, close up by the frames
+  removed. A piece keeps its id on its first part only when that part plays; one that starts in a
+  pause keeps its props on a `vt` part.
+- **The removed frames are worked out per piece**, because the plan sees the union of what plays: a
+  source played twice loses its pauses in both places, and the counts in the reply (seconds, cuts)
+  are what the timeline loses.
 
 ## Performance test
 

@@ -4,6 +4,7 @@ import type { EditDocument, EditRational } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  cutRangesOps,
   type FrameSpan,
   hasLinkedAudio,
   keptSpansOf,
@@ -278,6 +279,86 @@ describe("word edit ops", () => {
       { _tag: "splitItem", itemId: "v1", atFrame: 33, newItemId: "vt3" },
       { _tag: "deleteItem", itemIds: ["vt3"], ripple: true },
     ]);
+  });
+
+  it("cutRangesOps cuts many ranges in one item right to left (S7V-078)", () => {
+    // Moved out of order: the second half of the source plays first, then a 10-frame gap.
+    const document = documentOf([
+      [0, 50, 50],
+      [60, 50, 0],
+    ]);
+    expect(
+      cutRangesOps(document, "cam", [
+        [0, 5],
+        [20, 30],
+        [45, 55],
+        [90, 100],
+      ]),
+    ).toEqual([
+      // v1 plays 50-100: [50,55) at its start and [90,100) at its end.
+      { _tag: "splitItem", itemId: "v1", atFrame: 40, newItemId: "vt1" },
+      { _tag: "splitItem", itemId: "v1", atFrame: 5, newItemId: "vt2" },
+      // v2 plays 0-50, cut right to left: [45,50), [20,30), then [0,5) at its start.
+      { _tag: "splitItem", itemId: "v2", atFrame: 105, newItemId: "vt3" },
+      { _tag: "splitItem", itemId: "v2", atFrame: 90, newItemId: "vt4" },
+      { _tag: "splitItem", itemId: "v2", atFrame: 80, newItemId: "vt5" },
+      { _tag: "splitItem", itemId: "v2", atFrame: 65, newItemId: "vt6" },
+      { _tag: "deleteItem", itemIds: ["vt1", "v1", "vt3", "vt5", "v2"], ripple: true },
+    ]);
+  });
+
+  it("cutRangesOps joins touching ranges and only cuts the named track", () => {
+    const document = documentOf(
+      [[0, 100, 0]],
+      [
+        {
+          kind: "video",
+          id: "V2",
+          items: [{ id: "w1", media: "cam", start: 0, duration: 100, in: 0 }],
+        },
+      ],
+    );
+    expect(
+      cutRangesOps(
+        document,
+        "cam",
+        [
+          [40, 50],
+          [50, 60],
+        ],
+        "V1",
+      ),
+    ).toEqual([
+      { _tag: "splitItem", itemId: "v1", atFrame: 60, newItemId: "vt1" },
+      { _tag: "splitItem", itemId: "v1", atFrame: 40, newItemId: "vt2" },
+      { _tag: "deleteItem", itemIds: ["vt2"], ripple: true },
+    ]);
+    expect(cutRangesOps(document, "cam", [], "V1")).toEqual([]);
+  });
+
+  it("wordCutOps equals cutRangesOps with one range", () => {
+    const documents = [
+      documentOf([[0, 100, 0]]),
+      documentOf([
+        [0, 50, 0],
+        [70, 50, 50],
+      ]),
+      documentOf([
+        [0, 40, 60],
+        [50, 60, 0],
+      ]),
+    ];
+    for (const document of documents) {
+      for (const range of [
+        [0, 10],
+        [33, 57],
+        [45, 100],
+        [0, 100],
+        [60, 60],
+      ] as const) {
+        expect(wordCutOps(document, "cam", range)).toEqual(cutRangesOps(document, "cam", [range]));
+      }
+    }
   });
 
   it("should turn restore into restoreRange", () => {

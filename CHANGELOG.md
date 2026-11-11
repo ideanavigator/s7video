@@ -128,6 +128,8 @@ from; the per-ticket entries and how this file is compiled are in
 
 - The files that hold your edit and its history can change only through the Editor or the
   assistant. Saving them from the file view shows a plain message instead. (S7V-077)
+- If you rearranged parts of a clip on the timeline, removing silences now keeps your order and
+  gaps instead of putting the parts back in their original order. (S7V-078)
 - No change for users: a first message with an attachment was reported as showing its text twice,
   but the doubling came from a test script, not the app. (S7V-062)
 - While you look at an older version, the timeline only lets you look: a drag, trim, split or
