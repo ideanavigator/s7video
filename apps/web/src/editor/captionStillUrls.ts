@@ -5,9 +5,8 @@
  * from the asset route once per key and stay here as object URLs, so a cut fetches only the stills
  * it makes new. The URL's token changes with every reply, so the HTTP cache can't do this.
  */
+import { resolveAssetUrl } from "@t3tools/client-runtime/state/assets";
 import type { CaptionStillsResult } from "@t3tools/contracts";
-
-import { resolveAssetUrl } from "../assets/assetUrls";
 
 /** Per project, each still's key (`folder/name`) and its object URL, or null if it failed. */
 const loadedByProject = new Map<string, Map<string, Promise<string | null>>>();
