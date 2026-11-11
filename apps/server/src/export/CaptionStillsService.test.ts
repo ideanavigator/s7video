@@ -8,7 +8,12 @@
  */
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
-import type { EditOp, ProjectId, Transcript } from "@t3tools/contracts";
+import {
+  CaptionStillsResult,
+  type EditOp,
+  type ProjectId,
+  type Transcript,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -41,9 +46,14 @@ interface RenderParams {
 interface Calls {
   readonly renders: Array<RenderParams>;
   drawn: number;
+  /** The bytes of a new still; a short marker by default. */
+  stillBytes?: (text: string) => Uint8Array;
 }
 
 const sha = (text: string) => NodeCrypto.createHash("sha256").update(text).digest("hex");
+/** Named as the engine names them: 32 hex digits for the look, and for each text. */
+const LOOK = sha("look").slice(0, 32);
+const stillName = (text: string) => `${sha(text).slice(0, 32)}.png`;
 
 /** Answers `captions.render` as the engine does: the track's chunks, else the transcripts'. */
 const fakeEngine = (calls: Calls) =>
@@ -71,23 +81,23 @@ const fakeEngine = (calls: Calls) =>
                 text: word.text,
               })),
             );
-        const folder = NodePath.join(input.cacheDir, "look");
+        const folder = NodePath.join(input.cacheDir, LOOK);
         NodeFS.mkdirSync(folder, { recursive: true });
         for (const text of new Set(chunks.map((chunk) => chunk.text))) {
-          const file = NodePath.join(folder, `${sha(text).slice(0, 8)}.png`);
+          const file = NodePath.join(folder, stillName(text));
           if (NodeFS.existsSync(file)) continue;
-          NodeFS.writeFileSync(file, `png:${text}`);
+          NodeFS.writeFileSync(file, calls.stillBytes?.(text) ?? `png:${text}`);
           calls.drawn += 1;
         }
         return yield* Schema.decodeEffect(success)({
           width: 1080,
           height: 1920,
-          folder: "look",
+          folder: LOOK,
           drawn: 0,
           chunks: chunks.map((chunk) => ({
             start: chunk.start,
             end: chunk.end,
-            png: `${sha(chunk.text).slice(0, 8)}.png`,
+            png: stillName(chunk.text),
           })),
         }).pipe(Effect.orDie);
       }),
@@ -160,6 +170,32 @@ const captions = (texts: ReadonlyArray<string>, metadata?: { s7: { media: string
   })),
 });
 
+/** S7V-075's measured 10-minute talk: 534 chunks over 452 texts, about 21 KB per PNG still. */
+const TEN_MINUTES = 10 * 60 * 30;
+const LONG_CHUNKS = 534;
+const LONG_TEXTS = 452;
+const longEdit: ReadonlyArray<EditOp> = [
+  { _tag: "putMedia", media: { ...media, probe: { ...media.probe, durationFrames: TEN_MINUTES } } },
+  {
+    _tag: "addTrack",
+    track: {
+      kind: "video",
+      id: "V1",
+      items: [{ id: "v1", media: "cam", start: 0, duration: TEN_MINUTES, in: 0 }],
+    },
+  },
+  captionTrack,
+  {
+    _tag: "setCaptions",
+    trackId: "C1",
+    captions: Array.from({ length: LONG_CHUNKS }, (_, index) => ({
+      start: index * 33,
+      duration: 30,
+      text: `spoken words number ${index % LONG_TEXTS}`,
+    })),
+  },
+];
+
 const withStills = <A, E>(
   body: (input: {
     readonly projectId: ProjectId;
@@ -205,6 +241,10 @@ const apply = (
         edits.apply(projectId, ops, { origin: "agent", baseRevision: snapshot.revision }),
       ),
     );
+
+const encodeReply = Schema.encodeSync(CaptionStillsResult);
+const replyBytes = (result: CaptionStillsResult) =>
+  Buffer.byteLength(JSON.stringify(encodeReply(result)));
 
 const decoded = (stills: ReadonlyArray<string>) =>
   stills.map((still) => Buffer.from(still, "base64").toString());
@@ -292,6 +332,24 @@ describe("CaptionStillsService (S7V-075)", () => {
         ]);
         assert.deepStrictEqual((yield* stills.stills(projectId)).stills, []);
         assert.strictEqual(calls.renders.length, 0);
+      }),
+    ),
+  );
+
+  it.effect("S7V-079: the reply for a 10-minute edit stays under 200 KB", () =>
+    withStills(({ projectId, root, calls, edits, stills }) =>
+      Effect.gen(function* () {
+        writeClip(root, false);
+        calls.stillBytes = () => NodeCrypto.randomBytes(21_000);
+        yield* apply(edits, projectId, longEdit);
+        const result = yield* stills.stills(projectId);
+        assert.strictEqual(result.chunks.length, LONG_CHUNKS);
+        assert.strictEqual(calls.drawn, LONG_TEXTS);
+        const bytes = replyBytes(result);
+        console.info(
+          `captions.stills for 10 minutes: ${LONG_CHUNKS} chunks, ${LONG_TEXTS} stills, ${(bytes / 1000).toFixed(1)} KB`,
+        );
+        assert.isBelow(bytes, 200_000);
       }),
     ),
   );
