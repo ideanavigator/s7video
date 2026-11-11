@@ -71,6 +71,7 @@ import { extractIcnsPng } from "./icns.ts";
 import { openMediaFile, readMediaFileHeader, type OpenMediaFile } from "./MediaFile.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as MediaLibraryService from "../media/MediaLibraryService.ts";
+import { resolveCaptionStill } from "../export/captionStillFile.ts";
 
 export const ASSET_ROUTE_PREFIX = "/api/assets";
 
@@ -184,6 +185,14 @@ const AssetClaimsSchema = Schema.Union([
     threadId: ThreadId,
     itemId: TurnItemId,
     index: Schema.Number,
+    expiresAt: Schema.Number,
+  }),
+  // A project's caption stills of one look (S7V-079): one token for the whole set.
+  Schema.Struct({
+    version: Schema.Literal(1),
+    kind: Schema.Literal("caption-stills"),
+    projectId: ProjectId,
+    folder: Schema.String,
     expiresAt: Schema.Number,
   }),
   Schema.Struct({
@@ -941,6 +950,27 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
   };
 });
 
+/**
+ * The URL prefix of a project's caption stills of one look (S7V-079): a still is this plus its
+ * file name. Minted by `captions.stills`, which needs the same read scope as a `project-media` URL.
+ */
+export const issueCaptionStillsUrl = Effect.fn("AssetAccess.issueCaptionStillsUrl")(function* (
+  projectId: ProjectId,
+  folder: string,
+) {
+  const secretStore = yield* ServerSecretStore.ServerSecretStore;
+  const signingSecret = yield* secretStore.getOrCreateRandom(SIGNING_SECRET_NAME, 32);
+  const claims: AssetClaims = {
+    version: 1,
+    kind: "caption-stills",
+    projectId,
+    folder,
+    expiresAt: (yield* Clock.currentTimeMillis) + ASSET_TOKEN_TTL_MS,
+  };
+  const encodedPayload = base64UrlEncode(encodeAssetClaims(claims));
+  return `${ASSET_ROUTE_PREFIX}/${encodedPayload}.${signPayload(encodedPayload, signingSecret)}/`;
+});
+
 export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
   token: string,
   relativePath: string,
@@ -1044,6 +1074,12 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
 
   const decodedPath = decodeRelativePath(relativePath);
   if (decodedPath === null) return null;
+  if (claims.kind === "caption-stills") {
+    const still = yield* resolveCaptionStill(claims.projectId, claims.folder, decodedPath);
+    return still
+      ? ({ kind: "file", path: still, mimeType: "image/png" } satisfies ResolvedAsset)
+      : null;
+  }
   const path = yield* Path.Path;
   if (claims.kind === "media-file-exact") {
     if (decodedPath !== path.basename(claims.filePath)) return null;

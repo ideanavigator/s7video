@@ -22,6 +22,7 @@ import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
+import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as EditDocumentService from "../edit/EditDocumentService.ts";
 import { layerEditTest } from "../edit/editHarness.testkit.ts";
 import * as EngineService from "../engine/EngineService.ts";
@@ -223,6 +224,7 @@ const withStills = <A, E>(
       Effect.provide(
         CaptionStillsService.layer.pipe(
           Layer.provide(fakeEngine(calls)),
+          Layer.provide(ServerSecretStore.layer),
           Layer.provideMerge(layerEditTest(baseDir)),
         ),
       ),
@@ -246,8 +248,11 @@ const encodeReply = Schema.encodeSync(CaptionStillsResult);
 const replyBytes = (result: CaptionStillsResult) =>
   Buffer.byteLength(JSON.stringify(encodeReply(result)));
 
-const decoded = (stills: ReadonlyArray<string>) =>
-  stills.map((still) => Buffer.from(still, "base64").toString());
+/** The stills the reply names, read where the asset route serves them from. */
+const decoded = (root: string, result: CaptionStillsResult) =>
+  result.stills.map((name) =>
+    NodeFS.readFileSync(NodePath.join(root, ".s7cache", "captions", result.folder, name), "utf8"),
+  );
 
 describe("CaptionStillsService (S7V-075)", () => {
   it.effect("serves the track's stills, one per text, and serves undo without drawing", () =>
@@ -265,7 +270,10 @@ describe("CaptionStillsService (S7V-075)", () => {
           { start: 20, end: 35, still: 1 },
           { start: 40, end: 55, still: 0 },
         ]);
-        assert.deepStrictEqual(decoded(first.stills), ["png:hello there", "png:again"]);
+        assert.deepStrictEqual(decoded(root, first), ["png:hello there", "png:again"]);
+        // S7V-079: the reply names the stills, and one signed URL serves the look's folder.
+        assert.strictEqual(first.folder, LOOK);
+        assert.match(first.stillsUrl, /^\/api\/assets\/[\w-]+\.[\w-]+\/$/);
         assert.deepStrictEqual(first.missing, []);
         // A track with items never sends the transcripts.
         assert.isUndefined(calls.renders[0]!.transcripts);
@@ -289,7 +297,7 @@ describe("CaptionStillsService (S7V-075)", () => {
         writeClip(root, true);
         yield* apply(edits, projectId, video);
         const fallback = yield* stills.stills(projectId);
-        assert.deepStrictEqual(decoded(fallback.stills), ["png:hello", "png:there"]);
+        assert.deepStrictEqual(decoded(root, fallback), ["png:hello", "png:there"]);
         assert.deepStrictEqual(
           calls.renders[0]!.transcripts?.map((entry) => entry.media),
           ["cam"],
@@ -312,7 +320,7 @@ describe("CaptionStillsService (S7V-075)", () => {
         ]);
         const result = yield* stills.stills(projectId);
         assert.deepStrictEqual(result.missing, ["cam.mp4"]);
-        assert.deepStrictEqual(decoded(result.stills), ["png:kept words"]);
+        assert.deepStrictEqual(decoded(root, result), ["png:kept words"]);
         assert.strictEqual(calls.renders.length, 1);
       }),
     ),
@@ -336,7 +344,7 @@ describe("CaptionStillsService (S7V-075)", () => {
     ),
   );
 
-  it.effect("S7V-079: the reply for a 10-minute edit stays under 200 KB", () =>
+  it.effect("S7V-079: the reply for a 10-minute edit stays under 200 KB", (context) =>
     withStills(({ projectId, root, calls, edits, stills }) =>
       Effect.gen(function* () {
         writeClip(root, false);
@@ -346,8 +354,11 @@ describe("CaptionStillsService (S7V-075)", () => {
         assert.strictEqual(result.chunks.length, LONG_CHUNKS);
         assert.strictEqual(calls.drawn, LONG_TEXTS);
         const bytes = replyBytes(result);
-        console.info(
-          `captions.stills for 10 minutes: ${LONG_CHUNKS} chunks, ${LONG_TEXTS} stills, ${(bytes / 1000).toFixed(1)} KB`,
+        // Shown in the test report: the size S7V-079's AC-1 records.
+        yield* Effect.promise(() =>
+          context.annotate(
+            `captions.stills for 10 minutes: ${LONG_CHUNKS} chunks, ${LONG_TEXTS} stills, ${(bytes / 1000).toFixed(1)} KB`,
+          ),
         );
         assert.isBelow(bytes, 200_000);
       }),

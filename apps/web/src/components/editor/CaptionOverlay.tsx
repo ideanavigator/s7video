@@ -3,19 +3,55 @@
 /**
  * Captions over the player (S7V-075): stills drawn by the export's own renderer (libass), one per
  * caption chunk, shown at the frame the export shows them. The still is swapped from the player's
- * frame clock outside React. While new stills are drawn the old ones stay, with a small note. The
- * image URLs are built once per reply (the React Compiler memoizes them on `stills.stills`).
+ * frame clock outside React. The stills are fetched by key (S7V-079): while new ones are drawn or
+ * fetched, the old ones stay, with a small note.
  */
 import { scopedProjectKey } from "@t3tools/client-runtime/environment";
 import type { CaptionStillsResult, ScopedProjectRef } from "@t3tools/contracts";
+import { useEffect, useState } from "react";
+
 import { stillAt } from "../../editor/captionStills";
+import { forgetOtherCaptionStills, loadCaptionStills } from "../../editor/captionStillUrls";
 import {
+  type CaptionStillsState,
   rememberedPlayerFrame,
   selectPlayerSource,
   subscribePlayerFrame,
   useCaptionStills,
   useEditPlayerStore,
 } from "../../editor/editStore";
+import { usePreparedConnection } from "../../state/session";
+
+interface LoadedStills {
+  readonly stills: CaptionStillsResult;
+  readonly urls: ReadonlyArray<string | null>;
+}
+
+/** The newest reply whose stills have all been fetched; the one before it until then. */
+function useLoadedStills(
+  projectRef: ScopedProjectRef,
+  projectKey: string,
+  state: CaptionStillsState,
+): LoadedStills | null {
+  const connection = usePreparedConnection(projectRef.environmentId);
+  const httpBaseUrl = connection._tag === "Some" ? connection.value.httpBaseUrl : null;
+  const stills = state._tag === "ready" ? state.stills : null;
+  const [loaded, setLoaded] = useState<LoadedStills | null>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- fetches the reply's stills from the asset route into object URLs; only the newest reply may land
+  useEffect(() => {
+    if (stills === null || httpBaseUrl === null) return;
+    let current = true;
+    void loadCaptionStills(projectKey, stills, httpBaseUrl).then((urls) => {
+      if (!current) return;
+      setLoaded({ stills, urls });
+      forgetOtherCaptionStills(projectKey, stills);
+    });
+    return () => {
+      current = false;
+    };
+  }, [projectKey, stills, httpBaseUrl]);
+  return loaded;
+}
 
 /** Shows the edit's captions; nothing while a clip or a saved version plays. */
 export function CaptionOverlay(props: { readonly projectRef: ScopedProjectRef }) {
@@ -24,15 +60,22 @@ export function CaptionOverlay(props: { readonly projectRef: ScopedProjectRef })
     selectPlayerSource(state.sourceByProjectKey, projectKey),
   );
   const state = useCaptionStills(props.projectRef);
+  const loaded = useLoadedStills(props.projectRef, projectKey, state);
   if (source.kind !== "edit" || state._tag === "none") return null;
+  const updating = state.updating || loaded?.stills !== state.stills;
   return (
     <>
-      {state.stills.chunks.length === 0 ? null : (
-        <CaptionStill key={state.stills.key} projectKey={projectKey} stills={state.stills} />
+      {loaded === null || loaded.stills.chunks.length === 0 ? null : (
+        <CaptionStill
+          key={loaded.stills.key}
+          projectKey={projectKey}
+          chunks={loaded.stills.chunks}
+          urls={loaded.urls}
+        />
       )}
-      {state.updating || state.stills.missing.length > 0 ? (
+      {updating || state.stills.missing.length > 0 ? (
         <div className="absolute top-2 left-2 flex max-w-[90%] flex-col items-start gap-1 text-xs text-white">
-          {state.updating ? (
+          {updating ? (
             <span role="status" className="rounded bg-black/60 px-2 py-0.5">
               Updating captions…
             </span>
@@ -52,23 +95,24 @@ export function CaptionOverlay(props: { readonly projectRef: ScopedProjectRef })
 
 function CaptionStill(props: {
   readonly projectKey: string;
-  readonly stills: CaptionStillsResult;
+  readonly chunks: CaptionStillsResult["chunks"];
+  readonly urls: ReadonlyArray<string | null>;
 }) {
-  const { projectKey, stills } = props;
-  const urls = stills.stills.map((still) => `data:image/png;base64,${still}`);
+  const { projectKey, chunks, urls } = props;
 
   const attach = (image: HTMLImageElement) => {
     // Swapped only when the chunk changes: a new `src` decodes the still again.
     let shown = -2;
     const show = (frame: number) => {
-      const still = stillAt(stills.chunks, frame);
+      const still = stillAt(chunks, frame);
       if (still === shown) return;
       shown = still;
-      if (still === -1) {
+      const url = still === -1 ? null : urls[still];
+      if (url === null || url === undefined) {
         image.hidden = true;
         return;
       }
-      image.src = urls[still]!;
+      image.src = url;
       image.hidden = false;
     };
     show(rememberedPlayerFrame(projectKey));
