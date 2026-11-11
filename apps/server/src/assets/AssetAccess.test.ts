@@ -5,6 +5,7 @@ import * as NodeFSP from "node:fs/promises";
 import {
   AssetAccessError,
   AssetPreviewTypeValidationError,
+  type Project,
   ProjectId,
   SOURCE_CONTROL_MEDIA_ASSET,
   ThreadId,
@@ -32,9 +33,16 @@ import * as ProjectFaviconResolver from "../project/ProjectFaviconResolver.ts";
 import * as T3ProjectFileLoader from "../project/T3ProjectFileLoader.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import { assetFileResponse } from "../http.ts";
-import { ASSET_ROUTE_PREFIX, issueAssetUrl, readMcpAppHtml, resolveAsset } from "./AssetAccess.ts";
+import {
+  ASSET_ROUTE_PREFIX,
+  issueAssetUrl,
+  issueCaptionStillsUrl,
+  readMcpAppHtml,
+  resolveAsset,
+} from "./AssetAccess.ts";
 import * as NativeAppIconResolver from "./NativeAppIconResolver.ts";
 import * as MediaLibraryService from "../media/MediaLibraryService.ts";
+import * as ProjectService from "../project/ProjectService.ts";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
@@ -100,8 +108,20 @@ const oversizedScreenshotItem = {
 /** What each project's edit.json records, as `${projectId}/${mediaId}/${variant}[/${part}]` → file. */
 const recordedProjectMedia = new Map<string, string>();
 
+/** Each live project's workspace root, for the caption-stills tokens (S7V-079). */
+const projectRoots = new Map<string, string>();
+
 const layerTest = Layer.mergeAll(
   NodeHttpPlatform.layer,
+  Layer.mock(ProjectService.ProjectService)({
+    getById: (projectId) =>
+      Effect.sync(() => {
+        const workspaceRoot = projectRoots.get(projectId);
+        return workspaceRoot === undefined
+          ? Option.none()
+          : Option.some({ id: projectId, workspaceRoot } as unknown as Project);
+      }),
+  }),
   Layer.mock(MediaLibraryService.MediaLibraryService)({
     resolveVariant: (projectId, mediaId, variant, part) =>
       Effect.sync(() => {
@@ -1584,4 +1604,188 @@ describe("AssetAccess", () => {
       }
     }).pipe(Effect.provide(layerTest)),
   );
+
+  describe("caption stills (S7V-079)", () => {
+    const look = "0123456789abcdef0123456789abcdef";
+    const still = `${"a".repeat(32)}.png`;
+    const projectA = ProjectId.make("project-a");
+    const projectB = ProjectId.make("project-b");
+
+    /** Two projects, each with one still of `look`, and the token `captions.stills` gives A. */
+    const setUp = Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const base = yield* fs.realPath(yield* fs.makeTempDirectoryScoped({ prefix: "s7v-stills-" }));
+      const rootOf = (name: string) => path.join(base, name);
+      const lookOf = (name: string) => path.join(rootOf(name), ".s7cache", "captions", look);
+      for (const name of ["a", "b"]) {
+        yield* fs.makeDirectory(lookOf(name), { recursive: true });
+        yield* fs.writeFileString(path.join(lookOf(name), still), `png of ${name}`);
+      }
+      yield* fs.writeFileString(path.join(rootOf("a"), "edit.json"), "{}");
+      yield* fs.makeDirectory(path.join(base, "outside"));
+      yield* fs.writeFileString(path.join(base, "outside", `${"c".repeat(32)}.png`), "secret");
+      projectRoots.clear();
+      projectRoots.set(projectA, rootOf("a"));
+      projectRoots.set(projectB, rootOf("b"));
+      const url = yield* issueCaptionStillsUrl(projectA, look);
+      const token = url.slice(`${ASSET_ROUTE_PREFIX}/`.length, -1);
+      return { fs, path, base, rootOf, lookOf, url, token };
+    });
+
+    it.effect("serves a project's still by name, as a PNG", () =>
+      Effect.gen(function* () {
+        const { lookOf, path, url, token } = yield* setUp;
+        expect(url.startsWith(`${ASSET_ROUTE_PREFIX}/`) && url.endsWith("/")).toBe(true);
+        const asset = yield* resolveAsset(token, still);
+        expect(asset).toMatchObject({
+          kind: "file",
+          path: path.join(lookOf("a"), still),
+          mimeType: "image/png",
+        });
+        if (asset?.kind !== "file") throw new Error("Expected a file asset");
+        const response = HttpServerResponse.toWeb(yield* assetFileResponse(asset));
+        expect(response.status).toBe(200);
+        expect(response.headers.get("content-type")).toBe("image/png");
+        expect(yield* Effect.promise(() => response.text())).toBe("png of a");
+      }).pipe(Effect.provide(layerTest)),
+    );
+
+    it.effect.skipIf(!symlinksSupported)(
+      "serves the checked descriptor when a link is swapped in, before or after the open",
+      () =>
+        Effect.gen(function* () {
+          const { fs, path, base, rootOf, lookOf, token } = yield* setUp;
+          const secret = path.join(base, "outside", `${"c".repeat(32)}.png`);
+          const stillPath = path.join(lookOf("a"), still);
+          const swap = Effect.gen(function* () {
+            yield* fs.remove(stillPath);
+            yield* fs.symlink(secret, stillPath);
+          });
+          // After the open: the response still streams the file that was checked.
+          const asset = yield* resolveAsset(token, still);
+          if (asset?.kind !== "file") throw new Error("Expected a file asset");
+          yield* swap;
+          const response = HttpServerResponse.toWeb(yield* assetFileResponse(asset));
+          expect(yield* Effect.promise(() => response.text())).toBe("png of a");
+          // Between the project's checks and the open: the link is refused.
+          yield* fs.remove(stillPath);
+          yield* fs.writeFileString(stillPath, "png of a");
+          const root = rootOf("a");
+          const swapping = FileSystem.FileSystem.of({
+            ...fs,
+            realPath: Effect.fn(function* (requestedPath) {
+              const real = yield* fs.realPath(requestedPath);
+              if (requestedPath === root) yield* swap;
+              return real;
+            }),
+          });
+          expect(
+            yield* resolveAsset(token, still).pipe(
+              Effect.provideService(FileSystem.FileSystem, swapping),
+            ),
+          ).toBeNull();
+        }).pipe(Effect.provide(layerTest)),
+    );
+
+    it.effect("refuses traversal, absolute and encoded paths, and unknown keys", () =>
+      Effect.gen(function* () {
+        const { base, token } = yield* setUp;
+        for (const relativePath of [
+          `${"b".repeat(32)}.png`,
+          "../../../../edit.json",
+          "..%2F..%2F..%2F..%2Fedit.json",
+          "%2e%2e%2f%2e%2e%2f%2e%2e%2f%2e%2e%2fedit.json",
+          "%252e%252e%252fedit.json",
+          `../${look}/${still}`,
+          `${look}/${still}`,
+          `${base}/outside/${"c".repeat(32)}.png`,
+          encodeURIComponent(`${base}/outside/${"c".repeat(32)}.png`),
+          `${still}%00.png`,
+          still.toUpperCase(),
+          "%E0%A4%A",
+          "",
+        ]) {
+          expect(yield* resolveAsset(token, relativePath), relativePath).toBeNull();
+        }
+      }).pipe(Effect.provide(layerTest)),
+    );
+
+    it.effect("refuses another project's cache, a forged token, a removed project and age", () =>
+      Effect.gen(function* () {
+        const { fs, path, lookOf, token } = yield* setUp;
+        // B's still has a name A's folder lacks: A's token never looks in B.
+        const onlyInB = `${"d".repeat(32)}.png`;
+        yield* fs.writeFileString(path.join(lookOf("b"), onlyInB), "png of b");
+        expect(yield* resolveAsset(token, onlyInB)).toBeNull();
+        // Claims rewritten to project B without the key don't verify.
+        const [payload, signature] = token.split(".");
+        const claims = JSON.parse(Buffer.from(payload!, "base64url").toString("utf8"));
+        const forged = Buffer.from(JSON.stringify({ ...claims, projectId: projectB })).toString(
+          "base64url",
+        );
+        expect(yield* resolveAsset(`${forged}.${signature}`, still)).toBeNull();
+        // A look the engine can't have named is refused even when signed.
+        const badLook = yield* issueCaptionStillsUrl(projectA, "../../..");
+        const badToken = badLook.slice(`${ASSET_ROUTE_PREFIX}/`.length, -1);
+        expect(yield* resolveAsset(badToken, "edit.json")).toBeNull();
+        expect(yield* resolveAsset(badToken, still)).toBeNull();
+        yield* TestClock.adjust("61 minutes");
+        expect(yield* resolveAsset(token, still)).toBeNull();
+        const fresh = yield* issueCaptionStillsUrl(projectA, look);
+        projectRoots.delete(projectA);
+        expect(
+          yield* resolveAsset(fresh.slice(`${ASSET_ROUTE_PREFIX}/`.length, -1), still),
+        ).toBeNull();
+      }).pipe(Effect.provide(layerTest)),
+    );
+
+    it.effect.skipIf(!symlinksSupported)("refuses a link anywhere out of .s7cache/captions", () =>
+      Effect.gen(function* () {
+        const { fs, path, base, rootOf, lookOf, token } = yield* setUp;
+        const outside = path.join(base, "outside");
+        // The still itself links out.
+        const linked = `${"e".repeat(32)}.png`;
+        yield* fs.symlink(
+          path.join(outside, `${"c".repeat(32)}.png`),
+          path.join(lookOf("a"), linked),
+        );
+        expect(yield* resolveAsset(token, linked)).toBeNull();
+        // The still links to another file inside the same folder.
+        const sibling = `${"f".repeat(32)}.png`;
+        yield* fs.symlink(path.join(lookOf("a"), still), path.join(lookOf("a"), sibling));
+        expect(yield* resolveAsset(token, sibling)).toBeNull();
+        // The look folder links out.
+        const linkedLook = "1".repeat(32);
+        yield* fs.symlink(outside, path.join(rootOf("a"), ".s7cache", "captions", linkedLook));
+        const lookToken = (yield* issueCaptionStillsUrl(projectA, linkedLook)).slice(
+          `${ASSET_ROUTE_PREFIX}/`.length,
+          -1,
+        );
+        expect(yield* resolveAsset(lookToken, `${"c".repeat(32)}.png`)).toBeNull();
+        // The captions folder itself links out, to a folder laid out like a cache.
+        const captions = path.join(rootOf("a"), ".s7cache", "captions");
+        const outsideCaptions = path.join(base, "outside-captions");
+        yield* fs.makeDirectory(path.join(outsideCaptions, look), { recursive: true });
+        yield* fs.writeFileString(path.join(outsideCaptions, look, still), "outside");
+        yield* fs.remove(captions, { recursive: true });
+        yield* fs.symlink(outsideCaptions, captions);
+        expect(yield* resolveAsset(token, still)).toBeNull();
+        // The whole cache links to another project's.
+        yield* fs.remove(path.join(rootOf("a"), ".s7cache"), { recursive: true });
+        yield* fs.symlink(path.join(rootOf("b"), ".s7cache"), path.join(rootOf("a"), ".s7cache"));
+        expect(yield* resolveAsset(token, still)).toBeNull();
+      }).pipe(Effect.provide(layerTest)),
+    );
+
+    it.effect.skipIf(!symlinksSupported)("serves a project whose folder is reached by a link", () =>
+      Effect.gen(function* () {
+        const { fs, path, base, rootOf, token } = yield* setUp;
+        const alias = path.join(base, "alias");
+        yield* fs.symlink(rootOf("a"), alias);
+        projectRoots.set(projectA, alias);
+        expect(yield* resolveAsset(token, still)).not.toBeNull();
+      }).pipe(Effect.provide(layerTest)),
+    );
+  });
 });

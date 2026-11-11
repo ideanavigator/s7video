@@ -485,10 +485,10 @@ export const CaptionsRenderResult = Schema.Struct({
 export type CaptionsRenderResult = typeof CaptionsRenderResult.Type;
 
 /**
- * `captions.stills`: the captions the export burns in (the caption items, or the transcripts when
- * there are none), in timeline frames (`end` exclusive), each naming one of `stills`, a PNG of the
- * whole canvas drawn by the export's own renderer, base64. `missing` names the clips with sound
- * whose transcript can't be read, so their captions can't follow the edit.
+ * `captions.stills`: the export's captions in timeline frames (`end` exclusive), each naming one
+ * of `stills`, a whole-canvas PNG fetched from `stillsUrl` + its name (S7V-079). `folder/name`
+ * hashes all its pixels depend on, so it is a cache key for good. `missing` names the clips with
+ * sound whose transcript can't be read, so their captions can't follow the edit.
  */
 export const CaptionStillsResult = Schema.Struct({
   key: Schema.String,
@@ -497,6 +497,8 @@ export const CaptionStillsResult = Schema.Struct({
   chunks: Schema.Array(
     Schema.Struct({ start: NonNegativeInt, end: NonNegativeInt, still: NonNegativeInt }),
   ),
+  folder: Schema.String,
+  stillsUrl: Schema.String,
   stills: Schema.Array(Schema.String),
   missing: Schema.Array(Schema.String),
 });

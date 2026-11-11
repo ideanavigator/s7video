@@ -222,7 +222,7 @@ def test_fallback_stills_equal_the_stills_of_an_added_track(tmp_path: Path) -> N
 
 @pytest.mark.usefixtures("tools")
 def test_reply_size_for_a_ten_minute_edit(tmp_path: Path) -> None:
-    """Records the stills' size for 10 minutes of talk, as `captions.stills` sends them (base64)."""
+    """Records the stills' size for 10 minutes of talk in base64, as `captions.stills` sent them before S7V-079."""
     rate = Fraction(30)
     source = tmp_path / "cam.mp4"
     source.write_bytes(b"")

@@ -112,6 +112,9 @@ from; the per-ticket entries and how this file is compiled are in
 - Video projects open with the Editor beside the chat. Its first list shows your versions, newest
   marked Main, and you can make any older one main again. Drop a video anywhere on the Editor to
   add it. The Editor stays open after the assistant edits. (S7V-076)
+- Captions in the player update faster on long videos: after a cut, the player fetches only the
+  caption pictures the cut makes new and reuses the rest, instead of getting all of them again.
+  (S7V-079)
 
 ### Removed
 

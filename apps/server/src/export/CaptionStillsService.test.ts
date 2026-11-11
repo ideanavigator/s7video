@@ -8,7 +8,12 @@
  */
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
-import type { EditOp, ProjectId, Transcript } from "@t3tools/contracts";
+import {
+  CaptionStillsResult,
+  type EditOp,
+  type ProjectId,
+  type Transcript,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -17,6 +22,7 @@ import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
+import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as EditDocumentService from "../edit/EditDocumentService.ts";
 import { layerEditTest } from "../edit/editHarness.testkit.ts";
 import * as EngineService from "../engine/EngineService.ts";
@@ -41,9 +47,14 @@ interface RenderParams {
 interface Calls {
   readonly renders: Array<RenderParams>;
   drawn: number;
+  /** The bytes of a new still; a short marker by default. */
+  stillBytes?: (text: string) => Uint8Array;
 }
 
 const sha = (text: string) => NodeCrypto.createHash("sha256").update(text).digest("hex");
+/** Named as the engine names them: 32 hex digits for the look, and for each text. */
+const LOOK = sha("look").slice(0, 32);
+const stillName = (text: string) => `${sha(text).slice(0, 32)}.png`;
 
 /** Answers `captions.render` as the engine does: the track's chunks, else the transcripts'. */
 const fakeEngine = (calls: Calls) =>
@@ -71,23 +82,23 @@ const fakeEngine = (calls: Calls) =>
                 text: word.text,
               })),
             );
-        const folder = NodePath.join(input.cacheDir, "look");
+        const folder = NodePath.join(input.cacheDir, LOOK);
         NodeFS.mkdirSync(folder, { recursive: true });
         for (const text of new Set(chunks.map((chunk) => chunk.text))) {
-          const file = NodePath.join(folder, `${sha(text).slice(0, 8)}.png`);
+          const file = NodePath.join(folder, stillName(text));
           if (NodeFS.existsSync(file)) continue;
-          NodeFS.writeFileSync(file, `png:${text}`);
+          NodeFS.writeFileSync(file, calls.stillBytes?.(text) ?? `png:${text}`);
           calls.drawn += 1;
         }
         return yield* Schema.decodeEffect(success)({
           width: 1080,
           height: 1920,
-          folder: "look",
+          folder: LOOK,
           drawn: 0,
           chunks: chunks.map((chunk) => ({
             start: chunk.start,
             end: chunk.end,
-            png: `${sha(chunk.text).slice(0, 8)}.png`,
+            png: stillName(chunk.text),
           })),
         }).pipe(Effect.orDie);
       }),
@@ -160,6 +171,32 @@ const captions = (texts: ReadonlyArray<string>, metadata?: { s7: { media: string
   })),
 });
 
+/** S7V-075's measured 10-minute talk: 534 chunks over 452 texts, about 21 KB per PNG still. */
+const TEN_MINUTES = 10 * 60 * 30;
+const LONG_CHUNKS = 534;
+const LONG_TEXTS = 452;
+const longEdit: ReadonlyArray<EditOp> = [
+  { _tag: "putMedia", media: { ...media, probe: { ...media.probe, durationFrames: TEN_MINUTES } } },
+  {
+    _tag: "addTrack",
+    track: {
+      kind: "video",
+      id: "V1",
+      items: [{ id: "v1", media: "cam", start: 0, duration: TEN_MINUTES, in: 0 }],
+    },
+  },
+  captionTrack,
+  {
+    _tag: "setCaptions",
+    trackId: "C1",
+    captions: Array.from({ length: LONG_CHUNKS }, (_, index) => ({
+      start: index * 33,
+      duration: 30,
+      text: `spoken words number ${index % LONG_TEXTS}`,
+    })),
+  },
+];
+
 const withStills = <A, E>(
   body: (input: {
     readonly projectId: ProjectId;
@@ -187,6 +224,7 @@ const withStills = <A, E>(
       Effect.provide(
         CaptionStillsService.layer.pipe(
           Layer.provide(fakeEngine(calls)),
+          Layer.provide(ServerSecretStore.layer),
           Layer.provideMerge(layerEditTest(baseDir)),
         ),
       ),
@@ -206,8 +244,15 @@ const apply = (
       ),
     );
 
-const decoded = (stills: ReadonlyArray<string>) =>
-  stills.map((still) => Buffer.from(still, "base64").toString());
+const encodeReply = Schema.encodeSync(CaptionStillsResult);
+const replyBytes = (result: CaptionStillsResult) =>
+  Buffer.byteLength(JSON.stringify(encodeReply(result)));
+
+/** The stills the reply names, read where the asset route serves them from. */
+const decoded = (root: string, result: CaptionStillsResult) =>
+  result.stills.map((name) =>
+    NodeFS.readFileSync(NodePath.join(root, ".s7cache", "captions", result.folder, name), "utf8"),
+  );
 
 describe("CaptionStillsService (S7V-075)", () => {
   it.effect("serves the track's stills, one per text, and serves undo without drawing", () =>
@@ -225,7 +270,10 @@ describe("CaptionStillsService (S7V-075)", () => {
           { start: 20, end: 35, still: 1 },
           { start: 40, end: 55, still: 0 },
         ]);
-        assert.deepStrictEqual(decoded(first.stills), ["png:hello there", "png:again"]);
+        assert.deepStrictEqual(decoded(root, first), ["png:hello there", "png:again"]);
+        // S7V-079: the reply names the stills, and one signed URL serves the look's folder.
+        assert.strictEqual(first.folder, LOOK);
+        assert.match(first.stillsUrl, /^\/api\/assets\/[\w-]+\.[\w-]+\/$/);
         assert.deepStrictEqual(first.missing, []);
         // A track with items never sends the transcripts.
         assert.isUndefined(calls.renders[0]!.transcripts);
@@ -249,7 +297,7 @@ describe("CaptionStillsService (S7V-075)", () => {
         writeClip(root, true);
         yield* apply(edits, projectId, video);
         const fallback = yield* stills.stills(projectId);
-        assert.deepStrictEqual(decoded(fallback.stills), ["png:hello", "png:there"]);
+        assert.deepStrictEqual(decoded(root, fallback), ["png:hello", "png:there"]);
         assert.deepStrictEqual(
           calls.renders[0]!.transcripts?.map((entry) => entry.media),
           ["cam"],
@@ -272,7 +320,7 @@ describe("CaptionStillsService (S7V-075)", () => {
         ]);
         const result = yield* stills.stills(projectId);
         assert.deepStrictEqual(result.missing, ["cam.mp4"]);
-        assert.deepStrictEqual(decoded(result.stills), ["png:kept words"]);
+        assert.deepStrictEqual(decoded(root, result), ["png:kept words"]);
         assert.strictEqual(calls.renders.length, 1);
       }),
     ),
@@ -292,6 +340,27 @@ describe("CaptionStillsService (S7V-075)", () => {
         ]);
         assert.deepStrictEqual((yield* stills.stills(projectId)).stills, []);
         assert.strictEqual(calls.renders.length, 0);
+      }),
+    ),
+  );
+
+  it.effect("S7V-079: the reply for a 10-minute edit stays under 200 KB", (context) =>
+    withStills(({ projectId, root, calls, edits, stills }) =>
+      Effect.gen(function* () {
+        writeClip(root, false);
+        calls.stillBytes = () => NodeCrypto.randomBytes(21_000);
+        yield* apply(edits, projectId, longEdit);
+        const result = yield* stills.stills(projectId);
+        assert.strictEqual(result.chunks.length, LONG_CHUNKS);
+        assert.strictEqual(calls.drawn, LONG_TEXTS);
+        const bytes = replyBytes(result);
+        // Shown in the test report: the size S7V-079's AC-1 records.
+        yield* Effect.promise(() =>
+          context.annotate(
+            `captions.stills for 10 minutes: ${LONG_CHUNKS} chunks, ${LONG_TEXTS} stills, ${(bytes / 1000).toFixed(1)} KB`,
+          ),
+        );
+        assert.isBelow(bytes, 200_000);
       }),
     ),
   );
