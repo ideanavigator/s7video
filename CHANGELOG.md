@@ -81,6 +81,10 @@ from; the per-ticket entries and how this file is compiled are in
 - "Add captions" now adds captions to the edit: a Captions row on the timeline and captions over
   the player, exactly as they will export. They follow your cuts, and one undo removes them.
   (S7V-075)
+- A timeline under the player shows every change the assistant makes. Move, trim, split and delete
+  clips by hand, or cut by deleting words in the transcript; every change can be undone and becomes
+  a numbered version, an edit can use several clips, and none of it needs developer tools on your
+  Mac. (S7V-032)
 
 ### Changed
 
@@ -122,6 +126,10 @@ from; the per-ticket entries and how this file is compiled are in
 
 ### Fixed
 
+- The files that hold your edit and its history can change only through the Editor or the
+  assistant. Saving them from the file view shows a plain message instead. (S7V-077)
+- No change for users: a first message with an attachment was reported as showing its text twice,
+  but the doubling came from a test script, not the app. (S7V-062)
 - While you look at an older version, the timeline only lets you look: a drag, trim, split or
   delete no longer changes your main edit, and a click on the timeline takes you back to it.
   Version messages say "main", like the Versions tab. (S7V-087)

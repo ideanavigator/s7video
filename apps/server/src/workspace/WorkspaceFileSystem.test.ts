@@ -779,6 +779,153 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
         }),
     );
 
+    // S7V-077: the edit service owns a video project's edit, project and history files.
+    const makeVideoProject = Effect.fn("makeVideoProject")(function* (cwd: string) {
+      yield* writeTextFile(cwd, "edit.json", '{"version":1}\n');
+      yield* writeTextFile(cwd, "project.json", '{"format":"edit-project"}\n');
+      yield* writeTextFile(cwd, ".s7history/log.json", '{"entries":[]}\n');
+      yield* writeTextFile(cwd, ".s7history/objects/abc", "snapshot\n");
+    });
+
+    const expectProtected = Effect.fn("expectProtected")(function* (
+      cwd: string,
+      relativePath: string,
+    ) {
+      const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+      const error = yield* workspaceFileSystem
+        .writeFile({ cwd, relativePath, contents: "x" })
+        .pipe(Effect.flip);
+      expect(error._tag, `${cwd} ${relativePath}`).toBe("WorkspaceProtectedFileError");
+      expect(error.message).toBe(
+        "This file is managed by the Editor. Change your edit in the Editor or ask the assistant.",
+      );
+    });
+
+    const expectVideoProjectUnchanged = Effect.fn("expectVideoProjectUnchanged")(function* (
+      cwd: string,
+    ) {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      expect(yield* fileSystem.readFileString(path.join(cwd, "edit.json"))).toBe('{"version":1}\n');
+      expect(yield* fileSystem.readFileString(path.join(cwd, "project.json"))).toBe(
+        '{"format":"edit-project"}\n',
+      );
+      expect(yield* fileSystem.readFileString(path.join(cwd, ".s7history/log.json"))).toBe(
+        '{"entries":[]}\n',
+      );
+      expect(yield* fileSystem.readFileString(path.join(cwd, ".s7history/objects/abc"))).toBe(
+        "snapshot\n",
+      );
+      expect((yield* fileSystem.readDirectory(path.join(cwd, ".s7history"))).toSorted()).toEqual([
+        "log.json",
+        "objects",
+      ]);
+    });
+
+    it.effect("refuses writes to a video project's edit, project and history files", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir;
+        yield* makeVideoProject(cwd);
+        for (const relativePath of [
+          "edit.json",
+          "project.json",
+          ".s7history/log.json",
+          ".s7history/objects/abc",
+          ".s7history/objects/new",
+          ".s7history/new.json",
+        ]) {
+          yield* expectProtected(cwd, relativePath);
+        }
+        yield* expectVideoProjectUnchanged(cwd);
+      }),
+    );
+
+    it.effect("refuses case variants and other spellings of the protected files", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir;
+        yield* makeVideoProject(cwd);
+        for (const relativePath of [
+          "EDIT.JSON",
+          "Project.Json",
+          ".S7HISTORY/LOG.JSON",
+          ".S7History/Log.JSON",
+          "./edit.json",
+          "sub/../edit.json",
+          "./.s7history/log.json",
+          "sub/../.s7history/log.json",
+        ]) {
+          yield* expectProtected(cwd, relativePath);
+        }
+        yield* expectVideoProjectUnchanged(cwd);
+      }),
+    );
+
+    it.effect("refuses the protected files from a parent workspace and from inside history", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const parent = yield* makeTempDir;
+        const cwd = path.join(parent, "myproj");
+        yield* makeVideoProject(cwd);
+        yield* expectProtected(parent, "myproj/edit.json");
+        yield* expectProtected(parent, "myproj/project.json");
+        yield* expectProtected(parent, "myproj/.s7history/log.json");
+        yield* expectProtected(path.join(cwd, ".s7history"), "log.json");
+        yield* expectVideoProjectUnchanged(cwd);
+      }),
+    );
+
+    it.effect.skipIf(!symlinksSupported)("refuses protected files reached through a link", () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        yield* makeVideoProject(cwd);
+        yield* fileSystem.symlink("edit.json", path.join(cwd, "notes.json"));
+        yield* fileSystem.symlink(".s7history", path.join(cwd, "h"));
+        yield* expectProtected(cwd, "notes.json");
+        yield* expectProtected(cwd, "h/log.json");
+        yield* expectProtected(cwd, "h/objects/new");
+        yield* expectVideoProjectUnchanged(cwd);
+      }),
+    );
+
+    it.effect("writes edit.json and project.json outside a video project", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        // Another tool's project.json, without the video project format.
+        yield* writeTextFile(cwd, "edit.json", "{}\n");
+        yield* writeTextFile(cwd, "project.json", '{"format":"something-else"}\n');
+        for (const relativePath of ["edit.json", "project.json", "sub/edit.json"]) {
+          yield* workspaceFileSystem.writeFile({ cwd, relativePath, contents: "ok\n" });
+          expect(yield* fileSystem.readFileString(path.join(cwd, relativePath))).toBe("ok\n");
+        }
+      }),
+    );
+
+    it.effect("writes a video project's other files", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        yield* makeVideoProject(cwd);
+        for (const relativePath of [
+          "notes.md",
+          "styles/x.json",
+          "README.md",
+          "assets/edit.json",
+          "s7history/log.json",
+        ]) {
+          yield* workspaceFileSystem.writeFile({ cwd, relativePath, contents: "ok\n" });
+          expect(yield* fileSystem.readFileString(path.join(cwd, relativePath))).toBe("ok\n");
+        }
+        yield* expectVideoProjectUnchanged(cwd);
+      }),
+    );
+
     it.effect("writes files that sit beside git's folders", () =>
       Effect.gen(function* () {
         const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
