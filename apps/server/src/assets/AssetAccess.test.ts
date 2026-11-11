@@ -1638,15 +1638,54 @@ describe("AssetAccess", () => {
         const { lookOf, path, url, token } = yield* setUp;
         expect(url.startsWith(`${ASSET_ROUTE_PREFIX}/`) && url.endsWith("/")).toBe(true);
         const asset = yield* resolveAsset(token, still);
-        expect(asset).toEqual({
+        expect(asset).toMatchObject({
           kind: "file",
           path: path.join(lookOf("a"), still),
           mimeType: "image/png",
         });
-        const response = yield* assetFileResponse(asset as { path: string; mimeType: string });
+        if (asset?.kind !== "file") throw new Error("Expected a file asset");
+        const response = HttpServerResponse.toWeb(yield* assetFileResponse(asset));
         expect(response.status).toBe(200);
-        expect(response.headers["content-type"]).toBe("image/png");
+        expect(response.headers.get("content-type")).toBe("image/png");
+        expect(yield* Effect.promise(() => response.text())).toBe("png of a");
       }).pipe(Effect.provide(layerTest)),
+    );
+
+    it.effect.skipIf(!symlinksSupported)(
+      "serves the checked descriptor when a link is swapped in, before or after the open",
+      () =>
+        Effect.gen(function* () {
+          const { fs, path, base, rootOf, lookOf, token } = yield* setUp;
+          const secret = path.join(base, "outside", `${"c".repeat(32)}.png`);
+          const stillPath = path.join(lookOf("a"), still);
+          const swap = Effect.gen(function* () {
+            yield* fs.remove(stillPath);
+            yield* fs.symlink(secret, stillPath);
+          });
+          // After the open: the response still streams the file that was checked.
+          const asset = yield* resolveAsset(token, still);
+          if (asset?.kind !== "file") throw new Error("Expected a file asset");
+          yield* swap;
+          const response = HttpServerResponse.toWeb(yield* assetFileResponse(asset));
+          expect(yield* Effect.promise(() => response.text())).toBe("png of a");
+          // Between the project's checks and the open: the link is refused.
+          yield* fs.remove(stillPath);
+          yield* fs.writeFileString(stillPath, "png of a");
+          const root = rootOf("a");
+          const swapping = FileSystem.FileSystem.of({
+            ...fs,
+            realPath: Effect.fn(function* (requestedPath) {
+              const real = yield* fs.realPath(requestedPath);
+              if (requestedPath === root) yield* swap;
+              return real;
+            }),
+          });
+          expect(
+            yield* resolveAsset(token, still).pipe(
+              Effect.provideService(FileSystem.FileSystem, swapping),
+            ),
+          ).toBeNull();
+        }).pipe(Effect.provide(layerTest)),
     );
 
     it.effect("refuses traversal, absolute and encoded paths, and unknown keys", () =>
@@ -1724,6 +1763,14 @@ describe("AssetAccess", () => {
           -1,
         );
         expect(yield* resolveAsset(lookToken, `${"c".repeat(32)}.png`)).toBeNull();
+        // The captions folder itself links out, to a folder laid out like a cache.
+        const captions = path.join(rootOf("a"), ".s7cache", "captions");
+        const outsideCaptions = path.join(base, "outside-captions");
+        yield* fs.makeDirectory(path.join(outsideCaptions, look), { recursive: true });
+        yield* fs.writeFileString(path.join(outsideCaptions, look, still), "outside");
+        yield* fs.remove(captions, { recursive: true });
+        yield* fs.symlink(outsideCaptions, captions);
+        expect(yield* resolveAsset(token, still)).toBeNull();
         // The whole cache links to another project's.
         yield* fs.remove(path.join(rootOf("a"), ".s7cache"), { recursive: true });
         yield* fs.symlink(path.join(rootOf("b"), ".s7cache"), path.join(rootOf("a"), ".s7cache"));

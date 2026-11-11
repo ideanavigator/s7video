@@ -71,7 +71,7 @@ import { extractIcnsPng } from "./icns.ts";
 import { openMediaFile, readMediaFileHeader, type OpenMediaFile } from "./MediaFile.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as MediaLibraryService from "../media/MediaLibraryService.ts";
-import { resolveCaptionStill } from "../export/captionStillFile.ts";
+import { openCaptionStill } from "../export/captionStillFile.ts";
 
 export const ASSET_ROUTE_PREFIX = "/api/assets";
 
@@ -1075,9 +1075,9 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
   const decodedPath = decodeRelativePath(relativePath);
   if (decodedPath === null) return null;
   if (claims.kind === "caption-stills") {
-    const still = yield* resolveCaptionStill(claims.projectId, claims.folder, decodedPath);
+    const still = yield* openCaptionStill(claims.projectId, claims.folder, decodedPath);
     return still
-      ? ({ kind: "file", path: still, mimeType: "image/png" } satisfies ResolvedAsset)
+      ? ({ kind: "file", ...still, mimeType: "image/png" } satisfies ResolvedAsset)
       : null;
   }
   const path = yield* Path.Path;

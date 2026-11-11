@@ -11,6 +11,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 
+import { openMediaFile } from "../assets/MediaFile.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 
 const LOOK_NAME = /^[0-9a-f]{32}$/;
@@ -24,12 +25,11 @@ export const captionCacheDir = (path: Path.Path, workspaceRoot: string): string 
   path.join(workspaceRoot, ".s7cache", "captions");
 
 /**
- * The real path of one still of the project, or null. Refused: a name that isn't the engine's
- * (so no `..`, separators, encodings or other files), a project that no longer exists, and a
- * link anywhere on the way. Both the named path and the real path must be the same place under
- * the project's own `.s7cache/captions/`, as `WorkspaceFileSystem.isInGitFolder` checks.
+ * One still of the project, opened from its expected real path with `openMediaFile` (no-follow,
+ * identity re-checked), or null for a name that isn't the engine's, a removed project, or a link
+ * on the way. The route streams that descriptor, so a link or FIFO swapped in later isn't read.
  */
-export const resolveCaptionStill = Effect.fn("captionStillFile.resolveCaptionStill")(function* (
+export const openCaptionStill = Effect.fn("captionStillFile.openCaptionStill")(function* (
   projectId: ProjectId,
   folder: string,
   name: string,
@@ -40,15 +40,12 @@ export const resolveCaptionStill = Effect.fn("captionStillFile.resolveCaptionSti
   const path = yield* Path.Path;
   const project = yield* projects.getById(projectId).pipe(Effect.orElseSucceed(Option.none));
   if (Option.isNone(project)) return null;
-  const root = path.resolve(project.value.workspaceRoot);
-  const named = path.join(captionCacheDir(path, root), folder, name);
-  const [realRoot, realStill] = yield* Effect.all([
-    fileSystem.realPath(root).pipe(Effect.orElseSucceed(() => null)),
-    fileSystem.realPath(named).pipe(Effect.orElseSucceed(() => null)),
-  ]);
-  if (realRoot === null || realStill === null) return null;
-  // Equal only when no part of `.s7cache/captions/<look>/<name>` is a link.
-  if (realStill !== path.join(captionCacheDir(path, realRoot), folder, name)) return null;
-  const info = yield* fileSystem.stat(realStill).pipe(Effect.orElseSucceed(() => null));
-  return info?.type === "File" ? realStill : null;
+  const realRoot = yield* fileSystem
+    .realPath(path.resolve(project.value.workspaceRoot))
+    .pipe(Effect.orElseSucceed(() => null));
+  if (realRoot === null) return null;
+  // `openMediaFile` refuses it unless this is its real path: no part of the way is a link.
+  const still = path.join(captionCacheDir(path, realRoot), folder, name);
+  const file = yield* openMediaFile(still).pipe(Effect.orElseSucceed(() => null));
+  return file === null ? null : { path: still, file };
 });
