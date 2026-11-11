@@ -295,6 +295,51 @@ const VideoAddCaptionsTool = Tool.make("video_add_captions", {
   .annotate(Tool.Title, "Add captions")
   .annotateMerge(videoAnnotations(false));
 
+// S7V-036: user-triggered only. `at` is a clip frame as video_transcript_read shows it, mapped
+// through the edit; `clip` names that clip when the edit has several. One checkpoint.
+const VideoPlaceAudioTool = Tool.make("video_place_audio", {
+  description: "Add sound effect or music to video only if user asks. at: clip frame",
+  parameters: Schema.Struct({
+    media: Schema.String,
+    at: Schema.optional(Schema.Int),
+    clip: Schema.optional(Schema.String),
+    track: Schema.optional(Schema.Literals(["sfx", "music"])),
+    gainDb: Schema.optional(Schema.Finite),
+  }),
+  success: Schema.Struct({
+    revision: Schema.Int,
+    item: Schema.Struct({
+      id: Schema.String,
+      trackId: Schema.String,
+      start: Schema.Int,
+      duration: Schema.Int,
+      gainDb: Schema.Number,
+    }),
+    message: Schema.String,
+    cleanup: Cleanup,
+  }),
+  failure: OrchestratorMcpFailure,
+  dependencies: [...dependencies, TranscriptService.TranscriptService],
+})
+  .annotate(Tool.Title, "Place sound")
+  .annotateMerge(videoAnnotations(false));
+
+// S7V-036: user-triggered only. Fixed dips under the transcript's speech; run again after a cut.
+const VideoDuckMusicTool = Tool.make("video_duck_music", {
+  description: "Dip video music under speech only if user asks.",
+  parameters: Schema.Struct({ depthDb: Schema.optional(Schema.Finite) }),
+  success: Schema.Struct({
+    revision: Schema.Int,
+    ranges: Schema.Int,
+    message: Schema.String,
+    cleanup: Cleanup,
+  }),
+  failure: OrchestratorMcpFailure,
+  dependencies: transcriptDependencies,
+})
+  .annotate(Tool.Title, "Duck music")
+  .annotateMerge(videoAnnotations(false));
+
 /** Tools that return JSON. A new tool goes here, with its handler in `handlers.ts`. */
 export const VideoStandardToolkit = Toolkit.make(
   VideoImportTool,
@@ -311,6 +356,8 @@ export const VideoStandardToolkit = Toolkit.make(
   VideoCanvasTool,
   VideoAssembleTool,
   VideoAddCaptionsTool,
+  VideoPlaceAudioTool,
+  VideoDuckMusicTool,
 );
 
 /** `video_frame` returns image content, so it registers on its own (`registerVideoFrame`). */
@@ -332,6 +379,8 @@ export const VideoToolkit = Toolkit.make(
   VideoCanvasTool,
   VideoAssembleTool,
   VideoAddCaptionsTool,
+  VideoPlaceAudioTool,
+  VideoDuckMusicTool,
   VideoFrameTool,
 );
 

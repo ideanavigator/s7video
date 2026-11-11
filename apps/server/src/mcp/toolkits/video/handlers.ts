@@ -700,6 +700,12 @@ const handlers = {
       };
     }),
   ),
+  video_place_audio: McpToolAccess.actsAsCaller(() =>
+    Effect.fail(new OrchestratorMcpFailure({ code: "orchestration_error", message: "todo" })),
+  ),
+  video_duck_music: McpToolAccess.actsAsCaller(() =>
+    Effect.fail(new OrchestratorMcpFailure({ code: "orchestration_error", message: "todo" })),
+  ),
 } satisfies McpToolAccess.Handlers<typeof VideoToolkit.tools>;
 
 export const layerStandard = McpToolAccess.toLayer(VideoStandardToolkit, {
@@ -717,6 +723,8 @@ export const layerStandard = McpToolAccess.toLayer(VideoStandardToolkit, {
   video_canvas: handlers.video_canvas,
   video_assemble: handlers.video_assemble,
   video_add_captions: handlers.video_add_captions,
+  video_place_audio: handlers.video_place_audio,
+  video_duck_music: handlers.video_duck_music,
 });
 
 export const layerFrame = McpToolAccess.toLayer(VideoFrameToolkit, {
