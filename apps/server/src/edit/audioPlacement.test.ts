@@ -186,6 +186,24 @@ describe("placementOps", () => {
     const item = after.tracks.at(-1)!.items[0]!;
     expect(item).toMatchObject({ duration: 30, fadeInFrames: 10, fadeOutFrames: 20 });
   });
+
+  // AC-8: a placed sound is an ordinary item, so the timeline's move, trim and delete work on it.
+  it("leaves an item the timeline can move, trim and delete", () => {
+    const document = documentWith(fps30);
+    const { ops, item } = placementOps(document, {
+      media: "whoosh",
+      track: "sfx",
+      start: 42,
+      mediaFrames: 40,
+      gainDb: -9,
+    });
+    const after = placed(document, ops);
+    const moved = placed(after, [{ _tag: "moveItem", itemId: item.id, start: 100 }]);
+    const trimmed = placed(moved, [{ _tag: "trimItem", itemId: item.id, edge: "end", frame: 120 }]);
+    expect(trimmed.tracks.at(-1)!.items[0]).toMatchObject({ start: 100, duration: 20 });
+    const deleted = placed(trimmed, [{ _tag: "deleteItem", itemIds: [item.id], ripple: false }]);
+    expect(deleted.tracks.at(-1)!.items).toEqual([]);
+  });
 });
 
 describe("duck", () => {

@@ -465,8 +465,9 @@ The Editor is the main view of a video project (S7V-076). These upstream files h
 The services are new code (`edit/`, `export/`, `transcript/`, `engine/`). The upstream files only
 wire them in:
 
-- `server.ts` builds the edit, media, silence-cut, export, transcript and engine layers above the
-  core runtime, so WebSocket handlers, agent tools and the asset route share one instance of each.
+- `server.ts` builds the edit, media, silence-cut, caption, sound (S7V-036), export, transcript and
+  engine layers above the core runtime, so WebSocket handlers, agent tools and the asset route
+  share one instance of each. `mcp/McpTools.testkit.ts` mocks each of them for the tool tests.
 - `ws.ts` adds thin handlers for `edit.*`, `media.*`, `export.*`, `transcript.get` and
   `transcribe.*`.
 - `observability/RpcInstrumentation.ts` gives these methods the `engine`, `edit` and `media`
