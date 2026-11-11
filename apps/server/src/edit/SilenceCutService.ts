@@ -1,21 +1,23 @@
 // SPDX-FileCopyrightText: 2026 s7video contributors
 // SPDX-License-Identifier: MIT
 // Silence removal (S7V-027): reads a clip's cached transcript and its per-frame sound levels,
-// plans keep ranges (`silencePlan.ts`) and writes them as one `setKeepRanges` through
-// EditDocumentService, so the cut is one checkpoint and a repeat changes nothing. The levels come
+// plans keep ranges (`silencePlan.ts`) and writes them through EditDocumentService as one change,
+// so the cut is one checkpoint and a repeat changes nothing. A clip laid in source order end to end
+// gets one `setKeepRanges`; one the user rearranged is cut where each piece sits (S7V-078). The levels come
 // from the file the transcribe job writes beside the transcript; when it is missing, a `silence`
 // engine job measures them once and writes it (S7V-055).
 import {
   type EditDocument,
   type EditMedia,
   type EditOp,
+  type EditSourceRange,
   type EngineError,
   type EngineJobId,
   type ProjectId,
   SilenceCutError,
   SilenceDetectResult,
 } from "@t3tools/contracts";
-import { hasLinkedAudio } from "@t3tools/shared/editWordCuts";
+import { cutRangesOps, type FrameSpan, hasLinkedAudio } from "@t3tools/shared/editWordCuts";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -136,6 +138,60 @@ function placement(document: EditDocument, media: EditMedia) {
     start,
     own,
     addTrack: [{ _tag: "addTrack", track: { kind: "video", id: trackId, items: [] } }] as EditOp[],
+  };
+}
+
+/**
+ * True when the clip's pieces play in source order, end to end: what `setKeepRanges` lays, so
+ * re-laying them keeps the layout (S7V-078). Moves, gaps and a source played twice make it false.
+ */
+function packedInSourceOrder(own: ReadonlyArray<PlacedPiece>) {
+  const sorted = [...own].sort((a, b) => a.start - b.start);
+  return sorted.every((piece, index) => {
+    const previous = sorted[index - 1];
+    return (
+      previous === undefined ||
+      (piece.start === previous.start + previous.duration &&
+        piece.in >= previous.in + previous.duration)
+    );
+  });
+}
+
+interface PlacedPiece {
+  readonly start: number;
+  readonly duration: number;
+  readonly in: number;
+}
+
+/**
+ * What cutting `kept` out of each piece where it sits does: the source frames to cut (what plays
+ * minus `kept`), and, piece by piece, the places cut and the parts left. Worked out per piece, so
+ * a source played twice loses its frames in both places.
+ */
+function cutInPlace(own: ReadonlyArray<PlacedPiece>, kept: ReadonlyArray<EditSourceRange>) {
+  const keeps = kept.map((range): FrameSpan => [range.in, range.in + range.duration]);
+  const minus = ([from, to]: FrameSpan) => {
+    const parts: FrameSpan[] = [];
+    const holes: FrameSpan[] = [];
+    let at = from;
+    for (const [start, end] of keeps) {
+      if (end <= at || start >= to) continue;
+      if (start > at) holes.push([at, start]);
+      parts.push([Math.max(at, start), Math.min(end, to)]);
+      at = Math.min(end, to);
+    }
+    if (at < to) holes.push([at, to]);
+    return { parts, holes };
+  };
+  const pieces = own.map((piece) => minus([piece.in, piece.in + piece.duration]));
+  const parts = pieces.flatMap((piece) => piece.parts);
+  const holes = pieces.flatMap((piece) => piece.holes);
+  return {
+    ranges: holes,
+    cuts: holes.length,
+    removedFrames: holes.reduce((sum, [from, to]) => sum + to - from, 0),
+    keptSegments: parts.length,
+    shortestFrames: Math.min(...parts.map(([from, to]) => to - from)),
   };
 }
 
@@ -284,24 +340,39 @@ const make = Effect.gen(function* () {
       );
     }
 
+    // A clip the user rearranged is cut where each piece sits; one in source order end to end is
+    // re-laid as before, byte for byte (S7V-078).
+    const inPlace =
+      target.own.length > 0 && !packedInSourceOrder(target.own)
+        ? cutInPlace(target.own, plan.ranges)
+        : undefined;
+    const counts =
+      inPlace === undefined
+        ? {
+            cuts: plan.cuts,
+            removedFrames: plan.removedFrames,
+            keptSegments: plan.ranges.length,
+            shortestFrames: plan.shortestFrames,
+          }
+        : inPlace;
     const seconds = (frames: number) =>
       Math.round(((frames * document.fps.den) / document.fps.num) * 10) / 10;
     const summary = {
       media: media.id,
-      removedSeconds: seconds(plan.removedFrames),
-      cuts: plan.cuts,
-      keptSegments: plan.ranges.length,
-      shortestSegmentFrames: plan.shortestFrames,
+      removedSeconds: seconds(counts.removedFrames),
+      cuts: counts.cuts,
+      keptSegments: counts.keptSegments,
+      shortestSegmentFrames: counts.shortestFrames,
       keptRequests: plan.keptRequests,
       message: [
-        plan.cuts === 0
+        counts.cuts === 0
           ? "No more pauses to cut; the edit is unchanged."
-          : `Removed ${seconds(plan.removedFrames)} s in ${plan.cuts} cuts${plan.keptRequests > 0 ? `, keeping ${plan.keptRequests} pause(s) as asked` : ""}. This only cuts more; it never restores earlier cuts.`,
+          : `Removed ${seconds(counts.removedFrames)} s in ${counts.cuts} cuts${plan.keptRequests > 0 ? `, keeping ${plan.keptRequests} pause(s) as asked` : ""}. This only cuts more; it never restores earlier cuts.`,
         ...alreadyCutSentence(plan.alreadyCut),
       ].join(" "),
     };
     // Nothing new to remove: the edit stays exactly as it is.
-    if (plan.cuts === 0) return { ...summary, revision, changed: false };
+    if (counts.cuts === 0) return { ...summary, revision, changed: false };
     // The first clip on an empty timeline gives the edit its shape, in the same checkpoint, unless
     // the user already chose one (S7V-061).
     const empty = document.tracks.every(
@@ -319,19 +390,23 @@ const make = Effect.gen(function* () {
       [
         ...target.addTrack,
         ...reshape,
-        {
-          _tag: "setKeepRanges",
-          trackId: target.trackId,
-          mediaId: media.id,
-          ranges: plan.ranges,
-          start: target.start,
-        },
+        ...(inPlace === undefined
+          ? [
+              {
+                _tag: "setKeepRanges",
+                trackId: target.trackId,
+                mediaId: media.id,
+                ranges: plan.ranges,
+                start: target.start,
+              } as const,
+            ]
+          : cutRangesOps(document, media.id, inPlace.ranges, target.trackId)),
       ],
       {
         origin: "agent",
         baseRevision: revision,
         reply: input.reply,
-        summary: `Removed ${summary.removedSeconds} s of silence in ${plan.cuts} cuts`,
+        summary: `Removed ${summary.removedSeconds} s of silence in ${counts.cuts} cuts`,
       },
     );
     return { ...summary, revision: after.revision, changed: after.revision !== revision };

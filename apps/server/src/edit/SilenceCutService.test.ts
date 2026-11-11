@@ -6,6 +6,7 @@ import { assert, describe, it } from "@effect/vitest";
 import {
   EngineError,
   EngineJobId,
+  type EditDocument,
   type EditOp,
   type ProjectId,
   type Transcript,
@@ -725,6 +726,280 @@ describe("SilenceCutService", () => {
       }),
     ),
   );
+
+  describe("after manual moves (S7V-078)", () => {
+    /** The whole clip on V1, split at 60 (in speech) and 150 (in speech) into v1, p2 and p3. */
+    const splitInThree: ReadonlyArray<EditOp> = [
+      { _tag: "putMedia", media: camera },
+      { _tag: "addTrack", track: { kind: "video", id: "V1", items: [] } },
+      {
+        _tag: "setKeepRanges",
+        trackId: "V1",
+        mediaId: "cam",
+        ranges: [{ in: 0, duration: FRAMES }],
+      },
+      { _tag: "splitItem", itemId: "v1", atFrame: 60, newItemId: "p2" },
+      { _tag: "splitItem", itemId: "p2", atFrame: 150, newItemId: "p3" },
+      { _tag: "setItemProps", itemId: "p2", props: { label: "middle" } },
+      { _tag: "setItemProps", itemId: "p3", props: { gainDb: -3 } },
+    ];
+    /** The third piece first, a 30-frame gap, then the first and second pieces. */
+    const thirdFirst: ReadonlyArray<EditOp> = [
+      ...splitInThree,
+      { _tag: "moveItem", itemId: "v1", start: 180 },
+      { _tag: "moveItem", itemId: "p2", start: 240 },
+      { _tag: "moveItem", itemId: "p3", start: 0 },
+    ];
+    const layout = (document: EditDocument, trackId = "V1") =>
+      document.tracks
+        .find((track) => track.id === trackId)!
+        .items.map((item) => ({
+          id: item.id,
+          start: item.start,
+          in: "in" in item ? item.in : -1,
+          duration: item.duration,
+          ...("gainDb" in item ? { gainDb: item.gainDb } : {}),
+          ...("label" in item ? { label: item.label } : {}),
+        }));
+
+    it.effect("removes silences after a move and keeps order, gaps and ids", () =>
+      withProject(
+        ({ projectId, edits, silences }) =>
+          Effect.gen(function* () {
+            const result = yield* silences.removeSilences({ projectId });
+            // The same frames go as on the unmoved clip (the first test): 3.4 s in 4 cuts.
+            assert.strictEqual(result.removedSeconds, 3.4);
+            assert.strictEqual(result.cuts, 4);
+            assert.strictEqual(result.keptSegments, 5);
+            assert.strictEqual(result.shortestSegmentFrames, 33);
+            assert.strictEqual(
+              result.message,
+              "Removed 3.4 s in 4 cuts. This only cuts more; it never restores earlier cuts.",
+            );
+            const after = yield* edits.read(projectId);
+            // Keeps [27,93), [117,183) and [207,273), cut where each piece sits: p3 first, the
+            // 30-frame gap, then v1's and p2's parts. A piece whose first frames play keeps its id
+            // there (p3, p2); v1 starts in a pause, so its first kept part is a split part.
+            assert.deepEqual(layout(after.document), [
+              { id: "p3", start: 0, in: 150, duration: 33, gainDb: -3 },
+              { id: "vt2", start: 33, in: 207, duration: 66, gainDb: -3 },
+              { id: "vt4", start: 129, in: 27, duration: 33 },
+              { id: "p2", start: 162, in: 60, duration: 33, label: "middle" },
+              { id: "vt5", start: 195, in: 117, duration: 33, label: "middle" },
+            ]);
+          }),
+        thirdFirst,
+      ),
+    );
+
+    it.effect("in-order clip still uses setKeepRanges, byte for byte", () =>
+      withProject(
+        ({ projectId, root, edits, silences }) =>
+          Effect.gen(function* () {
+            const start = yield* edits.read(projectId);
+            const result = yield* silences.removeSilences({ projectId });
+            assert.isTrue(result.changed);
+            const afterCut = readEdit(root);
+            const kept = (yield* edits.read(projectId)).document.tracks[0]!.items;
+            // The same cut as the setKeepRanges today's service sends gives the same bytes.
+            yield* edits.undo(projectId);
+            const undone = yield* edits.read(projectId);
+            yield* edits.apply(
+              projectId,
+              [
+                {
+                  _tag: "setKeepRanges",
+                  trackId: "V1",
+                  mediaId: "cam",
+                  ranges: kept.map((item) => ({
+                    in: "in" in item ? item.in! : -1,
+                    duration: item.duration,
+                  })),
+                  start: 0,
+                },
+              ],
+              { origin: "agent", baseRevision: undone.revision },
+            );
+            assert.strictEqual(readEdit(root), afterCut);
+            // Re-laid, as before: three pieces reusing the freed ids, no split ids.
+            assert.deepEqual(
+              kept.map((item) => item.id),
+              ["v1", "v2", "v3"],
+            );
+            assert.strictEqual(start.document.tracks[0]!.items.length, 3);
+          }),
+        // Split in three but never moved: still in source order, end to end.
+        splitInThree,
+      ),
+    );
+
+    it.effect("move then cut is one version and one undo", () =>
+      withProject(
+        ({ projectId, root, edits, silences }) =>
+          Effect.gen(function* () {
+            const before = readEdit(root);
+            const start = yield* edits.read(projectId);
+            const versions = yield* edits.versions(projectId);
+            const result = yield* silences.removeSilences({ projectId });
+            assert.strictEqual(result.revision, start.revision + 1);
+            const now = yield* edits.versions(projectId);
+            assert.strictEqual(now.length, versions.length + 1);
+            assert.deepEqual(now[0]!.changes, ["Removed 3.4 s of silence in 4 cuts"]);
+            yield* edits.undo(projectId);
+            assert.strictEqual(readEdit(root), before);
+          }),
+        thirdFirst,
+      ),
+    );
+
+    it.effect("a piece wholly silent is deleted with ripple", () =>
+      withProject(
+        ({ projectId, edits, silences }) =>
+          Effect.gen(function* () {
+            yield* silences.removeSilences({ projectId });
+            const after = yield* edits.read(projectId);
+            // The silent lead-in [0,25) sat last, after a 20-frame gap: it goes, and nothing else moves.
+            assert.deepEqual(layout(after.document), [
+              { id: "vt6", start: 0, in: 27, duration: 66 },
+              { id: "vt4", start: 66, in: 117, duration: 66 },
+              { id: "vt2", start: 132, in: 207, duration: 66 },
+            ]);
+          }),
+        [
+          ...splitInThree.slice(0, 3),
+          { _tag: "splitItem", itemId: "v1", atFrame: 25, newItemId: "p2" },
+          { _tag: "moveItem", itemId: "p2", start: 0 },
+          { _tag: "moveItem", itemId: "v1", start: 295 },
+        ],
+      ),
+    );
+
+    it.effect("the same source used twice out of order: both pieces cut in place", () =>
+      withProject(
+        ({ projectId, edits, silences }) =>
+          Effect.gen(function* () {
+            const result = yield* silences.removeSilences({ projectId });
+            const after = yield* edits.read(projectId);
+            assert.deepEqual(layout(after.document), [
+              { id: "vt2", start: 0, in: 117, duration: 66 },
+              { id: "vt8", start: 96, in: 27, duration: 66 },
+              { id: "vt6", start: 162, in: 117, duration: 66 },
+              { id: "vt4", start: 228, in: 207, duration: 66 },
+            ]);
+            // The timeline lost 34 frames from the copy and 102 from the whole clip.
+            assert.strictEqual(result.removedSeconds, 4.5);
+            assert.strictEqual(result.cuts, 6);
+            assert.strictEqual(result.keptSegments, 4);
+          }),
+        [
+          { _tag: "putMedia", media: camera },
+          { _tag: "addTrack", track: { kind: "video", id: "V1", items: [] } },
+          {
+            _tag: "setKeepRanges",
+            trackId: "V1",
+            mediaId: "cam",
+            ranges: [{ in: 100, duration: 100 }],
+          },
+          {
+            _tag: "insertItem",
+            trackId: "V1",
+            item: { media: "cam", start: 130, duration: FRAMES, in: 0 },
+          } as EditOp,
+        ],
+      ),
+    );
+
+    it.effect("a tighter second pass after a move only cuts more", () =>
+      withProject(
+        ({ projectId, root, scenario, edits, silences }) =>
+          Effect.gen(function* () {
+            // A third of a second inside the first phrase: kept at 0.4 s, cut at 0.25 s.
+            scenario.words = [[30, 55], [65, 90], ...PHRASES.slice(1)];
+            const plays = (document: EditDocument) => {
+              const frames = new Set<number>();
+              for (const item of document.tracks[0]!.items) {
+                for (let at = 0; at < item.duration; at++)
+                  frames.add(("in" in item ? item.in! : 0) + at);
+              }
+              return frames;
+            };
+            yield* silences.removeSilences({ projectId });
+            const first = (yield* edits.read(projectId)).document;
+            const tighter = yield* silences.removeSilences({ projectId, minGapSeconds: 0.25 });
+            assert.isTrue(tighter.changed);
+            // The new pause (around frame 60) straddles the split at 60, and those two pieces sit
+            // apart on the timeline: two places are cut.
+            assert.strictEqual(tighter.cuts, 2);
+            const second = (yield* edits.read(projectId)).document;
+            const before = plays(first);
+            for (const frame of plays(second)) assert.isTrue(before.has(frame), `${frame}`);
+            assert.isFalse(plays(second).has(60));
+            // Still the user's order: the third piece's parts come first.
+            assert.strictEqual(layout(second)[0]!.id, "p3");
+            const ids = layout(second).map((item) => item.id);
+            assert.strictEqual(new Set(ids).size, ids.length);
+            const afterTighter = readEdit(root);
+            const again = yield* silences.removeSilences({ projectId, minGapSeconds: 0.25 });
+            assert.isFalse(again.changed);
+            assert.strictEqual(readEdit(root), afterTighter);
+          }),
+        thirdFirst,
+      ),
+    );
+
+    it.effect("another clip after the cut clip closes up", () =>
+      withProject(
+        ({ projectId, edits, silences }) =>
+          Effect.gen(function* () {
+            yield* silences.removeSilences({ projectId, media: "cam" });
+            const after = yield* edits.read(projectId);
+            // 102 frames removed before it: the other clip moves from 360 to 258.
+            assert.deepEqual(layout(after.document).at(-1), {
+              id: "v2",
+              start: 258,
+              in: 0,
+              duration: 40,
+            });
+          }),
+        [
+          ...thirdFirst.slice(0, 1),
+          { _tag: "putMedia", media: { ...camera, id: "other", path: "assets/other.mp4" } },
+          ...thirdFirst.slice(1, 3),
+          {
+            _tag: "insertItem",
+            trackId: "V1",
+            item: { media: "other", start: 360, duration: 40, in: 0 },
+          } as EditOp,
+          ...thirdFirst.slice(3),
+        ],
+      ),
+    );
+
+    it.effect("linked audio after a move is still refused", () =>
+      withProject(
+        ({ projectId, root, silences }) =>
+          Effect.gen(function* () {
+            const before = readEdit(root);
+            const error = yield* silences.removeSilences({ projectId }).pipe(Effect.flip);
+            assert.strictEqual(error._tag === "SilenceCutError" && error.reason, "linked-audio");
+            assert.strictEqual(
+              error.message,
+              "cam has linked sound on another track; silence removal cannot cut it yet.",
+            );
+            assert.strictEqual(readEdit(root), before);
+          }),
+        [
+          ...thirdFirst,
+          { _tag: "addTrack", track: { kind: "sfx", id: "A1", items: [] } },
+          {
+            _tag: "insertItem",
+            trackId: "A1",
+            item: { media: "cam", start: 0, duration: 30, in: 0 },
+          } as EditOp,
+        ],
+      ),
+    );
+  });
 
   it.effect("refuses a clip with linked sound on another track", () =>
     withProject(
