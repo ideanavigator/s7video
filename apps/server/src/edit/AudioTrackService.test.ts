@@ -118,9 +118,7 @@ const withProject = <A, E>(body: (project: Project) => Effect.Effect<A, E>) =>
         if (method !== "media.loudness") return Effect.die(`unexpected engine call ${method}`);
         const name = NodePath.basename(String(params["path"]));
         measured.push(name);
-        return Schema.decodeUnknownEffect(success)({ integratedLufs: LOUDNESS[name] }).pipe(
-          Effect.orDie,
-        );
+        return Schema.decodeEffect(success)({ integratedLufs: LOUDNESS[name] }).pipe(Effect.orDie);
       },
     });
     return yield* Effect.gen(function* () {

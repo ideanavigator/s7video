@@ -214,7 +214,7 @@ const withProject = <A, E>(
               // S7V-036: the voice clip measures -20 LUFS and every other sound -10 LUFS.
               call: (method, params, success) =>
                 method === "media.loudness"
-                  ? Schema.decodeUnknownEffect(success)({
+                  ? Schema.decodeEffect(success)({
                       integratedLufs: String(params["path"]).endsWith("cam.mp4") ? -20 : -10,
                     }).pipe(Effect.orDie)
                   : Effect.die(`unexpected quick call ${method}`),
