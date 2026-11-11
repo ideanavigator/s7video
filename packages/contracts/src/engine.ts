@@ -514,6 +514,33 @@ export class CaptionsError extends Schema.TaggedError<CaptionsError>()("Captions
   }
 }
 
+/** `media.loudness` (S7V-036): integrated loudness (EBU R128) of a file's first audio stream. */
+export const MediaLoudnessInput = Schema.Struct({ path: TrimmedNonEmptyString });
+export type MediaLoudnessInput = typeof MediaLoudnessInput.Type;
+
+/** `null` for silence: nothing above the −70 LUFS gate. */
+export const MediaLoudnessResult = Schema.Struct({ integratedLufs: Schema.NullOr(Schema.Finite) });
+export type MediaLoudnessResult = typeof MediaLoudnessResult.Type;
+
+/** A sound effect or music the agent can't place or duck, with the plain next step (S7V-036). */
+export class SoundError extends Schema.TaggedError<SoundError>()("SoundError", {
+  reason: Schema.Literals([
+    "unknown-media",
+    "no-sound",
+    "no-video",
+    "which-clip",
+    "cut",
+    "out-of-range",
+    "no-music",
+    "no-transcript",
+  ]),
+  detail: Schema.String,
+}) {
+  override get message(): string {
+    return this.detail;
+  }
+}
+
 /** `silence.detect`: whole-decibel RMS dBFS of the sound under each video frame (S7V-027). */
 export const SilenceDetectResult = Schema.Struct({
   rate: EngineRational,

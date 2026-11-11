@@ -19,6 +19,7 @@ import * as Schema from "effect/Schema";
 import { McpSchema, Tool, Toolkit } from "effect/ai";
 
 import * as ServerConfig from "../../../config.ts";
+import * as AudioTrackService from "../../../edit/AudioTrackService.ts";
 import * as CaptionTrackService from "../../../edit/CaptionTrackService.ts";
 import * as EditDocumentService from "../../../edit/EditDocumentService.ts";
 import * as SilenceCutService from "../../../edit/SilenceCutService.ts";
@@ -319,7 +320,7 @@ const VideoPlaceAudioTool = Tool.make("video_place_audio", {
     cleanup: Cleanup,
   }),
   failure: OrchestratorMcpFailure,
-  dependencies: [...dependencies, TranscriptService.TranscriptService],
+  dependencies: [...dependencies, AudioTrackService.AudioTrackService],
 })
   .annotate(Tool.Title, "Place sound")
   .annotateMerge(videoAnnotations(false));
@@ -335,7 +336,7 @@ const VideoDuckMusicTool = Tool.make("video_duck_music", {
     cleanup: Cleanup,
   }),
   failure: OrchestratorMcpFailure,
-  dependencies: transcriptDependencies,
+  dependencies: [...dependencies, AudioTrackService.AudioTrackService],
 })
   .annotate(Tool.Title, "Duck music")
   .annotateMerge(videoAnnotations(false));

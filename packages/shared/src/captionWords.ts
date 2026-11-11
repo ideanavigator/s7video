@@ -38,7 +38,7 @@ interface CaptionGroup {
 }
 
 /** A stretch of the timeline that plays `media` from `sourceIn` without a cut. */
-interface CaptionRun {
+export interface CaptionRun {
   readonly start: number;
   readonly frames: number;
   readonly media: string;
@@ -67,8 +67,11 @@ const TRANSCRIPT_CAPTION_SOURCE = "transcript";
 const firstVideoTrack = (document: EditDocument) =>
   document.tracks.find((track) => track.kind === "video");
 
-/** The video track's items as runs, joining items that continue their source exactly (a split). */
-function captionRuns(document: EditDocument): CaptionRun[] {
+/**
+ * The video track's items as runs, joining items that continue their source exactly (a split), in
+ * timeline order. Sound placement (S7V-036) maps clip frames through these, as captions do.
+ */
+export function captionRuns(document: EditDocument): CaptionRun[] {
   const items = [...(firstVideoTrack(document)?.items ?? [])].sort((a, b) => a.start - b.start);
   const runs: CaptionRun[] = [];
   for (const item of items) {
@@ -89,7 +92,7 @@ function captionRuns(document: EditDocument): CaptionRun[] {
 }
 
 /** `floor(frame * to / from + 1/2)`, exactly: the engine's `_to_rate`. */
-function toRate(frame: number, from: EditRational, to: EditRational): number {
+export function toRate(frame: number, from: EditRational, to: EditRational): number {
   const a = BigInt(to.num) * BigInt(from.den);
   const b = BigInt(to.den) * BigInt(from.num);
   const twice = 2n * BigInt(frame) * a + b;
