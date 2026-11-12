@@ -422,6 +422,14 @@ export const ExportStartInput = Schema.Struct({
 });
 export type ExportStartInput = typeof ExportStartInput.Type;
 
+/** "Export for editors" (S7V-040): the timeline file's format. */
+export const InterchangeFormat = Schema.Literals(["otio", "fcpxml", "fcp7xml", "edl"]);
+export type InterchangeFormat = typeof InterchangeFormat.Type;
+
+/** The captions file written beside it; SRT unless asked (PO, 2026-11-08). */
+export const InterchangeCaptions = Schema.Literals(["srt", "ass", "none"]);
+export type InterchangeCaptions = typeof InterchangeCaptions.Type;
+
 export const ExportStartResult = Schema.Struct({
   jobId: EngineJobId,
   /** Where the video will land, relative to the project folder (`exports/…mp4`). */
