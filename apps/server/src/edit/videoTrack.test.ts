@@ -70,6 +70,13 @@ describe("firstClipCanvasOps", () => {
     ]);
   });
 
+  it("gives a tall clip a tall shape on a wide canvas with no video", () => {
+    const wideCanvas = { ...documentWith([]), canvas: { width: 1920, height: 1080 } };
+    expect(firstClipCanvasOps(wideCanvas, clip("cam", 1080, 1920))).toEqual([
+      { _tag: "setCanvas", canvas: { width: 1080, height: 1920 }, fromClip: true },
+    ]);
+  });
+
   it("leaves the shape when video is placed, the user chose one, or it already matches", () => {
     const placed = documentWith([{ kind: "video", id: "V1", items: [item("a", "cam", 0)] }]);
     const chosen = { ...documentWith([]), metadata: { canvasChosen: true } };

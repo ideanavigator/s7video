@@ -45,6 +45,12 @@ describe("addClipsOps on a new project's edit", () => {
     expect(after.canvas).toEqual({ width: 1920, height: 1080 });
   });
 
+  it("keeps a shape the user chose", () => {
+    const after = applied(newEdit(true), 3);
+    expect(after.tracks.map((track) => track.id)).toEqual(["V1"]);
+    expect(after.canvas).toEqual({ width: 1080, height: 1920 });
+  });
+
   it("refuses an at past frame 0 with the plain reason", () => {
     const refused = addClipsOps(newEdit(false), 3, {
       parts: [{ mediaId: "cam", in: 0, duration: 90 }],
