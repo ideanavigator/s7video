@@ -8,10 +8,10 @@ import type {
   InterchangeCaptions,
   InterchangeFormat,
   InterchangeExportResult,
+  ScopedProjectRef,
 } from "@t3tools/contracts";
 import { useId, useState } from "react";
 
-import type { ScopedProjectRef } from "@t3tools/client-runtime/environment";
 import { editEnvironment } from "../../editor/editStore";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { Alert, AlertDescription } from "../ui/alert";
