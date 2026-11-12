@@ -136,6 +136,9 @@ from; the per-ticket entries and how this file is compiled are in
   assistant. Saving them from the file view shows a plain message instead. (S7V-077)
 - If you rearranged parts of a clip on the timeline, removing silences now keeps your order and
   gaps instead of putting the parts back in their original order. (S7V-078)
+- In a new project, the assistant now places your video on the timeline itself before adding
+  captions, music or sound effects, as one step you can undo. It used to stop and ask you to drag
+  the video there, which the Editor can't do. (S7V-093)
 - No change for users: a first message with an attachment was reported as showing its text twice,
   but the doubling came from a test script, not the app. (S7V-062)
 - While you look at an older version, the timeline only lets you look: a drag, trim, split or

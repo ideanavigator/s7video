@@ -43,6 +43,7 @@ import * as ServerConfig from "../../../config.ts";
 import * as EditDocumentService from "../../../edit/EditDocumentService.ts";
 import * as AudioTrackService from "../../../edit/AudioTrackService.ts";
 import * as CaptionTrackService from "../../../edit/CaptionTrackService.ts";
+import * as ClipPlacementService from "../../../edit/ClipPlacementService.ts";
 import * as SilenceCutService from "../../../edit/SilenceCutService.ts";
 import * as EngineService from "../../../engine/EngineService.ts";
 import * as ExportService from "../../../export/ExportService.ts";
@@ -358,6 +359,7 @@ const layerFor = (fixture: Fixture, cancelSignal: Deferred.Deferred<string>) => 
             });
       },
     }),
+    Layer.mock(ClipPlacementService.ClipPlacementService)({}),
     Layer.mock(CaptionTrackService.CaptionTrackService)({
       addCaptions: (projectId) =>
         projectId === projectB

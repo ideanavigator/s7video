@@ -30,6 +30,7 @@ import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as CaptionTrackService from "./CaptionTrackService.ts";
 import * as EditDocumentService from "./EditDocumentService.ts";
 import { historyLog, layerEditTest } from "./editHarness.testkit.ts";
+import { ASSEMBLE_FIRST } from "./videoTrack.ts";
 
 const FPS = { num: 30, den: 1 };
 const reply = { threadId: ThreadId.make("thread-captions"), runId: RunId.make("run-captions") };
@@ -221,10 +222,24 @@ describe("CaptionTrackService (S7V-075)", () => {
         const before = yield* setUp(project, cutEdit([mediaEntry("cam", false)]));
         const error = yield* project.captions.addCaptions(project.projectId, {}).pipe(Effect.flip);
         assert.strictEqual(error._tag === "CaptionsError" && error.reason, "no-clips");
+        assert.include(error.message, "no clip with sound is on the timeline");
         assert.strictEqual(
           (yield* project.edits.read(project.projectId)).revision,
           before.revision,
         );
+      }),
+    ),
+  );
+
+  // S7V-093: the Editor can't put a clip on an empty timeline, so the agent is told to do it.
+  it.effect("on an empty timeline, says to place the clip with video_assemble first", () =>
+    withProject((project) =>
+      Effect.gen(function* () {
+        writeClip(project.root, "cam");
+        yield* setUp(project, [{ _tag: "putMedia", media: mediaEntry("cam") }]);
+        const error = yield* project.captions.addCaptions(project.projectId, {}).pipe(Effect.flip);
+        assert.strictEqual(error._tag === "CaptionsError" && error.reason, "no-clips");
+        assert.include(error.message, ASSEMBLE_FIRST);
       }),
     ),
   );

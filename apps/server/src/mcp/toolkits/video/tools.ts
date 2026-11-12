@@ -21,6 +21,7 @@ import { McpSchema, Tool, Toolkit } from "effect/ai";
 import * as ServerConfig from "../../../config.ts";
 import * as AudioTrackService from "../../../edit/AudioTrackService.ts";
 import * as CaptionTrackService from "../../../edit/CaptionTrackService.ts";
+import * as ClipPlacementService from "../../../edit/ClipPlacementService.ts";
 import * as EditDocumentService from "../../../edit/EditDocumentService.ts";
 import * as SilenceCutService from "../../../edit/SilenceCutService.ts";
 import * as EngineService from "../../../engine/EngineService.ts";
@@ -280,7 +281,7 @@ const VideoAssembleTool = Tool.make("video_assemble", {
     cleanup: Cleanup,
   }),
   failure: OrchestratorMcpFailure,
-  dependencies,
+  dependencies: [...dependencies, ClipPlacementService.ClipPlacementService],
 })
   .annotate(Tool.Title, "Assemble clips")
   .annotateMerge(videoAnnotations(false));
