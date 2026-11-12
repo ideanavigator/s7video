@@ -119,6 +119,13 @@ reply or one Editor action, and stays listed when undo steps are capped or a red
   keeps every version with a `tag`, and the current (last) one.
 - **Make current** reads the version's `edit.json`, keeps today's library clips (`keepLibrary`, as
   undo does), and commits it as a new change with `restoredFrom`. Undo then steps back over it.
+- **Versions in chat (S7V-070).** `video_versions` and `video_version_restore` name a version as a
+  chat does: `v12` or `12` is a number first, then a tag compared as tags are, so a tag that reads
+  as a number loses to that number and the reply names the other version. Both resolve the name
+  inside `EditDocumentService` (`findVersion`, `restoreVersionRef`) under the project lock, so the
+  tool never reads a number that a cleanup removes before the restore. A restore from chat is a
+  change in that reply, so it folds into the reply's version when the reply already changed the
+  edit.
 
 ## Outside changes (S7V-054)
 

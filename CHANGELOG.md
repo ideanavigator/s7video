@@ -88,6 +88,8 @@ from; the per-ticket entries and how this file is compiled are in
 - Drop sound effects and music into the chat and ask the assistant to use them. It places them on
   their rows at sensible levels, dips the music while you speak, and exports at a steady −14 LUFS.
   For now you hear them in the exported video; the Editor's player doesn't play them yet. (S7V-036)
+- Ask the assistant about your versions by number or name, or say "make v12 current" or "go back
+  to the first cut": it brings that version back as the newest one, and nothing is lost. (S7V-070)
 
 ### Changed
 

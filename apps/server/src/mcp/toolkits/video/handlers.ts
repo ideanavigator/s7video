@@ -3,9 +3,12 @@
 // Thin handlers: resolve the caller's project and media (VideoProjectScope), call one engine or
 // edit service method, map its errors. The Editor panel reaches the same services directly.
 import {
+  type EditConflict,
   type EditDocument,
   type EditOp,
   type EditSnapshot,
+  type EditUnavailableError,
+  type EditVersion,
   type EngineError,
   type TranscriptError,
   type EngineJob,
@@ -225,6 +228,62 @@ const stepEdit = (direction: "undo" | "redo") =>
       );
     }),
   );
+
+const VERSION_LIST_SIZE = 20;
+
+/** A version's line: its first change, and how many more it made. */
+const versionLine = (version: EditVersion) => ({
+  n: version.n,
+  ...(version.tag === undefined ? {} : { tag: version.tag }),
+  author: version.author,
+  at: new Date(version.at).toISOString(),
+  change:
+    version.changes.length > 1
+      ? `${version.changes[0]} (+${version.changes.length - 1} more)`
+      : (version.changes[0] ?? ""),
+  ...(version.current ? { main: true } : {}),
+});
+
+const MADE_BY = {
+  assistant: "the assistant",
+  you: "the user",
+  outside: "a change outside the app",
+} as const;
+
+/** S7V-070: the details a chat gets for one version. Cuts are counted as kept pieces of video. */
+const versionDetails = (version: EditVersion, document: EditDocument) => {
+  const frames = editDurationFrames(document);
+  const seconds = (frames * document.fps.den) / document.fps.num;
+  const pieces = document.tracks
+    .filter((track) => track.kind === "video")
+    .reduce((total, track) => total + track.items.length, 0);
+  const captions = document.tracks.some(
+    (track) => track.kind === "caption" && track.items.length > 0,
+  );
+  return [
+    `v${version.n}${version.tag === undefined ? "" : ` "${version.tag}"`}${version.current ? " (main)" : ""}, by ${MADE_BY[version.author]}${version.restoredFrom === undefined ? "" : `, restored from v${version.restoredFrom}`}.`,
+    `Changes: ${version.changes.join("; ")}.`,
+    `${count(pieces, "kept piece")} of video, ${count(frames, "frame")} (${seconds.toFixed(1)} s), captions ${captions ? "on" : "off"}.`,
+  ].join(" ");
+};
+
+/** A number won over a version whose name reads the same: say which was used. */
+const alsoNamedNote = (alsoNamed: number | undefined) =>
+  alsoNamed === undefined
+    ? ""
+    : ` v${alsoNamed} also has this name; say v${alsoNamed} for that one.`;
+
+const versionFailure = (error: EditUnavailableError | EditConflict) =>
+  new OrchestratorMcpFailure({
+    code:
+      error._tag === "EditConflict" ||
+      error.reason === "unknown-version" ||
+      error.reason === "library-conflict" ||
+      error.reason === "outside-change-refused"
+        ? "invalid_request"
+        : "orchestration_error",
+    message: error._tag === "EditUnavailableError" ? error.explanation : error.message,
+  });
 
 const handlers = {
   // Always a copy: chat attachments live in the app's store, which may clean them up later.
@@ -752,6 +811,59 @@ const handlers = {
       };
     }),
   ),
+  // Read-only: works in plan mode and for read-only clients.
+  video_versions: McpToolAccess.readsAsCaller(({ version }) =>
+    Effect.gen(function* () {
+      const project = yield* callerProject();
+      const edits = yield* EditDocumentService.EditDocumentService;
+      if (version === undefined) {
+        const all = yield* edits.versions(project.projectId).pipe(Effect.mapError(versionFailure));
+        return { versions: all.slice(0, VERSION_LIST_SIZE).map(versionLine) };
+      }
+      const found = yield* edits
+        .findVersion(project.projectId, version)
+        .pipe(Effect.mapError(versionFailure));
+      return {
+        version: {
+          ...versionLine(found.version),
+          details: `${versionDetails(found.version, found.document)}${alsoNamedNote(found.alsoNamed)}`,
+        },
+      };
+    }),
+  ),
+  // Writes the edit (one checkpoint, one version), so plan-mode and read-only callers are refused.
+  video_version_restore: McpToolAccess.actsAsCaller(({ version }) =>
+    Effect.gen(function* () {
+      yield* refusePlanMode("restore a version");
+      const project = yield* callerProject();
+      const edits = yield* EditDocumentService.EditDocumentService;
+      const restored = yield* edits
+        .restoreVersionRef(project.projectId, version, {
+          reply: project.reply,
+          baseRevision: project.snapshot.revision,
+        })
+        .pipe(Effect.mapError(versionFailure));
+      const { snapshot } = restored;
+      const chosen = `v${restored.version.n}`;
+      const note = alsoNamedNote(restored.alsoNamed);
+      const saved = snapshot.version === undefined ? {} : { version: snapshot.version };
+      if (!restored.changed) {
+        return {
+          revision: snapshot.revision,
+          ...saved,
+          message: restored.version.current
+            ? `${chosen} is already the main version; nothing changed.${note}`
+            : `${chosen} is the same as the main version${snapshot.version === undefined ? "" : ` (v${snapshot.version})`}; nothing changed.${note}`,
+        };
+      }
+      return {
+        revision: snapshot.revision,
+        ...saved,
+        message: `${chosen} is now the main version${snapshot.version === undefined ? "" : `, saved as v${snapshot.version}`}: ${editSummary(snapshot)}. Say undo to go back.${note}`,
+        ...cleanupOf(snapshot),
+      };
+    }),
+  ),
 } satisfies McpToolAccess.Handlers<typeof VideoToolkit.tools>;
 
 export const layerStandard = McpToolAccess.toLayer(VideoStandardToolkit, {
@@ -771,8 +883,8 @@ export const layerStandard = McpToolAccess.toLayer(VideoStandardToolkit, {
   video_add_captions: handlers.video_add_captions,
   video_place_audio: handlers.video_place_audio,
   video_duck_music: handlers.video_duck_music,
-  video_versions: McpToolAccess.readsAsCaller(() => Effect.die("todo")),
-  video_version_restore: McpToolAccess.actsAsCaller(() => Effect.die("todo")),
+  video_versions: handlers.video_versions,
+  video_version_restore: handlers.video_version_restore,
 });
 
 export const layerFrame = McpToolAccess.toLayer(VideoFrameToolkit, {

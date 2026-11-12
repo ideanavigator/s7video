@@ -438,6 +438,7 @@ const layerFor = (fixture: Fixture, cancelSignal: Deferred.Deferred<string>) => 
           canRedo: false,
           ...(fixture.cleanup === undefined ? {} : { cleanup: fixture.cleanup }),
         } satisfies EditSnapshot),
+      versions: () => Effect.succeed([]),
     }),
     Layer.mock(EngineService.EngineService)({
       probe: (input) =>
@@ -587,6 +588,8 @@ describe("video toolkit", () => {
           "video_transcribe",
           "video_transcript_read",
           "video_undo",
+          "video_version_restore",
+          "video_versions",
         ]);
         // ToolSearch finds deferred tools by these words, so each says what it reads.
         for (const tool of tools) {
@@ -889,6 +892,28 @@ describe("video toolkit", () => {
     ),
   );
 
+  // S7V-070: listing versions is a read; making one main changes the edit.
+  it.effect("video_version_restore refuses a read-only client; video_versions does not", () =>
+    withTools(({ call }) =>
+      Effect.gen(function* () {
+        const readOnly = { sessionId: "session-ro", label: "Viewer", access: "read-only" as const };
+        const refused = yield* call(
+          threadA,
+          "video_version_restore",
+          { version: "v1" },
+          undefined,
+          readOnly,
+        );
+        expect(refused.isError).toBe(true);
+        expect(textOf(refused)).toEqual([
+          "This tool changes the environment, and this MCP client was approved for read-only access.",
+        ]);
+        const listed = yield* call(threadA, "video_versions", {}, undefined, readOnly);
+        expect(listed.structuredContent).toEqual({ versions: [] });
+      }),
+    ),
+  );
+
   it.effect("video_remove_silences cuts the caller's project and reports the result", () =>
     withTools(({ fixture, call }) =>
       Effect.gen(function* () {
@@ -1013,6 +1038,8 @@ describe("video toolkit", () => {
           ["video_add_captions", {}],
           ["video_place_audio", { media: "cam" }],
           ["video_duck_music", {}],
+          ["video_versions", {}],
+          ["video_version_restore", { version: "v1" }],
         ] as const) {
           // A hidden tool is not callable at all: the server answers as for an unknown tool.
           const error = yield* call(threadA, tool, args, ["orchestration"]).pipe(Effect.flip);
@@ -1493,6 +1520,8 @@ it.effect("should hide tools without the video capability", () =>
         "video_transcribe",
         "video_transcript_read",
         "video_undo",
+        "video_version_restore",
+        "video_versions",
       ]);
       expect(yield* listed("plainToken")).toEqual([]);
       NodeFS.rmSync(NodePath.dirname(fixture.rootA), { recursive: true, force: true });
