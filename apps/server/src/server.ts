@@ -121,6 +121,7 @@ import * as CaptionStillsService from "./export/CaptionStillsService.ts";
 import * as ExportService from "./export/ExportService.ts";
 import * as TranscriptService from "./transcript/TranscriptService.ts";
 import * as AudioTrackService from "./edit/AudioTrackService.ts";
+import * as ClipPlacementService from "./edit/ClipPlacementService.ts";
 import * as CaptionTrackService from "./edit/CaptionTrackService.ts";
 import * as SilenceCutService from "./edit/SilenceCutService.ts";
 import * as GitWorkflowService from "./git/GitWorkflowService.ts";
@@ -608,6 +609,7 @@ const layerRuntimeDependencies = MediaLibraryService.layer.pipe(
   Layer.provideMerge(SilenceCutService.layer),
   Layer.provideMerge(CaptionTrackService.layer),
   Layer.provideMerge(AudioTrackService.layer),
+  Layer.provideMerge(ClipPlacementService.layer),
   Layer.provideMerge(CaptionStillsService.layer),
   Layer.provideMerge(ExportService.layer.pipe(Layer.provideMerge(TranscriptService.layer))),
   Layer.provideMerge(layerEditDocument),

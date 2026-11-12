@@ -4,8 +4,6 @@
 // edit service method, map its errors. The Editor panel reaches the same services directly.
 import {
   type EditDocument,
-  type EditMedia,
-  type EditOp,
   type EditSnapshot,
   type EngineError,
   type TranscriptError,
@@ -24,9 +22,9 @@ import * as Stream from "effect/Stream";
 import * as AudioTrackService from "../../../edit/AudioTrackService.ts";
 import { CANVAS_FOR_RATIO } from "../../../edit/canvasForClip.ts";
 import * as CaptionTrackService from "../../../edit/CaptionTrackService.ts";
+import * as ClipPlacementService from "../../../edit/ClipPlacementService.ts";
 import * as EditDocumentService from "../../../edit/EditDocumentService.ts";
 import * as SilenceCutService from "../../../edit/SilenceCutService.ts";
-import { firstClipCanvasOps, videoTrackFor } from "../../../edit/videoTrack.ts";
 import * as EngineService from "../../../engine/EngineService.ts";
 import * as ExportService from "../../../export/ExportService.ts";
 import * as TranscriptService from "../../../transcript/TranscriptService.ts";
@@ -572,116 +570,28 @@ const handlers = {
     Effect.gen(function* () {
       yield* refusePlanMode("assemble clips");
       const project = yield* callerProject();
-      const { revision, document } = project.snapshot;
-      const invalid = (message: string) =>
-        new OrchestratorMcpFailure({ code: "invalid_request", message });
-      if (items.length === 0) return yield* invalid("Give at least one clip part to assemble.");
-      // A new project's edit has no tracks: the first assemble adds V1 in the same step (S7V-093).
-      const track = videoTrackFor(document);
-      const placed: EditMedia[] = [];
-      for (const item of items) {
-        if (item.in < 0 || item.duration < 1) {
-          return yield* invalid("Each part needs in >= 0 and duration >= 1, in edit frames.");
-        }
-        // Scope check first: refuses anything outside the project, without saying whether it exists.
-        yield* resolveMedia(project, item.mediaId);
-        const media = document.media.find(
-          (entry) => entry.id === item.mediaId || entry.path === item.mediaId,
-        );
-        if (media === undefined) {
-          return yield* invalid(`${item.mediaId} is not in this edit's media. Import it first.`);
-        }
-        placed.push(media);
-      }
-      // As the first silence cut does, the first clip on an empty timeline gives the edit its shape.
-      const reshape = firstClipCanvasOps(document, placed[0]!);
-      const end = track.items.reduce((last, item) => Math.max(last, item.start + item.duration), 0);
-      const taken = new Set(document.tracks.flatMap((entry) => entry.items.map((item) => item.id)));
-      const itemIds: string[] = [];
-      for (let index = 0; itemIds.length < items.length; index++) {
-        const id = `asm${revision}-${index}`;
-        if (!taken.has(id)) itemIds.push(id);
-      }
-      const from = at ?? end;
-      const length = items.reduce((total, item) => total + item.duration, 0);
-      // Mid-edit inserts go only where a video item starts. Everything from there on, on every
-      // track, moves right by the inserted length (S7V-034): one moveItem per item, or per link
-      // group, since moveItem carries linked items; the inserts then fill the opened gap.
-      const shifts: EditOp[] = [];
-      if (from !== end) {
-        if (!track.items.some((item) => item.start === from)) {
-          return yield* invalid(
-            `at must be where a video item starts, or the end of the edit (frame ${end}).`,
-          );
-        }
-        const groups = new Map<string, Array<{ id: string; start: number; end: number }>>();
-        const kindOf = new Map<string, string>();
-        for (const entry of document.tracks) {
-          for (const item of entry.items) {
-            const linkId = "linkId" in item ? item.linkId : undefined;
-            const key = linkId === undefined ? `item:${item.id}` : `link:${linkId}`;
-            const group = groups.get(key) ?? [];
-            group.push({ id: item.id, start: item.start, end: item.start + item.duration });
-            groups.set(key, group);
-            kindOf.set(item.id, entry.kind);
-          }
-        }
-        for (const group of groups.values()) {
-          const first = group.reduce((low, member) => (member.start < low.start ? member : low));
-          if (first.start >= from) {
-            shifts.push({ _tag: "moveItem", itemId: first.id, start: first.start + length });
-            continue;
-          }
-          // A music bed plays on under the new clips; anything else cut by `at` would drift.
-          const across = group.find(
-            (member) => member.end > from && kindOf.get(member.id) !== "music",
-          );
-          if (across !== undefined) {
-            return yield* invalid(
-              `"${across.id}" runs across frame ${from}, so clips can't be added there. Pick a frame where it has ended, or the end (frame ${end}).`,
-            );
-          }
-        }
-        if (document.markers.some((marker) => marker.start >= from)) {
-          shifts.push({
-            _tag: "setMarkers",
-            markers: document.markers.map((marker) =>
-              marker.start >= from ? { ...marker, start: marker.start + length } : marker,
-            ),
-          });
-        }
-      }
-      let position = from;
-      const inserts = items.map((item, index) => {
-        const op = {
-          _tag: "insertItem" as const,
-          trackId: track.trackId,
-          item: {
-            id: itemIds[index]!,
-            media: placed[index]!.id,
-            start: position,
-            duration: item.duration,
-            in: item.in,
-          },
-        };
-        position += item.duration;
-        return op;
-      });
-      const edits = yield* EditDocumentService.EditDocumentService;
-      return yield* edits
-        .apply(project.projectId, [...track.addTrack, ...reshape, ...shifts, ...inserts], {
-          origin: "agent",
-          baseRevision: revision,
-          reply: project.reply,
-          summary: `Added ${count(items.length, "clip part")} to the timeline`,
-        })
+      // Scope check first: refuses anything outside the project, without saying whether it exists.
+      for (const item of items) yield* resolveMedia(project, item.mediaId);
+      const clips = yield* ClipPlacementService.ClipPlacementService;
+      return yield* clips
+        .addClips(
+          project.projectId,
+          { parts: items, ...(at === undefined ? {} : { at }) },
+          { origin: "agent", reply: project.reply },
+        )
         .pipe(
-          Effect.map((after) => ({ revision: after.revision, itemIds, ...cleanupOf(after) })),
+          Effect.map(({ snapshot, itemIds }) => ({
+            revision: snapshot.revision,
+            itemIds,
+            ...cleanupOf(snapshot),
+          })),
           Effect.mapError(
             (error) =>
               new OrchestratorMcpFailure({
                 code:
-                  error._tag === "EditConflict" || error._tag === "EditValidationError"
+                  error._tag === "ClipPlacementError" ||
+                  error._tag === "EditConflict" ||
+                  error._tag === "EditValidationError"
                     ? "invalid_request"
                     : "orchestration_error",
                 message: error._tag === "EditUnavailableError" ? error.explanation : error.message,

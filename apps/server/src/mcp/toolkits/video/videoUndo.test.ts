@@ -32,6 +32,7 @@ import * as ManagedProjectFolders from "../../../project/ManagedProjectFolders.t
 import * as TranscriptService from "../../../transcript/TranscriptService.ts";
 import * as AudioTrackService from "../../../edit/AudioTrackService.ts";
 import * as CaptionTrackService from "../../../edit/CaptionTrackService.ts";
+import * as ClipPlacementService from "../../../edit/ClipPlacementService.ts";
 import * as SilenceCutService from "../../../edit/SilenceCutService.ts";
 import * as McpHttpServer from "../../McpHttpServer.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
@@ -206,6 +207,7 @@ const withProject = <A, E>(
       Layer.mock(ExportService.ExportService)({}),
       Layer.mock(MediaLibraryService.MediaLibraryService)({}),
       CaptionTrackService.layer,
+      ClipPlacementService.layer,
       silences === "real"
         ? SilenceCutService.layer.pipe(Layer.provideMerge(spokenClip))
         : Layer.mergeAll(

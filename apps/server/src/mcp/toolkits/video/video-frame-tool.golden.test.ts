@@ -33,6 +33,7 @@ import * as ProjectService from "../../../project/ProjectService.ts";
 import * as TranscriptService from "../../../transcript/TranscriptService.ts";
 import * as AudioTrackService from "../../../edit/AudioTrackService.ts";
 import * as CaptionTrackService from "../../../edit/CaptionTrackService.ts";
+import * as ClipPlacementService from "../../../edit/ClipPlacementService.ts";
 import * as SilenceCutService from "../../../edit/SilenceCutService.ts";
 import * as McpHttpServer from "../../McpHttpServer.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
@@ -160,6 +161,7 @@ describe.skipIf(!available)("video-frame-tool golden", () => {
             Layer.mock(SilenceCutService.SilenceCutService)({}),
             Layer.mock(CaptionTrackService.CaptionTrackService)({}),
             Layer.mock(AudioTrackService.AudioTrackService)({}),
+            Layer.mock(ClipPlacementService.ClipPlacementService)({}),
             Layer.mock(MediaLibraryService.MediaLibraryService)({}),
           ),
         ),
