@@ -17,7 +17,14 @@ import {
   type ProjectId,
   type ScopedProjectRef,
 } from "@t3tools/contracts";
-import { ClapperboardIcon, FilmIcon, PlusIcon, TriangleAlertIcon, UploadIcon } from "lucide-react";
+import {
+  ClapperboardIcon,
+  FilmIcon,
+  PlusIcon,
+  SendToBackIcon,
+  TriangleAlertIcon,
+  UploadIcon,
+} from "lucide-react";
 import * as Schema from "effect/Schema";
 import { useEffect, useId, useState, type DragEvent, type ReactNode } from "react";
 
@@ -595,58 +602,67 @@ function ExportButton(props: { readonly projectRef: ScopedProjectRef }) {
   })();
 
   return (
-    <div className="flex min-w-0 items-center gap-2">
-      {running ? (
-        <div className="flex min-w-0 flex-1 items-center gap-2">
-          <div
-            role="progressbar"
-            aria-label="Export"
-            aria-valuemin={0}
-            aria-valuemax={100}
-            aria-valuenow={progress}
-            className="h-1.5 w-24 overflow-hidden rounded-full bg-muted"
-          >
-            <div className="h-full bg-primary" style={{ width: `${progress}%` }} />
-          </div>
-          <span className="text-xs text-muted-foreground tabular-nums">{progress}%</span>
-        </div>
-      ) : outcome !== null ? (
-        <span
-          role="status"
-          className="min-w-0 truncate text-xs text-muted-foreground data-[state=failed]:text-destructive-foreground"
-          data-state={job?.state}
-        >
-          {outcome}
-        </span>
-      ) : null}
-      {running ? (
-        <Button
-          size="compact"
-          variant="outline"
-          aria-label="Cancel export"
-          disabled={cancelling}
-          onClick={() => void cancelExport()}
-        >
-          Cancel
-        </Button>
-      ) : (
-        <>
-          <Button size="compact" variant="outline" onClick={() => void exportEdit()}>
-            <UploadIcon aria-hidden />
-            Export
-          </Button>
-          <Button size="compact" variant="outline" onClick={() => setEditorsOpen(true)}>
-            Export for editors
-          </Button>
-        </>
-      )}
+    <>
       <ExportForEditorsDialog
         projectRef={props.projectRef}
         open={editorsOpen}
         onClose={() => setEditorsOpen(false)}
         onStarted={setStarted}
       />
-    </div>
+      <div className="flex min-w-0 items-center gap-2">
+        {running ? (
+          <div className="flex min-w-0 flex-1 items-center gap-2">
+            <div
+              role="progressbar"
+              aria-label="Export"
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={progress}
+              className="h-1.5 w-24 overflow-hidden rounded-full bg-muted"
+            >
+              <div className="h-full bg-primary" style={{ width: `${progress}%` }} />
+            </div>
+            <span className="text-xs text-muted-foreground tabular-nums">{progress}%</span>
+          </div>
+        ) : outcome !== null ? (
+          <span
+            role="status"
+            className="min-w-0 truncate text-xs text-muted-foreground data-[state=failed]:text-destructive-foreground"
+            data-state={job?.state}
+          >
+            {outcome}
+          </span>
+        ) : null}
+        {running ? (
+          <Button
+            size="compact"
+            variant="outline"
+            aria-label="Cancel export"
+            disabled={cancelling}
+            onClick={() => void cancelExport()}
+          >
+            Cancel
+          </Button>
+        ) : (
+          <>
+            <Button size="compact" variant="outline" onClick={() => void exportEdit()}>
+              <UploadIcon aria-hidden />
+              Export
+            </Button>
+            {/* An icon, so the export's status keeps its room in the header. */}
+            <Button
+              size="icon-sm"
+              variant="outline"
+              aria-label="Export for editors"
+              title="Export for editors"
+              onClick={() => setEditorsOpen(true)}
+            >
+              <SendToBackIcon aria-hidden />
+            </Button>
+          </>
+        )}
+      </div>
+    </>
   );
 }
 

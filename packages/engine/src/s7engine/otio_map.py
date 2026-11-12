@@ -409,7 +409,7 @@ def dropped(edit: dict[str, Any], fmt: str, captions: str, caption_chunks: int, 
             out.append("muted tracks (left out, as in the video export)")
         if caption_chunks:
             out.append("captions on the timeline (they are in the captions file beside it)" if captions != "none" else "captions (no captions file chosen)")
-    if caption_chunks and captions == "srt":
+    if caption_chunks and captions == "srt" and fmt != "otio":
         out.append("the caption look (an SRT file has no style; choose ASS to keep it)")
     if caption_chunks and captions == "ass":
         out.append("the caption font, Inter Bold, is named in the ASS file but not included")

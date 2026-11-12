@@ -62,6 +62,7 @@ const commands = vi.hoisted(() => ({
   undo: vi.fn(),
   redo: vi.fn(),
   plan: vi.fn(),
+  interchange: vi.fn(),
 }));
 const toasts = vi.hoisted(() => ({ add: vi.fn() }));
 
@@ -93,21 +94,23 @@ vi.mock(import("../../state/use-atom-command"), () => ({
   useAtomCommand: ((command: { label: string } | undefined) =>
     command?.label.endsWith("export:start")
       ? commands.start
-      : command?.label.endsWith("engine:cancel")
-        ? commands.cancel
-        : command?.label.endsWith("edit:history-clean")
-          ? commands.historyClean
-          : command?.label.endsWith("edit:history-dismiss")
-            ? commands.historyDismiss
-            : command?.label.endsWith("edit:apply")
-              ? commands.apply
-              : command?.label.endsWith("edit:undo")
-                ? commands.undo
-                : command?.label.endsWith("edit:redo")
-                  ? commands.redo
-                  : command?.label.endsWith("media:import-plan")
-                    ? commands.plan
-                    : vi.fn()) as never,
+      : command?.label.endsWith("export:interchange")
+        ? commands.interchange
+        : command?.label.endsWith("engine:cancel")
+          ? commands.cancel
+          : command?.label.endsWith("edit:history-clean")
+            ? commands.historyClean
+            : command?.label.endsWith("edit:history-dismiss")
+              ? commands.historyDismiss
+              : command?.label.endsWith("edit:apply")
+                ? commands.apply
+                : command?.label.endsWith("edit:undo")
+                  ? commands.undo
+                  : command?.label.endsWith("edit:redo")
+                    ? commands.redo
+                    : command?.label.endsWith("media:import-plan")
+                      ? commands.plan
+                      : vi.fn()) as never,
 }));
 vi.mock(import("../../assets/assetUrls"), () => ({
   useAssetUrlState: ((
@@ -596,6 +599,68 @@ describe("EditorPanel", () => {
     await expect.element(screen.getByRole("progressbar", { name: "Export" })).toBeVisible();
   });
 
+  it("lists what won't carry over before an export for editors, then starts it", async () => {
+    setState([asset("clip-0")], true);
+    commands.interchange.mockReset();
+    commands.interchange
+      .mockResolvedValueOnce({
+        _tag: "Success",
+        value: { files: [], dropped: ["zooms", "volume changes and fades"] },
+      })
+      .mockResolvedValueOnce({
+        _tag: "Success",
+        value: {
+          jobId: EngineJobId.make("job-3"),
+          files: ["exports/edit.edl", "exports/edit.srt"],
+          dropped: ["zooms", "volume changes and fades"],
+        },
+      });
+    await using screen = await renderPanel();
+    await screen.getByRole("button", { name: "Export for editors" }).click();
+    const dialog = screen.getByRole("dialog", { name: "Export for editors" });
+    await expect.element(dialog.getByRole("radio", { name: /Final Cut Pro/u })).toBeChecked();
+    await dialog.getByRole("radio", { name: /EDL/u }).click();
+    await dialog.getByRole("radio", { name: /No captions file/u }).click();
+    await dialog.getByRole("radio", { name: /SRT/u }).click();
+    await dialog.getByRole("button", { name: "Next" }).click();
+    expect(commands.interchange).toHaveBeenNthCalledWith(1, {
+      environmentId: EnvironmentId.make("env-1"),
+      input: { projectId, format: "edl", captions: "srt", check: true },
+    });
+    await expect.element(dialog.getByText("What won't carry over to EDL:")).toBeVisible();
+    const list = dialog.getByRole("list", { name: "What won't carry over to EDL:" });
+    await expect.element(list.getByText("zooms")).toBeVisible();
+    await expect.element(list.getByText("volume changes and fades")).toBeVisible();
+    await expect.element(dialog.getByRole("button", { name: "Cancel" })).toBeVisible();
+    await dialog.getByRole("button", { name: "Continue" }).click();
+    expect(commands.interchange).toHaveBeenNthCalledWith(2, {
+      environmentId: EnvironmentId.make("env-1"),
+      input: { projectId, format: "edl", captions: "srt" },
+    });
+    await expect.element(screen.getByRole("dialog")).not.toBeInTheDocument();
+    await expect.element(screen.getByRole("progressbar", { name: "Export" })).toBeVisible();
+  });
+
+  it("cancels an export for editors from the notice without starting it", async () => {
+    setState([asset("clip-0")], true);
+    commands.interchange.mockReset();
+    commands.interchange.mockResolvedValueOnce({
+      _tag: "Success",
+      value: { files: [], dropped: [] },
+    });
+    await using screen = await renderPanel();
+    await screen.getByRole("button", { name: "Export for editors" }).click();
+    const dialog = screen.getByRole("dialog", { name: "Export for editors" });
+    await dialog.getByRole("radio", { name: /Premiere or DaVinci Resolve/u }).click();
+    await dialog.getByRole("button", { name: "Next" }).click();
+    await expect
+      .element(dialog.getByText("Everything carries over to Premiere or DaVinci Resolve."))
+      .toBeVisible();
+    await dialog.getByRole("button", { name: "Cancel" }).click();
+    await expect.element(screen.getByRole("dialog")).not.toBeInTheDocument();
+    expect(commands.interchange).toHaveBeenCalledTimes(1);
+  });
+
   it("offers no export action for other start errors", async () => {
     setState([asset("clip-0")], true);
     toasts.add.mockReset();
@@ -848,6 +913,7 @@ describe("EditorPanel", () => {
     await expect.element(await videoOf(screen)).toBeInTheDocument();
     // Export would write the current edit, so it waits until the preview ends; so do the looks.
     expect(screen.getByRole("button", { name: "Export" }).query()).toBeNull();
+    expect(screen.getByRole("button", { name: "Export for editors" }).query()).toBeNull();
     expect(screen.getByRole("group", { name: "Caption look" }).query()).toBeNull();
     const playhead = document.querySelector<HTMLElement>("[data-testid=timeline-playhead]")!;
     await expect.poll(() => playhead.hidden).toBe(true);

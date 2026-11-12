@@ -478,6 +478,7 @@ describe("video_undo and video_redo", () => {
           ["video_redo", {}],
           ["video_remove_silences", {}],
           ["video_export", {}],
+          ["video_export_interchange", { format: "fcpxml" }],
           ["video_canvas", { ratio: "1:1" }],
           ["video_assemble", { items: [{ mediaId: "cam", in: 0, duration: 30 }] }],
           ["video_import", { path: NodePath.join(root, "clip.mp4") }],

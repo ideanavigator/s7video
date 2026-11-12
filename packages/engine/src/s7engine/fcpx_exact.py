@@ -7,8 +7,9 @@ and keeps rates as whole numbers, so 30000/1001 becomes 29. Spike B2 measured li
 early on 5 of 58 clips and 7 of 58 misread source starts; true NTSC rates also miss its frame
 duration table and get an empty ``frameDuration``. Its ``format_name`` runs ``ffprobe`` from PATH.
 
-``install`` replaces those helpers (two module functions and five class attributes) with exact
-``Fraction`` versions. This file is ours and written fresh; the adapter ships unmodified. It patches
+``install`` replaces those helpers (three module functions and five class attributes) with exact
+``Fraction`` versions. It also stops the writer adding a browser clip to the event for every clip on
+the timeline: it tests an XML element's truth, which is false for an element with no children. This file is ours and written fresh; the adapter ships unmodified. It patches
 only the version it was checked against, so an upgrade fails loudly until it is checked again.
 """
 
@@ -140,6 +141,14 @@ def reader_number_of_frames(self: Any, time_value: str | None, format_id: str) -
     return round(parse_time(time_value) * rate)
 
 
+def _one_asset_clip(create: Any) -> Any:
+    def create_once(self: Any, clip: Any, format_element: Any, resource_id: str) -> None:
+        if self.event_resource.find(f"./asset-clip[@ref='{resource_id}']") is None:
+            create(self, clip, format_element, resource_id)
+
+    return create_once
+
+
 def install() -> Any:
     """Patches the adapter once and returns its module. Refuses any version but the checked one."""
     global _installed
@@ -158,5 +167,7 @@ def install() -> Any:
             fcpx_xml.FcpxOtio._calculate_rational_number = staticmethod(calculate_rational_number)
             fcpx_xml.FcpxXml._format_frame_rate = reader_format_rate
             fcpx_xml.FcpxXml._number_of_frames = reader_number_of_frames
+            writer = fcpx_xml.FcpxOtio
+            writer._create_asset_clip_element = _one_asset_clip(writer._create_asset_clip_element)
             _installed = True
     return fcpx_xml

@@ -76,12 +76,28 @@ const fakeEngine = (
           feature: "libass",
         });
       }
+      if (input.method === "interchange.export") {
+        const base = String(input.params.outputBase);
+        const extension = input.params.format === "fcp7xml" ? "xml" : String(input.params.format);
+        const files = [`${base}.${extension}`];
+        if (input.params.captions !== "none")
+          files.push(`${base}.${String(input.params.captions)}`);
+        for (const file of files) NodeFS.writeFileSync(file, "interchange");
+        return { files, dropped: ["zooms"], captions: 2 } as never;
+      }
       const output = String(input.params.outputPath);
       NodeFS.writeFileSync(output, "mp4");
       return rendered(output) as never;
     });
+  // `interchange.check`: what the export would drop, and its caption chunks.
+  const call: EngineService.EngineService["Service"]["call"] = (method, params) =>
+    Effect.sync(() => {
+      calls.push({ kind: "call", projectId: undefined, method, params });
+      return { dropped: ["zooms"], captions: 2 } as never;
+    });
   return Layer.mock(EngineService.EngineService)({
     runJob,
+    call,
     cancelJob: () => Effect.succeed(true),
     subscribeJobs: Stream.empty,
   });
@@ -426,6 +442,127 @@ describe("ExportService", () => {
           // Captions off needs no transcript.
           yield* exports.start({ projectId, captions: false });
           assert.strictEqual(calls.length, 1);
+          assert.isUndefined(calls[0]?.params.transcripts);
+        }),
+      { ops: withVideo },
+    ),
+  );
+
+  it.effect("starts an editors export with its captions file beside it (S7V-040)", () =>
+    withExports(
+      "ok",
+      ({ projectId, root, exports, calls, finish }) =>
+        Effect.gen(function* () {
+          const started = yield* exports.startInterchange({ projectId, format: "fcpxml" });
+          const stem = started.files[0]?.replace(/\.fcpxml$/u, "");
+          assert.match(String(stem), /^exports\/my-reel-2-\d{8}-\d{4}$/u);
+          assert.deepStrictEqual(started.files, [`${stem}.fcpxml`, `${stem}.srt`]);
+          assert.deepStrictEqual(started.dropped, ["zooms"]);
+
+          // The engine's check runs first, with the same inputs as the job; SRT is the default.
+          const [check, job] = calls;
+          assert.strictEqual(check?.method, "interchange.check");
+          assert.strictEqual(job?.method, "interchange.export");
+          assert.strictEqual(job?.kind, "export");
+          assert.strictEqual(job?.projectId, projectId);
+          assert.strictEqual(job?.params.captions, "srt");
+          assert.strictEqual(
+            job?.params.outputBase,
+            NodePath.join(NodePath.resolve(root), String(stem)),
+          );
+          assert.deepStrictEqual(
+            { ...job?.params, outputBase: undefined },
+            { ...check?.params, outputBase: undefined },
+          );
+
+          yield* finish;
+          const status = yield* settled(exports, String(started.jobId) as EngineJobId);
+          assert.deepStrictEqual(status, {
+            jobId: started.jobId,
+            projectId,
+            path: `${stem}.fcpxml`,
+            files: started.files,
+            dropped: ["zooms"],
+            state: "succeeded",
+          } as ExportStatus);
+          for (const file of started.files) {
+            assert.isTrue(NodeFS.existsSync(NodePath.join(root, file)));
+            assert.isTrue(isIgnored(root, file));
+          }
+          assert.deepStrictEqual(
+            historyLog(root)?.versions?.map((version) => version.exported),
+            [true],
+          );
+        }),
+      { ops: withVideo, cached: { cam: transcriptOf([]) } },
+    ),
+  );
+
+  it.effect("a check lists what won't carry over and starts nothing", () =>
+    withExports(
+      "ok",
+      ({ projectId, root, exports, calls }) =>
+        Effect.gen(function* () {
+          const checked = yield* exports.startInterchange({
+            projectId,
+            format: "edl",
+            captions: "none",
+            check: true,
+          });
+          assert.deepStrictEqual(checked, { files: [], dropped: ["zooms"] });
+          assert.deepStrictEqual(
+            calls.map((entry) => entry.method),
+            ["interchange.check"],
+          );
+          assert.deepStrictEqual(NodeFS.readdirSync(NodePath.join(root, "exports")), []);
+        }),
+      { ops: withVideo },
+    ),
+  );
+
+  it.effect("interchange names never collide with an MP4 export in the same minute", () =>
+    withExports("ok", ({ projectId, exports }) =>
+      Effect.gen(function* () {
+        const started = yield* Effect.all(
+          [
+            exports.startInterchange({ projectId, format: "otio", captions: "srt" }),
+            exports.startInterchange({ projectId, format: "fcpxml", captions: "srt" }),
+            exports.startInterchange({ projectId, format: "fcp7xml", captions: "ass" }),
+          ],
+          { concurrency: 3 },
+        );
+        const mp4 = yield* exports.start({ projectId, captions: false });
+        const files = [...started.flatMap((entry) => entry.files), mp4.path];
+        assert.strictEqual(new Set(files).size, files.length, files.join(", "));
+        // Each export's files share one free index: no `.srt` pairs with another export's file.
+        const stems = started.map(
+          (entry) => new Set(entry.files.map((file) => file.replace(/\.[a-z0-9]+$/u, ""))),
+        );
+        assert.isTrue(stems.every((stem) => stem.size === 1));
+        const srts = started.flatMap((entry) =>
+          entry.files.filter((file) => file.endsWith(".srt")),
+        );
+        assert.strictEqual(new Set(srts).size, 2);
+      }),
+    ),
+  );
+
+  it.effect("an editors export without a transcript fails plainly unless captions are off", () =>
+    withExports(
+      "ok",
+      ({ projectId, exports, calls }) =>
+        Effect.gen(function* () {
+          const error = yield* exports
+            .startInterchange({ projectId, format: "fcpxml" })
+            .pipe(Effect.flip);
+          assert.strictEqual(error._tag, "ExportStartError");
+          assert.strictEqual(calls.length, 0);
+          const started = yield* exports.startInterchange({
+            projectId,
+            format: "fcpxml",
+            captions: "none",
+          });
+          assert.strictEqual(started.files.length, 1);
           assert.isUndefined(calls[0]?.params.transcripts);
         }),
       { ops: withVideo },
