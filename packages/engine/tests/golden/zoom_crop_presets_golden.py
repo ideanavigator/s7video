@@ -175,18 +175,28 @@ def test_zoom_crops_exactly(media, tmp_path: Path) -> None:
             # The frames either side of a zoom are the unzoomed export's, not the zoom's.
             crop = zoom.frame_crop(W, H, punch, step)
             as_plain = _ssim(got, unzoomed)
+            as_zoom = _ssim(got, _zoomed(unzoomed, crop, tmp_path / f"out-{frame}.png"))
+            print(f"zoom-crop-presets frame {frame} (outside x{punch.scale}): SSIM vs unzoomed {as_plain:.4f}, vs zoomed {as_zoom:.4f}")
             assert as_plain >= MIN_SSIM, (frame, as_plain)
-            assert as_plain > _ssim(got, _zoomed(unzoomed, crop, tmp_path / f"out-{frame}.png")), frame
+            assert as_plain > as_zoom, frame
             continue
         crop = zoom.frame_crop(W, H, punch, step)
         rects.append([frame, crop.scaled_width, crop.scaled_height, crop.x, crop.y])
         exact = _ssim(got, _zoomed(unzoomed, crop, tmp_path / f"ref-{frame}.png"))
-        assert exact >= MIN_SSIM, (frame, exact)
-        assert exact > _ssim(got, unzoomed), frame
+        bare = _ssim(got, unzoomed)
+        nears = []
         for dx, dy in ((2, 0), (-2, 0), (0, 2), (0, -2)):
             near = zoom.Crop(crop.scaled_width, crop.scaled_height, crop.x + dx, crop.y + dy)
             if 0 <= near.x <= near.scaled_width - W and 0 <= near.y <= near.scaled_height - H:
-                assert exact > _ssim(got, _zoomed(unzoomed, near, tmp_path / f"near-{frame}.png")), (frame, dx, dy)
+                nears.append(_ssim(got, _zoomed(unzoomed, near, tmp_path / f"near-{frame}.png")))
+        print(
+            f"zoom-crop-presets frame {frame} (x{punch.scale}, ramp step {min(step, punch.ramp_frames) if punch.ramp_frames else '-'}):"
+            f" rect {crop.scaled_width}x{crop.scaled_height}+{crop.x}+{crop.y}, SSIM {exact:.4f},"
+            f" 2 px off at most {max(nears):.4f}, unzoomed {bare:.4f}"
+        )
+        assert exact >= MIN_SSIM, (frame, exact)
+        assert exact > bare, frame
+        assert all(exact > near for near in nears), (frame, nears)
     # The ramp reaches the target's own rectangle on frame N, and keeps it.
     ramp_start, _, ramp_value = ZOOMS[2]
     target = zoom.crop_at(W, H, ramp_value["scale"], ramp_value["anchorX"], ramp_value["anchorY"])
@@ -226,11 +236,15 @@ def _masks(captioned: Path, plain: Path, band: tuple[int, int, int, int]) -> lis
     return [frozenset(i for i, (a, b) in enumerate(zip(x, y)) if abs(a - b) > TEXT_DIFF) for x, y in zip(planes(captioned), planes(plain))]
 
 
-def _assert_switches(masks: list[frozenset[int]], edges: list[int], total: int) -> None:
+def _assert_switches(masks: list[frozenset[int]], edges: list[int], total: int) -> dict[str, int]:
+    """Each edge switches the captions within one frame; returns how many switched 1 early, on, 1 late."""
+    offsets = {"-1": 0, "0": 0, "+1": 0}
     for edge in edges:
         if 0 < edge < total:
-            window = range(max(1, edge - 1), min(total, edge + 2))
-            assert any(masks[frame] != masks[frame - 1] for frame in window), edge
+            changed = [frame - edge for frame in range(max(1, edge - 1), min(total, edge + 2)) if masks[frame] != masks[frame - 1]]
+            assert changed, edge
+            offsets[f"{min(changed, key=abs):+d}".replace("+0", "0")] += 1
+    return offsets
 
 
 def _alpha_box(still: Path, width: int) -> tuple[int, int, int, int] | None:
@@ -266,14 +280,21 @@ def test_every_look_stays_in_the_safe_zone_and_on_its_frames(synth_clip, tmp_pat
         left, top, right, bottom = layout.safe
         # Every still the export's own ASS draws, box, outline and shadow included, is in the zone.
         stills = captions._render({"edit": edit, "cacheDir": str(tmp_path / "stills")}, JobContext.detached())
+        boxes = []
         for name in {chunk["png"] for chunk in stills["chunks"]}:
             box = _alpha_box(tmp_path / "stills" / stills["folder"] / name, width)
             assert box is not None, (style, name)
             assert left <= box[0] and box[2] < right and top <= box[1] and box[3] < bottom, (style, box, layout.safe)
+            boxes.append(box)
+        # The union of every caption's pixels, and the zone it must stay in.
+        union = [min(b[0] for b in boxes), min(b[1] for b in boxes), max(b[2] for b in boxes), max(b[3] for b in boxes)]
+        observed[style]["captionBox"] = union
+        observed[style]["safeZone"] = list(layout.safe)
         captioned = _render(edit, tmp_path / f"{style}.mp4", tmp_path, burn=True)
         # Each still switches on its own frames: a chunk's, or a word's in the highlighted look.
         masks = _masks(captioned, plain, (left, top, right, bottom))
-        _assert_switches(masks, sorted({edge for cue in cues for edge in (cue.start, cue.end)}), total)
+        offsets = _assert_switches(masks, sorted({edge for cue in cues for edge in (cue.start, cue.end)}), total)
+        print(f"zoom-crop-presets {width}x{height} {style}: {len(cues)} stills, caption box {union} in safe zone {list(layout.safe)}, switches (1 early / on / 1 late) {offsets}")
         captioned.unlink()
     _record(f"looks-{width}x{height}", observed)
 
@@ -297,7 +318,9 @@ def test_transcript_captions_switch_on_the_word_frames(synth_clip, tmp_path: Pat
     captioned = _render(edit, tmp_path / "captioned.mp4", tmp_path, burn=True, transcripts=[transcript])
     plain = _render(edit, tmp_path / "plain.mp4", tmp_path, burn=False)
     safe = captions_ass.layout_for(W, H, captions_ass.load_style("s7-karaoke")).safe
-    _assert_switches(_masks(captioned, plain, safe), sorted({edge for cue in cues for edge in (cue.start, cue.end)}), total)
+    offsets = _assert_switches(_masks(captioned, plain, safe), sorted({edge for cue in cues for edge in (cue.start, cue.end)}), total)
+    print(f"zoom-crop-presets transcript captions, s7-karaoke: {len(cues)} word states on the word frames, switches (1 early / on / 1 late) {offsets}")
+    _record("transcriptWordStarts", [cue.start for cue in cues])
 
 
 # --- Previews ------------------------------------------------------------------------------------
