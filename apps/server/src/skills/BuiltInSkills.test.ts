@@ -95,8 +95,7 @@ it.layer(NodeServices.layer)("built-in skills", (it) => {
           path: path.join(builtInSkillsRoot(path, pluginDir), "add-sound-and-music", "SKILL.md"),
           enabled: true,
           scope: "system",
-          description:
-            "Add sound and music - place the user's SFX and music. Use only if the user asks.",
+          description: "Add sound and music - place the user's own. Use only if the user asks.",
           displayName: "Add sound and music",
         },
         {

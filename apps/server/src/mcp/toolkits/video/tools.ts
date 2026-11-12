@@ -299,7 +299,7 @@ const VideoAddCaptionsTool = Tool.make("video_add_captions", {
 // S7V-036: user-triggered only. `at` is a clip frame as video_transcript_read shows it, mapped
 // through the edit; `clip` names that clip when the edit has several. One checkpoint.
 const VideoPlaceAudioTool = Tool.make("video_place_audio", {
-  description: "Add sound effect or music to video only if user asks. at: clip frame",
+  description: "Add SFX or music to video only if user asks. at: clip frame",
   parameters: Schema.Struct({
     media: Schema.String,
     at: Schema.optional(Schema.Int),

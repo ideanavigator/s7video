@@ -1,6 +1,6 @@
 ---
 name: add-sound-and-music
-description: Add sound and music - place the user's SFX and music. Use only if the user asks.
+description: Add sound and music - place the user's own. Use only if the user asks.
 ---
 
 # Add sound and music
