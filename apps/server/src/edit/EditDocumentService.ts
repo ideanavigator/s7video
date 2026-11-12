@@ -55,6 +55,12 @@ export interface EditCaller {
   readonly reply?: EditReply | undefined;
 }
 
+/** A version a chat named, and the other version whose tag reads the same, if any. */
+export interface FoundVersion {
+  readonly version: EditVersion;
+  readonly alsoNamed?: number | undefined;
+}
+
 export class EditDocumentService extends Context.Service<
   EditDocumentService,
   {
@@ -122,6 +128,26 @@ export class EditDocumentService extends Context.Service<
       n: number,
       options: EditCaller & { readonly baseRevision: number },
     ) => Effect.Effect<EditSnapshot, EditUnavailableError | EditConflict>;
+    /**
+     * S7V-070: one version by the words a chat uses for it, `v12`, `12` or its tag; a number wins
+     * over a tag that reads the same (`alsoNamed`). Nothing is written.
+     */
+    readonly findVersion: (
+      projectId: ProjectId,
+      ref: string,
+    ) => Effect.Effect<FoundVersion & { readonly document: EditDocument }, EditUnavailableError>;
+    /**
+     * `restoreVersion` for a version named as `findVersion` reads it. `changed` is false when that
+     * version is already the edit: nothing is written and no version is added.
+     */
+    readonly restoreVersionRef: (
+      projectId: ProjectId,
+      ref: string,
+      options: EditCaller & { readonly baseRevision: number },
+    ) => Effect.Effect<
+      FoundVersion & { readonly snapshot: EditSnapshot; readonly changed: boolean },
+      EditUnavailableError | EditConflict
+    >;
     /** Removes a version that is not the current one; clips in Assets are never touched. */
     readonly deleteVersion: (
       projectId: ProjectId,
@@ -721,9 +747,58 @@ const make = Effect.gen(function* () {
     );
   });
 
-  const restoreVersion: EditDocumentService["Service"]["restoreVersion"] = Effect.fn(
-    "EditDocumentService.restoreVersion",
-  )(function* (projectId, n, options) {
+  /** The version `ref` names (a number, or what a chat calls it), read under the lock. */
+  const resolveVersion = Effect.fnUntraced(function* (
+    projectId: ProjectId,
+    root: string,
+    ref: number | string,
+  ) {
+    const all = yield* history.versions(root).pipe(Effect.mapError(historyError(projectId)));
+    const byNumber = typeof ref === "number" ? all.find((entry) => entry.n === ref) : undefined;
+    const found =
+      typeof ref === "string"
+        ? EditHistoryService.findVersionRef(all, ref)
+        : byNumber === undefined
+          ? ({ _tag: "missing", n: ref } as const)
+          : ({ _tag: "found", version: byNumber } as const);
+    if (found._tag === "missing") {
+      const named = String(ref).trim();
+      if (found.n !== undefined) return yield* unknownVersion(projectId, found.n);
+      return yield* unavailable(
+        projectId,
+        "unknown-version",
+        named === ""
+          ? "Say which version: v12 or its name."
+          : `No version in this project is named "${named}".`,
+      );
+    }
+    const text = yield* history
+      .versionText(root, found.version.n)
+      .pipe(Effect.mapError(historyError(projectId)));
+    if (Option.isNone(text)) return yield* unknownVersion(projectId, found.version.n);
+    return {
+      version: versionOf(found.version, all.at(-1)?.n === found.version.n),
+      ...("alsoNamed" in found ? { alsoNamed: found.alsoNamed } : {}),
+      editJson: text.value.editJson,
+    };
+  });
+
+  const findVersion: EditDocumentService["Service"]["findVersion"] = Effect.fn(
+    "EditDocumentService.findVersion",
+  )(function* (projectId, ref) {
+    return yield* withRoot(projectId, (root) =>
+      Effect.gen(function* () {
+        const { editJson, ...found } = yield* resolveVersion(projectId, root, ref);
+        return { ...found, document: yield* parseEdit(projectId, editJson) };
+      }),
+    );
+  });
+
+  const restore = Effect.fnUntraced(function* (
+    projectId: ProjectId,
+    ref: number | string,
+    options: EditCaller & { readonly baseRevision: number },
+  ) {
     return yield* withRoot(projectId, (root) =>
       Effect.gen(function* () {
         const current = yield* loadReconciled(projectId, root, "write");
@@ -733,29 +808,36 @@ const make = Effect.gen(function* () {
             currentRevision: current.revision,
           });
         }
-        const found = yield* history
-          .versionText(root, n)
-          .pipe(Effect.mapError(historyError(projectId)));
-        if (Option.isNone(found)) return yield* unknownVersion(projectId, n);
-        const editText = yield* keepLibrary(
-          projectId,
-          { restore: n },
-          found.value.editJson,
-          current.document,
-        );
+        const { editJson, ...found } = yield* resolveVersion(projectId, root, ref);
+        const n = found.version.n;
+        const editText = yield* keepLibrary(projectId, { restore: n }, editJson, current.document);
         // Already the edit: nothing to write, and no version.
         if (editText === current.editText) {
-          return yield* snapshotOf(root, current.revision, current.document);
+          const snapshot = yield* snapshotOf(root, current.revision, current.document);
+          return { ...found, snapshot, changed: false };
         }
         const document = yield* parseEdit(projectId, editText);
-        return yield* commit(projectId, root, current, editText, document, {
+        const snapshot = yield* commit(projectId, root, current, editText, document, {
           author: options.reply === undefined ? "you" : "assistant",
           reply: options.reply,
           change: `Restored from v${n}`,
           restoredFrom: n,
         });
+        return { ...found, snapshot, changed: true };
       }),
     );
+  });
+
+  const restoreVersion: EditDocumentService["Service"]["restoreVersion"] = Effect.fn(
+    "EditDocumentService.restoreVersion",
+  )(function* (projectId, n, options) {
+    return (yield* restore(projectId, n, options)).snapshot;
+  });
+
+  const restoreVersionRef: EditDocumentService["Service"]["restoreVersionRef"] = Effect.fn(
+    "EditDocumentService.restoreVersionRef",
+  )(function* (projectId, ref, options) {
+    return yield* restore(projectId, ref, options);
   });
 
   const deleteVersion: EditDocumentService["Service"]["deleteVersion"] = Effect.fn(
@@ -862,6 +944,8 @@ const make = Effect.gen(function* () {
     versionDocument,
     tagVersion,
     restoreVersion,
+    findVersion,
+    restoreVersionRef,
     deleteVersion,
   });
 });

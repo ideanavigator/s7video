@@ -53,10 +53,15 @@ pnpm mcp-tool-use --model claude-haiku-5-5 --samples 3 --out runs/s7v-061 --case
 | `VID-01` | control | "remove the silences" loads the video tools, transcribes, then cuts, and calls no coding tool. |
 | `VID-02` | guard   | After a cut, "undo that" calls `video_undo` once and never restores `edit.json` with git.      |
 | `VID-03` | guard   | "open this in the browser and make a PR" gets a plain "can't" and calls no hidden or web tool. |
+| `VID-04` | control | "make v12 the current version" calls `video_version_restore` once for v12, never git.          |
+| `VID-05` | control | "go back to the first cut" restores the version named "first cut" (S7V-070).                   |
+| `VID-06` | guard   | "what changed between v12 and v15?" answers from `video_versions`, restores nothing.           |
 
 ```sh
 pnpm mcp-tool-use --dry-run --case VID-01,VID-02,VID-03
 pnpm mcp-tool-use --model claude-haiku-5-5 --samples 1 --out runs/s7v-072-haiku --case VID-01,VID-02,VID-03
+pnpm mcp-tool-use --dry-run --case VID-04,VID-05,VID-06
+pnpm mcp-tool-use --model claude-haiku-5-5 --samples 1 --out runs/s7v-070-haiku --case VID-04,VID-05,VID-06
 ```
 
 Dry runs cost $0. The paid Haiku run needs the PO's approval first; record its cost in the PR.

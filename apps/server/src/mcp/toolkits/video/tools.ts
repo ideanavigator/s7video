@@ -6,6 +6,7 @@
 import {
   EditAspectRatio,
   EditRational,
+  EditVersionAuthor,
   EngineJob,
   EngineJobId,
   EngineJobState,
@@ -342,6 +343,45 @@ const VideoDuckMusicTool = Tool.make("video_duck_music", {
   .annotate(Tool.Title, "Duck music")
   .annotateMerge(videoAnnotations(false));
 
+// S7V-070: `version` is v12, 12 or the version's name (its tag in the Versions tab).
+const VersionLine = Schema.Struct({
+  n: Schema.Int,
+  tag: Schema.optional(Schema.String),
+  author: EditVersionAuthor,
+  at: Schema.String,
+  change: Schema.String,
+  main: Schema.optional(Schema.Boolean),
+});
+
+const VideoVersionsTool = Tool.make("video_versions", {
+  description: "List video edit versions, or one version's details (v12 or name).",
+  parameters: Schema.Struct({ version: Schema.optional(Schema.String) }),
+  success: Schema.Struct({
+    versions: Schema.optional(Schema.Array(VersionLine)),
+    version: Schema.optional(Schema.Struct({ ...VersionLine.fields, details: Schema.String })),
+  }),
+  failure: OrchestratorMcpFailure,
+  dependencies,
+})
+  .annotate(Tool.Title, "List versions")
+  .annotateMerge(READS);
+
+// S7V-070: S7V-069's make-current. Adds a version "Restored from vN"; never deletes or renumbers.
+const VideoVersionRestoreTool = Tool.make("video_version_restore", {
+  description: "Make a video edit version current (v12 or name). Use this, not git.",
+  parameters: Schema.Struct({ version: Schema.String }),
+  success: Schema.Struct({
+    revision: Schema.Int,
+    version: Schema.optional(Schema.Int),
+    message: Schema.String,
+    cleanup: Cleanup,
+  }),
+  failure: OrchestratorMcpFailure,
+  dependencies,
+})
+  .annotate(Tool.Title, "Restore version")
+  .annotateMerge(videoAnnotations(false));
+
 /** Tools that return JSON. A new tool goes here, with its handler in `handlers.ts`. */
 export const VideoStandardToolkit = Toolkit.make(
   VideoImportTool,
@@ -360,6 +400,8 @@ export const VideoStandardToolkit = Toolkit.make(
   VideoAddCaptionsTool,
   VideoPlaceAudioTool,
   VideoDuckMusicTool,
+  VideoVersionsTool,
+  VideoVersionRestoreTool,
 );
 
 /** `video_frame` returns image content, so it registers on its own (`registerVideoFrame`). */
@@ -383,6 +425,8 @@ export const VideoToolkit = Toolkit.make(
   VideoAddCaptionsTool,
   VideoPlaceAudioTool,
   VideoDuckMusicTool,
+  VideoVersionsTool,
+  VideoVersionRestoreTool,
   VideoFrameTool,
 );
 

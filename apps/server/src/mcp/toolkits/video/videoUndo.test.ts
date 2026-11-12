@@ -482,6 +482,7 @@ describe("video_undo and video_redo", () => {
           ["video_add_captions", {}],
           ["video_place_audio", { media: "cam" }],
           ["video_duck_music", {}],
+          ["video_version_restore", { version: "v1" }],
         ];
         for (const [tool, args] of changing) {
           const result = yield* call(tool, args);
@@ -491,7 +492,7 @@ describe("video_undo and video_redo", () => {
           );
         }
         expect(readFile(root, "edit.json")).toBe(before);
-        for (const tool of ["video_edit_read", "video_job_status"]) {
+        for (const tool of ["video_edit_read", "video_job_status", "video_versions"]) {
           expect((yield* call(tool)).isError, tool).toBe(false);
         }
       }),
@@ -1000,5 +1001,165 @@ describe("video_undo and video_redo", () => {
         }
       }),
     ),
+  );
+});
+
+// S7V-070: versions by plain words. The harness's tool calls all come from one chat reply.
+describe("video_versions and video_version_restore", () => {
+  it.effect(
+    "video_versions lists the newest 20 and finds one by number or name, in plan mode",
+    () =>
+      withProject(({ thread, edits, call }) =>
+        Effect.gen(function* () {
+          const initial = yield* edits.read(thread.projectId);
+          let revision = (yield* edits.apply(thread.projectId, [...setup, keep([[0, 300]])], {
+            origin: "agent",
+            baseRevision: initial.revision,
+            summary: "Kept the whole clip",
+          })).revision;
+          for (let n = 2; n <= 22; n++) {
+            revision = (yield* edits.apply(thread.projectId, [keep([[0, 300 - n]])], {
+              origin: "timeline",
+              baseRevision: revision,
+            })).revision;
+          }
+          yield* edits.tagVersion(thread.projectId, 1, "first cut");
+          yield* edits.tagVersion(thread.projectId, 5, "12");
+          thread.interactionMode = "plan";
+
+          const listed = yield* call("video_versions");
+          expect(listed.isError).toBe(false);
+          // A blank version is no version: it lists.
+          const blank = yield* call("video_versions", { version: "  " });
+          expect(blank.structuredContent).toEqual(listed.structuredContent);
+          const lines = (listed.structuredContent as { versions: ReadonlyArray<{ n: number }> })
+            .versions;
+          expect(lines.map((line) => line.n)).toEqual(
+            Array.from({ length: 20 }, (_, index) => 22 - index),
+          );
+          expect(lines[0]).toMatchObject({ n: 22, author: "you", main: true });
+          expect(lines.at(-1)).not.toHaveProperty("main");
+
+          const named = yield* call("video_versions", { version: "First Cut" });
+          expect(named.structuredContent).toEqual({
+            version: {
+              n: 1,
+              tag: "first cut",
+              author: "assistant",
+              at: expect.any(String),
+              change: "Kept the whole clip",
+              details:
+                'v1 "first cut", by the assistant. Changes: Kept the whole clip. 1 kept piece of video, 300 frames (10.0 s), captions off.',
+            },
+          });
+          for (const ref of ["v12", "12"]) {
+            const numbered = yield* call("video_versions", { version: ref });
+            const details = (
+              numbered.structuredContent as { version: { n: number; details: string } }
+            ).version;
+            expect(details.n, ref).toBe(12);
+            expect(details.details.includes("v5 also has this name"), ref).toBe(ref === "12");
+          }
+          for (const [ref, message] of [
+            ["v999", "There is no version v999 in this project."],
+            ["nope", 'No version in this project is named "nope".'],
+          ] as const) {
+            const missing = yield* call("video_versions", { version: ref });
+            expect(missing.isError, ref).toBe(true);
+            expect(textOf(missing), ref).toEqual([message]);
+          }
+        }),
+      ),
+  );
+
+  it.effect("video_version_restore adds one version equal to the chosen one, and undoes", () =>
+    withProject(({ root, thread, edits, call }) =>
+      Effect.gen(function* () {
+        const initial = yield* edits.read(thread.projectId);
+        const first = yield* edits.apply(thread.projectId, [...setup, keep([[0, 300]])], {
+          origin: "timeline",
+          baseRevision: initial.revision,
+        });
+        const v1Edit = readFile(root, "edit.json");
+        yield* edits.apply(thread.projectId, [keep([[0, 90]])], {
+          origin: "timeline",
+          baseRevision: first.revision,
+        });
+        const v2Edit = readFile(root, "edit.json");
+        const before = yield* edits.versions(thread.projectId);
+
+        const restored = yield* call("video_version_restore", { version: "v1" });
+        expect(restored.isError).toBe(false);
+        expect(readFile(root, "edit.json")).toBe(v1Edit);
+        const after = yield* edits.read(thread.projectId);
+        expect(restored.structuredContent).toEqual({
+          revision: after.revision,
+          version: 3,
+          message: `v1 is now the main version, saved as v3: revision ${after.revision}: 1 item on 1 track, 300 frames, captions off. Say undo to go back.`,
+        });
+        const versions = yield* edits.versions(thread.projectId);
+        expect(versions[0]).toMatchObject({
+          n: 3,
+          author: "assistant",
+          threadId,
+          changes: ["Restored from v1"],
+          restoredFrom: 1,
+        });
+        expect(versions.slice(1)).toEqual(
+          before.map((version) => ({ ...version, current: false })),
+        );
+
+        for (const [ref, message] of [
+          ["v3", "v3 is already the main version; nothing changed."],
+          ["1", "v1 is the same as the main version (v3); nothing changed."],
+        ] as const) {
+          const same = yield* call("video_version_restore", { version: ref });
+          expect(same.structuredContent, ref).toEqual({
+            revision: after.revision,
+            version: 3,
+            message,
+          });
+        }
+        expect((yield* edits.versions(thread.projectId)).length).toBe(3);
+
+        const blank = yield* call("video_version_restore", { version: " " });
+        expect(blank.isError).toBe(true);
+        expect(textOf(blank)).toEqual(["Say which version to make main: v12 or its name."]);
+        expect((yield* edits.versions(thread.projectId)).length).toBe(3);
+
+        const missing = yield* call("video_version_restore", { version: "the tight cut" });
+        expect(missing.isError).toBe(true);
+        expect(textOf(missing)).toEqual(['No version in this project is named "the tight cut".']);
+
+        yield* call("video_undo");
+        expect(readFile(root, "edit.json")).toBe(v2Edit);
+      }),
+    ),
+  );
+
+  it.effect(
+    "a restore after another change in the same reply folds into that reply's version",
+    () =>
+      withProject(({ root, thread, edits, call }) =>
+        Effect.gen(function* () {
+          const initial = yield* edits.read(thread.projectId);
+          yield* edits.apply(thread.projectId, [...setup, keep([[0, 300]])], {
+            origin: "timeline",
+            baseRevision: initial.revision,
+          });
+          const v1Edit = readFile(root, "edit.json");
+          yield* call("video_canvas", { ratio: "1:1" });
+          const restored = yield* call("video_version_restore", { version: "v1" });
+          expect(restored.isError).toBe(false);
+          expect(readFile(root, "edit.json")).toBe(v1Edit);
+          const versions = yield* edits.versions(thread.projectId);
+          expect(versions.map((version) => version.n)).toEqual([2, 1]);
+          expect(versions[0]).toMatchObject({
+            author: "assistant",
+            changes: ["Made the video 1:1 (1080×1080)", "Restored from v1"],
+            restoredFrom: 1,
+          });
+        }),
+      ),
   );
 });
