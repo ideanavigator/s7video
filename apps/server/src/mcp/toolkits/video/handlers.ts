@@ -3,6 +3,8 @@
 // Thin handlers: resolve the caller's project and media (VideoProjectScope), call one engine or
 // edit service method, map its errors. The Editor panel reaches the same services directly.
 import {
+  CAPTION_PRESET_NAMES,
+  type CaptionsError,
   type EditConflict,
   type EditDocument,
   type EditSnapshot,
@@ -15,6 +17,7 @@ import {
   type MediaLibraryError,
   OrchestratorMcpFailure,
   type SoundError,
+  type ZoomError,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -29,6 +32,8 @@ import * as CaptionTrackService from "../../../edit/CaptionTrackService.ts";
 import * as ClipPlacementService from "../../../edit/ClipPlacementService.ts";
 import * as EditDocumentService from "../../../edit/EditDocumentService.ts";
 import * as SilenceCutService from "../../../edit/SilenceCutService.ts";
+import { parseZoomRange, ZOOM_RANGE_FORMAT } from "../../../edit/zoomOps.ts";
+import * as ZoomService from "../../../edit/ZoomService.ts";
 import * as EngineService from "../../../engine/EngineService.ts";
 import * as ExportService from "../../../export/ExportService.ts";
 import * as TranscriptService from "../../../transcript/TranscriptService.ts";
@@ -80,6 +85,19 @@ const soundFailure = (error: SoundError | EngineError | EditDocumentService.Edit
             : "orchestration_error",
         message: error._tag === "EditUnavailableError" ? error.explanation : error.message,
       });
+
+/** A plain refusal (no transcript, cut, out of range) or a conflict is the agent's to fix. */
+const editRefusal = (error: CaptionsError | ZoomError | EditDocumentService.EditApplyError) =>
+  new OrchestratorMcpFailure({
+    code:
+      error._tag === "CaptionsError" ||
+      error._tag === "ZoomError" ||
+      error._tag === "EditConflict" ||
+      error._tag === "EditValidationError"
+        ? "invalid_request"
+        : "orchestration_error",
+    message: error._tag === "EditUnavailableError" ? error.explanation : error.message,
+  });
 
 const noSuchJob = () =>
   new OrchestratorMcpFailure({
@@ -666,20 +684,9 @@ const handlers = {
       yield* refusePlanMode("add captions");
       const project = yield* callerProject();
       const captions = yield* CaptionTrackService.CaptionTrackService;
-      const result = yield* captions.addCaptions(project.projectId, { reply: project.reply }).pipe(
-        Effect.mapError(
-          (error) =>
-            new OrchestratorMcpFailure({
-              code:
-                error._tag === "CaptionsError" ||
-                error._tag === "EditConflict" ||
-                error._tag === "EditValidationError"
-                  ? "invalid_request"
-                  : "orchestration_error",
-              message: error._tag === "EditUnavailableError" ? error.explanation : error.message,
-            }),
-        ),
-      );
+      const result = yield* captions
+        .addCaptions(project.projectId, { reply: project.reply })
+        .pipe(Effect.mapError(editRefusal));
       const hint = yield* cleanupAfterChange(project, result.changed);
       return {
         revision: result.revision,
@@ -785,6 +792,56 @@ const handlers = {
       };
     }),
   ),
+  // Writes the edit (one checkpoint), so plan-mode and read-only callers are refused.
+  video_zoom: McpToolAccess.actsAsCaller(({ range, clip, scale, anchorX, anchorY }) =>
+    Effect.gen(function* () {
+      yield* refusePlanMode("zoom in");
+      const project = yield* callerProject();
+      if (clip !== undefined) yield* resolveMedia(project, clip);
+      const frames = parseZoomRange(range);
+      if (frames === null) {
+        return yield* new OrchestratorMcpFailure({
+          code: "invalid_request",
+          message: ZOOM_RANGE_FORMAT,
+        });
+      }
+      const zooms = yield* ZoomService.ZoomService;
+      const zoomed = yield* zooms
+        .zoom(
+          project.projectId,
+          { ...frames, clip, scale, anchorX, anchorY },
+          { reply: project.reply },
+        )
+        .pipe(Effect.mapError(editRefusal));
+      return {
+        ...zoomed,
+        message: `${zoomed.message} Say undo to take it out.`,
+        ...(yield* cleanupAfterChange(project)),
+      };
+    }),
+  ),
+  // Writes the edit (one checkpoint), so plan-mode and read-only callers are refused.
+  video_caption_style: McpToolAccess.actsAsCaller(({ preset }) =>
+    Effect.gen(function* () {
+      yield* refusePlanMode("change the caption look");
+      const project = yield* callerProject();
+      const captions = yield* CaptionTrackService.CaptionTrackService;
+      const result = yield* captions
+        .setStyle(project.projectId, preset, { reply: project.reply, origin: "agent" })
+        .pipe(Effect.mapError(editRefusal));
+      const name = CAPTION_PRESET_NAMES[preset];
+      const message = result.added
+        ? `Added ${result.captions} captions in the ${name} look. Say undo to take them out.`
+        : result.changed
+          ? `The captions now use the ${name} look, over the player and in the export. Say undo to go back.`
+          : `The captions already use the ${name} look.`;
+      return {
+        revision: result.revision,
+        message,
+        ...(yield* cleanupAfterChange(project, result.changed)),
+      };
+    }),
+  ),
 } satisfies McpToolAccess.Handlers<typeof VideoToolkit.tools>;
 
 export const layerStandard = McpToolAccess.toLayer(VideoStandardToolkit, {
@@ -806,6 +863,8 @@ export const layerStandard = McpToolAccess.toLayer(VideoStandardToolkit, {
   video_duck_music: handlers.video_duck_music,
   video_versions: handlers.video_versions,
   video_version_restore: handlers.video_version_restore,
+  video_zoom: handlers.video_zoom,
+  video_caption_style: handlers.video_caption_style,
 });
 
 export const layerFrame = McpToolAccess.toLayer(VideoFrameToolkit, {

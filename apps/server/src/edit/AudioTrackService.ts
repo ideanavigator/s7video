@@ -8,7 +8,6 @@
 import {
   type EditDocument,
   type EditMedia,
-  type EditRational,
   type EngineError,
   EditUnavailableError,
   MediaLoudnessResult,
@@ -37,7 +36,7 @@ import {
 import { duckOps, duckOver, placementOps, videoEndFrame } from "./audioPlacement.ts";
 import { loadCaptionTranscripts } from "./captionTrack.ts";
 import * as EditDocumentService from "./EditDocumentService.ts";
-import { snapToWord, speechRanges, timelineFrameOf } from "./timelineMap.ts";
+import { snapToWord, speechRanges, timecode, timelineFrameOf } from "./timelineMap.ts";
 import { ASSEMBLE_FIRST } from "./videoTrack.ts";
 
 const LOUDNESS_VERSION = 1;
@@ -107,14 +106,6 @@ const nameOf = (media: EditMedia) => media.label ?? media.path ?? media.id;
 
 const findMedia = (document: EditDocument, media: string) =>
   document.media.find((entry) => entry.id === media || entry.path === media);
-
-/** `mm:ss.cc` on the timeline, as the reply names a place: 00:04.20. */
-const timecode = (frames: number, fps: EditRational) => {
-  const centis = Math.round((frames * fps.den * 100) / fps.num);
-  const minutes = Math.floor(centis / 6000);
-  const rest = (centis - minutes * 6000) / 100;
-  return `${String(minutes).padStart(2, "0")}:${rest.toFixed(2).padStart(5, "0")}`;
-};
 
 const make = Effect.gen(function* () {
   const edits = yield* EditDocumentService.EditDocumentService;

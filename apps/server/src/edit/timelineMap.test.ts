@@ -4,7 +4,13 @@
 import { type EditDocument, type EditRational, emptyEditDocument } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { snapToWord, speechRanges, timelineFrameOf } from "./timelineMap.ts";
+import {
+  snapToWord,
+  speechRanges,
+  timecode,
+  timelineFrameOf,
+  timelineRangesOf,
+} from "./timelineMap.ts";
 
 const edit = (
   fps: EditRational,
@@ -133,5 +139,66 @@ describe("snapToWord", () => {
     // A blank word is no word, as for captions.
     expect(snapToWord(document, "cam", transcript, 21)).toEqual({ frame: 30, word: "today" });
     expect(snapToWord(document, "cam", transcript, 45)).toBeNull();
+  });
+});
+
+// S7V-037: a zoom's clip-frame range, as the timeline ranges that play it.
+describe("timelineRangesOf", () => {
+  it("gives the kept pieces of a range in timeline order, and nothing when it was all cut", () => {
+    const document = edit(fps30, [
+      [0, 30, 0],
+      [30, 30, 50],
+      [60, 30, 100],
+    ]);
+    expect(timelineRangesOf(document, "cam", 20, 60, fps30)).toEqual([
+      { start: 20, end: 30 },
+      { start: 30, end: 40 },
+    ]);
+    expect(timelineRangesOf(document, "cam", 10, 120, fps30)).toEqual([
+      { start: 10, end: 30 },
+      { start: 30, end: 60 },
+      { start: 60, end: 80 },
+    ]);
+    expect(timelineRangesOf(document, "cam", 32, 48, fps30)).toEqual([]);
+    expect(timelineRangesOf(document, "other", 0, 30, fps30)).toEqual([]);
+  });
+
+  it("keeps a split clip's range whole: the split continues the source", () => {
+    const document = edit(fps30, [
+      [0, 40, 0],
+      [40, 60, 40],
+    ]);
+    expect(timelineRangesOf(document, "cam", 20, 70, fps30)).toEqual([{ start: 20, end: 70 }]);
+  });
+
+  it("zooms a frame placed twice only where it first plays", () => {
+    const document = edit(fps30, [
+      [0, 30, 100],
+      [30, 100, 50],
+    ]);
+    // Source 100-130 plays first at 0-30; the rest of 60-140 plays in the second item.
+    expect(timelineRangesOf(document, "cam", 60, 140, fps30)).toEqual([
+      { start: 0, end: 30 },
+      { start: 40, end: 80 },
+      { start: 110, end: 120 },
+    ]);
+  });
+
+  it("keeps range edges on frame boundaries at 29.97", () => {
+    const ntsc = { num: 30000, den: 1001 };
+    const document = edit(ntsc, [[0, 2000, 0]]);
+    // 1000 and 1500 frames at 30 fps are 999.0 and 1498.5 frames at 29.97, half up.
+    expect(timelineRangesOf(document, "cam", 1000, 1500, fps30)).toEqual([
+      { start: 999, end: 1499 },
+    ]);
+    // A one-frame range never maps to nothing.
+    expect(timelineRangesOf(document, "cam", 1000, 1001, fps30)).toEqual([
+      { start: 999, end: 1000 },
+    ]);
+  });
+
+  it("names a timeline place as minutes, seconds and hundredths", () => {
+    expect(timecode(126, fps30)).toBe("00:04.20");
+    expect(timecode(30 * 75, fps30)).toBe("01:15.00");
   });
 });

@@ -73,6 +73,58 @@ describe("applyEditOps", () => {
     }
   });
 
+  // S7V-037 (AC-11): a later silence cut re-lays the clip; a punch-in stays on exactly its frames.
+  it("a later setKeepRanges keeps the zoom on every kept part of a zoomed item", () => {
+    const zoom = { scale: 1.5, anchorX: 0.5, anchorY: 0.3, rampFrames: 0 };
+    const zoomed = run([
+      keep([[0, 300]]),
+      { _tag: "splitItem", itemId: "v1", atFrame: 200, newItemId: "vz1" },
+      { _tag: "splitItem", itemId: "v1", atFrame: 100, newItemId: "vz2" },
+      { _tag: "setItemProps", itemId: "vz2", props: { zoom } },
+    ]);
+    const withZoom = (document: EditDocument) =>
+      document.tracks[0]!.items.map((item) => ({
+        ...items(document).find((entry) => entry.id === item.id),
+        zoom: "zoom" in item ? item.zoom : undefined,
+      }));
+    // Kept ranges cross the zoom's edges (source 100 and 200): each is cut there.
+    const cut = run(
+      [
+        keep([
+          [0, 50],
+          [80, 70],
+          [170, 80],
+          [260, 40],
+        ]),
+      ],
+      zoomed,
+    );
+    expect(withZoom(cut)).toEqual([
+      { id: "v1", start: 0, duration: 50, in: 0, zoom: undefined },
+      { id: "v2", start: 50, duration: 20, in: 80, zoom: undefined },
+      { id: "v3", start: 70, duration: 50, in: 100, zoom },
+      { id: "v4", start: 120, duration: 30, in: 170, zoom },
+      { id: "v5", start: 150, duration: 50, in: 200, zoom: undefined },
+      { id: "v6", start: 200, duration: 40, in: 260, zoom: undefined },
+    ]);
+    // A zoomed range that stays whole keeps its id as well as its zoom.
+    const kept = run(
+      [
+        keep([
+          [0, 50],
+          [100, 100],
+          [250, 50],
+        ]),
+      ],
+      zoomed,
+    );
+    expect(withZoom(kept)[1]).toEqual({ id: "vz2", start: 50, duration: 100, in: 100, zoom });
+    // With no zoom anywhere, a range is never cut up.
+    expect(items(run([keep([[0, 120]])], run([keep([[0, 300]])])))).toEqual([
+      { id: "v1", start: 0, duration: 120, in: 0 },
+    ]);
+  });
+
   it("keeps ids and props of ranges that stay, and restores a removed range in place", () => {
     const cut = run([
       keep([

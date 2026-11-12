@@ -7,9 +7,10 @@ Three FFmpeg runs, all cancellable and reporting progress:
 1. **measure**: the edit's audio mix alone through ``ebur128``, for its integrated loudness (the
    voice joined from the video track, plus sound effects and music, S7V-036 ``mix.py``);
 2. **render**: one pass that trims and joins the original sources frame-exactly, fades the audio
-   for 10 ms on each side of every join (inside the kept range, so no cut moves), applies one fixed
-   gain to −14 LUFS with a limiter only at the ceiling, burns the captions in with libass and
-   encodes with ``h264_videotoolbox`` + AAC into an MP4 with ``+faststart``;
+   for 10 ms on each side of every join (inside the kept range, so no cut moves), zooms the items
+   that have a punch-in (S7V-037, ``zoom.py``), applies one fixed gain to −14 LUFS with a limiter
+   only at the ceiling, burns the captions in with libass in the edit's look after the zoom, so
+   captions never zoom, and encodes with ``h264_videotoolbox`` + AAC into an MP4 with ``+faststart``;
 3. **check**: ``ebur128`` on the finished file, so the result reports what was really written.
 
 Frames: each source goes through ``fps=<edit rate>`` first, so frame ``n`` of the filter stream is
@@ -40,6 +41,7 @@ from ..edit_schema import validate_edit_document
 from ..ffmpeg import _tool_env, ffprobe_json, run_tool, tool_path
 from ..jobs import Cancelled, JobContext
 from ..rpc import FILE_NOT_FOUND, INVALID_PARAMS, MEDIA_ERROR, MISSING_TOOL, OUTPUT_ERROR, Method, RpcError
+from ..zoom import Zoom, filters as zoom_filters, ramp_parts
 from ._media import PATH_SCHEMA, media_file
 
 SAMPLE_RATE = 48_000
@@ -126,6 +128,7 @@ class Segment:
     source_in: int = 0
     gain_db: float = 0.0
     muted: bool = False
+    zoom: Zoom | None = None
 
 
 @dataclass
@@ -166,8 +169,6 @@ def plan_segments(edit: dict[str, Any], width: int, height: int) -> Plan:
     segments: list[Segment] = []
     at = 0
     for item in items:
-        if item.get("zoom") is not None:
-            raise _unsupported("zoom")
         if media[item["media"]]["kind"] != "video" or not media[item["media"]]["probe"].get("hasVideo"):
             raise _unsupported("an image or audio file on the video track")
         if item["start"] > at:
@@ -180,6 +181,7 @@ def plan_segments(edit: dict[str, Any], width: int, height: int) -> Plan:
                 source_in=item["in"],
                 gain_db=float(item.get("gainDb", 0.0)),
                 muted=bool(item.get("muted")) or bool(video_tracks[0].get("muted")),
+                zoom=Zoom.from_edit(item.get("zoom")),
             )
         )
         at = item["start"] + item["duration"]
@@ -191,15 +193,32 @@ def plan_segments(edit: dict[str, Any], width: int, height: int) -> Plan:
     return Plan(rate, width, height, at, segments, audio=audio)
 
 
+def _checked_style(style_id: str) -> str:
+    try:
+        captions_ass.load_style(style_id)
+    except captions_ass.CaptionStyleError as error:
+        raise RpcError(INVALID_PARAMS, str(error)) from None
+    return style_id
+
+
 def caption_items(edit: dict[str, Any]) -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
     for track in edit["tracks"]:
         if track["kind"] != "caption" or track.get("muted"):
             continue
         for item in track["items"]:
-            captions_ass.load_style(item.get("style") or track.get("style") or captions_ass.DEFAULT_STYLE)
+            _checked_style(item.get("style") or track.get("style") or captions_ass.DEFAULT_STYLE)
             items.append(item)
     return items
+
+
+def caption_style(edit: dict[str, Any]) -> str:
+    """The edit's one caption look (S7V-037): the style of the first shown caption track with items,
+    else of a caption track that names one (the transcript track before its clips have words)."""
+    tracks = [track for track in edit["tracks"] if track["kind"] == "caption" and not track.get("muted")]
+    shown = [track for track in tracks if track["items"]] or tracks
+    style = next((track["style"] for track in shown if track.get("style")), captions_ass.DEFAULT_STYLE)
+    return _checked_style(style)
 
 
 def has_caption_items(edit: dict[str, Any]) -> bool:
@@ -208,11 +227,15 @@ def has_caption_items(edit: dict[str, Any]) -> bool:
 
 
 def export_chunks(edit: dict[str, Any], plan: Plan, params: dict[str, Any]) -> list[captions_ass.Chunk]:
-    """The edit's caption items win; with none, the clips' transcripts give the captions (S7V-046)."""
+    """The edit's caption items win; with none, the clips' transcripts give the captions (S7V-046).
+
+    Either way they are chunked by the rules of the edit's look (``caption_style``).
+    """
+    style = caption_style(edit)
     if has_caption_items(edit) or not params.get("transcripts"):
-        return captions_ass.caption_chunks(caption_items(edit), plan.rate, plan.total_frames)
+        return captions_ass.caption_chunks(caption_items(edit), plan.rate, plan.total_frames, style)
     transcripts = {entry["media"]: entry for entry in params["transcripts"]}
-    return captions_from_words.transcript_chunks(plan.segments, transcripts, plan.rate, plan.total_frames)
+    return captions_from_words.transcript_chunks(plan.segments, transcripts, plan.rate, plan.total_frames, style)
 
 
 # --- Filter graph ------------------------------------------------------------------------------
@@ -262,7 +285,7 @@ def _seconds(value: Fraction) -> str:
     return timebase.decimal_seconds(value)
 
 
-def _video_chain(plan: Plan, source: Source | None) -> str:
+def _canvas_chain(plan: Plan, source: Source | None) -> str:
     tonemap = (
         "zscale=t=linear:npl=100,format=gbrpf32le,zscale=p=bt709,tonemap=tonemap=hable:desat=0,"
         "zscale=t=bt709:m=bt709:r=tv,"
@@ -272,8 +295,35 @@ def _video_chain(plan: Plan, source: Source | None) -> str:
     untagged = ":in_color_matrix=bt709" if source is not None and source.untagged_matrix and not source.hdr else ""
     return (
         f"{tonemap}scale={plan.width}:{plan.height}:force_original_aspect_ratio=increase{untagged}"
-        f":out_color_matrix=bt709:out_range=tv,crop={plan.width}:{plan.height},setsar=1,format=yuv420p"
+        f":out_color_matrix=bt709:out_range=tv,crop={plan.width}:{plan.height}"
     )
+
+
+def _still_zoom(plan: Plan, punch_in: Zoom, scale: float) -> str:
+    # The zoom works on the canvas-sized frame, so its anchor is a point of what the viewer sees.
+    return zoom_filters(plan.width, plan.height, scale, punch_in.anchor_x, punch_in.anchor_y)
+
+
+def _video_chain(plan: Plan, source: Source | None, punch_in: Zoom | None = None) -> str:
+    zoomed = _still_zoom(plan, punch_in, punch_in.scale) if punch_in is not None else ""
+    return f"{_canvas_chain(plan, source)},{zoomed + ',' if zoomed else ''}setsar=1,format=yuv420p"
+
+
+def _ramp_chains(plan: Plan, source: Source | None, punch_in: Zoom, position: int, head: str, frames: int) -> list[str]:
+    """A ramped zoom, one still zoom per ramp frame, split and joined again inside the segment, so
+    its sound and its joins with the other segments are those of any other segment."""
+    parts = ramp_parts(punch_in, frames)
+    branches = "".join(f"[r{position}p{index}]" for index in range(len(parts)))
+    chains = [f"{head}{_canvas_chain(plan, source)},split={len(parts)}{branches}"]
+    for index, part in enumerate(parts):
+        zoomed = _still_zoom(plan, punch_in, part.scale) or "null"
+        chains.append(
+            f"[r{position}p{index}]trim=start_frame={part.start}:end_frame={part.end},setpts=PTS-STARTPTS,"
+            f"{zoomed},setsar=1,format=yuv420p[z{position}p{index}]"
+        )
+    joined = "".join(f"[z{position}p{index}]" for index in range(len(parts)))
+    chains.append(f"{joined}concat=n={len(parts)}:v=1:a=0,setsar=1,format=yuv420p[vs{position}]")
+    return chains
 
 
 def _audio_chain(samples: int, segment: Segment) -> str:
@@ -319,10 +369,14 @@ def build_graph(plan: Plan, inputs: list[Input], assignment: list[int | None], *
                     f"trim=end_frame={segment.frames},format=yuv420p[vs{position}]"
                 )
             else:
-                chains.append(
+                head = (
                     f"[v{position}]trim=start_frame={segment.source_in}:end_frame={segment.source_in + segment.frames},"
-                    f"setpts=PTS-STARTPTS,{_video_chain(plan, source)}[vs{position}]"
+                    "setpts=PTS-STARTPTS,"
                 )
+                if segment.zoom is not None and segment.zoom.ramp_frames > 0:
+                    chains += _ramp_chains(plan, source, segment.zoom, position, head, segment.frames)
+                else:
+                    chains.append(f"{head}{_video_chain(plan, source, segment.zoom)}[vs{position}]")
         if source is not None and source.has_audio and not segment.muted:
             start = source.video_offset + Fraction(segment.source_in) / plan.rate
             end = start + Fraction(segment.frames) / plan.rate
@@ -614,7 +668,7 @@ def _render(params: dict[str, Any], job: JobContext) -> dict[str, Any]:
         ass_file = None
         if chunks:
             ass_file = "captions.ass"
-            captions_ass.write_ass(os.path.join(workdir, ass_file), chunks, plan.rate, width, height)
+            captions_ass.write_ass(os.path.join(workdir, ass_file), chunks, plan.rate, width, height, caption_style(edit))
             captions_ass.link_fonts(Path(workdir) / "fonts")
         with open(os.path.join(workdir, "render.txt"), "w", encoding="utf-8") as file:
             file.write(build_graph(plan, inputs, assignment, video=True, ass_file=ass_file))

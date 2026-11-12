@@ -188,6 +188,31 @@ function isTranscriptCaptionTrack(track: EditTrack): track is EditCaptionTrack {
 export const transcriptCaptionTrackOf = (document: EditDocument): EditCaptionTrack | undefined =>
   document.tracks.find(isTranscriptCaptionTrack);
 
+/**
+ * The caption tracks whose captions show (S7V-037): the transcript track, and any caption track
+ * with items. With none, picking a look adds the captions in it.
+ */
+export function shownCaptionTracks(document: EditDocument): EditCaptionTrack[] {
+  const transcript = transcriptCaptionTrackOf(document);
+  return document.tracks.filter(
+    (track): track is EditCaptionTrack =>
+      track.kind === "caption" && (track === transcript || track.items.length > 0),
+  );
+}
+
+/**
+ * The edit's one caption look (S7V-037), as the export reads it (`export.caption_style`): the
+ * first shown caption track with items that names one, else any shown caption track's, else ours.
+ */
+export function captionLookOf(document: EditDocument): string {
+  const shown = document.tracks.filter(
+    (track): track is EditCaptionTrack => track.kind === "caption" && track.muted !== true,
+  );
+  const withItems = shown.filter((track) => track.items.length > 0);
+  const tracks = withItems.length > 0 ? withItems : shown;
+  return tracks.find((track) => track.style !== undefined)?.style ?? "s7-neutral";
+}
+
 /** The first free track id `C1`, `C2`…; ids share one space across the edit. */
 function freeTrackId(document: EditDocument): string {
   const taken = new Set<string>([

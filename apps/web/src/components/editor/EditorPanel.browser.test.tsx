@@ -81,8 +81,9 @@ vi.mock(import("../../editor/editStore"), async (importOriginal) => ({
   useTranscriptionJobs: () => ({ transcribe: null, download: null }),
   // The Versions tab (S7V-069) has its own tests; here it stays loading but for screenshots.
   useProjectVersions: () => state.versions,
-  // The caption overlay (S7V-075) has its own tests.
+  // The caption overlay (S7V-075) and the look picker (S7V-037) have their own tests.
   useCaptionStills: () => ({ _tag: "none" }),
+  useCaptionPresets: () => null,
 }));
 vi.mock(import("../../state/media"), () => ({
   useMediaLibrary: () => state.library,
@@ -432,6 +433,12 @@ describe("EditorPanel", () => {
     await using screen = await renderPanel();
     await expect.element(screen.getByRole("group", { name: "Player: clip-0.mov" })).toBeVisible();
     await expect.element(screen.getByRole("button", { name: "Export" })).toBeVisible();
+    // S7V-037: the caption looks sit beside Export; with no captions yet, none is in use.
+    await expect.element(screen.getByRole("group", { name: "Caption look" })).toBeVisible();
+    await expect.element(screen.getByText("Pick a look to add captions.")).toBeVisible();
+    await expect
+      .element(screen.getByRole("button", { name: "Caption style: Plain" }))
+      .toHaveAttribute("aria-pressed", "false");
   });
 
   it("plays an edit from several clips on the player clock, each clip with its own state", async () => {
@@ -839,8 +846,9 @@ describe("EditorPanel", () => {
     await using screen = await renderPanel();
     await expect.element(screen.getByRole("status").getByText("Previewing v2")).toBeVisible();
     await expect.element(await videoOf(screen)).toBeInTheDocument();
-    // Export would write the current edit, so it waits until the preview ends.
+    // Export would write the current edit, so it waits until the preview ends; so do the looks.
     expect(screen.getByRole("button", { name: "Export" }).query()).toBeNull();
+    expect(screen.getByRole("group", { name: "Caption look" }).query()).toBeNull();
     const playhead = document.querySelector<HTMLElement>("[data-testid=timeline-playhead]")!;
     await expect.poll(() => playhead.hidden).toBe(true);
     await screen.getByRole("button", { name: "Back to main" }).click();

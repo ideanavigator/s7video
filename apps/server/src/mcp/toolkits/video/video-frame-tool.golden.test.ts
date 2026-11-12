@@ -32,6 +32,7 @@ import * as ThreadManagementService from "../../../orchestration-v2/ThreadManage
 import * as ProjectService from "../../../project/ProjectService.ts";
 import * as TranscriptService from "../../../transcript/TranscriptService.ts";
 import * as AudioTrackService from "../../../edit/AudioTrackService.ts";
+import * as ZoomService from "../../../edit/ZoomService.ts";
 import * as CaptionTrackService from "../../../edit/CaptionTrackService.ts";
 import * as ClipPlacementService from "../../../edit/ClipPlacementService.ts";
 import * as SilenceCutService from "../../../edit/SilenceCutService.ts";
@@ -162,6 +163,7 @@ describe.skipIf(!available)("video-frame-tool golden", () => {
             Layer.mock(CaptionTrackService.CaptionTrackService)({}),
             Layer.mock(AudioTrackService.AudioTrackService)({}),
             Layer.mock(ClipPlacementService.ClipPlacementService)({}),
+            Layer.mock(ZoomService.ZoomService)({}),
             Layer.mock(MediaLibraryService.MediaLibraryService)({}),
           ),
         ),

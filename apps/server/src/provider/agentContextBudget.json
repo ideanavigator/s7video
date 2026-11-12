@@ -1,9 +1,9 @@
 {
-  "builtInSkillListingBytes": 328,
+  "builtInSkillListingBytes": 538,
   "claudeSystemAppendBytes": 5153,
   "claudeSystemAppendVideoBytes": 1545,
   "codexAdditionalContextBytes": 6883,
   "codexAdditionalContextVideoBytes": 1537,
-  "mcpToolListJsonBytes": 51552,
-  "mcpToolListVideoJsonBytes": 4015
+  "mcpToolListJsonBytes": 52093,
+  "mcpToolListVideoJsonBytes": 4556
 }

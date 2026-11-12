@@ -514,6 +514,68 @@ export class CaptionsError extends Schema.TaggedError<CaptionsError>()("Captions
   }
 }
 
+/**
+ * Our caption looks (S7V-037), one JSON file each in the engine's `styles/captions/`. A test keeps
+ * this list and that folder the same.
+ */
+export const CaptionPresetId = Schema.Literals([
+  "s7-neutral",
+  "s7-box",
+  "s7-karaoke",
+  "s7-minimal",
+]);
+export type CaptionPresetId = typeof CaptionPresetId.Type;
+
+/** Each look's plain name, as the Editor's strip and the agent's replies call it. */
+export const CAPTION_PRESET_NAMES: Readonly<Record<CaptionPresetId, string>> = {
+  "s7-neutral": "Plain",
+  "s7-box": "Boxed",
+  "s7-karaoke": "Highlighted word",
+  "s7-minimal": "Minimal",
+};
+
+/** `captions.preview`: one look's sample caption at a canvas, as a small PNG in `cacheDir/<folder>/`. */
+export const CaptionsPreviewResult = Schema.Struct({
+  folder: TrimmedNonEmptyString,
+  png: TrimmedNonEmptyString,
+});
+export type CaptionsPreviewResult = typeof CaptionsPreviewResult.Type;
+
+/** `captions.presets`: each look's plain name and preview, a base64 PNG, for the Editor's strip. */
+export const CaptionPresetsResult = Schema.Struct({
+  presets: Schema.Array(
+    Schema.Struct({
+      id: CaptionPresetId,
+      name: TrimmedNonEmptyString,
+      /** Base64 PNG; empty when the preview could not be drawn (the strip shows the name only). */
+      png: Schema.String,
+    }),
+  ),
+});
+export type CaptionPresetsResult = typeof CaptionPresetsResult.Type;
+
+/** `captions.setStyle`: the Editor's strip picks a look; captions are added when the edit has none. */
+export const CaptionStyleInput = Schema.Struct({ projectId: ProjectId, preset: CaptionPresetId });
+export type CaptionStyleInput = typeof CaptionStyleInput.Type;
+
+export const CaptionStyleResult = Schema.Struct({
+  revision: Schema.Int,
+  /** The captions were added from the transcripts in the same change. */
+  added: Schema.Boolean,
+  changed: Schema.Boolean,
+});
+export type CaptionStyleResult = typeof CaptionStyleResult.Type;
+
+/** A punch-in zoom the agent can't add, with the plain next step (S7V-037). */
+export class ZoomError extends Schema.TaggedError<ZoomError>()("ZoomError", {
+  reason: Schema.Literals(["range", "out-of-range", "which-clip", "cut", "no-video"]),
+  detail: Schema.String,
+}) {
+  override get message(): string {
+    return this.detail;
+  }
+}
+
 /** `media.loudness` (S7V-036): integrated loudness (EBU R128) of a file's first audio stream. */
 export const MediaLoudnessInput = Schema.Struct({ path: TrimmedNonEmptyString });
 export type MediaLoudnessInput = typeof MediaLoudnessInput.Type;

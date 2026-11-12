@@ -22,6 +22,7 @@ import * as ThreadManagementService from "../../../orchestration-v2/ThreadManage
 import * as ManagedProjectFolders from "../../../project/ManagedProjectFolders.ts";
 import * as TranscriptService from "../../../transcript/TranscriptService.ts";
 import * as AudioTrackService from "../../../edit/AudioTrackService.ts";
+import * as ZoomService from "../../../edit/ZoomService.ts";
 import * as CaptionTrackService from "../../../edit/CaptionTrackService.ts";
 import * as ClipPlacementService from "../../../edit/ClipPlacementService.ts";
 import * as SilenceCutService from "../../../edit/SilenceCutService.ts";
@@ -88,6 +89,7 @@ describe.runIf(ENABLED)("video_edit_read timing", () => {
           Layer.provide(Layer.mock(CaptionTrackService.CaptionTrackService)({})),
           Layer.provide(Layer.mock(AudioTrackService.AudioTrackService)({})),
           Layer.provide(Layer.mock(ClipPlacementService.ClipPlacementService)({})),
+          Layer.provide(Layer.mock(ZoomService.ZoomService)({})),
           Layer.provide(Layer.mock(MediaLibraryService.MediaLibraryService)({})),
         );
         const durations: number[] = [];

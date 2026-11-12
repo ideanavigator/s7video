@@ -17,6 +17,7 @@ def all_methods() -> list[Method]:
         frame.METHOD,
         export.METHOD,
         captions.METHOD,
+        captions.PREVIEW_METHOD,
         *transcribe.METHODS,
         thumbnail.METHOD,
         proxy.KEYFRAMES,

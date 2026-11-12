@@ -21,6 +21,7 @@ import {
   ProviderInstanceId,
   CaptionsError,
   SoundError,
+  ZoomError,
   SilenceCutError,
   ThreadId,
 } from "@t3tools/contracts";
@@ -45,6 +46,8 @@ import * as AudioTrackService from "../../../edit/AudioTrackService.ts";
 import * as CaptionTrackService from "../../../edit/CaptionTrackService.ts";
 import * as ClipPlacementService from "../../../edit/ClipPlacementService.ts";
 import * as SilenceCutService from "../../../edit/SilenceCutService.ts";
+import * as ZoomService from "../../../edit/ZoomService.ts";
+import { ZOOM_RANGE_FORMAT } from "../../../edit/zoomOps.ts";
 import * as EngineService from "../../../engine/EngineService.ts";
 import * as ExportService from "../../../export/ExportService.ts";
 import * as MediaLibraryService from "../../../media/MediaLibraryService.ts";
@@ -178,6 +181,8 @@ interface Fixture {
   }>;
   readonly silences: Array<SilenceCutService.RemoveSilencesInput>;
   readonly sounds: Array<readonly [string, ProjectId, unknown]>;
+  /** Zooms and caption looks asked of the services (S7V-037). */
+  readonly looks: Array<readonly [string, ProjectId, unknown]>;
   diskShort: boolean;
   /** Runs as each job subscription starts. */
   onSubscribe: Effect.Effect<void>;
@@ -253,6 +258,7 @@ const makeFixture = (): Fixture => {
     imports: [],
     silences: [],
     sounds: [],
+    looks: [],
     diskShort: false,
     onSubscribe: Effect.void,
     recent: [],
@@ -370,6 +376,34 @@ const layerFor = (fixture: Fixture, cancelSignal: Deferred.Deferred<string>) => 
               }),
             )
           : Effect.succeed({ revision: 9, captions: 12, changed: true }),
+      // Project A has captions; project B has none, so its first look adds them.
+      setStyle: (projectId, preset, options) => {
+        fixture.looks.push(["style", projectId, { preset, origin: options.origin }]);
+        return Effect.succeed({
+          revision: 12,
+          captions: 12,
+          changed: preset !== "s7-neutral",
+          added: projectId === projectB,
+        });
+      },
+    }),
+    // Project B's range was cut: the service's plain refusal.
+    Layer.mock(ZoomService.ZoomService)({
+      zoom: (projectId, input) => {
+        fixture.looks.push(["zoom", projectId, input]);
+        return projectId === projectB
+          ? Effect.fail(
+              new ZoomError({
+                reason: "cut",
+                detail: "That moment was cut from the edit, so nothing was zoomed.",
+              }),
+            )
+          : Effect.succeed({
+              revision: 13,
+              items: 1,
+              message: "Zoomed in 1.25x from 00:04.00 to 00:06.00.",
+            });
+      },
     }),
     Layer.mock(MediaLibraryService.MediaLibraryService)({
       plan: (input) =>
@@ -576,6 +610,7 @@ describe("video toolkit", () => {
           "video_add_captions",
           "video_assemble",
           "video_canvas",
+          "video_caption_style",
           "video_duck_music",
           "video_edit_read",
           "video_export",
@@ -592,6 +627,7 @@ describe("video toolkit", () => {
           "video_undo",
           "video_version_restore",
           "video_versions",
+          "video_zoom",
         ]);
         // ToolSearch finds deferred tools by these words, so each says what it reads.
         for (const tool of tools) {
@@ -1042,6 +1078,8 @@ describe("video toolkit", () => {
           ["video_duck_music", {}],
           ["video_versions", {}],
           ["video_version_restore", { version: "v1" }],
+          ["video_zoom", { range: "0-30" }],
+          ["video_caption_style", { preset: "s7-box" }],
         ] as const) {
           // A hidden tool is not callable at all: the server answers as for an unknown tool.
           const error = yield* call(threadA, tool, args, ["orchestration"]).pipe(Effect.flip);
@@ -1052,6 +1090,7 @@ describe("video toolkit", () => {
         expect(fixture.exports).toEqual([]);
         expect(fixture.imports).toEqual([]);
         expect(fixture.sounds).toEqual([]);
+        expect(fixture.looks).toEqual([]);
       }),
     ),
   );
@@ -1142,6 +1181,96 @@ describe("video toolkit", () => {
           expect(textOf(refused)).toEqual(["Transcribe the clip first: cam has no transcript."]);
         }),
       ),
+  );
+
+  // S7V-037: one service call each, for the caller's own project, with the defaults left to it.
+  it.effect("video_zoom parses one range, zooms through the service and offers undo", () =>
+    withTools(({ fixture, call }) =>
+      Effect.gen(function* () {
+        const zoomed = yield* call(threadA, "video_zoom", { range: " 120 - 180 ", anchorY: 0.4 });
+        expect(zoomed.isError).toBe(false);
+        expect(zoomed.structuredContent).toEqual({
+          revision: 13,
+          items: 1,
+          message: "Zoomed in 1.25x from 00:04.00 to 00:06.00. Say undo to take it out.",
+        });
+        const cut = yield* call(threadB, "video_zoom", { range: "40-60" });
+        expect(textOf(cut)).toEqual(["That moment was cut from the edit, so nothing was zoomed."]);
+        expect(fixture.looks).toEqual([
+          [
+            "zoom",
+            projectA,
+            {
+              from: 120,
+              to: 180,
+              clip: undefined,
+              scale: undefined,
+              anchorX: undefined,
+              anchorY: 0.4,
+            },
+          ],
+          [
+            "zoom",
+            projectB,
+            {
+              from: 40,
+              to: 60,
+              clip: undefined,
+              scale: undefined,
+              anchorX: undefined,
+              anchorY: undefined,
+            },
+          ],
+        ]);
+        // A list, a reversed range or a clip outside the project never reaches the service.
+        for (const args of [
+          { range: "9-30,60-90" },
+          { range: "60-30" },
+          { range: "30" },
+          { range: "0-30", clip: NodePath.join(fixture.outside, "secret.mp4") },
+        ]) {
+          const refused = yield* call(threadA, "video_zoom", args);
+          expect(refused.isError, JSON.stringify(args)).toBe(true);
+        }
+        expect(textOf(yield* call(threadA, "video_zoom", { range: "9-30,60-90" }))).toEqual([
+          ZOOM_RANGE_FORMAT,
+        ]);
+        expect(fixture.looks).toHaveLength(2);
+      }),
+    ),
+  );
+
+  it.effect("video_caption_style picks the look by name and says when it added captions", () =>
+    withTools(({ fixture, call }) =>
+      Effect.gen(function* () {
+        const boxed = yield* call(threadA, "video_caption_style", { preset: "s7-box" });
+        expect(boxed.structuredContent).toEqual({
+          revision: 12,
+          message:
+            "The captions now use the Boxed look, over the player and in the export. Say undo to go back.",
+        });
+        const same = yield* call(threadA, "video_caption_style", { preset: "s7-neutral" });
+        expect(same.structuredContent).toEqual({
+          revision: 12,
+          message: "The captions already use the Plain look.",
+        });
+        const added = yield* call(threadB, "video_caption_style", { preset: "s7-karaoke" });
+        expect(added.structuredContent).toEqual({
+          revision: 12,
+          message: "Added 12 captions in the Highlighted word look. Say undo to take them out.",
+        });
+        // Only our looks: anything else fails the tool's own schema and reaches no service.
+        const unknown = yield* call(threadA, "video_caption_style", { preset: "kigaru" }).pipe(
+          Effect.flip,
+        );
+        expect(String(unknown)).toMatch(/preset/u);
+        expect(fixture.looks).toEqual([
+          ["style", projectA, { preset: "s7-box", origin: "agent" }],
+          ["style", projectA, { preset: "s7-neutral", origin: "agent" }],
+          ["style", projectB, { preset: "s7-karaoke", origin: "agent" }],
+        ]);
+      }),
+    ),
   );
 
   it.effect(
@@ -1508,6 +1637,7 @@ it.effect("should hide tools without the video capability", () =>
         "video_add_captions",
         "video_assemble",
         "video_canvas",
+        "video_caption_style",
         "video_duck_music",
         "video_edit_read",
         "video_export",
@@ -1524,6 +1654,7 @@ it.effect("should hide tools without the video capability", () =>
         "video_undo",
         "video_version_restore",
         "video_versions",
+        "video_zoom",
       ]);
       expect(yield* listed("plainToken")).toEqual([]);
       NodeFS.rmSync(NodePath.dirname(fixture.rootA), { recursive: true, force: true });

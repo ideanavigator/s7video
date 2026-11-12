@@ -132,7 +132,8 @@ with the rules in `packages/shared/src/editWordCuts.ts`, which silence removal a
 
 - **In source order, end to end** (no manual move): silence removal still sends one
   `setKeepRanges`, so the bytes are what they always were and the goldens did not change. Pieces it
-  re-cuts get fresh ids without props, as before, and other clips on the track do not move.
+  re-cuts get fresh ids without props, as before, except a zoom, which every kept part of a zoomed
+  item keeps (S7V-037, [punch-in zoom](punch-in-zoom.md)). Other clips on the track do not move.
 - **Otherwise** (a move, a gap, a source played twice) it cuts each piece where it sits with
   `cutRangesOps`, the many-range form of the text cut: split + one ripple delete, in one change.
   Order and gaps stay, and later items on the track, other clips included, close up by the frames

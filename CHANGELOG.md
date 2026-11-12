@@ -90,6 +90,9 @@ from; the per-ticket entries and how this file is compiled are in
   For now you hear them in the exported video; the Editor's player doesn't play them yet. (S7V-036)
 - Ask the assistant about your versions by number or name, or say "make v12 current" or "go back
   to the first cut": it brings that version back as the newest one, and nothing is lost. (S7V-070)
+- Ask the assistant to zoom in on a moment and the export tightens on your face there. Choose from
+  four caption looks we designed, each with a preview next to Export; the look you pick shows over
+  the player and in the export. For now the zoom shows only in the exported video. (S7V-037)
 
 ### Changed
 
