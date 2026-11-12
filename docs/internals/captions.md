@@ -62,7 +62,10 @@ The looks are ours: `s7-neutral` (Plain, the default), `s7-box` (Boxed), `s7-kar
   list (`CaptionPresetId`, with the plain names) is in `contracts/engine.ts`; a server test keeps
   the two the same. Optional keys: `box` (border style 3, the padding as the outline width),
   `outline`, `highlight`. Every look keeps the platforms' safe zone; margins grow by the outline or
-  padding and the shadow, so the whole caption stays inside.
+  padding (plus its anti-aliased pixel) and the shadow, and keep a pixel of slack left and right
+  of every line, because libass fits a line's advance to the margins and anti-aliasing and side
+  bearings put up to a pixel of ink past it. So the whole caption stays inside (golden
+  `zoom-crop-presets` checks every still's pixels).
 - **One look per edit.** The export, the stills and the Editor read the same rule
   (`export.caption_style`, `captionLookOf`): the first shown caption track with items that names
   a look, else a shown caption track's (the transcript track before its clips have words), else

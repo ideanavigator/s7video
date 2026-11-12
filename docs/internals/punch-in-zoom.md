@@ -33,8 +33,13 @@ the player doesn't yet (S7V-092).
   the upper third, about a framed face's eyes (PO, 2026-11-08), so the eyes stay put. It never
   needs clamping; `zoom.py` clamps anyway after rounding.
 - **Whole, even pixels:** the frame is scaled to `2·round(W·s/2)` × `2·round(H·s/2)` and the
-  canvas is cut out at `2·round(a·(S−W)/2)`, for 4:2:0 chroma. Golden `zoom-crop-presets` checks
-  the rectangle against the unzoomed export's frames.
+  canvas is cut out at `2·round(a·(S−W)/2)`, for 4:2:0 chroma.
+- **Golden `zoom-crop-presets` compares each zoomed frame with the source frame** put through the
+  export's own canvas chain and the same rectangle, never encoded (SSIM ≥ 0.98, and above the
+  rectangle 2 px off). Not with the unzoomed export's decoded frame zoomed: that stacks one
+  export's compression loss, magnified by the upscale, on the other's, and measured 0.976–0.981
+  on `talking-head-01`, where the zoomed export keeps its source as well as the unzoomed one
+  (0.983–0.986 against 0.982–0.984; coordinator decision, 2026-11-12).
 - **A ramp is per item:** with `rampFrames` N the scale grows linearly from 1 on the item's first
   frame to the target on frame N. Each ramp frame gets its own still zoom (`zoom.ramp_parts`), and
   the parts are split, trimmed and joined again inside the item's segment, so its sound and its
