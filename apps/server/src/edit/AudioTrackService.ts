@@ -31,7 +31,7 @@ import { DUCK_DEPTH_DB, SILENT_VOICE_LUFS, defaultLevelDb, itemGainDb } from "./
 import { duckOps, duckOver, placementOps, videoEndFrame } from "./audioPlacement.ts";
 import { loadCaptionTranscripts } from "./captionTrack.ts";
 import * as EditDocumentService from "./EditDocumentService.ts";
-import { speechRanges, timelineFrameOf } from "./timelineMap.ts";
+import { snapToWord, speechRanges, timelineFrameOf } from "./timelineMap.ts";
 
 const LOUDNESS_VERSION = 1;
 const LEVEL_RANGE_DB = { min: -60, max: 20 } as const;
@@ -48,7 +48,7 @@ const encodeCache = Schema.encodeSync(Schema.fromJsonString(LoudnessCacheFile));
 
 export interface PlaceAudioInput {
   readonly media: string;
-  /** A frame of `clip`, at its transcript's rate, as `video_transcript_read` shows it. */
+  /** A frame of `clip` at its transcript's rate, snapped to the start of the word it falls in. */
   readonly at?: number | undefined;
   readonly clip?: string | undefined;
   readonly track?: "sfx" | "music" | undefined;
@@ -101,8 +101,13 @@ const nameOf = (media: EditMedia) => media.label ?? media.path ?? media.id;
 const findMedia = (document: EditDocument, media: string) =>
   document.media.find((entry) => entry.id === media || entry.path === media);
 
-const seconds = (frames: number, fps: EditRational) =>
-  `${((frames * fps.den) / fps.num).toFixed(1)} s`;
+/** `mm:ss.cc` on the timeline, as the reply names a place: 00:04.20. */
+const timecode = (frames: number, fps: EditRational) => {
+  const centis = Math.round((frames * fps.den * 100) / fps.num);
+  const minutes = Math.floor(centis / 6000);
+  const rest = (centis - minutes * 6000) / 100;
+  return `${String(minutes).padStart(2, "0")}:${rest.toFixed(2).padStart(5, "0")}`;
+};
 
 const make = Effect.gen(function* () {
   const edits = yield* EditDocumentService.EditDocumentService;
@@ -212,6 +217,7 @@ const make = Effect.gen(function* () {
     }
     const root = yield* projectRoot(projectId);
     let start = 0;
+    let onWord = "";
     if (input.at !== undefined) {
       if (input.at < 0) return yield* refuse("out-of-range", "at is a clip frame, from 0.");
       const clipMedia = document.media.find((entry) => entry.id === clip)!;
@@ -227,7 +233,16 @@ const make = Effect.gen(function* () {
           `Frame ${input.at} of ${clip} was cut from the edit, so nothing was added. Pick a moment that is still in it (video_transcript_read).`,
         );
       }
-      start = mapped;
+      const transcript = transcripts.get(clip);
+      const snapped =
+        transcript === undefined ? null : snapToWord(document, clip, transcript, mapped);
+      start = snapped?.frame ?? mapped;
+      onWord =
+        transcript === undefined
+          ? " (not snapped to a word: the clip has no transcript)"
+          : snapped === null
+            ? " (after the last word, so not snapped)"
+            : `, on "${snapped.word}"`;
     }
     const mediaFrames = asset.probe.durationFrames ?? 0;
     if (mediaFrames < 1) {
@@ -260,8 +275,8 @@ const make = Effect.gen(function* () {
         : `${Math.abs(levelDb)} dB ${levelDb < 0 ? "under" : "over"} the voice`;
     const where =
       track === "music"
-        ? `from ${seconds(start, document.fps)} for ${seconds(placement.item.duration, document.fps)}`
-        : `at ${seconds(start, document.fps)}`;
+        ? `from ${timecode(start, document.fps)}${onWord} to ${timecode(start + placement.item.duration, document.fps)}`
+        : `at ${timecode(start, document.fps)}${onWord}`;
     return {
       revision: after.revision,
       item: placement.item,

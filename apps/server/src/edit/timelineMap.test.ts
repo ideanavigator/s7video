@@ -4,7 +4,7 @@
 import { type EditDocument, type EditRational, emptyEditDocument } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { speechRanges, timelineFrameOf } from "./timelineMap.ts";
+import { snapToWord, speechRanges, timelineFrameOf } from "./timelineMap.ts";
 
 const edit = (
   fps: EditRational,
@@ -113,5 +113,25 @@ describe("speechRanges", () => {
       { start: 5, end: 15 },
       { start: 35, end: 50 },
     ]);
+  });
+});
+
+describe("snapToWord", () => {
+  const transcript = {
+    fps: fps30,
+    words: [
+      { text: "Hello", startFrame: 10, endFrame: 20 },
+      { text: " ", startFrame: 21, endFrame: 22 },
+      { text: "today", startFrame: 30, endFrame: 45 },
+    ],
+  };
+  const document = edit(fps30, [[0, 300, 0]]);
+
+  it("snaps inside a word to its start, between words to the next, and past the end to null", () => {
+    expect(snapToWord(document, "cam", transcript, 15)).toEqual({ frame: 10, word: "Hello" });
+    expect(snapToWord(document, "cam", transcript, 20)).toEqual({ frame: 30, word: "today" });
+    // A blank word is no word, as for captions.
+    expect(snapToWord(document, "cam", transcript, 21)).toEqual({ frame: 30, word: "today" });
+    expect(snapToWord(document, "cam", transcript, 45)).toBeNull();
   });
 });

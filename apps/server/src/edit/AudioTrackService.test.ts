@@ -193,12 +193,54 @@ describe("AudioTrackService.placeAudio", () => {
           gainDb: -19,
         });
         expect(placed.message).toBe(
-          'Added "whoosh" on the sound effect track at 1.3 s, 9 dB under the voice.',
+          'Added "whoosh" on the sound effect track at 00:01.33 (not snapped to a word: the clip has no transcript), 9 dB under the voice.',
         );
         const after = yield* project.edits.read(project.projectId);
         expect(validateEditDocument(after.document).ok).toBe(true);
         const [newest] = yield* project.edits.versions(project.projectId);
         expect(newest!.changes).toEqual(['Added sound effect "whoosh"']);
+      }),
+    ),
+  );
+
+  // PO 2026-11-12: `at` snaps to the start of the word it falls in, else the next word heard.
+  it.effect("snaps at to a word: inside one, between two, across a cut, past the last", () =>
+    withProject((project) =>
+      Effect.gen(function* () {
+        yield* setUp(project);
+        // Kept: clip 0-30 at 0, 50-80 at 30, 100-130 at 60. "w2" crosses the cut at 30-50.
+        writeTranscript(project.root, [
+          [5, 12],
+          [15, 28],
+          [45, 62],
+          [110, 125],
+        ]);
+        const place = (at: number) =>
+          project.sounds.placeAudio(project.projectId, { media: "whoosh", at }, { reply });
+        const cases: ReadonlyArray<readonly [number, number, string]> = [
+          // Inside "w1": its start.
+          [20, 15, 'at 00:00.50, on "w1"'],
+          // Between "w0" and "w1": the next word.
+          [13, 15, 'at 00:00.50, on "w1"'],
+          // Inside "w2", whose start was cut: where its kept part starts.
+          [60, 30, 'at 00:01.00, on "w2"'],
+          // In the pause before the cut: the next word heard, after the cut.
+          [29, 30, 'at 00:01.00, on "w2"'],
+          // After the last word: as given.
+          [127, 87, "at 00:02.90 (after the last word, so not snapped)"],
+        ];
+        for (const [at, start, where] of cases) {
+          const placed = yield* place(at);
+          expect(placed.item.start, `at ${at}`).toBe(start);
+          expect(placed.message, `at ${at}`).toBe(
+            `Added "whoosh" on the sound effect track ${where}, 9 dB under the voice.`,
+          );
+        }
+        // A cut frame is still refused, even inside a word that plays in part.
+        const cut = yield* place(47).pipe(Effect.flip);
+        expect(cut.message).toContain("Frame 47 of cam was cut from the edit");
+        const after = yield* project.edits.read(project.projectId);
+        expect(validateEditDocument(after.document).ok).toBe(true);
       }),
     ),
   );

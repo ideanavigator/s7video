@@ -32,6 +32,26 @@ export function timelineFrameOf(
   return null;
 }
 
+/**
+ * Timeline frame `frame` of `media` snapped to the start of the word playing there, or else of
+ * the next word heard (PO 2026-11-12), or null after the last word. Word starts are the caption's,
+ * so a word that crosses a cut starts where its kept part starts.
+ */
+export function snapToWord(
+  document: EditDocument,
+  media: string,
+  transcript: CaptionTranscript,
+  frame: number,
+): { readonly frame: number; readonly word: string } | null {
+  const words = mapCaptionWords(document, new Map([[media, transcript]]))
+    .flat()
+    .sort((left, right) => left.start - right.start);
+  const word =
+    words.find((entry) => entry.start <= frame && frame < entry.end) ??
+    words.find((entry) => entry.start > frame);
+  return word === undefined ? null : { frame: word.start, word: word.text };
+}
+
 /** `frames / fps < 0.3 s`, exactly; an overlap (negative gap) counts as short. */
 const underThreeTenths = (frames: number, fps: EditRational) => frames * fps.den * 10 < 3 * fps.num;
 

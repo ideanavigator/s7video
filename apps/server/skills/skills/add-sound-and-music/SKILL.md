@@ -12,10 +12,12 @@ never find, make or download one. Do it with the video tools:
    `label`. A sound shared as a chat attachment that is not listed yet: call `video_import` with
    its path first. If you can't tell which sound the user means, ask.
 2. Place each one with `video_place_audio` and its media id:
-   - A sound effect "when I say ...": find the word with `video_transcript_read` and pass its
-     frame as `at`. Each line's `[start-end]` are clip frames; the line's first word starts at
-     `start`, and a later word's frame is your estimate from its place in the line. If the clip
-     has no transcript, call `video_transcribe` and wait for its job with `video_job_status`
+   - A sound effect "when I say ...": find the word with `video_transcript_read` and pass a
+     frame in it as `at`. Each line's `[start-end]` are clip frames; the line's first word starts
+     at `start`, and a later word's frame is your estimate from its place in the line. The tool
+     snaps to the start of the word that frame falls in and names it. If it names another word,
+     call `video_undo` and place it again with a frame nearer the right one. If the clip has no
+     transcript, call `video_transcribe` and wait for its job with `video_job_status`
      (`waitSeconds: 30`) first. If the edit has more than one clip, also pass `clip`: the clip
      the word is in.
    - Music: pass `track: "music"`. Leave out `at` and it starts at the beginning and runs to the

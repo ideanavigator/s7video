@@ -33,8 +33,12 @@ export mixes them under the voice and brings the whole mix to −14 LUFS. Nothin
 - A clip on the timeline more than once plays the frame first where it first plays. With several
   clips, `at` needs `clip` (PO 2026-11-11). Without `at`, the item starts at frame 0 and `clip`
   can be left out.
-- `video_transcript_read` stamps lines, not words. Only a line's first word has an exact frame;
-  the agent estimates a later word's frame from its place in the line.
+- `at` then snaps to the start of the clip's word playing there, or else the next word heard,
+  and the reply names it (PO 2026-11-12). The reason: `video_transcript_read` stamps lines, not
+  words, so the agent can only estimate a word's frame from its place in the line. Word starts
+  are the caption's, so a word that crosses a cut starts where its kept part starts. After the
+  last word, or with no transcript, `at` is used as given and the reply says it wasn't snapped.
+  A frame the edit cut is refused before any snap.
 - The edit ends where the video track ends, since that is what the export renders. Sound effects
   play their full length, trimmed there. Music runs there with no loop, fading in over 0.5 s and
   out over 1 s, rounded to whole frames. A bed too short for both fades splits its length between
