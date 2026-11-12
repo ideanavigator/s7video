@@ -526,6 +526,34 @@ const handlers = {
         );
     }),
   ),
+  // S7V-040: writes into exports/ like video_export, so plan-mode and read-only callers are refused.
+  video_export_interchange: McpToolAccess.actsAsCaller(({ format, captions }) =>
+    Effect.gen(function* () {
+      yield* refusePlanMode("export");
+      const project = yield* callerProject();
+      const exports = yield* ExportService.ExportService;
+      const started = yield* exports
+        .startInterchange({
+          projectId: project.projectId,
+          format,
+          ...(captions === undefined ? {} : { captions }),
+        })
+        .pipe(
+          Effect.mapError((error) =>
+            error._tag === "EngineError"
+              ? engineFailure(error)
+              : new OrchestratorMcpFailure({ code: "orchestration_error", message: error.message }),
+          ),
+        );
+      if (started.jobId === undefined) {
+        return yield* new OrchestratorMcpFailure({
+          code: "orchestration_error",
+          message: "The export did not start. Try again.",
+        });
+      }
+      return { jobId: started.jobId, files: started.files, dropped: started.dropped };
+    }),
+  ),
   // Acts on the environment: it loads a 4-6 GB model and writes the project's .s7cache, and the
   // matching transcribe.run RPC needs operate scope, so plan-mode and read-only callers are refused.
   video_transcribe: McpToolAccess.actsAsCaller(({ media }) =>
@@ -851,6 +879,7 @@ export const layerStandard = McpToolAccess.toLayer(VideoStandardToolkit, {
   video_job_status: handlers.video_job_status,
   video_job_cancel: handlers.video_job_cancel,
   video_export: handlers.video_export,
+  video_export_interchange: handlers.video_export_interchange,
   video_transcribe: handlers.video_transcribe,
   video_transcript_read: handlers.video_transcript_read,
   video_undo: handlers.video_undo,

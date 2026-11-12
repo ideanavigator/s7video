@@ -58,6 +58,7 @@ import { AssetsTab, useAssetsActions } from "./AssetsTab";
 import { CaptionOverlay } from "./CaptionOverlay";
 import { CaptionStylePicker } from "./CaptionStylePicker";
 import { EditPlayer } from "./EditPlayer";
+import { ExportForEditorsDialog } from "./ExportForEditorsDialog";
 import { HistoryCleanupBanner } from "./HistoryCleanupBanner";
 import { ImportDialog } from "./ImportDialog";
 import { MultiClipPlayer, type MultiClipSource } from "./MultiClipPlayer";
@@ -544,6 +545,7 @@ function ExportButton(props: { readonly projectRef: ScopedProjectRef }) {
   // Set from the click until the job stops running, so a repeat click can't resend the cancel.
   const [cancellingJobId, setCancellingJobId] = useState<EngineJobId | null>(null);
   const cancelling = cancellingJobId !== null && cancellingJobId === (job?.id ?? started?.jobId);
+  const [editorsOpen, setEditorsOpen] = useState(false);
 
   const exportEdit = async (captions?: false) => {
     const result = await start({
@@ -585,7 +587,8 @@ function ExportButton(props: { readonly projectRef: ScopedProjectRef }) {
   const outcome = (() => {
     if (running || job === null) return null;
     if (job.state === "succeeded") {
-      return <>Exported to {status?.path ?? started?.path ?? "the exports folder"}</>;
+      const files = status?.files?.join(", ") ?? status?.path ?? started?.path;
+      return <>Exported to {files ?? "the exports folder"}</>;
     }
     if (job.state === "cancelled") return <>Export cancelled</>;
     return <>Export failed{status?.message ? `: ${status.message}` : ""}</>;
@@ -627,11 +630,22 @@ function ExportButton(props: { readonly projectRef: ScopedProjectRef }) {
           Cancel
         </Button>
       ) : (
-        <Button size="compact" variant="outline" onClick={() => void exportEdit()}>
-          <UploadIcon aria-hidden />
-          Export
-        </Button>
+        <>
+          <Button size="compact" variant="outline" onClick={() => void exportEdit()}>
+            <UploadIcon aria-hidden />
+            Export
+          </Button>
+          <Button size="compact" variant="outline" onClick={() => setEditorsOpen(true)}>
+            Export for editors
+          </Button>
+        </>
       )}
+      <ExportForEditorsDialog
+        projectRef={props.projectRef}
+        open={editorsOpen}
+        onClose={() => setEditorsOpen(false)}
+        onStarted={setStarted}
+      />
     </div>
   );
 }

@@ -2809,6 +2809,7 @@ export const layerWsRpc = (
         [WS_METHODS.engineJobsCancel]: (input) =>
           engine.cancelJob(input.jobId).pipe(Effect.map((applied) => ({ applied }))),
         [WS_METHODS.exportStart]: (input) => exports.start(input),
+        [WS_METHODS.exportInterchange]: (input) => exports.startInterchange(input),
         [WS_METHODS.exportStatus]: (input) => exports.status(input.jobId),
         [WS_METHODS.captionsStills]: (input) => captionStills.stills(input.projectId),
         [WS_METHODS.captionsPresets]: (input) => captionStills.presets(input.projectId),

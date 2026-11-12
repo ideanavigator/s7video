@@ -151,26 +151,16 @@ def _unsupported(what: str) -> RpcError:
     return RpcError(INVALID_PARAMS, f"export cannot draw {what} yet")
 
 
-def plan_segments(edit: dict[str, Any], width: int, height: int) -> Plan:
-    """The output's segments from the edit's first video track, with black gaps between items, and
-    the sound effect and music items that play over them."""
+def timeline_plan(edit: dict[str, Any], width: int, height: int) -> Plan:
+    """The first video track's segments, with black gaps between items, and the sound effect and
+    music items that play over them; refuses nothing, so "Export for editors" can take its
+    captions from the same chunks as the MP4 (S7V-040)."""
     rate = timebase.from_rational(edit["fps"])
     video_tracks = [track for track in edit["tracks"] if track["kind"] == "video"]
-    for track in video_tracks[1:]:
-        if track["items"] and not track.get("muted"):
-            raise _unsupported("a second video track")
-    for track in edit["tracks"]:
-        if track["kind"] == "overlay" and track["items"] and not track.get("muted"):
-            raise _unsupported(f"{track['kind']} tracks")
     items = sorted(video_tracks[0]["items"], key=lambda item: item["start"]) if video_tracks else []
-    if not items:
-        raise RpcError(INVALID_PARAMS, "the edit has no video to export")
-    media = {entry["id"]: entry for entry in edit["media"]}
     segments: list[Segment] = []
     at = 0
     for item in items:
-        if media[item["media"]]["kind"] != "video" or not media[item["media"]]["probe"].get("hasVideo"):
-            raise _unsupported("an image or audio file on the video track")
         if item["start"] > at:
             segments.append(Segment(at, item["start"] - at))
         segments.append(
@@ -185,12 +175,30 @@ def plan_segments(edit: dict[str, Any], width: int, height: int) -> Plan:
             )
         )
         at = item["start"] + item["duration"]
-    audio = mix.audio_items(edit, at)
-    for entry in audio:
+    return Plan(rate, width, height, at, segments, audio=mix.audio_items(edit, at))
+
+
+def plan_segments(edit: dict[str, Any], width: int, height: int) -> Plan:
+    """``timeline_plan``, refusing what the render cannot draw yet."""
+    video_tracks = [track for track in edit["tracks"] if track["kind"] == "video"]
+    for track in video_tracks[1:]:
+        if track["items"] and not track.get("muted"):
+            raise _unsupported("a second video track")
+    for track in edit["tracks"]:
+        if track["kind"] == "overlay" and track["items"] and not track.get("muted"):
+            raise _unsupported(f"{track['kind']} tracks")
+    if not video_tracks or not video_tracks[0]["items"]:
+        raise RpcError(INVALID_PARAMS, "the edit has no video to export")
+    media = {entry["id"]: entry for entry in edit["media"]}
+    for item in video_tracks[0]["items"]:
+        if media[item["media"]]["kind"] != "video" or not media[item["media"]]["probe"].get("hasVideo"):
+            raise _unsupported("an image or audio file on the video track")
+    plan = timeline_plan(edit, width, height)
+    for entry in plan.audio:
         source = media[entry.media]
         if source["kind"] == "image" or not source["probe"].get("hasAudio"):
             raise RpcError(INVALID_PARAMS, f'media "{entry.media}" on a sound track has no sound')
-    return Plan(rate, width, height, at, segments, audio=audio)
+    return plan
 
 
 def _checked_style(style_id: str) -> str:
