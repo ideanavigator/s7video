@@ -99,11 +99,16 @@ def test_layout_inside_safe_zone_for_every_preset(preset: str, width: int, heigh
     style = captions_ass.load_style(preset)
     layout = captions_ass.layout_for(width, height, style)
     left, top, right, bottom = layout.safe
-    edge, shadow = math.ceil(layout.edge), math.ceil(layout.shadow)
-    # The text box, its outline or box padding, and its shadow all stay inside the safe zone.
-    assert layout.margin_left == left + edge
-    assert width - layout.margin_right + edge + shadow == right
+    # An outline or box reaches its width plus an anti-aliased pixel past the text.
+    edge = math.ceil(layout.edge) + (1 if layout.edge > 0 else 0)
+    shadow = math.ceil(layout.shadow)
+    assert layout.edge_pixels == edge
+    # The text box, its outline or box padding, its shadow and a pixel of slack each side all stay
+    # inside the safe zone.
+    assert layout.margin_left == left + edge + 1
+    assert width - layout.margin_right + edge + shadow + 1 == right
     assert height - layout.margin_bottom + edge + shadow == bottom
+    assert layout.text_width == layout.safe_width - 2 * (edge + 1)
     assert bottom - 2.5 * layout.font_size - 2 * edge - shadow > top
     ass = captions_ass.build_ass([captions_ass.Chunk("hello there", 0, 30)], Fraction(30), width, height, preset)
     ass_style = ass.styles["Default"]

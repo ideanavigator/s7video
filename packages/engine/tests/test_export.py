@@ -219,7 +219,8 @@ def test_ass_layout_inside_safe_zone(width: int, height: int, kind: str) -> None
     layout = captions_ass.layout_for(width, height)
     left, top, right, bottom = layout.safe
     assert 0 < left < right < width and 0 < top < bottom < height
-    assert layout.margin_left == left and width - layout.margin_right + math.ceil(layout.shadow) == right
+    # A pixel of slack each side of a line (S7V-037): glyph ink can reach a pixel past its advance.
+    assert layout.margin_left == left + 1 and width - layout.margin_right + math.ceil(layout.shadow) + 1 == right
     assert height - layout.margin_bottom + math.ceil(layout.shadow) == bottom
     # Two lines of text and the shadow fit between the top of the safe zone and its bottom.
     assert bottom - 2.5 * layout.font_size - layout.shadow > top

@@ -40,6 +40,11 @@ _SENTENCE_END = re.compile(r"[.!?…]$|[,;:]$")
 _WIDE = 0.74
 _NARROW = 0.64
 _MAX_LINES = 2
+#: Pixels of slack on each side of a line: anti-aliasing and side bearings put up to a pixel of ink
+#: past a line's advance, which libass fits to the margins (S7V-037 golden ``zoom-crop-presets``).
+_SLACK = 1
+#: The anti-aliased pixel just past an outline or a box's padding.
+_FRINGE = 1
 
 
 @dataclass(frozen=True)
@@ -91,9 +96,14 @@ class Layout:
         return self.safe[2] - self.safe[0]
 
     @property
+    def edge_pixels(self) -> int:
+        """How far an outline or a box reaches past the text, its anti-aliased fringe included."""
+        return math.ceil(self.edge) + (_FRINGE if self.edge > 0 else 0)
+
+    @property
     def text_width(self) -> int:
-        """The safe width less the outline or box on both sides: where the glyphs must fit."""
-        return self.safe_width - 2 * math.ceil(self.edge)
+        """The safe width less the outline or box and the slack on both sides: where glyphs fit."""
+        return self.safe_width - 2 * (self.edge_pixels + _SLACK)
 
 
 class CaptionStyleError(ValueError):
@@ -137,17 +147,18 @@ def layout_for(width: int, height: int, style: dict[str, Any] | None = None) -> 
     bottom = math.ceil(safe["bottom"] * height)
     shadow = round(spec["shadow"] * short, 1)
     edge = round(spec.get("pad", spec.get("outline", 0)) * short, 1)
+    edge_pixels = math.ceil(edge) + (_FRINGE if edge > 0 else 0)
     # The shadow falls down and to the right of the text, so those margins make room for it; an
-    # outline or a box reaches out on every side.
+    # outline or a box reaches out on every side; and each line keeps a pixel of slack each side.
     return Layout(
         width=width,
         height=height,
         font_size=round(spec["fontSize"] * short),
         shadow=shadow,
         edge=edge,
-        margin_left=left + math.ceil(edge),
-        margin_right=right + math.ceil(edge) + math.ceil(shadow),
-        margin_bottom=bottom + math.ceil(edge) + math.ceil(shadow),
+        margin_left=left + edge_pixels + _SLACK,
+        margin_right=right + edge_pixels + math.ceil(shadow) + _SLACK,
+        margin_bottom=bottom + edge_pixels + math.ceil(shadow),
         safe=(left, top, width - right, height - bottom),
     )
 

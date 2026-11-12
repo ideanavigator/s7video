@@ -4,11 +4,14 @@
 
 **Zoom.** ``talking-head-01`` cut to 4 ranges (240 frames at 24000/1001), exported at 9:16 with
 three punch-ins: 1.25 across a cut, 1.5, and 2.0 with a 6-frame ramp. Each sampled zoomed frame
-matches the unzoomed export's frame scaled and cropped at the rectangle ``zoom.py`` computes
-(SSIM ≥ 0.98, and above the same rectangle 2 px off either way, so the rectangle is the exact
-one). The frame before each zoom and the frame after it match the unzoomed export; its first and
-last frames are zoomed (the cut list is exact in frames). Each ramp frame matches its own
-rectangle and frame N the target's.
+matches its reference, the source frame put through the export's own canvas chain and scaled and
+cropped at the rectangle ``zoom.py`` computes, never encoded: SSIM ≥ 0.98, and above the same
+rectangle 2 px off either way, so the rectangle is the exact one. (Zooming the unzoomed export's
+decoded frame instead would stack that export's compression loss, magnified by the upscale, on
+the zoomed export's own: 0.976–0.981 where this reference gives 0.983–0.986, S7V-037.) The frame
+before each zoom and the frame after it match the unzoomed export; its first and last frames are
+zoomed (the cut list is exact in frames). Each ramp frame matches its own rectangle and frame N
+the target's.
 
 **Looks.** A synthetic ``testsrc2`` clip at 9:16, 1:1 and 16:9 with 20 caption chunks of four
 long words, in each look: every caption, its box, outline or shadow included, stays inside the
@@ -88,10 +91,26 @@ def _frames(video: Path, frames: list[int], out: Path) -> dict[int, Path]:
     return {frame: out / f"f-{index + 1:04d}.png" for index, frame in enumerate(wanted)}
 
 
-def _zoomed(png: Path, crop: zoom.Crop, out: Path) -> Path:
-    """``png`` zoomed as the export zooms it: on 4:2:0 frames, scaled up, the canvas cut out."""
-    _ffmpeg("-i", str(png), "-vf", f"format=yuv420p,scale={crop.scaled_width}:{crop.scaled_height},crop={W}:{H}:{crop.x}:{crop.y},format=rgb24", str(out))
-    return out
+def _source_frames(source: Path, plan: export.Plan, wanted: dict[str, tuple[int, zoom.Crop | None]], out: Path) -> dict[str, Path]:
+    """Source frames through the export's own canvas chain, each zoomed at its rectangle (or not),
+    never encoded, as RGB PNGs: the zoom's references, from one decode of the source."""
+    out.mkdir(parents=True, exist_ok=True)
+    names = list(wanted)
+    canvas = export._canvas_chain(plan, export._probe_source(str(source), JobContext.detached()))
+    chains = [f"[0:v]fps={RATE.numerator}/{RATE.denominator},{canvas},split={len(names)}" + "".join(f"[b{i}]" for i in range(len(names)))]
+    outputs: list[str] = []
+    for index, name in enumerate(names):
+        frame, crop = wanted[name]
+        zoomed = "" if crop is None else f"scale={crop.scaled_width}:{crop.scaled_height},crop={W}:{H}:{crop.x}:{crop.y},"
+        chains.append(f"[b{index}]select=eq(n\\,{frame}),{zoomed}format=rgb24[o{index}]")
+        outputs += ["-map", f"[o{index}]", "-frames:v", "1", str(out / f"{name}.png")]
+    _ffmpeg("-i", str(source), "-filter_complex", ";".join(chains), *outputs)
+    return {name: out / f"{name}.png" for name in names}
+
+
+def _source_frame(plan: export.Plan, frame: int) -> int:
+    segment = next(s for s in plan.segments if s.timeline_start <= frame < s.timeline_start + s.frames)
+    return segment.source_in + frame - segment.timeline_start
 
 
 def _ssim(a: Path, b: Path, crop: str = "") -> float:
@@ -167,32 +186,37 @@ def test_zoom_crops_exactly(media, tmp_path: Path) -> None:
         for step in range(punch.ramp_frames + 2):
             samples[start + step] = (punch, step, True)
     shots = {"plain": _frames(plain, list(samples), tmp_path / "plain"), "zoomed": _frames(zoomed, list(samples), tmp_path / "zoomed")}
+    plan = export.plan_segments(edit, W, H)
+    wanted: dict[str, tuple[int, zoom.Crop | None]] = {}
+    for frame, (punch, step, _inside) in samples.items():
+        crop = zoom.frame_crop(W, H, punch, step)
+        wanted[f"ref-{frame}"] = (_source_frame(plan, frame), crop)
+        for dx, dy in ((2, 0), (-2, 0), (0, 2), (0, -2)):
+            near = zoom.Crop(crop.scaled_width, crop.scaled_height, crop.x + dx, crop.y + dy)
+            if 0 <= near.x <= near.scaled_width - W and 0 <= near.y <= near.scaled_height - H:
+                wanted[f"near-{frame}-{dx}-{dy}"] = (_source_frame(plan, frame), near)
+    refs = _source_frames(source, plan, wanted, tmp_path / "source")
 
     rects: list[list[int]] = []
     for frame, (punch, step, inside) in sorted(samples.items()):
         got, unzoomed = shots["zoomed"][frame], shots["plain"][frame]
         if not inside:
             # The frames either side of a zoom are the unzoomed export's, not the zoom's.
-            crop = zoom.frame_crop(W, H, punch, step)
             as_plain = _ssim(got, unzoomed)
-            as_zoom = _ssim(got, _zoomed(unzoomed, crop, tmp_path / f"out-{frame}.png"))
+            as_zoom = _ssim(got, refs[f"ref-{frame}"])
             print(f"zoom-crop-presets frame {frame} (outside x{punch.scale}): SSIM vs unzoomed {as_plain:.4f}, vs zoomed {as_zoom:.4f}")
             assert as_plain >= MIN_SSIM, (frame, as_plain)
             assert as_plain > as_zoom, frame
             continue
         crop = zoom.frame_crop(W, H, punch, step)
         rects.append([frame, crop.scaled_width, crop.scaled_height, crop.x, crop.y])
-        exact = _ssim(got, _zoomed(unzoomed, crop, tmp_path / f"ref-{frame}.png"))
+        exact = _ssim(got, refs[f"ref-{frame}"])
         bare = _ssim(got, unzoomed)
-        nears = []
-        for dx, dy in ((2, 0), (-2, 0), (0, 2), (0, -2)):
-            near = zoom.Crop(crop.scaled_width, crop.scaled_height, crop.x + dx, crop.y + dy)
-            if 0 <= near.x <= near.scaled_width - W and 0 <= near.y <= near.scaled_height - H:
-                nears.append(_ssim(got, _zoomed(unzoomed, near, tmp_path / f"near-{frame}.png")))
+        nears = [_ssim(got, path) for name, path in refs.items() if name.startswith(f"near-{frame}-")]
         print(
             f"zoom-crop-presets frame {frame} (x{punch.scale}, ramp step {min(step, punch.ramp_frames) if punch.ramp_frames else '-'}):"
             f" rect {crop.scaled_width}x{crop.scaled_height}+{crop.x}+{crop.y}, SSIM {exact:.4f},"
-            f" 2 px off at most {max(nears):.4f}, unzoomed {bare:.4f}"
+            f" 2 px off at most {f'{max(nears):.4f}' if nears else '- (no room)'}, unzoomed {bare:.4f}"
         )
         assert exact >= MIN_SSIM, (frame, exact)
         assert exact > bare, frame
