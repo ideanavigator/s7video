@@ -609,9 +609,10 @@ const layerRuntimeCoreDependencies = layerRuntimeCoreDependenciesBase.pipe(
 const layerRuntimeDependencies = MediaLibraryService.layer.pipe(
   Layer.provideMerge(SilenceCutService.layer),
   Layer.provideMerge(CaptionTrackService.layer),
-  Layer.provideMerge(AudioTrackService.layer),
-  Layer.provideMerge(ClipPlacementService.layer),
-  Layer.provideMerge(ZoomService.layer),
+  // The agent's edit tools' services; none reads another, so one merge keeps `pipe` within 20.
+  Layer.provideMerge(
+    Layer.mergeAll(AudioTrackService.layer, ClipPlacementService.layer, ZoomService.layer),
+  ),
   Layer.provideMerge(CaptionStillsService.layer),
   Layer.provideMerge(ExportService.layer.pipe(Layer.provideMerge(TranscriptService.layer))),
   Layer.provideMerge(layerEditDocument),
