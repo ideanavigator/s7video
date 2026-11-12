@@ -19,6 +19,7 @@ import { page, userEvent } from "vite-plus/test/browser";
 import "~/index.css";
 
 import { render } from "../../../test/render";
+import type { CaptionStillsState } from "../../editor/editStore";
 import { CaptionStylePicker } from "./CaptionStylePicker";
 
 /** A stand-in preview at the engine's size (240 px wide), drawn here: slate, with a white line. */
@@ -40,7 +41,10 @@ const previewPng = (box: boolean) => {
   return canvas.toDataURL("image/png").slice("data:image/png;base64,".length);
 };
 
-const state = vi.hoisted(() => ({ presets: null as CaptionPresetsResult | null }));
+const state = vi.hoisted(() => ({
+  presets: null as CaptionPresetsResult | null,
+  stills: { _tag: "none" } as CaptionStillsState,
+}));
 const commands = vi.hoisted(() => ({
   setStyle: vi.fn(async (_input: unknown): Promise<unknown> => ({
     _tag: "Success",
@@ -52,6 +56,7 @@ const toasts = vi.hoisted(() => ({ add: vi.fn() }));
 vi.mock(import("../../editor/editStore"), async (importOriginal) => ({
   ...(await importOriginal()),
   useCaptionPresets: () => state.presets,
+  useCaptionStills: () => state.stills,
 }));
 vi.mock(import("../../state/use-atom-command"), () => ({
   useAtomCommand: (() => commands.setStyle) as never,
@@ -154,6 +159,41 @@ describe("CaptionStylePicker (S7V-037)", () => {
       environmentId: projectRef.environmentId,
       input: { projectId: projectRef.projectId, preset: "s7-neutral" },
     });
+  });
+
+  it("with only the transcripts' fallback captions, marks Plain, and Plain still adds the track", async () => {
+    state.presets = allPreviews();
+    // No caption track, but the player shows the transcripts' captions in the plain look (S7V-046).
+    state.stills = {
+      _tag: "ready",
+      updating: false,
+      stills: {
+        key: "fallback",
+        width: 1080,
+        height: 1920,
+        chunks: [{ start: 0, end: 30, still: 0 }],
+        folder: "f".repeat(32),
+        stillsUrl: "/api/assets/payload.signature/",
+        stills: [`${"a".repeat(32)}.png`],
+        missing: [],
+      },
+    };
+    commands.setStyle.mockClear();
+    try {
+      await using screen = await mount(documentWith());
+      await expect
+        .element(screen.getByRole("button", { name: "Caption style: Plain" }))
+        .toHaveAttribute("aria-pressed", "true");
+      expect(screen.getByText("Pick a look to add captions.").query()).toBeNull();
+      // Picking Plain writes the caption track in that look: one change, one undo.
+      await screen.getByRole("button", { name: "Caption style: Plain" }).click();
+      expect(commands.setStyle).toHaveBeenCalledWith({
+        environmentId: projectRef.environmentId,
+        input: { projectId: projectRef.projectId, preset: "s7-neutral" },
+      });
+    } finally {
+      state.stills = { _tag: "none" };
+    }
   });
 
   it("drops the hint once the edit has captions", async () => {

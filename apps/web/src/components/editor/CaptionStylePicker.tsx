@@ -15,7 +15,7 @@ import {
 import { captionLookOf, shownCaptionTracks } from "@t3tools/shared/captionWords";
 import { useId, useState } from "react";
 
-import { editEnvironment, useCaptionPresets } from "../../editor/editStore";
+import { editEnvironment, useCaptionPresets, useCaptionStills } from "../../editor/editStore";
 import { cn } from "../../lib/utils";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { toastManager } from "../ui/toast";
@@ -29,13 +29,17 @@ export function CaptionStylePicker(props: {
   const setStyle = useAtomCommand(editEnvironment.setCaptionStyle, { reportFailure: false });
   const [picking, setPicking] = useState(false);
   const hintId = useId();
-  // With no captions, no look is in use yet: picking any one, Plain too, adds them in it.
-  const captioned = shownCaptionTracks(props.document).length > 0;
-  const current = captioned ? captionLookOf(props.document) : null;
+  const stills = useCaptionStills(props.projectRef);
+  const tracked = shownCaptionTracks(props.document).length > 0;
+  // With no caption track, the transcripts still caption the player and the export in the plain
+  // look (S7V-046): that look shows as in use, and picking any look, Plain too, writes the track.
+  const fallback = !tracked && stills._tag === "ready" && stills.stills.chunks.length > 0;
+  const current = tracked ? captionLookOf(props.document) : fallback ? "s7-neutral" : null;
+  const captioned = tracked || fallback;
   const previews = new Map(presets?.presets.map((preset) => [preset.id, preset.png]) ?? []);
 
   const pick = async (preset: CaptionPresetId) => {
-    if (preset === current || picking) return;
+    if ((tracked && preset === current) || picking) return;
     setPicking(true);
     const result = await setStyle({ environmentId, input: { projectId, preset } });
     setPicking(false);
