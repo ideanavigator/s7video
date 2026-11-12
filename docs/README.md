@@ -59,6 +59,7 @@ source alone does not explain. Most code changes do not need an internal documen
 - [Edit history](./internals/edit-history.md)
 - [Timeline](./internals/timeline.md)
 - [Captions in the edit](./internals/captions.md)
+- [Sound effects, music and loudness](./internals/audio-mix.md)
 
 ### Runbooks
 

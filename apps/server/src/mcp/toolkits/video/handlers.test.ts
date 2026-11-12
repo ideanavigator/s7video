@@ -20,6 +20,7 @@ import {
   ProjectId,
   ProviderInstanceId,
   CaptionsError,
+  SoundError,
   SilenceCutError,
   ThreadId,
 } from "@t3tools/contracts";
@@ -40,6 +41,7 @@ import * as NodePath from "node:path";
 
 import * as ServerConfig from "../../../config.ts";
 import * as EditDocumentService from "../../../edit/EditDocumentService.ts";
+import * as AudioTrackService from "../../../edit/AudioTrackService.ts";
 import * as CaptionTrackService from "../../../edit/CaptionTrackService.ts";
 import * as SilenceCutService from "../../../edit/SilenceCutService.ts";
 import * as EngineService from "../../../engine/EngineService.ts";
@@ -174,6 +176,7 @@ interface Fixture {
     label: string | undefined;
   }>;
   readonly silences: Array<SilenceCutService.RemoveSilencesInput>;
+  readonly sounds: Array<readonly [string, ProjectId, unknown]>;
   diskShort: boolean;
   /** Runs as each job subscription starts. */
   onSubscribe: Effect.Effect<void>;
@@ -248,6 +251,7 @@ const makeFixture = (): Fixture => {
     sharedInB,
     imports: [],
     silences: [],
+    sounds: [],
     diskShort: false,
     onSubscribe: Effect.void,
     recent: [],
@@ -319,6 +323,40 @@ const layerFor = (fixture: Fixture, cancelSignal: Deferred.Deferred<string>) => 
                 changed: true,
               });
         }),
+    }),
+    // Project B has no transcript and no music: the service's plain refusals.
+    Layer.mock(AudioTrackService.AudioTrackService)({
+      placeAudio: (projectId, input) => {
+        fixture.sounds.push(["place", projectId, input]);
+        return projectId === projectB
+          ? Effect.fail(
+              new SoundError({
+                reason: "cut",
+                detail: "Frame 40 of other was cut from the edit, so nothing was added.",
+              }),
+            )
+          : Effect.succeed({
+              revision: 10,
+              item: { id: "sfx1", trackId: "S1", start: 42, duration: 5, gainDb: -5.3 },
+              message: 'Added "whoosh" on the sound effect track at 1.8 s, 9 dB under the voice.',
+            });
+      },
+      duckMusic: (projectId, input) => {
+        fixture.sounds.push(["duck", projectId, input]);
+        return projectId === projectB
+          ? Effect.fail(
+              new SoundError({
+                reason: "no-music",
+                detail: "There is no music in the edit yet. Place it with video_place_audio first.",
+              }),
+            )
+          : Effect.succeed({
+              revision: 11,
+              ranges: 13,
+              changed: true,
+              message: "The music now dips 12 dB under speech in 13 places.",
+            });
+      },
     }),
     Layer.mock(CaptionTrackService.CaptionTrackService)({
       addCaptions: (projectId) =>
@@ -535,12 +573,14 @@ describe("video toolkit", () => {
           "video_add_captions",
           "video_assemble",
           "video_canvas",
+          "video_duck_music",
           "video_edit_read",
           "video_export",
           "video_frame",
           "video_import",
           "video_job_cancel",
           "video_job_status",
+          "video_place_audio",
           "video_probe",
           "video_redo",
           "video_remove_silences",
@@ -971,6 +1011,8 @@ describe("video toolkit", () => {
           ["video_remove_silences", {}],
           ["video_assemble", { items: [] }],
           ["video_add_captions", {}],
+          ["video_place_audio", { media: "cam" }],
+          ["video_duck_music", {}],
         ] as const) {
           // A hidden tool is not callable at all: the server answers as for an unknown tool.
           const error = yield* call(threadA, tool, args, ["orchestration"]).pipe(Effect.flip);
@@ -980,6 +1022,76 @@ describe("video toolkit", () => {
         expect(fixture.cancelled).toEqual([]);
         expect(fixture.exports).toEqual([]);
         expect(fixture.imports).toEqual([]);
+        expect(fixture.sounds).toEqual([]);
+      }),
+    ),
+  );
+
+  // S7V-036: one service call for the caller's own project; its plain refusals reach the agent.
+  it.effect("video_place_audio places through the service and offers undo", () =>
+    withTools(({ fixture, call }) =>
+      Effect.gen(function* () {
+        const placed = yield* call(threadA, "video_place_audio", {
+          media: "cam",
+          at: 40,
+          track: "sfx",
+        });
+        expect(placed.isError).toBe(false);
+        expect(placed.structuredContent).toEqual({
+          revision: 10,
+          item: { id: "sfx1", trackId: "S1", start: 42, duration: 5, gainDb: -5.3 },
+          message:
+            'Added "whoosh" on the sound effect track at 1.8 s, 9 dB under the voice. Say undo to take it out.',
+        });
+        expect(fixture.sounds).toEqual([
+          [
+            "place",
+            projectA,
+            { media: "cam", at: 40, clip: undefined, track: "sfx", gainDb: undefined },
+          ],
+        ]);
+        const refused = yield* call(threadB, "video_place_audio", { media: "other", at: 40 });
+        expect(refused.isError).toBe(true);
+        expect(textOf(refused)).toEqual([
+          "Frame 40 of other was cut from the edit, so nothing was added.",
+        ]);
+      }),
+    ),
+  );
+
+  it.effect("video_place_audio refuses media outside the project before the service", () =>
+    withTools(({ fixture, call }) =>
+      Effect.gen(function* () {
+        for (const args of [
+          { media: NodePath.join(fixture.outside, "secret.mp4") },
+          { media: "cam", clip: "escape" },
+          { media: "linked" },
+        ]) {
+          const refused = yield* call(threadA, "video_place_audio", args);
+          expect(refused.isError, JSON.stringify(args)).toBe(true);
+        }
+        expect(fixture.sounds).toEqual([]);
+      }),
+    ),
+  );
+
+  it.effect("video_duck_music ducks through the service and says when there is no music", () =>
+    withTools(({ fixture, call }) =>
+      Effect.gen(function* () {
+        const ducked = yield* call(threadA, "video_duck_music", {});
+        expect(ducked.structuredContent).toEqual({
+          revision: 11,
+          ranges: 13,
+          message: "The music now dips 12 dB under speech in 13 places. Say undo to take it out.",
+        });
+        const refused = yield* call(threadB, "video_duck_music", { depthDb: -9 });
+        expect(textOf(refused)).toEqual([
+          "There is no music in the edit yet. Place it with video_place_audio first.",
+        ]);
+        expect(fixture.sounds).toEqual([
+          ["duck", projectA, { depthDb: undefined }],
+          ["duck", projectB, { depthDb: -9 }],
+        ]);
       }),
     ),
   );
@@ -1367,12 +1479,14 @@ it.effect("should hide tools without the video capability", () =>
         "video_add_captions",
         "video_assemble",
         "video_canvas",
+        "video_duck_music",
         "video_edit_read",
         "video_export",
         "video_frame",
         "video_import",
         "video_job_cancel",
         "video_job_status",
+        "video_place_audio",
         "video_probe",
         "video_redo",
         "video_remove_silences",

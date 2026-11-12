@@ -85,6 +85,9 @@ from; the per-ticket entries and how this file is compiled are in
   clips by hand, or cut by deleting words in the transcript; every change can be undone and becomes
   a numbered version, an edit can use several clips, and none of it needs developer tools on your
   Mac. (S7V-032)
+- Drop sound effects and music into the chat and ask the assistant to use them. It places them on
+  their rows at sensible levels, dips the music while you speak, and exports at a steady −14 LUFS.
+  For now you hear them in the exported video; the Editor's player doesn't play them yet. (S7V-036)
 
 ### Changed
 

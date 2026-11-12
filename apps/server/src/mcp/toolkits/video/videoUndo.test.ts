@@ -14,6 +14,7 @@ import {
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { McpSchema, McpServer } from "effect/ai";
 import * as NodeCrypto from "node:crypto";
@@ -28,6 +29,7 @@ import * as MediaLibraryService from "../../../media/MediaLibraryService.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as ManagedProjectFolders from "../../../project/ManagedProjectFolders.ts";
 import * as TranscriptService from "../../../transcript/TranscriptService.ts";
+import * as AudioTrackService from "../../../edit/AudioTrackService.ts";
 import * as CaptionTrackService from "../../../edit/CaptionTrackService.ts";
 import * as SilenceCutService from "../../../edit/SilenceCutService.ts";
 import * as McpHttpServer from "../../McpHttpServer.ts";
@@ -209,11 +211,19 @@ const withProject = <A, E>(
             Layer.mock(EngineService.EngineService)({
               subscribeJobs: Stream.make({ type: "snapshot" as const, jobs: [] }),
               recentJobs: Effect.succeed([]),
+              // S7V-036: the voice clip measures -20 LUFS and every other sound -10 LUFS.
+              call: (method, params, success) =>
+                method === "media.loudness"
+                  ? Schema.decodeEffect(success)({
+                      integratedLufs: String(params["path"]).endsWith("cam.mp4") ? -20 : -10,
+                    }).pipe(Effect.orDie)
+                  : Effect.die(`unexpected quick call ${method}`),
             }),
             Layer.mock(TranscriptService.TranscriptService)({}),
             Layer.mock(SilenceCutService.SilenceCutService)({}),
           ),
     ).pipe(Layer.provideMerge(editLayer));
+    const withSound = AudioTrackService.layer.pipe(Layer.provideMerge(services));
     return yield* Effect.gen(function* () {
       const folders = yield* ManagedProjectFolders.ManagedProjectFolders;
       const edits = yield* EditDocumentService.EditDocumentService;
@@ -232,7 +242,7 @@ const withProject = <A, E>(
       Effect.provide(
         McpHttpServer.layerVideoToolkit.pipe(
           Layer.provideMerge(McpServer.McpServer.layer),
-          Layer.provideMerge(services),
+          Layer.provideMerge(withSound),
         ),
       ),
     );
@@ -467,6 +477,8 @@ describe("video_undo and video_redo", () => {
           ["video_import", { path: NodePath.join(root, "clip.mp4") }],
           ["video_transcribe", { media: "cam" }],
           ["video_add_captions", {}],
+          ["video_place_audio", { media: "cam" }],
+          ["video_duck_music", {}],
         ];
         for (const [tool, args] of changing) {
           const result = yield* call(tool, args);
@@ -479,6 +491,99 @@ describe("video_undo and video_redo", () => {
         for (const tool of ["video_edit_read", "video_job_status"]) {
           expect((yield* call(tool)).isError, tool).toBe(false);
         }
+      }),
+    ),
+  );
+
+  // S7V-036: each placement and each duck is one assistant version, and one undo takes it out.
+  it.effect("video_place_audio and video_duck_music are each one undoable step", () =>
+    withProject(({ root, thread, edits, call }) =>
+      Effect.gen(function* () {
+        const clip = Buffer.from("a talking-head clip");
+        NodeFS.mkdirSync(NodePath.join(root, "assets"), { recursive: true });
+        NodeFS.writeFileSync(NodePath.join(root, "assets", "cam.mp4"), clip);
+        for (const name of ["whoosh.wav", "bed.wav"]) {
+          NodeFS.writeFileSync(NodePath.join(root, "assets", name), `a synthetic ${name}`);
+        }
+        const sha256 = NodeCrypto.createHash("sha256").update(clip).digest("hex");
+        const cache = NodePath.join(root, ".s7cache", "transcripts");
+        NodeFS.mkdirSync(cache, { recursive: true });
+        NodeFS.writeFileSync(
+          NodePath.join(cache, `${sha256}.json`),
+          JSON.stringify({
+            transcriptVersion: 1,
+            mediaFingerprint: { sha256, size: clip.length },
+            model: "test",
+            revision: "test",
+            fps: { num: 30, den: 1 },
+            durationFrames: 900,
+            words: [
+              { text: "Hello", startFrame: 10, endFrame: 20, confidence: 1, speaker: "S1" },
+              { text: "there.", startFrame: 24, endFrame: 40, confidence: 1, speaker: "S1" },
+              { text: "Again", startFrame: 100, endFrame: 130, confidence: 1, speaker: "S1" },
+            ],
+            createdAt: "2026-11-12T00:00:00.000Z",
+          }),
+        );
+        const sound = (id: string, durationFrames: number) => ({
+          _tag: "putMedia" as const,
+          media: {
+            id,
+            kind: "audio" as const,
+            path: `assets/${id}.wav`,
+            label: id,
+            fingerprint: { sha256: "cd".repeat(32), size: 64 },
+            probe: { durationFrames, hasVideo: false, hasAudio: true },
+          },
+        });
+        const initial = yield* edits.read(thread.projectId);
+        yield* edits.apply(
+          thread.projectId,
+          [...setup, keep([[0, 200]]), sound("whoosh", 15), sound("bed", 900)],
+          { origin: "agent", baseRevision: initial.revision },
+        );
+        const plain = readFile(root, "edit.json");
+
+        const placed = yield* call("video_place_audio", { media: "whoosh", at: 24 });
+        expect(placed.isError).toBe(false);
+        expect(placed.structuredContent).toMatchObject({
+          item: { id: "sfx1", trackId: "S1", start: 24, duration: 15, gainDb: -19 },
+        });
+        const withSfx = readFile(root, "edit.json");
+        const [newest] = yield* edits.versions(thread.projectId);
+        expect(newest!.changes).toEqual(['Added sound effect "whoosh"']);
+        expect(newest!.author).toBe("assistant");
+
+        const music = yield* call("video_place_audio", { media: "bed", track: "music" });
+        expect(music.structuredContent).toMatchObject({
+          item: { trackId: "M1", start: 0, duration: 200, gainDb: -28 },
+        });
+        const ducked = yield* call("video_duck_music");
+        expect(ducked.isError).toBe(false);
+        const track = JSON.parse(readFile(root, "edit.json")).tracks.find(
+          (entry: { kind: string }) => entry.kind === "music",
+        );
+        expect(track.duck).toEqual({
+          depthDb: -12,
+          attackFrames: 5,
+          releaseFrames: 12,
+          ranges: [
+            { start: 10, end: 40 },
+            { start: 100, end: 130 },
+          ],
+        });
+        expect(textOf(yield* call("video_duck_music")).join("")).toContain(
+          "The music already dips 12 dB under speech in 2 places.",
+        );
+
+        // One undo each: the duck, then the music, then the sound effect.
+        yield* call("video_undo");
+        yield* call("video_undo");
+        expect(readFile(root, "edit.json")).toBe(withSfx);
+        yield* call("video_undo");
+        expect(readFile(root, "edit.json")).toBe(plain);
+        yield* call("video_redo");
+        expect(readFile(root, "edit.json")).toBe(withSfx);
       }),
     ),
   );

@@ -12,6 +12,7 @@ import {
   type EngineJobId,
   type MediaLibraryError,
   OrchestratorMcpFailure,
+  type SoundError,
 } from "@t3tools/contracts";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -19,6 +20,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 
+import * as AudioTrackService from "../../../edit/AudioTrackService.ts";
 import { CANVAS_FOR_RATIO } from "../../../edit/canvasForClip.ts";
 import * as CaptionTrackService from "../../../edit/CaptionTrackService.ts";
 import * as EditDocumentService from "../../../edit/EditDocumentService.ts";
@@ -59,6 +61,20 @@ const transcriptFailure = (error: EngineError | TranscriptError) =>
     : new OrchestratorMcpFailure({
         code: error.reason === "media_refused" ? "invalid_request" : "orchestration_error",
         message: error.message,
+      });
+
+/** Plain refusals (no such sound, frame cut, no transcript) are the agent's to fix; the rest is ours. */
+const soundFailure = (error: SoundError | EngineError | EditDocumentService.EditApplyError) =>
+  error._tag === "EngineError"
+    ? engineFailure(error)
+    : new OrchestratorMcpFailure({
+        code:
+          error._tag === "SoundError" ||
+          error._tag === "EditConflict" ||
+          error._tag === "EditValidationError"
+            ? "invalid_request"
+            : "orchestration_error",
+        message: error._tag === "EditUnavailableError" ? error.explanation : error.message,
       });
 
 const noSuchJob = () =>
@@ -700,6 +716,42 @@ const handlers = {
       };
     }),
   ),
+  // Writes the edit (one checkpoint), so plan-mode and read-only callers are refused.
+  video_place_audio: McpToolAccess.actsAsCaller(({ media, at, clip, track, gainDb }) =>
+    Effect.gen(function* () {
+      yield* refusePlanMode("add sound");
+      const project = yield* callerProject();
+      // Scope check first: refuses anything outside the project, without saying whether it exists.
+      yield* resolveMedia(project, media);
+      if (clip !== undefined) yield* resolveMedia(project, clip);
+      const sounds = yield* AudioTrackService.AudioTrackService;
+      const placed = yield* sounds
+        .placeAudio(project.projectId, { media, at, clip, track, gainDb }, { reply: project.reply })
+        .pipe(Effect.mapError(soundFailure));
+      return {
+        ...placed,
+        message: `${placed.message} Say undo to take it out.`,
+        ...(yield* cleanupAfterChange(project)),
+      };
+    }),
+  ),
+  // Writes the edit (one checkpoint), so plan-mode and read-only callers are refused.
+  video_duck_music: McpToolAccess.actsAsCaller(({ depthDb }) =>
+    Effect.gen(function* () {
+      yield* refusePlanMode("duck the music");
+      const project = yield* callerProject();
+      const sounds = yield* AudioTrackService.AudioTrackService;
+      const ducked = yield* sounds
+        .duckMusic(project.projectId, { depthDb }, { reply: project.reply })
+        .pipe(Effect.mapError(soundFailure));
+      return {
+        revision: ducked.revision,
+        ranges: ducked.ranges,
+        message: ducked.changed ? `${ducked.message} Say undo to take it out.` : ducked.message,
+        ...(yield* cleanupAfterChange(project, ducked.changed)),
+      };
+    }),
+  ),
 } satisfies McpToolAccess.Handlers<typeof VideoToolkit.tools>;
 
 export const layerStandard = McpToolAccess.toLayer(VideoStandardToolkit, {
@@ -717,6 +769,8 @@ export const layerStandard = McpToolAccess.toLayer(VideoStandardToolkit, {
   video_canvas: handlers.video_canvas,
   video_assemble: handlers.video_assemble,
   video_add_captions: handlers.video_add_captions,
+  video_place_audio: handlers.video_place_audio,
+  video_duck_music: handlers.video_duck_music,
 });
 
 export const layerFrame = McpToolAccess.toLayer(VideoFrameToolkit, {

@@ -91,6 +91,14 @@ it.layer(NodeServices.layer)("built-in skills", (it) => {
           displayName: "Add captions",
         },
         {
+          name: "video:add-sound-and-music",
+          path: path.join(builtInSkillsRoot(path, pluginDir), "add-sound-and-music", "SKILL.md"),
+          enabled: true,
+          scope: "system",
+          description: "Add sound and music - place the user's own. Use only if the user asks.",
+          displayName: "Add sound and music",
+        },
+        {
           name: "video:remove-silences",
           path: path.join(builtInSkillsRoot(path, pluginDir), "remove-silences", "SKILL.md"),
           enabled: true,
