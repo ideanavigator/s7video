@@ -18,7 +18,10 @@ Checked, for each rate:
 - **captions**: the SRT and ASS beside the files have every chunk the MP4 export burns in, each
   within 1 frame.
 
-No reference file: exact equality with the edit is the expectation. Nothing is rendered.
+The cuts must equal the edit exactly. The reference
+(``references/interchange-otio-fcpxml-edl.json``) pins each rate's clip and caption counts, and
+what each format says it doesn't carry over. Nothing is rendered. Record a new reference with
+``S7VIDEO_GOLDEN_UPDATE=1`` and say why in the PR.
 Run with ``pnpm test:golden -- interchange-otio-fcpxml-edl``.
 """
 
@@ -44,6 +47,8 @@ from s7engine import fcpx_exact, otio_map
 from s7engine.jobs import JobContext
 from s7engine.methods import export, interchange
 
+REFERENCE = Path(__file__).parent / "references" / "interchange-otio-fcpxml-edl.json"
+UPDATE = os.environ.get("S7VIDEO_GOLDEN_UPDATE") == "1"
 KEEP = harness.REPO_ROOT / "fixtures" / "media" / "talking-head-01.keep.json"
 TRANSCRIPT = harness.REPO_ROOT / "fixtures" / "media" / "talking-head-01.transcript.json"
 CLIP_RATE = Fraction(24000, 1001)
@@ -150,11 +155,14 @@ def test_interchange_otio_fcpxml_edl(media, tmp_path: Path, rate: str) -> None:
         }
         return interchange._export(params, JobContext.detached())
 
-    otio_files = run("otio", "srt")["files"]
+    otio_result = run("otio", "srt")
+    otio_files = otio_result["files"]
+    dropped = {"otio": otio_result["dropped"]}
     assert _canonical(otio_map.from_otio(_read(otio_files[0], fps))) == _canonical(edit)
 
     for fmt in ("fcpxml", "fcp7xml", "edl"):
         result = run(fmt, "srt")
+        dropped[fmt] = result["dropped"]
         timeline = _read(result["files"][0], fps)
         assert _cuts(timeline, fps) == expected, fmt
         diff = harness.cut_list_diff(
@@ -194,3 +202,13 @@ def test_interchange_otio_fcpxml_edl(media, tmp_path: Path, rate: str) -> None:
     for chunk in burned:
         assert any(abs(start - chunk.start) <= 1 for start in starts), chunk
         assert any(abs(end - chunk.end) <= 1 for end in ends), chunk
+
+    observed = {"clips": len(expected), "captionChunks": len(burned), "dropped": dropped}
+    references = json.loads(REFERENCE.read_text(encoding="utf-8")) if REFERENCE.exists() else {}
+    if UPDATE:
+        references[rate] = observed
+        REFERENCE.write_text(json.dumps(references, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    elif rate not in references:
+        pytest.fail(f"no reference for {rate} at {REFERENCE}; record one with S7VIDEO_GOLDEN_UPDATE=1")
+    else:
+        assert observed == references[rate]

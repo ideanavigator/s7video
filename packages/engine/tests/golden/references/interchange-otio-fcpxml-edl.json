@@ -1,0 +1,66 @@
+{
+  "24000/1001": {
+    "clips": 26,
+    "captionChunks": 101,
+    "dropped": {
+      "otio": [],
+      "fcpxml": [
+        "volume changes and fades",
+        "music dipping under speech (ducking)",
+        "the frame shape (1080×1920): the editor opens its own default size",
+        "fitting each clip to the frame (fill and crop)",
+        "captions on the timeline (they are in the captions file beside it)",
+        "the caption look (an SRT file has no style; choose ASS to keep it)"
+      ],
+      "fcp7xml": [
+        "volume changes and fades",
+        "music dipping under speech (ducking)",
+        "the frame shape (1080×1920): the editor opens its own default size",
+        "fitting each clip to the frame (fill and crop)",
+        "captions on the timeline (they are in the captions file beside it)",
+        "the caption look (an SRT file has no style; choose ASS to keep it)"
+      ],
+      "edl": [
+        "volume changes and fades",
+        "music dipping under speech (ducking)",
+        "all sound: the clips' own audio, sound effects and music (this EDL is picture only)",
+        "the frame shape (1080×1920): the editor opens its own default size",
+        "fitting each clip to the frame (fill and crop)",
+        "captions on the timeline (they are in the captions file beside it)",
+        "the caption look (an SRT file has no style; choose ASS to keep it)"
+      ]
+    }
+  },
+  "30000/1001": {
+    "clips": 26,
+    "captionChunks": 102,
+    "dropped": {
+      "otio": [],
+      "fcpxml": [
+        "volume changes and fades",
+        "music dipping under speech (ducking)",
+        "the frame shape (1080×1920): the editor opens its own default size",
+        "fitting each clip to the frame (fill and crop)",
+        "captions on the timeline (they are in the captions file beside it)",
+        "the caption look (an SRT file has no style; choose ASS to keep it)"
+      ],
+      "fcp7xml": [
+        "volume changes and fades",
+        "music dipping under speech (ducking)",
+        "the frame shape (1080×1920): the editor opens its own default size",
+        "fitting each clip to the frame (fill and crop)",
+        "captions on the timeline (they are in the captions file beside it)",
+        "the caption look (an SRT file has no style; choose ASS to keep it)"
+      ],
+      "edl": [
+        "volume changes and fades",
+        "music dipping under speech (ducking)",
+        "all sound: the clips' own audio, sound effects and music (this EDL is picture only)",
+        "the frame shape (1080×1920): the editor opens its own default size",
+        "fitting each clip to the frame (fill and crop)",
+        "captions on the timeline (they are in the captions file beside it)",
+        "the caption look (an SRT file has no style; choose ASS to keep it)"
+      ]
+    }
+  }
+}
