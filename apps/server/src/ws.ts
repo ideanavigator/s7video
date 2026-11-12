@@ -223,6 +223,7 @@ import { mutateProjectWithClone } from "./project/ProjectMutation.ts";
 import * as ProjectCloneTracker from "./project/ProjectCloneTracker.ts";
 import * as EngineService from "./engine/EngineService.ts";
 import * as CaptionStillsService from "./export/CaptionStillsService.ts";
+import * as CaptionTrackService from "./edit/CaptionTrackService.ts";
 import * as ExportService from "./export/ExportService.ts";
 import * as TranscriptService from "./transcript/TranscriptService.ts";
 import * as RepositoryIdentityResolver from "./project/RepositoryIdentityResolver.ts";
@@ -1370,6 +1371,7 @@ export const layerWsRpc = (
       const engine = yield* EngineService.EngineService;
       const exports = yield* ExportService.ExportService;
       const captionStills = yield* CaptionStillsService.CaptionStillsService;
+      const captionTracks = yield* CaptionTrackService.CaptionTrackService;
       const transcripts = yield* TranscriptService.TranscriptService;
       const repositoryIdentityResolver =
         yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
@@ -2809,6 +2811,11 @@ export const layerWsRpc = (
         [WS_METHODS.exportStart]: (input) => exports.start(input),
         [WS_METHODS.exportStatus]: (input) => exports.status(input.jobId),
         [WS_METHODS.captionsStills]: (input) => captionStills.stills(input.projectId),
+        [WS_METHODS.captionsPresets]: (input) => captionStills.presets(input.projectId),
+        [WS_METHODS.captionsSetStyle]: (input) =>
+          captionTracks
+            .setStyle(input.projectId, input.preset, { origin: "timeline" })
+            .pipe(Effect.map(({ revision, added, changed }) => ({ revision, added, changed }))),
         [WS_METHODS.transcriptGet]: (input) =>
           transcripts.get(input).pipe(Effect.map((transcript) => ({ transcript }))),
         [WS_METHODS.transcribeRun]: (input) => transcripts.transcribe(input),

@@ -119,15 +119,50 @@ function assignProps(target: Record<string, unknown>, props: Record<string, unkn
   }
 }
 
-/** Lays source ranges end to end from `start`, keeping the ids and props of items that match. */
+/**
+ * `range` cut where the old items' zoom changes (S7V-037), each part with the zoom of the old item
+ * it lies in, so a later silence cut keeps a punch-in on exactly its frames. No zoom: one part.
+ */
+function byZoom(range: EditSourceRange, previous: ReadonlyArray<DraftItem>) {
+  const zoomed = previous.filter((item) => item.zoom !== undefined && item.in !== undefined);
+  const end = range.in + range.duration;
+  const edges = new Set([range.in, end]);
+  for (const item of zoomed) {
+    for (const edge of [item.in!, item.in! + item.duration]) {
+      if (range.in < edge && edge < end) edges.add(edge);
+    }
+  }
+  const zoomAt = (frame: number) =>
+    zoomed.find((item) => item.in! <= frame && frame < item.in! + item.duration)?.zoom;
+  const parts: Array<{ range: EditSourceRange; zoom: unknown }> = [];
+  const sorted = [...edges].sort((x, y) => x - y);
+  for (let index = 0; index + 1 < sorted.length; index++) {
+    const [from, to] = [sorted[index]!, sorted[index + 1]!];
+    const zoom = zoomAt(from);
+    const last = parts.at(-1);
+    if (last !== undefined && JSON.stringify(last.zoom) === JSON.stringify(zoom)) {
+      last.range = { in: last.range.in, duration: to - last.range.in };
+    } else {
+      parts.push({ range: { in: from, duration: to - from }, zoom });
+    }
+  }
+  return parts;
+}
+
+/**
+ * Lays source ranges end to end from `start`, keeping the ids and props of items that match, and
+ * a zoom on every part of a zoomed item that is still kept (`byZoom`).
+ */
 function layRanges(
   document: DraftDocument,
   track: DraftTrack,
   mediaId: string,
-  ranges: ReadonlyArray<EditSourceRange>,
+  keep: ReadonlyArray<EditSourceRange>,
   start: number,
 ): DraftItem[] {
   const previous = track.items.filter((item) => "media" in item && item.media === mediaId);
+  const parts = keep.flatMap((range) => byZoom(range, previous));
+  const ranges = parts.map((part) => part.range);
   const used = new Set<DraftItem>();
   const matches = ranges.map((range) => {
     const match = previous.find(
@@ -145,8 +180,9 @@ function layRanges(
   return ranges.map((range, index) => {
     const match = matches[index];
     const id = match?.id ?? allocateId(document, ITEM_PREFIX.video, taken);
+    const zoom = parts[index]!.zoom;
     const item = {
-      ...match,
+      ...(match ?? (zoom === undefined ? {} : { zoom })),
       id,
       media: mediaId,
       start: at,

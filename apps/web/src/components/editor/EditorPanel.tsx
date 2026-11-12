@@ -56,6 +56,7 @@ import { toastManager } from "../ui/toast";
 import { BROWSER_ADD_MEDIA_HINT } from "./addMediaHint";
 import { AssetsTab, useAssetsActions } from "./AssetsTab";
 import { CaptionOverlay } from "./CaptionOverlay";
+import { CaptionStylePicker } from "./CaptionStylePicker";
 import { EditPlayer } from "./EditPlayer";
 import { HistoryCleanupBanner } from "./HistoryCleanupBanner";
 import { ImportDialog } from "./ImportDialog";
@@ -865,7 +866,10 @@ export default function EditorPanel(props: {
         {edit._tag === "ready" &&
         previewingVersion === null &&
         (view._tag === "play-timeline" || (view._tag === "play" && view.mode === "edit")) ? (
-          <ExportButton projectRef={projectRef} />
+          <div className="flex min-w-0 items-center gap-2">
+            <CaptionStylePicker projectRef={projectRef} document={edit.snapshot.document} />
+            <ExportButton projectRef={projectRef} />
+          </div>
         ) : null}
       </div>
       <RefusedChangeNotice snapshot={edit._tag === "ready" ? edit.snapshot : null} />
