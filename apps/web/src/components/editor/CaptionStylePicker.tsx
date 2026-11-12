@@ -61,7 +61,7 @@ export function CaptionStylePicker(props: {
             disabled={picking}
             onClick={() => void pick(id)}
             className={cn(
-              "flex shrink-0 cursor-pointer flex-col items-center gap-0.5 rounded-md border p-0.5 outline-none transition-shadow focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring disabled:cursor-default disabled:opacity-64",
+              "flex shrink-0 cursor-pointer flex-col items-center gap-1 rounded-md border p-1 outline-none transition-shadow focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring disabled:cursor-default disabled:opacity-64",
               selected
                 ? "border-primary ring-2 ring-inset ring-primary"
                 : "border-border hover:bg-accent",

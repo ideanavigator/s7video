@@ -21,9 +21,24 @@ import "~/index.css";
 import { render } from "../../../test/render";
 import { CaptionStylePicker } from "./CaptionStylePicker";
 
-/** A 1×1 PNG: enough for an <img> to load. */
-const PNG =
-  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
+/** A stand-in preview at the engine's size (240 px wide), drawn here: slate, with a white line. */
+const previewPng = (box: boolean) => {
+  const canvas = document.createElement("canvas");
+  canvas.width = 240;
+  canvas.height = 52;
+  const context = canvas.getContext("2d")!;
+  context.fillStyle = "#5b6270";
+  context.fillRect(0, 0, 240, 52);
+  if (box) {
+    context.fillStyle = "rgba(17, 19, 24, 0.72)";
+    context.fillRect(60, 10, 120, 32);
+  }
+  context.fillStyle = "#ffffff";
+  context.font = "bold 22px sans-serif";
+  context.textAlign = "center";
+  context.fillText("Say it loud", 120, 34);
+  return canvas.toDataURL("image/png").slice("data:image/png;base64,".length);
+};
 
 const state = vi.hoisted(() => ({ presets: null as CaptionPresetsResult | null }));
 const commands = vi.hoisted(() => ({
@@ -77,9 +92,9 @@ const documentWith = (style?: string): EditDocument => ({
 
 const allPreviews = (): CaptionPresetsResult => ({
   presets: [
-    { id: "s7-neutral", name: "Plain", png: PNG },
-    { id: "s7-box", name: "Boxed", png: PNG },
-    { id: "s7-karaoke", name: "Highlighted word", png: PNG },
+    { id: "s7-neutral", name: "Plain", png: previewPng(false) },
+    { id: "s7-box", name: "Boxed", png: previewPng(true) },
+    { id: "s7-karaoke", name: "Highlighted word", png: previewPng(false) },
     { id: "s7-minimal", name: "Minimal", png: "" },
   ],
 });

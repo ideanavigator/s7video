@@ -610,6 +610,7 @@ describe("video toolkit", () => {
           "video_add_captions",
           "video_assemble",
           "video_canvas",
+          "video_caption_style",
           "video_duck_music",
           "video_edit_read",
           "video_export",
@@ -626,6 +627,7 @@ describe("video toolkit", () => {
           "video_undo",
           "video_version_restore",
           "video_versions",
+          "video_zoom",
         ]);
         // ToolSearch finds deferred tools by these words, so each says what it reads.
         for (const tool of tools) {
@@ -1635,6 +1637,7 @@ it.effect("should hide tools without the video capability", () =>
         "video_add_captions",
         "video_assemble",
         "video_canvas",
+        "video_caption_style",
         "video_duck_music",
         "video_edit_read",
         "video_export",
@@ -1651,6 +1654,7 @@ it.effect("should hide tools without the video capability", () =>
         "video_undo",
         "video_version_restore",
         "video_versions",
+        "video_zoom",
       ]);
       expect(yield* listed("plainToken")).toEqual([]);
       NodeFS.rmSync(NodePath.dirname(fixture.rootA), { recursive: true, force: true });
