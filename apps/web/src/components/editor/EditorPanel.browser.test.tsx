@@ -433,11 +433,12 @@ describe("EditorPanel", () => {
     await using screen = await renderPanel();
     await expect.element(screen.getByRole("group", { name: "Player: clip-0.mov" })).toBeVisible();
     await expect.element(screen.getByRole("button", { name: "Export" })).toBeVisible();
-    // S7V-037: the caption looks sit beside Export, the plain one picked on an edit without captions.
+    // S7V-037: the caption looks sit beside Export; with no captions yet, none is in use.
     await expect.element(screen.getByRole("group", { name: "Caption look" })).toBeVisible();
+    await expect.element(screen.getByText("Pick a look to add captions.")).toBeVisible();
     await expect
       .element(screen.getByRole("button", { name: "Caption style: Plain" }))
-      .toHaveAttribute("aria-pressed", "true");
+      .toHaveAttribute("aria-pressed", "false");
   });
 
   it("plays an edit from several clips on the player clock, each clip with its own state", async () => {

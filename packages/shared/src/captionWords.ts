@@ -189,6 +189,18 @@ export const transcriptCaptionTrackOf = (document: EditDocument): EditCaptionTra
   document.tracks.find(isTranscriptCaptionTrack);
 
 /**
+ * The caption tracks whose captions show (S7V-037): the transcript track, and any caption track
+ * with items. With none, picking a look adds the captions in it.
+ */
+export function shownCaptionTracks(document: EditDocument): EditCaptionTrack[] {
+  const transcript = transcriptCaptionTrackOf(document);
+  return document.tracks.filter(
+    (track): track is EditCaptionTrack =>
+      track.kind === "caption" && (track === transcript || track.items.length > 0),
+  );
+}
+
+/**
  * The edit's one caption look (S7V-037), as the export reads it (`export.caption_style`): the
  * first shown caption track with items that names one, else any shown caption track's, else ours.
  */

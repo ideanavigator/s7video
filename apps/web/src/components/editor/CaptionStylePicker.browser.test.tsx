@@ -135,11 +135,34 @@ describe("CaptionStylePicker (S7V-037)", () => {
 
   it("before the previews arrive, and with no captions yet, still offers every look", async () => {
     state.presets = null;
+    commands.setStyle.mockClear();
     await using screen = await mount(documentWith());
+    // No captions: the strip says what a pick does, and no look is marked as in use.
+    await expect.element(screen.getByText("Pick a look to add captions.")).toBeVisible();
+    await expect
+      .element(screen.getByRole("group", { name: "Caption look" }))
+      .toHaveAccessibleDescription("Pick a look to add captions.");
+    for (const name of ["Plain", "Boxed", "Highlighted word", "Minimal"]) {
+      await expect
+        .element(screen.getByRole("button", { name: `Caption style: ${name}` }))
+        .toHaveAttribute("aria-pressed", "false");
+    }
+    expect(document.querySelectorAll("img")).toHaveLength(0);
+    // Plain too adds the captions, in that look.
+    await screen.getByRole("button", { name: "Caption style: Plain" }).click();
+    expect(commands.setStyle).toHaveBeenCalledWith({
+      environmentId: projectRef.environmentId,
+      input: { projectId: projectRef.projectId, preset: "s7-neutral" },
+    });
+  });
+
+  it("drops the hint once the edit has captions", async () => {
+    state.presets = allPreviews();
+    await using screen = await mount(documentWith("s7-neutral"));
     await expect
       .element(screen.getByRole("button", { name: "Caption style: Plain" }))
       .toHaveAttribute("aria-pressed", "true");
-    expect(document.querySelectorAll("img")).toHaveLength(0);
+    expect(screen.getByText("Pick a look to add captions.").query()).toBeNull();
   });
 
   it("sends one pick, by keyboard too, and nothing for the look already used", async () => {
@@ -177,12 +200,19 @@ describe("CaptionStylePicker (S7V-037)", () => {
     });
   });
 
-  it.each(["light", "dark"] as const)("renders the looks for the UX review (%s)", async (theme) => {
+  it.each([
+    ["light", "s7-karaoke"],
+    ["dark", "s7-karaoke"],
+    ["light", undefined],
+    ["dark", undefined],
+  ] as const)("renders the looks for the UX review (%s, %s)", async (theme, style) => {
     state.presets = allPreviews();
     await page.viewport(1440, 900);
     document.documentElement.classList.toggle("dark", theme === "dark");
-    await using _screen = await mount(documentWith("s7-karaoke"));
-    await page.screenshot({ path: `${SHOTS}/strip-${theme}.png` });
+    await using _screen = await mount(documentWith(style));
+    await page.screenshot({
+      path: `${SHOTS}/strip-${style === undefined ? "empty-" : ""}${theme}.png`,
+    });
     document.documentElement.classList.remove("dark");
   });
 });

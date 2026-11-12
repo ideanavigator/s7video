@@ -9,14 +9,17 @@ import {
   CAPTION_PRESET_NAMES,
   type CaptionPresetId,
   CaptionsError,
-  type EditCaptionTrack,
   type EditDocument,
   type EditOp,
   type EditOrigin,
   EditUnavailableError,
   type ProjectId,
 } from "@t3tools/contracts";
-import { captionTrackOps, transcriptCaptionTrackOf } from "@t3tools/shared/captionWords";
+import {
+  captionTrackOps,
+  shownCaptionTracks,
+  transcriptCaptionTrackOf,
+} from "@t3tools/shared/captionWords";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -44,17 +47,8 @@ export interface SetStyleResult extends AddCaptionsResult {
   readonly added: boolean;
 }
 
-/** The tracks whose captions show: the transcript track, and any caption track with items. */
-const styledTracks = (document: EditDocument) => {
-  const transcript = transcriptCaptionTrackOf(document);
-  return document.tracks.filter(
-    (track): track is EditCaptionTrack =>
-      track.kind === "caption" && (track === transcript || track.items.length > 0),
-  );
-};
-
 const captionCount = (document: EditDocument) =>
-  styledTracks(document).reduce((sum, track) => sum + track.items.length, 0);
+  shownCaptionTracks(document).reduce((sum, track) => sum + track.items.length, 0);
 
 export class CaptionTrackService extends Context.Service<
   CaptionTrackService,
@@ -143,7 +137,7 @@ const make = Effect.gen(function* () {
     const snapshot = yield* edits.read(projectId);
     const { document } = snapshot;
     const name = CAPTION_PRESET_NAMES[preset];
-    const tracks = styledTracks(document);
+    const tracks = shownCaptionTracks(document);
     let ops: EditOp[];
     if (tracks.length > 0) {
       ops = tracks

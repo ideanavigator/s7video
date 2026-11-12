@@ -12,8 +12,8 @@ import {
   type EditDocument,
   type ScopedProjectRef,
 } from "@t3tools/contracts";
-import { captionLookOf } from "@t3tools/shared/captionWords";
-import { useState } from "react";
+import { captionLookOf, shownCaptionTracks } from "@t3tools/shared/captionWords";
+import { useId, useState } from "react";
 
 import { editEnvironment, useCaptionPresets } from "../../editor/editStore";
 import { cn } from "../../lib/utils";
@@ -28,7 +28,10 @@ export function CaptionStylePicker(props: {
   const presets = useCaptionPresets(props.projectRef);
   const setStyle = useAtomCommand(editEnvironment.setCaptionStyle, { reportFailure: false });
   const [picking, setPicking] = useState(false);
-  const current = captionLookOf(props.document);
+  const hintId = useId();
+  // With no captions, no look is in use yet: picking any one, Plain too, adds them in it.
+  const captioned = shownCaptionTracks(props.document).length > 0;
+  const current = captioned ? captionLookOf(props.document) : null;
   const previews = new Map(presets?.presets.map((preset) => [preset.id, preset.png]) ?? []);
 
   const pick = async (preset: CaptionPresetId) => {
@@ -47,7 +50,17 @@ export function CaptionStylePicker(props: {
   };
 
   return (
-    <div role="group" aria-label="Caption look" className="flex min-w-0 items-center gap-1">
+    <div
+      role="group"
+      aria-label="Caption look"
+      aria-describedby={captioned ? undefined : hintId}
+      className="flex min-w-0 items-center gap-1"
+    >
+      {captioned ? null : (
+        <span id={hintId} className="min-w-0 truncate text-xs text-muted-foreground">
+          Pick a look to add captions.
+        </span>
+      )}
       {CaptionPresetId.literals.map((id) => {
         const name = CAPTION_PRESET_NAMES[id];
         const png = previews.get(id);

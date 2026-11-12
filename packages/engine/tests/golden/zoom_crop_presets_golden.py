@@ -16,8 +16,9 @@ the target's.
 **Looks.** A synthetic ``testsrc2`` clip at 9:16, 1:1 and 16:9 with 20 caption chunks of four
 long words, in each look: every caption, its box, outline or shadow included, stays inside the
 safe zone, each still switches on its own frames (±1), the highlighted look once per word, and
-each look's ASS events match the stored reference. Transcript-derived captions on an edit with
-no caption items switch on the transcript's word frames (±1) too.
+each look's whole ASS file (its style and its events) matches the stored reference, no two looks
+alike. Transcript-derived captions on an edit with no caption items switch on the transcript's
+word frames (±1) too.
 
 **Previews.** Each look's ``captions.preview`` matches the exported frame of the same sample
 caption on the same flat frame, cut and shrunk the same way: SSIM ≥ 0.98.
@@ -304,8 +305,10 @@ def test_every_look_stays_in_the_safe_zone_and_on_its_frames(synth_clip, tmp_pat
         cues = captions_ass.cues(chunks, style)
         assert len(chunks) == CHUNKS
         assert len(cues) == (4 * CHUNKS if style == "s7-karaoke" else CHUNKS)
-        events = [(e.start, e.end, e.text) for e in captions_ass.build_cues(cues, Fraction(30), width, height, style).events]
-        observed[style] = {"events": len(events), "sha256": hashlib.sha256(json.dumps(events).encode()).hexdigest()}
+        # The whole ASS file: the look's style (font, size, colours, box, outline, shadow, margins)
+        # as well as its events, so a change to either is a change to the reference.
+        ass = captions_ass.build_cues(cues, Fraction(30), width, height, style)
+        observed[style] = {"events": len(ass.events), "sha256": hashlib.sha256(ass.to_string("ass").encode()).hexdigest()}
         layout = captions_ass.layout_for(width, height, captions_ass.load_style(style))
         left, top, right, bottom = layout.safe
         # Every still the export's own ASS draws, box, outline and shadow included, is in the zone.
@@ -326,6 +329,8 @@ def test_every_look_stays_in_the_safe_zone_and_on_its_frames(synth_clip, tmp_pat
         offsets = _assert_switches(masks, sorted({edge for cue in cues for edge in (cue.start, cue.end)}), total)
         print(f"zoom-crop-presets {width}x{height} {style}: {len(cues)} stills, caption box {union} in safe zone {list(layout.safe)}, switches (1 early / on / 1 late) {offsets}")
         captioned.unlink()
+    # Each look is its own file: no two looks may share a hash on a canvas.
+    assert len({look["sha256"] for look in observed.values()}) == len(PRESETS), observed
     _record(f"looks-{width}x{height}", observed)
 
 
