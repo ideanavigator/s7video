@@ -241,9 +241,9 @@ New: `docs/engineering/` (standards), `docs/changelog/` (per-ticket entries), `d
 
 `docs/README.md`, upstream's docs index, is edited in place. It has the s7video title and a
 contributor section that points to the agent rules, standards and planning. Its provider list
-matches the kept providers. The Connect, mobile and relay pages are gone. It links five s7video
-`docs/internals/` pages: media import, edit history, timeline, captions, and sound and music
-(S7V-036).
+matches the kept providers. The Connect, mobile and relay pages are gone. It links six s7video
+`docs/internals/` pages: media import, edit history, timeline, captions, sound and music
+(S7V-036), and punch-in zoom (S7V-037).
 
 ## Edit projects (S7V-024)
 
@@ -412,7 +412,7 @@ tools. These upstream files have small edits:
 - `provider/CodexProvider.ts` (`probeCodexSkillsForCwd`), `Drivers/CodexDriver.ts`, `Drivers/CodexManagedProvider.ts`: the same call before `skills/list` in edit projects.
 - `scripts/build-desktop-artifact.ts` stages the folder and ships it as the `skills` extra resource, outside `app.asar`; `apps/desktop/src/backend/DesktopBackendConfiguration.ts` sets `S7VIDEO_SKILLS_DIR` when packaged.
 - `provider/agentContextBudget.json` gains `builtInSkillListingBytes`, the per-session cost of listing the skills.
-- `provider/ClaudeCapabilitiesProbe.test.ts` checks the skills an edit project lists; S7V-036 adds `add-sound-and-music`.
+- `provider/ClaudeCapabilitiesProbe.test.ts` checks the skills an edit project lists; S7V-036 adds `add-sound-and-music`, S7V-037 `caption-style` and `punch-in-zoom`.
 - `apps/web/src/components/chat/useComposerMenuItems.ts` and `ComposerCommandMenu.tsx`: a `/` menu skill row with a `displayName` (built-in skills read it from `agents/openai.yaml`) shows that name instead of `/skill:<name>`. Skills without one keep the upstream label; search is unchanged.
 
 ## Media import (S7V-025)
@@ -473,7 +473,7 @@ The services are new code (`edit/`, `export/`, `transcript/`, `engine/`). The up
 wire them in:
 
 - `server.ts` builds the edit, media, silence-cut, caption, sound (S7V-036), clip placement
-  (S7V-093), export, transcript and engine layers above the core runtime, so WebSocket handlers, agent tools and the asset route
+  (S7V-093), zoom (S7V-037), export, transcript and engine layers above the core runtime, so WebSocket handlers, agent tools and the asset route
   share one instance of each.
 - `ws.ts` adds thin handlers for `edit.*`, `media.*`, `export.*`, `transcript.get` and
   `transcribe.*`.
@@ -495,7 +495,10 @@ small wiring as the other `edit.*` methods: `edit.versions`, `edit.versionGet`, 
 `RpcInstrumentation.ts` also puts `edit.historyClean` and `edit.historyDismiss` (S7V-050) in the
 `edit` group. The caption stills (S7V-075) get the same wiring: `captions.stills` in
 `contracts/rpc.ts`, a thin handler in `ws.ts`, read scope in `auth/RpcAuthorization.ts` and the
-`engine` group in `observability/RpcInstrumentation.ts`.
+`engine` group in `observability/RpcInstrumentation.ts`. The caption looks (S7V-037) add two more
+the same way: `captions.presets` (read scope, `engine` group) and `captions.setStyle` (operate
+scope in `contracts/clientRpcPermissions.ts`, `edit` group), and `ws.test.ts` mocks the caption
+track service its handlers now read.
 
 ## Edit control files are write-protected (S7V-077)
 

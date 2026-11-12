@@ -9,6 +9,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import {
+  CaptionPresetId,
   CaptionStillsResult,
   EngineError,
   type EditOp,
@@ -373,6 +374,17 @@ describe("CaptionStillsService (S7V-075)", () => {
       }),
     ),
   );
+
+  it("S7V-037: the app's caption looks are the engine's style files", () => {
+    const styles = NodePath.join(
+      import.meta.dirname,
+      "../../../../packages/engine/src/s7engine/styles/captions",
+    );
+    const files = NodeFS.readdirSync(styles)
+      .filter((name) => name.endsWith(".json"))
+      .map((name) => name.slice(0, -".json".length));
+    assert.deepStrictEqual(files.toSorted(), [...CaptionPresetId.literals].toSorted());
+  });
 
   // S7V-037: the highlighted look draws one still per word being said, so the reply has an entry
   // per word: at most 4 per chunk (the looks' maxWords), each word state its own still.

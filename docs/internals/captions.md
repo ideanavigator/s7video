@@ -51,6 +51,42 @@ worded from the caller's ops only, so a cut still reads "Cut words in the transc
 - Caption rows are read-only on the timeline: a press on one seeks, and split and delete skip
   them (the rows are `locked` in the timeline model).
 
+## Caption looks (S7V-037)
+
+The looks are ours: `s7-neutral` (Plain, the default), `s7-box` (Boxed), `s7-karaoke`
+(Highlighted word) and `s7-minimal` (Minimal), all Inter Bold, the one bundled OFL font.
+
+- **The folder is the registry.** Each look is a JSON file in the engine's `styles/captions/`;
+  `load_style` reads only `s7-*` ids found there and refuses the rest ("is not one of ours"), and
+  a look whose font isn't bundled fails plainly instead of falling back to a system font. The app's
+  list (`CaptionPresetId`, with the plain names) is in `contracts/engine.ts`; a server test keeps
+  the two the same. Optional keys: `box` (border style 3, the padding as the outline width),
+  `outline`, `highlight`. Every look keeps the platforms' safe zone; margins grow by the outline or
+  padding and the shadow, so the whole caption stays inside.
+- **One look per edit.** The export, the stills and the Editor read the same rule
+  (`export.caption_style`, `captionLookOf`): the first shown caption track with items that names
+  a look, else a shown caption track's (the transcript track before its clips have words), else
+  `s7-neutral`. The look lives on the track, not its items: rebuilds replace only items, so a look
+  survives every cut.
+- **Picking a look on an edit with no captions adds them** in that look, in the same change (PO,
+  2026-11-12): `CaptionTrackService.setStyle` runs `captionTrackOps` and `setCaptionStyle` in
+  one apply. An empty unmarked track would not be the one "add captions" rebuilds, and a later
+  "add captions" would add a second track without the look. The `video_caption_style` tool and the
+  Editor's strip (`captions.setStyle`, origin `timeline`) both use it.
+- **The highlighted look shows each chunk once per word being said**, the word in the accent
+  colour until the next word starts: one ASS event per word state (`captions_ass.cues`). ASS `\k`
+  karaoke was not used: it times syllables in centiseconds from the event's start, so a word's
+  switch can land a frame off, and it leaves earlier words lit. Word states start on frame
+  boundaries with `frame_to_ms`, as every chunk does, and they are exactly the stills the player
+  needs. A 10-minute talk has at most four times the entries of the plain look, and the reply stays
+  under 200 KB (`CaptionStillsService.test.ts`).
+- **Previews** (`captions.preview`) draw a sample line on a flat slate frame at the project's
+  canvas with the same ASS builder and libass, cut to the caption band and shrunk to 240 px, so
+  every shape gives the strip the same text size. Each sits in its look's cache folder as
+  `preview-<16 hex>.png`; `captions.presets` reads them by real path, no-follow, like the stills,
+  and sends them inline (four small PNGs). A look whose preview can't be drawn shows its name only.
+  Golden `zoom-crop-presets` compares each with the exported frame of the same caption.
+
 ## The player overlay
 
 The player shows stills drawn by the export's own renderer, so the preview cannot drift from the
@@ -61,16 +97,18 @@ band; the same ASS through the same libass is pixel-equal before scaling.
   the player shows those too: the server passes the same transcripts the export would
   (`transcriptMediaFor`), and the engine picks the chunks with the export's own `export_chunks`.
   A track and the fallback on the same edit give the same stills (`test_captions.py`).
-- The engine's `captions.render` builds the export's chunks and its ASS (`build_ass`), retimes one
-  text per second, and has FFmpeg's `subtitles` filter draw them onto a transparent
+- The engine's `captions.render` builds the export's chunks and its ASS events in the edit's look
+  (`cues`, `build_cues`), retimes one event per second, and has FFmpeg's `subtitles` filter draw
+  them onto a transparent
   `color=black@0` canvas (`alpha=1`) as RGBA PNGs: about 0.2 s for 54 at 1080×1920 on an M4 Max.
-- The engine keeps the stills in `.s7cache/captions/<look>/<text>.png`. `look` hashes the canvas
-  size, the style file's bytes, the bundled fonts and `RENDER_VERSION` in `methods/captions.py`;
-  `text` hashes the chunk's text. Timing never changes a still, so undo and trims draw nothing,
-  and a cut draws only the texts it makes new. **Bump `RENDER_VERSION` when the drawing changes in
-  a way those inputs don't show** (the ASS builder's code, the FFmpeg arguments). The newest 4
-  looks and 4,000 stills are kept; drawing happens in a `.tmp-*` folder inside the cache, removed
-  on any exit, and never counted.
+- The engine keeps the stills in `.s7cache/captions/<look>/<cue>.png`. `look` hashes the canvas
+  size, the look's id and style file's bytes, the bundled fonts and `RENDER_VERSION` in
+  `methods/captions.py`; `cue` hashes the event's words and its lit word. Timing never changes a
+  still, so undo and trims draw nothing, and a cut draws only the cues it makes new; switching
+  looks back and forth draws nothing either. **Bump `RENDER_VERSION` when the drawing changes in
+  a way those inputs don't show** (the ASS builder's code, the FFmpeg arguments; 2 since S7V-037).
+  The newest 4 looks (the four looks at one canvas) and 4,000 stills are kept; drawing happens in
+  a `.tmp-*` folder inside the cache, removed on any exit, and never counted.
 - `captions.stills` names the stills; it doesn't carry them (S7V-079). Inline base64 was 13.3 MB
   for a 10-minute talk (534 chunks, 452 stills, `test_reply_size_for_a_ten_minute_edit`); the
   names are 38.6 KB (`CaptionStillsService.test.ts`). The reply carries one signed asset URL for
@@ -92,7 +130,7 @@ band; the same ASS through the same libass is pixel-equal before scaling.
   and swaps the `<img>` from the player's frame clock outside React. A muted caption track has no
   stills, as it exports nothing.
 - Golden `caption-overlay-parity` composites each still on the uncaptioned export and compares it
-  with the captioned export at 9:16, 1:1 and 16:9.
+  with the captioned export at 9:16, 1:1 and 16:9, in every look.
 
 Shipped builds need the `alpha` option of the `subtitles` filter in the bundled LGPL FFmpeg
 (S7V-016); it is part of FFmpeg's libass filter and needs nothing else.
