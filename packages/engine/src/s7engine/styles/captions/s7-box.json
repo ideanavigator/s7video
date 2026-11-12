@@ -1,0 +1,28 @@
+{
+  "id": "s7-box",
+  "description": "s7video's boxed caption style: white bold sans on a semi-opaque dark box, no shadow, bottom centre inside the social safe zone. Sizes and the box padding are fractions of the canvas's shorter side; safe-zone margins are fractions of the canvas height (top, bottom) and width (left, right).",
+  "font": { "file": "Inter-Bold.ttf", "family": "Inter", "bold": true },
+  "colour": { "text": "#FFFFFF", "shadow": "#000000" },
+  "box": { "colour": "#111318", "opacity": 0.72 },
+  "chunk": { "minWords": 2, "maxWords": 4, "pauseSeconds": 0.3 },
+  "layouts": {
+    "portrait": {
+      "fontSize": 0.068,
+      "shadow": 0,
+      "pad": 0.014,
+      "safe": { "top": 0.13, "bottom": 0.26, "left": 0.085, "right": 0.14 }
+    },
+    "square": {
+      "fontSize": 0.064,
+      "shadow": 0,
+      "pad": 0.013,
+      "safe": { "top": 0.08, "bottom": 0.12, "left": 0.07, "right": 0.07 }
+    },
+    "landscape": {
+      "fontSize": 0.06,
+      "shadow": 0,
+      "pad": 0.012,
+      "safe": { "top": 0.08, "bottom": 0.1, "left": 0.1, "right": 0.1 }
+    }
+  }
+}

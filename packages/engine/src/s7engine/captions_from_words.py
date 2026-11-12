@@ -75,7 +75,13 @@ def map_words(segments: list[Any], transcripts: dict[str, dict[str, Any]], rate:
 
 
 def transcript_chunks(
-    segments: list[Any], transcripts: dict[str, dict[str, Any]], rate: Fraction, end_frame: int
+    segments: list[Any],
+    transcripts: dict[str, dict[str, Any]],
+    rate: Fraction,
+    end_frame: int,
+    style_id: str = captions_ass.DEFAULT_STYLE,
 ) -> list[captions_ass.Chunk]:
-    chunks = [chunk for words in map_words(segments, transcripts, rate) for chunk in captions_ass.chunk_words(words, rate)]
+    style = captions_ass.load_style(style_id)
+    groups = map_words(segments, transcripts, rate)
+    chunks = [chunk for words in groups for chunk in captions_ass.chunk_words(words, rate, style)]
     return captions_ass.clip_chunks(chunks, end_frame)
