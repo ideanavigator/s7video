@@ -11,7 +11,7 @@ inside the platforms' safe zone for the canvas's aspect ratio.
 The looks are the JSON files in ``styles/captions/`` (the registry: a new look is a new file) and
 use only the bundled fonts. A look with a ``highlight`` shows each chunk once per word, with the
 word being said in that colour: one event per word state, so each starts on its word's own frame
-(``\k`` karaoke times syllables in centiseconds from the event's start and leaves past words lit).
+(``\\k`` karaoke times syllables in centiseconds from the event's start and leaves past words lit).
 """
 
 from __future__ import annotations

@@ -1,10 +1,9 @@
 # SPDX-FileCopyrightText: 2026 s7video contributors
 # SPDX-License-Identifier: MIT
-"""Punch-in zoom maths (S7V-037): the crop in whole, even pixels, and the ramp's filter expressions."""
+"""Punch-in zoom maths (S7V-037): the crop in whole, even pixels, and a ramp's still-zoom parts."""
 
 from __future__ import annotations
 
-import math
 
 import pytest
 
@@ -36,8 +35,8 @@ def test_crop_rect_is_even_and_clamped(width: int, height: int, scale: float, an
 def test_no_zoom_and_scale_one_draw_nothing() -> None:
     assert zoom.Zoom.from_edit(None) is None
     assert zoom.Zoom.from_edit({"scale": 1, "anchorX": 0.5, "anchorY": 0.5, "rampFrames": 0}) is None
-    assert zoom.filters(1080, 1920, zoom.Zoom(1.0, 0.5, 0.5)) == ""
-    assert zoom.filters(1080, 1920, zoom.Zoom(1.25, 0.5, 1 / 3)) == "scale=1350:2400,crop=1080:1920:136:160"
+    assert zoom.filters(1080, 1920, 1.0, 0.5, 0.5) == ""
+    assert zoom.filters(1080, 1920, 1.25, 0.5, 1 / 3) == "scale=1350:2400,crop=1080:1920:136:160"
 
 
 def test_ramp_reaches_scale_on_frame_n() -> None:
@@ -51,30 +50,12 @@ def test_ramp_reaches_scale_on_frame_n() -> None:
     assert sizes == sorted(sizes) and sizes[0] == 1080 and sizes[-1] == 1620
 
 
-def _evaluate(expression: str, n: float) -> float:
-    """An FFmpeg expression of the shape `filters` writes, evaluated as FFmpeg does (doubles)."""
-    python = expression.replace("\\,", ",")
-    return eval(python, {"__builtins__": {}}, {"min": min, "max": _ffmax, "floor": math.floor, "n": n})  # noqa: S307
-
-
-def _ffmax(a: float, b: float) -> float:
-    # FFmpeg's FFMAX(a, b) is `a > b ? a : b`: with a NaN first argument it gives the second.
-    return a if a > b else b
-
-
-@pytest.mark.parametrize(("scale", "frames"), [(1.25, 6), (1.15, 12), (2.0, 1), (1.37, 30)])
-@pytest.mark.parametrize(("width", "height"), [(1080, 1920), (1920, 1080)])
-def test_ramp_expressions_compute_the_crop_of_every_frame(width: int, height: int, scale: float, frames: int) -> None:
-    ramp = zoom.Zoom(scale, 0.43, 0.29, ramp_frames=frames)
-    chain = zoom.filters(width, height, ramp)
-    scale_part, crop_part = chain.split(",crop=")
-    options = dict(option.split("=", 1) for option in scale_part.removeprefix("scale=").split(":"))
-    crop_options = dict(option.split("=", 1) for option in crop_part.split(":"))
-    assert options["eval"] == "frame"
-    assert (crop_options["w"], crop_options["h"]) == (str(width), str(height))
-    for n in range(frames + 3):
-        expected = zoom.frame_crop(width, height, ramp, n)
-        got = (_evaluate(options["w"], n), _evaluate(options["h"], n), _evaluate(crop_options["x"], n), _evaluate(crop_options["y"], n))
-        assert got == (expected.scaled_width, expected.scaled_height, expected.x, expected.y), n
-    # At configuration FFmpeg has no frame number yet: the first size is the unzoomed canvas.
-    assert (_evaluate(options["w"], math.nan), _evaluate(options["h"], math.nan)) == (width, height)
+def test_ramp_parts_are_one_still_zoom_per_ramp_frame_then_the_target() -> None:
+    ramp = zoom.Zoom(1.5, 0.5, 1 / 3, ramp_frames=6)
+    parts = zoom.ramp_parts(ramp, 40)
+    assert [(part.start, part.end) for part in parts] == [(n, n + 1) for n in range(6)] + [(6, 40)]
+    assert [part.scale for part in parts] == [zoom.scale_at(ramp, n) for n in range(6)] + [1.5]
+    assert parts[0].scale == 1 and parts[-1].scale == 1.5
+    # An item shorter than the ramp is all ramp; a still zoom is one part.
+    assert [(part.start, part.end) for part in zoom.ramp_parts(ramp, 4)] == [(0, 1), (1, 2), (2, 3), (3, 4)]
+    assert zoom.ramp_parts(zoom.Zoom(1.25, 0.5, 0.5), 30) == [zoom.Part(0, 30, 1.25)]

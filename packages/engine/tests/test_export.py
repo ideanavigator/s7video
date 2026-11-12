@@ -303,6 +303,30 @@ def test_zoom_uses_canvas_not_source_size(tmp_path: Path, width: int, height: in
     assert graph[-1].startswith("[vcat]") and "subtitles=" in graph[-1]
 
 
+def test_a_ramped_zoom_is_one_still_zoom_per_ramp_frame_inside_its_segment(tmp_path: Path) -> None:
+    source = tmp_path / "cam.mp4"
+    source.write_bytes(b"x")
+    edit = make_edit(source=source, ranges=[(0, 30), (30, 60)], fps=Fraction(30), duration_frames=300)
+    edit["tracks"][0]["items"][1]["zoom"] = {"scale": 1.5, "anchorX": 0.5, "anchorY": 0.3, "rampFrames": 3}
+    plan = export.plan_segments(edit, 1080, 1920)
+    plan.sources["cam"] = export.Source(str(source), Fraction(0), True, False)
+    inputs, assignment = export.assign_inputs(plan)
+    graph = export.build_graph(plan, inputs, assignment, video=True, ass_file=None).split(";\n")
+    parts = [chain for chain in graph if chain.startswith("[r1p")]
+    assert [chain.split(",")[0] for chain in parts] == [
+        "[r1p0]trim=start_frame=0:end_frame=1",
+        "[r1p1]trim=start_frame=1:end_frame=2",
+        "[r1p2]trim=start_frame=2:end_frame=3",
+        "[r1p3]trim=start_frame=3:end_frame=30",
+    ]
+    # Frame 0 is the unzoomed canvas; each later part is its own still zoom, the last the target.
+    assert ",null,setsar=1" in parts[0]
+    assert "scale=1620:2880,crop=1080:1920:270:288" in parts[3]
+    assert any(chain.startswith("[z1p0][z1p1][z1p2][z1p3]concat=n=4:v=1:a=0") and chain.endswith("[vs1]") for chain in graph)
+    # The sound is the segment's own: one audio chain, as for any segment.
+    assert sum(chain.startswith("[a1]") for chain in graph) == 1
+
+
 def test_transcript_captions_use_track_style(tmp_path: Path) -> None:
     source = tmp_path / "cam.mp4"
     source.write_bytes(b"x")

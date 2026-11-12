@@ -41,7 +41,7 @@ from ..edit_schema import validate_edit_document
 from ..ffmpeg import _tool_env, ffprobe_json, run_tool, tool_path
 from ..jobs import Cancelled, JobContext
 from ..rpc import FILE_NOT_FOUND, INVALID_PARAMS, MEDIA_ERROR, MISSING_TOOL, OUTPUT_ERROR, Method, RpcError
-from ..zoom import Zoom, filters as zoom_filters
+from ..zoom import Zoom, filters as zoom_filters, ramp_parts
 from ._media import PATH_SCHEMA, media_file
 
 SAMPLE_RATE = 48_000
@@ -285,7 +285,7 @@ def _seconds(value: Fraction) -> str:
     return timebase.decimal_seconds(value)
 
 
-def _video_chain(plan: Plan, source: Source | None, punch_in: Zoom | None = None) -> str:
+def _canvas_chain(plan: Plan, source: Source | None) -> str:
     tonemap = (
         "zscale=t=linear:npl=100,format=gbrpf32le,zscale=p=bt709,tonemap=tonemap=hable:desat=0,"
         "zscale=t=bt709:m=bt709:r=tv,"
@@ -293,13 +293,37 @@ def _video_chain(plan: Plan, source: Source | None, punch_in: Zoom | None = None
         else ""
     )
     untagged = ":in_color_matrix=bt709" if source is not None and source.untagged_matrix and not source.hdr else ""
-    # The zoom works on the canvas-sized frame, so its anchor is a point of what the viewer sees.
-    zoomed = zoom_filters(plan.width, plan.height, punch_in) if punch_in is not None else ""
     return (
         f"{tonemap}scale={plan.width}:{plan.height}:force_original_aspect_ratio=increase{untagged}"
-        f":out_color_matrix=bt709:out_range=tv,crop={plan.width}:{plan.height},"
-        f"{zoomed + ',' if zoomed else ''}setsar=1,format=yuv420p"
+        f":out_color_matrix=bt709:out_range=tv,crop={plan.width}:{plan.height}"
     )
+
+
+def _still_zoom(plan: Plan, punch_in: Zoom, scale: float) -> str:
+    # The zoom works on the canvas-sized frame, so its anchor is a point of what the viewer sees.
+    return zoom_filters(plan.width, plan.height, scale, punch_in.anchor_x, punch_in.anchor_y)
+
+
+def _video_chain(plan: Plan, source: Source | None, punch_in: Zoom | None = None) -> str:
+    zoomed = _still_zoom(plan, punch_in, punch_in.scale) if punch_in is not None else ""
+    return f"{_canvas_chain(plan, source)},{zoomed + ',' if zoomed else ''}setsar=1,format=yuv420p"
+
+
+def _ramp_chains(plan: Plan, source: Source | None, punch_in: Zoom, position: int, head: str, frames: int) -> list[str]:
+    """A ramped zoom, one still zoom per ramp frame, split and joined again inside the segment, so
+    its sound and its joins with the other segments are those of any other segment."""
+    parts = ramp_parts(punch_in, frames)
+    branches = "".join(f"[r{position}p{index}]" for index in range(len(parts)))
+    chains = [f"{head}{_canvas_chain(plan, source)},split={len(parts)}{branches}"]
+    for index, part in enumerate(parts):
+        zoomed = _still_zoom(plan, punch_in, part.scale) or "null"
+        chains.append(
+            f"[r{position}p{index}]trim=start_frame={part.start}:end_frame={part.end},setpts=PTS-STARTPTS,"
+            f"{zoomed},setsar=1,format=yuv420p[z{position}p{index}]"
+        )
+    joined = "".join(f"[z{position}p{index}]" for index in range(len(parts)))
+    chains.append(f"{joined}concat=n={len(parts)}:v=1:a=0,setsar=1,format=yuv420p[vs{position}]")
+    return chains
 
 
 def _audio_chain(samples: int, segment: Segment) -> str:
@@ -345,10 +369,14 @@ def build_graph(plan: Plan, inputs: list[Input], assignment: list[int | None], *
                     f"trim=end_frame={segment.frames},format=yuv420p[vs{position}]"
                 )
             else:
-                chains.append(
+                head = (
                     f"[v{position}]trim=start_frame={segment.source_in}:end_frame={segment.source_in + segment.frames},"
-                    f"setpts=PTS-STARTPTS,{_video_chain(plan, source, segment.zoom)}[vs{position}]"
+                    "setpts=PTS-STARTPTS,"
                 )
+                if segment.zoom is not None and segment.zoom.ramp_frames > 0:
+                    chains += _ramp_chains(plan, source, segment.zoom, position, head, segment.frames)
+                else:
+                    chains.append(f"{head}{_video_chain(plan, source, segment.zoom)}[vs{position}]")
         if source is not None and source.has_audio and not segment.muted:
             start = source.video_offset + Fraction(segment.source_in) / plan.rate
             end = start + Fraction(segment.frames) / plan.rate

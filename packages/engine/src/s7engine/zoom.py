@@ -7,7 +7,9 @@ anchor is the zoom's fixed point: the pixel at (``anchor_x``, ``anchor_y``) of t
 where it is while the picture grows around it, as CSS ``transform-origin`` does, so the player can
 draw the same zoom later (S7V-092). Sizes and offsets are even, for 4:2:0 chroma, and the crop
 never leaves the frame. With ``ramp_frames`` N the scale grows linearly from 1 on the item's first
-frame to ``scale`` on frame N; the filter expressions below compute exactly what ``crop_at`` does.
+frame to ``scale`` on frame N: each ramp frame is drawn with its own still zoom (``ramp_parts``).
+FFmpeg's ``scale`` can change the frame size per frame (``eval=frame``), but ``crop`` keeps placing
+its rectangle by the first frame's size, so a moving size can't be cut out exactly (S7V-037 Check 2).
 """
 
 from __future__ import annotations
@@ -43,7 +45,7 @@ class Crop:
 
 
 def _even(value: float) -> int:
-    """The nearest even integer, halves up: ``2*floor(v/2+0.5)``, as the filter expressions say it."""
+    """The nearest even integer, halves up: ``2*floor(v/2+0.5)``."""
     return 2 * math.floor(value / 2 + 0.5)
 
 
@@ -66,22 +68,27 @@ def frame_crop(width: int, height: int, zoom: Zoom, frame: int) -> Crop:
     return crop_at(width, height, scale_at(zoom, frame), zoom.anchor_x, zoom.anchor_y)
 
 
-def filters(width: int, height: int, zoom: Zoom) -> str:
-    """The filter chain that zooms a ``width`` × ``height`` frame; empty when nothing changes.
+def filters(width: int, height: int, scale: float, anchor_x: float, anchor_y: float) -> str:
+    """The filter chain for a still zoom of a ``width`` × ``height`` frame; empty when nothing changes."""
+    crop = crop_at(width, height, scale, anchor_x, anchor_y)
+    if (crop.scaled_width, crop.scaled_height) == (width, height):
+        return ""
+    return f"scale={crop.scaled_width}:{crop.scaled_height},crop={width}:{height}:{crop.x}:{crop.y}"
 
-    A ramp re-evaluates per frame (``eval=frame``): ``n`` counts the segment's frames from 0. At
-    configuration ``n`` is NaN, and ``max(n,0)`` is then 0, as FFmpeg's ``max`` keeps its second
-    argument when the comparison fails.
-    """
-    if zoom.ramp_frames <= 0:
-        crop = crop_at(width, height, zoom.scale, zoom.anchor_x, zoom.anchor_y)
-        if (crop.scaled_width, crop.scaled_height) == (width, height):
-            return ""
-        return f"scale={crop.scaled_width}:{crop.scaled_height},crop={width}:{height}:{crop.x}:{crop.y}"
-    frames = zoom.ramp_frames
-    scale = f"(1+{zoom.scale - 1!r}*(min(max(n\\,0)\\,{frames})/{frames}))"
-    scaled_w = f"max({width}\\,2*floor({width}*{scale}/2+0.5))"
-    scaled_h = f"max({height}\\,2*floor({height}*{scale}/2+0.5))"
-    x = f"2*floor({zoom.anchor_x!r}*({scaled_w}-{width})/2+0.5)"
-    y = f"2*floor({zoom.anchor_y!r}*({scaled_h}-{height})/2+0.5)"
-    return f"scale=w={scaled_w}:h={scaled_h}:eval=frame,crop=w={width}:h={height}:x={x}:y={y}"
+
+@dataclass(frozen=True)
+class Part:
+    """Frames ``start`` to ``end`` (end exclusive, counted from the item's first) at one still scale."""
+
+    start: int
+    end: int
+    scale: float
+
+
+def ramp_parts(zoom: Zoom, frames: int) -> list[Part]:
+    """An item of ``frames`` frames as still-zoom parts: one per ramp frame, then the target to its end."""
+    ramp = min(max(zoom.ramp_frames, 0), frames)
+    parts = [Part(step, step + 1, scale_at(zoom, step)) for step in range(ramp)]
+    if frames > ramp:
+        parts.append(Part(ramp, frames, zoom.scale))
+    return parts

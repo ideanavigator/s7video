@@ -36,10 +36,12 @@ the player doesn't yet (S7V-092).
   canvas is cut out at `2·round(a·(S−W)/2)`, for 4:2:0 chroma. Golden `zoom-crop-presets` checks
   the rectangle against the unzoomed export's frames.
 - **A ramp is per item:** with `rampFrames` N the scale grows linearly from 1 on the item's first
-  frame to the target on frame N, through `scale` with `eval=frame` and a `crop` whose x and y
-  follow `n`. The expressions compute exactly what `zoom.frame_crop` does (`test_zoom.py`). Each
-  item restarts its ramp, so a ramp that a cut or split divides starts again on the second part.
-  The tool always writes 0, a hard punch-in.
+  frame to the target on frame N. Each ramp frame gets its own still zoom (`zoom.ramp_parts`), and
+  the parts are split, trimmed and joined again inside the item's segment, so its sound and its
+  joins are any segment's. **Not `scale` with `eval=frame`:** FFmpeg's `scale` can change the size
+  per frame, but `crop` keeps placing its rectangle by the first frame's size, so a moving size is
+  cut out at the wrong place (S7V-037 Check 2). Each item restarts its ramp, so a ramp that a cut
+  or split divides starts again on the second part. The tool always writes 0, a hard punch-in.
 
 ## In the player (S7V-092)
 
