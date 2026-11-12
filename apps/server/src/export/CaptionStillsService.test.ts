@@ -10,6 +10,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import {
   CaptionStillsResult,
+  EngineError,
   type EditOp,
   type ProjectId,
   type Transcript,
@@ -49,6 +50,9 @@ interface Calls {
   drawn: number;
   /** The bytes of a new still; a short marker by default. */
   stillBytes?: (text: string) => Uint8Array;
+  /** S7V-037: the looks asked for a preview, and the one whose drawing fails. */
+  readonly previews?: Array<string>;
+  failPreview?: string;
 }
 
 const sha = (text: string) => NodeCrypto.createHash("sha256").update(text).digest("hex");
@@ -57,10 +61,36 @@ const LOOK = sha("look").slice(0, 32);
 const stillName = (text: string) => `${sha(text).slice(0, 32)}.png`;
 
 /** Answers `captions.render` as the engine does: the track's chunks, else the transcripts'. */
+/** Answers `captions.preview` as the engine does: a PNG in the look's folder, by look. */
+const previewOf = (calls: Calls, params: Record<string, unknown>) => {
+  const preset = String(params["preset"]);
+  calls.previews?.push(preset);
+  if (preset === calls.failPreview) return null;
+  const folder = sha(`look ${preset}`).slice(0, 32);
+  const png = `preview-${sha(preset).slice(0, 16)}.png`;
+  const file = NodePath.join(String(params["cacheDir"]), folder, png);
+  NodeFS.mkdirSync(NodePath.dirname(file), { recursive: true });
+  // Drawn only when missing, as the engine does.
+  if (!NodeFS.existsSync(file)) NodeFS.writeFileSync(file, `png:${preset}`);
+  return { folder, png };
+};
+
 const fakeEngine = (calls: Calls) =>
   Layer.mock(EngineService.EngineService)({
-    call: (_method, params, success) =>
+    call: (method, params, success) =>
       Effect.gen(function* () {
+        if (method === "captions.preview") {
+          const preview = previewOf(calls, params);
+          if (preview === null) {
+            return yield* new EngineError({
+              reason: "missing_tool",
+              method,
+              tool: "ffmpeg",
+              feature: "libass",
+            });
+          }
+          return yield* Schema.decodeEffect(success)(preview).pipe(Effect.orDie);
+        }
         const input = params as unknown as RenderParams;
         calls.renders.push(input);
         const items = input.edit.tracks
@@ -340,6 +370,83 @@ describe("CaptionStillsService (S7V-075)", () => {
         ]);
         assert.deepStrictEqual((yield* stills.stills(projectId)).stills, []);
         assert.strictEqual(calls.renders.length, 0);
+      }),
+    ),
+  );
+
+  // S7V-037: the highlighted look draws one still per word being said, so the reply has an entry
+  // per word: at most 4 per chunk (the looks' maxWords), each word state its own still.
+  it.effect("S7V-037: the 10-minute reply in the highlighted look stays under 200 KB", (context) =>
+    withStills(({ projectId, root, edits, stills }) =>
+      Effect.gen(function* () {
+        writeClip(root, false);
+        const states = LONG_CHUNKS * 4;
+        yield* apply(edits, projectId, [
+          ...longEdit.slice(0, 3),
+          {
+            _tag: "setCaptions",
+            trackId: "C1",
+            captions: Array.from({ length: states }, (_, index) => ({
+              start: index * 8,
+              duration: 8,
+              text: `spoken words number ${index % (LONG_TEXTS * 4)}`,
+            })),
+          },
+        ]);
+        const result = yield* stills.stills(projectId);
+        assert.strictEqual(result.chunks.length, states);
+        assert.strictEqual(result.stills.length, LONG_TEXTS * 4);
+        const bytes = replyBytes(result);
+        yield* Effect.promise(() =>
+          context.annotate(
+            `captions.stills for 10 minutes, one entry per word: ${states} entries, ${result.stills.length} stills, ${(bytes / 1000).toFixed(1)} KB`,
+          ),
+        );
+        assert.isBelow(bytes, 200_000);
+      }),
+    ),
+  );
+
+  it.effect("S7V-037: each look's preview, inline, or its name alone when it can't be drawn", () =>
+    withStills(({ projectId, root, calls, edits, stills }) =>
+      Effect.gen(function* () {
+        writeClip(root, false);
+        yield* apply(edits, projectId, video);
+        const asked: Array<string> = [];
+        Object.assign(calls, { previews: asked, failPreview: "s7-minimal" });
+        const { presets } = yield* stills.presets(projectId);
+        assert.deepStrictEqual(asked, ["s7-neutral", "s7-box", "s7-karaoke", "s7-minimal"]);
+        assert.deepStrictEqual(
+          presets.map(({ id, name, png }) => [id, name, Buffer.from(png, "base64").toString()]),
+          [
+            ["s7-neutral", "Plain", "png:s7-neutral"],
+            ["s7-box", "Boxed", "png:s7-box"],
+            ["s7-karaoke", "Highlighted word", "png:s7-karaoke"],
+            ["s7-minimal", "Minimal", ""],
+          ],
+        );
+        // A preview swapped for a link is never read: it could point anywhere on the machine.
+        const preview = NodePath.join(
+          root,
+          ".s7cache",
+          "captions",
+          sha("look s7-box").slice(0, 32),
+          `preview-${sha("s7-box").slice(0, 16)}.png`,
+        );
+        const secret = NodePath.join(root, "secret.txt");
+        NodeFS.writeFileSync(secret, "not a preview");
+        NodeFS.rmSync(preview);
+        NodeFS.symlinkSync(secret, preview);
+        const again = yield* stills.presets(projectId);
+        assert.deepStrictEqual(
+          again.presets.map((entry) => [entry.id, Buffer.from(entry.png, "base64").toString()]),
+          [
+            ["s7-neutral", "png:s7-neutral"],
+            ["s7-box", ""],
+            ["s7-karaoke", "png:s7-karaoke"],
+            ["s7-minimal", ""],
+          ],
+        );
       }),
     ),
   );

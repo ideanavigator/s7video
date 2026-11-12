@@ -27,6 +27,7 @@ from export_support import decode_audio_mono, decode_gray, make_edit, stream_inf
 from s7engine import captions_ass, captions_from_words, rpc
 from s7engine.jobs import Cancelled, JobContext
 from s7engine.methods import export
+from s7engine.zoom import Zoom
 
 W, H = 288, 512
 BITS = 12
@@ -276,9 +277,60 @@ def test_unsupported_tracks_fail_plainly(tmp_path: Path) -> None:
     with pytest.raises(rpc.RpcError, match="export cannot draw overlay tracks yet"):
         export.plan_segments(edit, 1080, 1920)
     edit["tracks"].pop()
+    # S7V-037: a punch-in is drawn, on its own segment.
     edit["tracks"][0]["items"][0]["zoom"] = {"scale": 1.2, "anchorX": 0.5, "anchorY": 0.5, "rampFrames": 0}
-    with pytest.raises(rpc.RpcError, match="zoom"):
-        export.plan_segments(edit, 1080, 1920)
+    [segment] = export.plan_segments(edit, 1080, 1920).segments
+    assert segment.zoom == Zoom(1.2, 0.5, 0.5, 0)
+
+
+@pytest.mark.parametrize(("width", "height", "scaled"), [(1080, 1920, "1350:2400"), (1920, 1080, "2400:1350")])
+def test_zoom_uses_canvas_not_source_size(tmp_path: Path, width: int, height: int, scaled: str) -> None:
+    source = tmp_path / "cam.mp4"
+    source.write_bytes(b"x")
+    edit = make_edit(source=source, ranges=[(0, 30), (30, 60)], fps=Fraction(30), duration_frames=300, width=width, height=height)
+    edit["tracks"][0]["items"][1]["zoom"] = {"scale": 1.25, "anchorX": 0.5, "anchorY": 1 / 3, "rampFrames": 0}
+    plan = export.plan_segments(edit, width, height)
+    plan.sources["cam"] = export.Source(str(source), Fraction(0), True, False)
+    inputs, assignment = export.assign_inputs(plan)
+    graph = export.build_graph(plan, inputs, assignment, video=True, ass_file="captions.ass").split(";\n")
+    plain, zoomed = (next(chain for chain in graph if chain.endswith(f"[vs{index}]")) for index in (0, 1))
+    canvas = f"crop={width}:{height},"
+    assert "scale=" not in plain.split(canvas)[1]
+    # After the canvas crop, so the anchor is a point of the frame the viewer sees.
+    assert zoomed.split(canvas)[1].startswith(f"scale={scaled},crop={width}:{height}:")
+    # Both halves of the split clip still share one decoder, and captions burn in after the zoom.
+    assert len(inputs) == 1
+    assert graph[-1].startswith("[vcat]") and "subtitles=" in graph[-1]
+
+
+def test_transcript_captions_use_track_style(tmp_path: Path) -> None:
+    source = tmp_path / "cam.mp4"
+    source.write_bytes(b"x")
+    edit = make_edit(source=source, ranges=[(0, 90)], fps=Fraction(30), duration_frames=300)
+    assert export.caption_style(edit) == captions_ass.DEFAULT_STYLE
+    # The transcript track before its clips have words: empty, but it names the look.
+    edit["tracks"].append({"kind": "caption", "id": "C1", "style": "s7-box", "items": [], "metadata": {"s7": {"source": "transcript"}}})
+    assert export.caption_style(edit) == "s7-box"
+    transcript = {"media": "cam", "fps": {"num": 30, "den": 1}, "words": [{"text": "hi", "startFrame": 0, "endFrame": 10}, {"text": "there", "startFrame": 12, "endFrame": 20}]}
+    plan = export.plan_segments(edit, 1080, 1920)
+    chunks = export.export_chunks(edit, plan, {"transcripts": [transcript]})
+    assert [chunk.text for chunk in chunks] == ["hi there"]
+    ass = captions_ass.build_ass(chunks, plan.rate, 1080, 1920, export.caption_style(edit))
+    assert ass.styles["Default"].borderstyle == 3
+    # A muted track's look does not count; a shown track with items wins.
+    edit["tracks"][-1]["muted"] = True
+    assert export.caption_style(edit) == captions_ass.DEFAULT_STYLE
+    edit["tracks"].append({"kind": "caption", "id": "C2", "style": "s7-minimal", "items": [{"id": "c1", "start": 0, "duration": 20, "text": "hi there"}]})
+    assert export.caption_style(edit) == "s7-minimal"
+
+
+def test_unknown_caption_style_is_refused_plainly(tmp_path: Path) -> None:
+    source = tmp_path / "cam.mp4"
+    source.write_bytes(b"x")
+    edit = make_edit(source=source, ranges=[(0, 90)], fps=Fraction(30), duration_frames=300)
+    edit["tracks"].append({"kind": "caption", "id": "C1", "style": "kigaru-yellow", "items": [{"id": "c1", "start": 0, "duration": 20, "text": "hi"}]})
+    with pytest.raises(rpc.RpcError, match='caption style "kigaru-yellow" is not one of ours: s7-box, s7-karaoke, s7-minimal, s7-neutral'):
+        export.export_chunks(edit, export.plan_segments(edit, 1080, 1920), {})
 
 
 # --- Tier 1 with FFmpeg: the caption file on real frames ---------------------------------------
@@ -304,13 +356,16 @@ def _caption_bbox(ass: Path, width: int, height: int, cwd: Path) -> tuple[int, i
 
 
 @needs_ffmpeg
+@pytest.mark.parametrize("style", ["s7-neutral", "s7-box", "s7-karaoke", "s7-minimal"])
 @pytest.mark.parametrize(("width", "height"), [(1080, 1920), (1080, 1080), (1920, 1080)])
 @pytest.mark.parametrize("text", ["Wikipedia's Arbitration Committee decides", "Supercalifragilisticexpialidocious", "WWWW MMMM WWWW MMMM"])
-def test_rendered_captions_stay_inside_safe_zone(tmp_path: Path, width: int, height: int, text: str) -> None:
-    captions_ass.write_ass(tmp_path / "c.ass", [captions_ass.Chunk(text, 0, 30)], Fraction(30), width, height)
+def test_rendered_captions_stay_inside_safe_zone(tmp_path: Path, width: int, height: int, text: str, style: str) -> None:
+    # Every look, its box, outline or shadow included (S7V-037); the highlighted look lights a word.
+    words = tuple(captions_ass.Word(word, index * 5, index * 5 + 5) for index, word in enumerate(text.split()))
+    captions_ass.write_ass(tmp_path / "c.ass", [captions_ass.Chunk(text, 0, 30, words)], Fraction(30), width, height, style)
     box = _caption_bbox(tmp_path / "c.ass", width, height, tmp_path)
     assert box is not None, "the caption was not drawn"
-    left, top, right, bottom = captions_ass.layout_for(width, height).safe
+    left, top, right, bottom = captions_ass.layout_for(width, height, captions_ass.load_style(style)).safe
     assert left <= box[0] and box[2] < right, (box, (left, right))
     assert top <= box[1] and box[3] < bottom, (box, (top, bottom))
 

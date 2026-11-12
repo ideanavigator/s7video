@@ -27,6 +27,7 @@ import * as TranscriptService from "../transcript/TranscriptService.ts";
 import * as EditDocumentService from "./EditDocumentService.ts";
 import { historyLog, layerEditTest } from "./editHarness.testkit.ts";
 import * as SilenceCutService from "./SilenceCutService.ts";
+import { zoomOps } from "./zoomOps.ts";
 
 const FRAMES = 300;
 const camera = {
@@ -291,6 +292,46 @@ describe("SilenceCutService", () => {
           assert.strictEqual(again.cuts, 0);
           assert.strictEqual(readEdit(root), afterTighterText);
         }
+      }),
+    ),
+  );
+
+  // S7V-037 (AC-11): a later silence cut keeps a punch-in on every part of it that survives.
+  it.effect("a tighter pass keeps the zoom on the kept parts of a zoomed item, in one undo", () =>
+    withProject(({ projectId, root, scenario, edits, silences }) =>
+      Effect.gen(function* () {
+        scenario.words = [[30, 55], [65, 90], ...PHRASES.slice(1)];
+        yield* silences.removeSilences({ projectId });
+        const first = yield* edits.read(projectId);
+        const target = first.document.tracks[0]!.items.toSorted((a, b) => a.start - b.start)[0]!;
+        const from = "in" in target ? target.in : -1;
+        const zoom = { scale: 1.4, anchorX: 0.45, anchorY: 0.3, rampFrames: 0 };
+        yield* edits.apply(
+          projectId,
+          zoomOps(
+            first.document,
+            [{ start: target.start, end: target.start + target.duration }],
+            zoom,
+          ).ops,
+          { origin: "agent", baseRevision: first.revision },
+        );
+        const zoomedText = readEdit(root);
+        const tighter = yield* silences.removeSilences({ projectId, minGapSeconds: 0.25 });
+        assert.isTrue(tighter.changed);
+        const after = (yield* edits.read(projectId)).document.tracks[0]!.items;
+        const inside = (item: (typeof after)[number]) =>
+          "in" in item && item.in >= from && item.in + item.duration <= from + target.duration;
+        // The pause inside the zoomed item was cut: both sides keep the same zoom, nothing else has it.
+        assert.isAtLeast(after.filter(inside).length, 2);
+        for (const item of after) {
+          assert.deepStrictEqual(
+            "zoom" in item ? item.zoom : undefined,
+            inside(item) ? zoom : undefined,
+          );
+        }
+        // Still one change: one undo gives the zoomed edit back exactly.
+        yield* edits.undo(projectId);
+        assert.strictEqual(readEdit(root), zoomedText);
       }),
     ),
   );

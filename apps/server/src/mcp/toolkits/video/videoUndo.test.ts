@@ -486,6 +486,8 @@ describe("video_undo and video_redo", () => {
           ["video_place_audio", { media: "cam" }],
           ["video_duck_music", {}],
           ["video_version_restore", { version: "v1" }],
+          ["video_zoom", { range: "0-30" }],
+          ["video_caption_style", { preset: "s7-box" }],
         ];
         for (const [tool, args] of changing) {
           const result = yield* call(tool, args);
@@ -649,6 +651,107 @@ describe("video_undo and video_redo", () => {
         expect(readFile(root, "edit.json")).toBe(before);
         expect((yield* call("video_redo")).isError).toBe(false);
         expect(readFile(root, "edit.json")).toBe(captioned);
+      }),
+    ),
+  );
+
+  // S7V-037: a zoom and a caption look are each one assistant version and one undo step.
+  it.effect("video_zoom and video_caption_style are each one undoable step", () =>
+    withProject(({ root, thread, edits, call }) =>
+      Effect.gen(function* () {
+        const clip = Buffer.from("a talking-head clip");
+        NodeFS.mkdirSync(NodePath.join(root, "assets"), { recursive: true });
+        NodeFS.writeFileSync(NodePath.join(root, "assets", "cam.mp4"), clip);
+        const sha256 = NodeCrypto.createHash("sha256").update(clip).digest("hex");
+        const cache = NodePath.join(root, ".s7cache", "transcripts");
+        NodeFS.mkdirSync(cache, { recursive: true });
+        NodeFS.writeFileSync(
+          NodePath.join(cache, `${sha256}.json`),
+          JSON.stringify({
+            transcriptVersion: 1,
+            mediaFingerprint: { sha256, size: clip.length },
+            model: "test",
+            revision: "test",
+            fps: { num: 30, den: 1 },
+            durationFrames: 900,
+            words: [
+              { text: "Hello", startFrame: 10, endFrame: 20, confidence: 1, speaker: "S1" },
+              { text: "there.", startFrame: 22, endFrame: 30, confidence: 1, speaker: "S1" },
+              { text: "Again", startFrame: 100, endFrame: 130, confidence: 1, speaker: "S1" },
+            ],
+            createdAt: "2026-11-12T00:00:00.000Z",
+          }),
+        );
+        const initial = yield* edits.read(thread.projectId);
+        yield* edits.apply(
+          thread.projectId,
+          [
+            ...setup,
+            keep([
+              [0, 60],
+              [90, 60],
+            ]),
+          ],
+          { origin: "agent", baseRevision: initial.revision },
+        );
+        const plain = readFile(root, "edit.json");
+
+        const zoomed = yield* call("video_zoom", { range: "20-40" });
+        expect(zoomed.isError).toBe(false);
+        expect(textOf(zoomed).join("")).toContain(
+          "Zoomed in 1.25x from 00:00.67 to 00:01.33. It shows in the exported video, not in the player. Say undo to take it out.",
+        );
+        const video = JSON.parse(readFile(root, "edit.json")).tracks.find(
+          (entry: { kind: string }) => entry.kind === "video",
+        );
+        expect(
+          video.items.map((item: { start: number; duration: number; zoom?: unknown }) => [
+            item.start,
+            item.duration,
+            item.zoom ?? null,
+          ]),
+        ).toEqual([
+          [0, 20, null],
+          [20, 20, { scale: 1.25, anchorX: 0.5, anchorY: 1 / 3, rampFrames: 0 }],
+          [40, 20, null],
+          [60, 60, null],
+        ]);
+        const withZoom = readFile(root, "edit.json");
+        const [newest] = yield* edits.versions(thread.projectId);
+        expect(newest!.changes).toEqual(["Zoomed in at 00:00.67"]);
+        expect(newest!.author).toBe("assistant");
+
+        // Plain refusals change nothing: a cut moment, a setting out of range, a list.
+        for (const [args, says] of [
+          [{ range: "65-80" }, "That moment was cut from the edit"],
+          [{ range: "20-40", scale: 3 }, "scale is how far to zoom in, from 1.0"],
+          [{ range: "20-40", anchorY: -0.1 }, "anchorY is the point down the frame"],
+          [{ range: "9-30,60-90" }, "range is one clip-frame range"],
+          [{ range: "20-40", clip: "cam", anchorX: 2 }, "anchorX is the point across the frame"],
+        ] as const) {
+          const refused = yield* call("video_zoom", args);
+          expect(refused.isError, JSON.stringify(args)).toBe(true);
+          expect(textOf(refused).join(""), JSON.stringify(args)).toContain(says);
+        }
+        expect(readFile(root, "edit.json")).toBe(withZoom);
+
+        // No captions yet: the look adds them, in the same step.
+        const boxed = yield* call("video_caption_style", { preset: "s7-box" });
+        expect(boxed.isError).toBe(false);
+        expect(textOf(boxed).join("")).toContain("Added 2 captions in the Boxed look.");
+        const captions = JSON.parse(readFile(root, "edit.json")).tracks.find(
+          (entry: { kind: string }) => entry.kind === "caption",
+        );
+        expect([captions.style, captions.metadata]).toEqual([
+          "s7-box",
+          { s7: { source: "transcript" } },
+        ]);
+
+        // One undo each: the look and its captions, then the zoom and its splits.
+        expect((yield* call("video_undo")).isError).toBe(false);
+        expect(readFile(root, "edit.json")).toBe(withZoom);
+        expect((yield* call("video_undo")).isError).toBe(false);
+        expect(readFile(root, "edit.json")).toBe(plain);
       }),
     ),
   );

@@ -70,6 +70,8 @@ it.effect("lists the built-in skills in edit projects only (S7V-048)", () =>
     assert.deepEqual(names(video), [
       "video:add-captions",
       "video:add-sound-and-music",
+      "video:caption-style",
+      "video:punch-in-zoom",
       "video:remove-silences",
     ]);
   }).pipe(

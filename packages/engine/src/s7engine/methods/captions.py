@@ -254,6 +254,8 @@ def _preview(params: dict[str, Any], job: JobContext) -> dict[str, Any]:
                     "1",
                     "-f",
                     "image2",
+                    "-update",
+                    "1",
                     "-y",
                     "preview.png",
                 ],

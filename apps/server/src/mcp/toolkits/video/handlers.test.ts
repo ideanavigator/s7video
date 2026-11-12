@@ -1257,8 +1257,11 @@ describe("video toolkit", () => {
           revision: 12,
           message: "Added 12 captions in the Highlighted word look. Say undo to take them out.",
         });
-        const unknown = yield* call(threadA, "video_caption_style", { preset: "kigaru" });
-        expect(unknown.isError).toBe(true);
+        // Only our looks: anything else fails the tool's own schema and reaches no service.
+        const unknown = yield* call(threadA, "video_caption_style", { preset: "kigaru" }).pipe(
+          Effect.flip,
+        );
+        expect(String(unknown)).toMatch(/preset/u);
         expect(fixture.looks).toEqual([
           ["style", projectA, { preset: "s7-box", origin: "agent" }],
           ["style", projectA, { preset: "s7-neutral", origin: "agent" }],
