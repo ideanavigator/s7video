@@ -861,6 +861,7 @@ describe("versions named in chat", () => {
         for (const [ref, explanation] of [
           ["v999", "There is no version v999 in this project."],
           ["nope", 'No version in this project is named "nope".'],
+          ["  ", "Say which version: v12 or its name."],
         ] as const) {
           for (const attempt of [
             Effect.flip(edits.findVersion(projectId, ref)),

@@ -817,7 +817,7 @@ const handlers = {
     Effect.gen(function* () {
       const project = yield* callerProject();
       const edits = yield* EditDocumentService.EditDocumentService;
-      if (version === undefined) {
+      if (version === undefined || version.trim() === "") {
         const all = yield* edits.versions(project.projectId).pipe(Effect.mapError(versionFailure));
         return { versions: all.slice(0, VERSION_LIST_SIZE).map(versionLine) };
       }
@@ -836,6 +836,12 @@ const handlers = {
   video_version_restore: McpToolAccess.actsAsCaller(({ version }) =>
     Effect.gen(function* () {
       yield* refusePlanMode("restore a version");
+      if (version.trim() === "") {
+        return yield* new OrchestratorMcpFailure({
+          code: "invalid_request",
+          message: "Say which version to make main: v12 or its name.",
+        });
+      }
       const project = yield* callerProject();
       const edits = yield* EditDocumentService.EditDocumentService;
       const restored = yield* edits

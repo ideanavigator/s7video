@@ -926,6 +926,9 @@ describe("video_versions and video_version_restore", () => {
 
           const listed = yield* call("video_versions");
           expect(listed.isError).toBe(false);
+          // A blank version is no version: it lists.
+          const blank = yield* call("video_versions", { version: "  " });
+          expect(blank.structuredContent).toEqual(listed.structuredContent);
           const lines = (listed.structuredContent as { versions: ReadonlyArray<{ n: number }> })
             .versions;
           expect(lines.map((line) => line.n)).toEqual(
@@ -1014,6 +1017,11 @@ describe("video_versions and video_version_restore", () => {
             message,
           });
         }
+        expect((yield* edits.versions(thread.projectId)).length).toBe(3);
+
+        const blank = yield* call("video_version_restore", { version: " " });
+        expect(blank.isError).toBe(true);
+        expect(textOf(blank)).toEqual(["Say which version to make main: v12 or its name."]);
         expect((yield* edits.versions(thread.projectId)).length).toBe(3);
 
         const missing = yield* call("video_version_restore", { version: "the tight cut" });

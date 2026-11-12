@@ -762,13 +762,15 @@ const make = Effect.gen(function* () {
           ? ({ _tag: "missing", n: ref } as const)
           : ({ _tag: "found", version: byNumber } as const);
     if (found._tag === "missing") {
-      return yield* found.n === undefined
-        ? unavailable(
-            projectId,
-            "unknown-version",
-            `No version in this project is named "${String(ref).trim()}".`,
-          )
-        : unknownVersion(projectId, found.n);
+      const named = String(ref).trim();
+      if (found.n !== undefined) return yield* unknownVersion(projectId, found.n);
+      return yield* unavailable(
+        projectId,
+        "unknown-version",
+        named === ""
+          ? "Say which version: v12 or its name."
+          : `No version in this project is named "${named}".`,
+      );
     }
     const text = yield* history
       .versionText(root, found.version.n)
