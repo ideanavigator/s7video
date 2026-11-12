@@ -4,6 +4,7 @@
 // edit service method, map its errors. The Editor panel reaches the same services directly.
 import {
   type EditDocument,
+  type EditMedia,
   type EditOp,
   type EditSnapshot,
   type EngineError,
@@ -25,6 +26,7 @@ import { CANVAS_FOR_RATIO } from "../../../edit/canvasForClip.ts";
 import * as CaptionTrackService from "../../../edit/CaptionTrackService.ts";
 import * as EditDocumentService from "../../../edit/EditDocumentService.ts";
 import * as SilenceCutService from "../../../edit/SilenceCutService.ts";
+import { firstClipCanvasOps, videoTrackFor } from "../../../edit/videoTrack.ts";
 import * as EngineService from "../../../engine/EngineService.ts";
 import * as ExportService from "../../../export/ExportService.ts";
 import * as TranscriptService from "../../../transcript/TranscriptService.ts";
@@ -574,9 +576,9 @@ const handlers = {
       const invalid = (message: string) =>
         new OrchestratorMcpFailure({ code: "invalid_request", message });
       if (items.length === 0) return yield* invalid("Give at least one clip part to assemble.");
-      const track = document.tracks.find((entry) => entry.kind === "video");
-      if (track === undefined) return yield* invalid("This edit has no video track.");
-      const mediaIds: string[] = [];
+      // A new project's edit has no tracks: the first assemble adds V1 in the same step (S7V-093).
+      const track = videoTrackFor(document);
+      const placed: EditMedia[] = [];
       for (const item of items) {
         if (item.in < 0 || item.duration < 1) {
           return yield* invalid("Each part needs in >= 0 and duration >= 1, in edit frames.");
@@ -589,8 +591,10 @@ const handlers = {
         if (media === undefined) {
           return yield* invalid(`${item.mediaId} is not in this edit's media. Import it first.`);
         }
-        mediaIds.push(media.id);
+        placed.push(media);
       }
+      // As the first silence cut does, the first clip on an empty timeline gives the edit its shape.
+      const reshape = firstClipCanvasOps(document, placed[0]!);
       const end = track.items.reduce((last, item) => Math.max(last, item.start + item.duration), 0);
       const taken = new Set(document.tracks.flatMap((entry) => entry.items.map((item) => item.id)));
       const itemIds: string[] = [];
@@ -651,10 +655,10 @@ const handlers = {
       const inserts = items.map((item, index) => {
         const op = {
           _tag: "insertItem" as const,
-          trackId: track.id,
+          trackId: track.trackId,
           item: {
             id: itemIds[index]!,
-            media: mediaIds[index]!,
+            media: placed[index]!.id,
             start: position,
             duration: item.duration,
             in: item.in,
@@ -665,7 +669,7 @@ const handlers = {
       });
       const edits = yield* EditDocumentService.EditDocumentService;
       return yield* edits
-        .apply(project.projectId, [...shifts, ...inserts], {
+        .apply(project.projectId, [...track.addTrack, ...reshape, ...shifts, ...inserts], {
           origin: "agent",
           baseRevision: revision,
           reply: project.reply,

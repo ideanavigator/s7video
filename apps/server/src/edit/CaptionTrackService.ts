@@ -18,6 +18,7 @@ import * as Path from "effect/Path";
 import * as ProjectService from "../project/ProjectService.ts";
 import { loadCaptionTranscripts } from "./captionTrack.ts";
 import * as EditDocumentService from "./EditDocumentService.ts";
+import { ASSEMBLE_FIRST } from "./videoTrack.ts";
 
 const ADDED_CAPTIONS = "Added captions";
 
@@ -68,9 +69,14 @@ const make = Effect.gen(function* () {
       });
     }
     if (transcripts.size === 0) {
+      const noVideo = snapshot.document.tracks.every(
+        (track) => track.kind !== "video" || track.items.length === 0,
+      );
       return yield* new CaptionsError({
         reason: "no-clips",
-        detail: "There is nothing to caption: no clip with sound is on the timeline.",
+        detail: noVideo
+          ? `There is nothing to caption: the timeline has no clip yet. ${ASSEMBLE_FIRST}`
+          : "There is nothing to caption: no clip with sound is on the timeline.",
       });
     }
     const ops = captionTrackOps(snapshot.document, transcripts);

@@ -9,7 +9,6 @@
 import {
   type EditDocument,
   type EditMedia,
-  type EditOp,
   type EditSourceRange,
   type EngineError,
   type EngineJobId,
@@ -30,9 +29,9 @@ import * as EngineService from "../engine/EngineService.ts";
 import { projectFor, resolveMedia } from "../mcp/VideoProjectScope.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as TranscriptService from "../transcript/TranscriptService.ts";
-import { canvasForClip } from "./canvasForClip.ts";
 import * as EditDocumentService from "./EditDocumentService.ts";
 import { DEFAULT_MIN_GAP_SECONDS, type FrameRange, planSilenceCuts } from "./silencePlan.ts";
+import { firstClipCanvasOps, videoTrackFor } from "./videoTrack.ts";
 
 export interface RemoveSilencesInput {
   readonly projectId: ProjectId;
@@ -118,27 +117,15 @@ const chooseMedia = Effect.fn("SilenceCutService.chooseMedia")(function* (
   );
 });
 
-/** The video track holding the clip, else the first video track, else a new one. */
+/** Where the clip goes (`videoTrackFor`), its pieces already there, and where it starts. */
 function placement(document: EditDocument, media: EditMedia) {
-  const videoTracks = document.tracks.flatMap((track) => (track.kind === "video" ? [track] : []));
-  const holding = videoTracks.find((track) => track.items.some((item) => item.media === media.id));
-  const track = holding ?? videoTracks[0];
-  const own = track?.items.filter((item) => item.media === media.id) ?? [];
+  const { trackId, items, addTrack } = videoTrackFor(document, media.id);
+  const own = items.filter((item) => item.media === media.id);
   const start =
     own.length > 0
       ? Math.min(...own.map((item) => item.start))
-      : Math.max(0, ...(track?.items.map((item) => item.start + item.duration) ?? []));
-  if (track !== undefined) return { trackId: track.id, start, addTrack: [] as EditOp[], own };
-  const ids = new Set(document.tracks.map((entry) => entry.id));
-  let index = 1;
-  while (ids.has(`V${index}`)) index++;
-  const trackId = `V${index}`;
-  return {
-    trackId,
-    start,
-    own,
-    addTrack: [{ _tag: "addTrack", track: { kind: "video", id: trackId, items: [] } }] as EditOp[],
-  };
+      : Math.max(0, ...items.map((item) => item.start + item.duration));
+  return { trackId, start, own, addTrack };
 }
 
 /**
@@ -373,18 +360,7 @@ const make = Effect.gen(function* () {
     };
     // Nothing new to remove: the edit stays exactly as it is.
     if (counts.cuts === 0) return { ...summary, revision, changed: false };
-    // The first clip on an empty timeline gives the edit its shape, in the same checkpoint, unless
-    // the user already chose one (S7V-061).
-    const empty = document.tracks.every(
-      (track) => track.kind !== "video" || track.items.length === 0,
-    );
-    const chosen = document.metadata.canvasChosen === true;
-    const canvas = empty && !chosen ? canvasForClip(media.probe) : undefined;
-    const reshape =
-      canvas === undefined ||
-      (canvas.width === document.canvas.width && canvas.height === document.canvas.height)
-        ? []
-        : [{ _tag: "setCanvas", canvas, fromClip: true } as const];
+    const reshape = firstClipCanvasOps(document, media);
     const after = yield* edits.apply(
       input.projectId,
       [

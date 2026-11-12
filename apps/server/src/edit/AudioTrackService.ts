@@ -38,6 +38,7 @@ import { duckOps, duckOver, placementOps, videoEndFrame } from "./audioPlacement
 import { loadCaptionTranscripts } from "./captionTrack.ts";
 import * as EditDocumentService from "./EditDocumentService.ts";
 import { snapToWord, speechRanges, timelineFrameOf } from "./timelineMap.ts";
+import { ASSEMBLE_FIRST } from "./videoTrack.ts";
 
 const LOUDNESS_VERSION = 1;
 const LEVEL_RANGE_DB = { min: -60, max: 20 } as const;
@@ -196,7 +197,7 @@ const make = Effect.gen(function* () {
     const items = document.tracks.find((track) => track.kind === "video")?.items ?? [];
     const clips = [...new Set([...items].sort((a, b) => a.start - b.start).map((i) => i.media))];
     if (end === 0 || clips.length === 0) {
-      return yield* refuse("no-video", "The timeline has no video yet. Add a clip first.");
+      return yield* refuse("no-video", `The timeline has no video yet. ${ASSEMBLE_FIRST}`);
     }
     const levelDb = input.gainDb ?? defaultLevelDb(input.track ?? "sfx");
     if (levelDb < LEVEL_RANGE_DB.min || levelDb > LEVEL_RANGE_DB.max) {

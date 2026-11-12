@@ -29,6 +29,7 @@ import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as AudioTrackService from "./AudioTrackService.ts";
 import * as EditDocumentService from "./EditDocumentService.ts";
 import { layerEditTest } from "./editHarness.testkit.ts";
+import { ASSEMBLE_FIRST } from "./videoTrack.ts";
 
 const FPS = { num: 30, den: 1 };
 const reply = { threadId: ThreadId.make("thread-sound"), runId: RunId.make("run-sound") };
@@ -297,7 +298,7 @@ describe("AudioTrackService.placeAudio", () => {
         expect(error).toEqual(
           new SoundError({
             reason: "no-video",
-            detail: "The timeline has no video yet. Add a clip first.",
+            detail: `The timeline has no video yet. ${ASSEMBLE_FIRST}`,
           }),
         );
       }),
