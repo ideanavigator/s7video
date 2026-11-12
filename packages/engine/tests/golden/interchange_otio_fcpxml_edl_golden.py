@@ -4,7 +4,8 @@
 
 The edit is the clip's silence cut (``fixtures/media/talking-head-01.keep.json``, 26 ranges at its
 own 24000/1001, and retimed to 30000/1001) as a 1080×1920 reel. Its captions come from the clip's
-stored transcript, and it has a synthetic sound effect and a ducked synthetic music bed, made here.
+stored transcript, a punch-in zoom on its fourth clip, and a synthetic sound effect and a ducked
+synthetic music bed, made here.
 
 Checked, for each rate:
 
@@ -80,6 +81,7 @@ def _edit(source: Path, work: Path, rate: Fraction) -> tuple[dict[str, Any], dic
     ranges = [(round(start * scale), round(end * scale)) for start, end in keep["keep"]]
     edit = make_edit(source=source, ranges=ranges, fps=rate, duration_frames=round(SOURCE_FRAMES * scale), width=WIDTH, height=HEIGHT)
     edit["media"][0]["probe"].update({"width": 1920, "height": 1080})
+    edit["tracks"][0]["items"][3]["zoom"] = {"scale": 1.25, "anchorX": 0.5, "anchorY": 0.33, "rampFrames": 6}
     edit["tracks"].append({"kind": "caption", "id": "C1", "style": "s7-neutral", "items": []})
     ding = _tone(work / "ding.wav", "sine=f=1000:sample_rate=8000", 1)
     bed = _tone(work / "bed.wav", "sine=f=220:sample_rate=8000", 20)

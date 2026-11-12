@@ -661,6 +661,60 @@ describe("EditorPanel", () => {
     expect(commands.interchange).toHaveBeenCalledTimes(1);
   });
 
+  it("shows why the editors export couldn't be checked, and lets the user try again", async () => {
+    setState([asset("clip-0")], true);
+    commands.interchange.mockReset();
+    commands.interchange
+      .mockResolvedValueOnce({
+        _tag: "Failure",
+        cause: Cause.fail(new ExportStartError({ projectId, reason: "no-transcript" })),
+      })
+      .mockResolvedValueOnce({ _tag: "Success", value: { files: [], dropped: ["zooms"] } });
+    await using screen = await renderPanel();
+    await screen.getByRole("button", { name: "Export for editors" }).click();
+    const dialog = screen.getByRole("dialog", { name: "Export for editors" });
+    await dialog.getByRole("button", { name: "Next" }).click();
+    await expect
+      .element(dialog.getByText("Transcribe the clip first, or export without captions."))
+      .toBeVisible();
+    // Still choosing: the user can turn the captions file off and check again.
+    await dialog.getByRole("radio", { name: /No captions file/u }).click();
+    await dialog.getByRole("button", { name: "Next" }).click();
+    expect(commands.interchange).toHaveBeenNthCalledWith(2, {
+      environmentId: EnvironmentId.make("env-1"),
+      input: { projectId, format: "fcpxml", captions: "none", check: true },
+    });
+    await expect.element(dialog.getByText("What won't carry over to Final Cut Pro:")).toBeVisible();
+    await expect
+      .element(dialog.getByText("Transcribe the clip first, or export without captions."))
+      .not.toBeInTheDocument();
+  });
+
+  it("exports the editors choice that was checked, with the choices locked while checking", async () => {
+    setState([asset("clip-0")], true);
+    commands.interchange.mockReset();
+    let answer: (value: unknown) => void = () => {};
+    commands.interchange
+      .mockImplementationOnce(() => new Promise((resolve) => (answer = resolve)))
+      .mockResolvedValueOnce({
+        _tag: "Success",
+        value: { jobId: EngineJobId.make("job-4"), files: ["exports/edit.otio"], dropped: [] },
+      });
+    await using screen = await renderPanel();
+    await screen.getByRole("button", { name: "Export for editors" }).click();
+    const dialog = screen.getByRole("dialog", { name: "Export for editors" });
+    await dialog.getByRole("radio", { name: /Premiere or DaVinci Resolve/u }).click();
+    await dialog.getByRole("button", { name: "Next" }).click();
+    await expect.element(dialog.getByRole("radio", { name: /EDL/u })).toBeDisabled();
+    await expect.element(dialog.getByRole("radio", { name: /SRT/u })).toBeDisabled();
+    await act(async () => answer({ _tag: "Success", value: { files: [], dropped: [] } }));
+    await dialog.getByRole("button", { name: "Continue" }).click();
+    expect(commands.interchange).toHaveBeenNthCalledWith(2, {
+      environmentId: EnvironmentId.make("env-1"),
+      input: { projectId, format: "otio", captions: "srt" },
+    });
+  });
+
   it("offers no export action for other start errors", async () => {
     setState([asset("clip-0")], true);
     toasts.add.mockReset();

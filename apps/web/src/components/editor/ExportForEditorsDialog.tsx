@@ -52,11 +52,17 @@ const CAPTION_CHOICES: ReadonlyArray<{
   { captions: "none", title: "No captions file" },
 ];
 
+interface Choice {
+  readonly format: InterchangeFormat;
+  readonly captions: InterchangeCaptions;
+}
+
+/** The review and the export use the choice that was checked, never one changed since. */
 type Step =
   | { readonly kind: "choose" }
   | { readonly kind: "checking" }
-  | { readonly kind: "review"; readonly dropped: ReadonlyArray<string> }
-  | { readonly kind: "starting"; readonly dropped: ReadonlyArray<string> };
+  | { readonly kind: "review"; readonly choice: Choice; readonly dropped: ReadonlyArray<string> }
+  | { readonly kind: "starting"; readonly choice: Choice; readonly dropped: ReadonlyArray<string> };
 
 const errorText = (error: unknown) =>
   error instanceof Error ? error.message : "Check the project, then try again.";
@@ -89,11 +95,11 @@ function ExportChoice(props: {
   const captionsLabel = useId();
   const droppedLabel = useId();
 
-  const request = async (check: boolean) => {
+  const request = async (choice: Choice, check: boolean) => {
     setError(null);
     const result = await run({
       environmentId,
-      input: { projectId, format, captions, ...(check ? { check } : {}) },
+      input: { projectId, ...choice, ...(check ? { check } : {}) },
     });
     if (result._tag === "Failure") {
       setError(errorText(squashAtomCommandFailure(result)));
@@ -103,23 +109,29 @@ function ExportChoice(props: {
   };
 
   const review = async () => {
+    const choice = { format, captions };
     setStep({ kind: "checking" });
-    const checked = await request(true);
-    setStep(checked === null ? { kind: "choose" } : { kind: "review", dropped: checked.dropped });
+    const checked = await request(choice, true);
+    setStep(
+      checked === null ? { kind: "choose" } : { kind: "review", choice, dropped: checked.dropped },
+    );
   };
 
-  const start = async (dropped: ReadonlyArray<string>) => {
-    setStep({ kind: "starting", dropped });
-    const started = await request(false);
+  const start = async (choice: Choice, dropped: ReadonlyArray<string>) => {
+    setStep({ kind: "starting", choice, dropped });
+    const started = await request(choice, false);
     if (started === null || started.jobId === undefined) {
-      setStep({ kind: "review", dropped });
+      setStep({ kind: "review", choice, dropped });
       return;
     }
     props.onStarted({ jobId: started.jobId, path: started.files.join(", ") });
     props.onClose();
   };
 
-  const choice = INTERCHANGE_CHOICES.find((entry) => entry.format === format);
+  const checking = step.kind === "checking";
+  const reviewed = step.kind === "review" || step.kind === "starting" ? step.choice : null;
+  const shownFormat = reviewed?.format ?? format;
+  const choice = INTERCHANGE_CHOICES.find((entry) => entry.format === shownFormat);
   return (
     <DialogPopup>
       <DialogHeader>
@@ -154,6 +166,7 @@ function ExportChoice(props: {
               <RadioGroup
                 aria-labelledby={formatLabel}
                 value={format}
+                disabled={checking}
                 onValueChange={(next) => setFormat(next as InterchangeFormat)}
               >
                 {INTERCHANGE_CHOICES.map((entry) => (
@@ -177,6 +190,7 @@ function ExportChoice(props: {
               <RadioGroup
                 aria-labelledby={captionsLabel}
                 value={captions}
+                disabled={checking}
                 onValueChange={(next) => setCaptions(next as InterchangeCaptions)}
               >
                 {CAPTION_CHOICES.map((entry) => (
@@ -208,7 +222,7 @@ function ExportChoice(props: {
           <Button
             size="sm"
             disabled={step.kind === "starting"}
-            onClick={() => void start(step.dropped)}
+            onClick={() => void start(step.choice, step.dropped)}
           >
             {step.kind === "starting" && <Spinner aria-hidden />}
             Continue

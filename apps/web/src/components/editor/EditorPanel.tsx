@@ -60,6 +60,7 @@ import { Button } from "../ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "../ui/empty";
 import { Spinner } from "../ui/spinner";
 import { toastManager } from "../ui/toast";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { BROWSER_ADD_MEDIA_HINT } from "./addMediaHint";
 import { AssetsTab, useAssetsActions } from "./AssetsTab";
 import { CaptionOverlay } from "./CaptionOverlay";
@@ -650,15 +651,21 @@ function ExportButton(props: { readonly projectRef: ScopedProjectRef }) {
               Export
             </Button>
             {/* An icon, so the export's status keeps its room in the header. */}
-            <Button
-              size="icon-sm"
-              variant="outline"
-              aria-label="Export for editors"
-              title="Export for editors"
-              onClick={() => setEditorsOpen(true)}
-            >
-              <SendToBackIcon aria-hidden />
-            </Button>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    size="icon-sm"
+                    variant="outline"
+                    aria-label="Export for editors"
+                    onClick={() => setEditorsOpen(true)}
+                  >
+                    <SendToBackIcon aria-hidden />
+                  </Button>
+                }
+              />
+              <TooltipPopup side="bottom">Export for editors</TooltipPopup>
+            </Tooltip>
           </>
         )}
       </div>

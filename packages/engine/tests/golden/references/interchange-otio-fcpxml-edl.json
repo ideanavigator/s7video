@@ -7,6 +7,7 @@
       "fcpxml": [
         "volume changes and fades",
         "music dipping under speech (ducking)",
+        "zooms",
         "the frame shape (1080×1920): the editor opens its own default size",
         "fitting each clip to the frame (fill and crop)",
         "captions on the timeline (they are in the captions file beside it)",
@@ -15,6 +16,7 @@
       "fcp7xml": [
         "volume changes and fades",
         "music dipping under speech (ducking)",
+        "zooms",
         "the frame shape (1080×1920): the editor opens its own default size",
         "fitting each clip to the frame (fill and crop)",
         "captions on the timeline (they are in the captions file beside it)",
@@ -23,6 +25,7 @@
       "edl": [
         "volume changes and fades",
         "music dipping under speech (ducking)",
+        "zooms",
         "all sound: the clips' own audio, sound effects and music (this EDL is picture only)",
         "the frame shape (1080×1920): the editor opens its own default size",
         "fitting each clip to the frame (fill and crop)",
@@ -39,6 +42,7 @@
       "fcpxml": [
         "volume changes and fades",
         "music dipping under speech (ducking)",
+        "zooms",
         "the frame shape (1080×1920): the editor opens its own default size",
         "fitting each clip to the frame (fill and crop)",
         "captions on the timeline (they are in the captions file beside it)",
@@ -47,6 +51,7 @@
       "fcp7xml": [
         "volume changes and fades",
         "music dipping under speech (ducking)",
+        "zooms",
         "the frame shape (1080×1920): the editor opens its own default size",
         "fitting each clip to the frame (fill and crop)",
         "captions on the timeline (they are in the captions file beside it)",
@@ -55,6 +60,7 @@
       "edl": [
         "volume changes and fades",
         "music dipping under speech (ducking)",
+        "zooms",
         "all sound: the clips' own audio, sound effects and music (this EDL is picture only)",
         "the frame shape (1080×1920): the editor opens its own default size",
         "fitting each clip to the frame (fill and crop)",

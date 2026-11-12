@@ -322,6 +322,43 @@ def test_edl_with_several_video_tracks(tmp_path: Path) -> None:
     assert cut_list(read_back(xml["files"][0], rate), rate, index=1) == [(5, 10, 0)], "XML keeps the second track"
 
 
+@pytest.mark.parametrize("rate", [Fraction(25), Fraction(30)], ids=str)
+@pytest.mark.parametrize("fmt", ["fcpxml", "fcp7xml", "edl"])
+def test_whole_rate_cuts_read_back_exactly(tmp_path: Path, rate: Fraction, fmt: str) -> None:
+    items = irregular_cuts()
+    result = run_export(tmp_path, simple_edit(tmp_path, rate, items), fmt)
+    assert cut_list(read_back(result["files"][0], rate), rate) == items
+
+
+def edl_markers(path: str, rate: Fraction) -> list[tuple[str, int]]:
+    track = read_back(path, rate).tracks[0]
+    return [
+        (marker.name, round(marker.marked_range.start_time.rescaled_to(float(rate)).value))
+        for clip in track
+        if isinstance(clip, otio.schema.Clip)
+        for marker in clip.markers
+    ]
+
+
+def test_edl_markers_read_back_at_whole_rates_but_not_drop_frame(tmp_path: Path) -> None:
+    whole = simple_edit(tmp_path, Fraction(25), [(0, 40, 10), (40, 33, 90)])
+    whole["markers"] = [{"id": "k", "start": 45, "duration": 0, "label": "look", "color": "red"}]
+    result = run_export(tmp_path, whole, "edl")
+    assert "* LOC: 00:00:03:20 PURPLE  LOOK" in Path(result["files"][0]).read_text()
+    # On its clip, in the clip's source frames (90 + 45 - 40).
+    assert edl_markers(result["files"][0], Fraction(25)) == [("LOOK", 95)]
+
+    ntsc = Fraction(30000, 1001)
+    (tmp_path / "ntsc").mkdir()
+    drop = simple_edit(tmp_path / "ntsc", ntsc, [(0, 40, 10), (40, 33, 90)])
+    drop["markers"] = whole["markers"]
+    text = Path(run_export(tmp_path / "ntsc", drop, "edl")["files"][0])
+    assert "* LOC: 00:00:03;05 PURPLE  LOOK" in text.read_text()
+    # A known OTIO reader limit (docs/internals/pro-export.md): it parses `LOC` only with `:`.
+    assert edl_markers(str(text), ntsc) == []
+    assert cut_list(read_back(str(text), ntsc), ntsc) == [(0, 40, 10), (40, 33, 90)]
+
+
 def test_drop_frame_rate_29_97(tmp_path: Path) -> None:
     rate = Fraction(30000, 1001)
     items = irregular_cuts(30, seed=3)
