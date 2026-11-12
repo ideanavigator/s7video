@@ -79,7 +79,9 @@ silent.
 - The duck envelope is a balanced `if(lt(t,…))` tree of linear pieces. FFmpeg evaluates only the
   branch it takes, so each frame costs log₂ of the piece count, even with hundreds of ranges.
 - An item cut short by the end of the video fades out there: over its own fade-out (music's
-  1 s), or over 10 ms when it has none (a sound effect), so it never clicks.
+  1 s), or over 10 ms when it has none (a sound effect), so it never clicks. Cut short means the
+  video's end stops it before its file ends: the export trims it, or placement already ended it
+  there. A sound whose file ends exactly at the video's end keeps its own ending.
 - Overlay tracks are still refused.
 
 The golden `mix-sfx-music-lufs` checks it end to end on `talking-head-01` with synthetic sounds:

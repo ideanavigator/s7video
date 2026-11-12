@@ -83,8 +83,10 @@ def audio_items(edit: dict[str, Any], total_frames: int) -> list[AudioItem]:
     """The sound effect and music items that play, trimmed at the end of the video.
 
     An item cut short there fades out at that end: over its own fade-out, or over 10 ms
-    (``CUT_FADE_SECONDS``) when it has none.
+    (``CUT_FADE_SECONDS``) when it has none. Cut short means the video's end stops it before its
+    file ends, whether the export trims it or it was placed already ending there.
     """
+    media = {entry["id"]: entry for entry in edit["media"]}
     items: list[AudioItem] = []
     for track in edit["tracks"]:
         if track["kind"] not in ("sfx", "music") or track.get("muted"):
@@ -96,6 +98,10 @@ def audio_items(edit: dict[str, Any], total_frames: int) -> list[AudioItem]:
                 continue
             fade_in = min(int(item.get("fadeInFrames", 0)), frames)
             fade_out = min(int(item.get("fadeOutFrames", 0)), frames - fade_in)
+            # A file of unknown length counts as going on: a 10 ms fade is safe either way.
+            length = ((media.get(item["media"]) or {}).get("probe") or {}).get("durationFrames")
+            file_goes_on = length is None or int(item.get("in", 0)) + frames < int(length)
+            at_video_end = int(item["start"]) + frames == total_frames
             items.append(
                 AudioItem(
                     media=item["media"],
@@ -106,7 +112,7 @@ def audio_items(edit: dict[str, Any], total_frames: int) -> list[AudioItem]:
                     fade_in=fade_in,
                     fade_out=fade_out,
                     duck=duck,
-                    cut_short=frames < int(item["duration"]),
+                    cut_short=frames < int(item["duration"]) or (at_video_end and file_goes_on),
                 )
             )
     return items

@@ -121,6 +121,24 @@ def test_items_are_trimmed_at_the_end_of_the_video_and_still_fade_out(tmp_path: 
     assert not whole.audio[0].cut_short
 
 
+def test_a_sound_placed_to_end_at_the_video_end_still_fades(tmp_path: Path) -> None:
+    # As placement writes it: a 40-frame file at frame 290 of a 300-frame edit is placed 10 frames
+    # long, so its duration already ends where the video does while the file goes on.
+    placed = {"kind": "sfx", "id": "S1", "items": [{"id": "s", "media": "tick", "start": 290, "duration": 10, "in": 0}]}
+    edit = _edit_with_sound(tmp_path, tracks=[placed])
+    edit["media"][1]["probe"]["durationFrames"] = 40
+    plan, graph = _plan(edit)
+    assert plan.audio[0].cut_short
+    played = plan.sample_at(300) - plan.sample_at(290)
+    assert f"afade=t=out:ss={played - 480}:ns=480" in graph
+    # The same item when the file itself ends there: its own end, no fade added.
+    edit["media"][1]["probe"]["durationFrames"] = 10
+    plan, graph = _plan(edit)
+    assert not plan.audio[0].cut_short
+    chain = next(line for line in graph.splitlines() if line.startswith("[1:a:0]"))
+    assert "afade" not in chain
+
+
 def test_muted_music_track_is_left_out(tmp_path: Path) -> None:
     plan, graph = _plan(_edit_with_sound(tmp_path, tracks=[{**MUSIC, "muted": True}]))
     assert plan.audio == []
