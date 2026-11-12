@@ -10,6 +10,12 @@ export const MUSIC_BED_DB = -18;
 export const DUCK_DEPTH_DB = -12;
 /** The reference when the voice clip is silent: the export's target, so levels stay sensible. */
 export const SILENT_VOICE_LUFS = -14;
+/** The export's quiet line (`QUIET_LUFS`, export.py): at or below it a file counts as silent. */
+const QUIET_LUFS = -50;
+
+/** Loud enough to level against: neither silence (null) nor room noise at or below −50 LUFS. */
+export const isAudible = (lufs: number | null): lufs is number =>
+  lufs !== null && lufs > QUIET_LUFS;
 
 export const defaultLevelDb = (track: "sfx" | "music") =>
   track === "sfx" ? SFX_LEVEL_DB.normal : MUSIC_BED_DB;

@@ -140,9 +140,11 @@ const sameDuck = (left: EditDuck | undefined, right: EditDuck) =>
       range.start === right.ranges[index]!.start && range.end === right.ranges[index]!.end,
   );
 
-/** `duck` on every music track; none when every one already has it. */
+/** `duck` on every unlocked music track (placement skips locked ones too); none when all have it. */
 export function duckOps(document: EditDocument, duck: EditDuck): EditOp[] {
   return document.tracks
-    .filter((track) => track.kind === "music" && !sameDuck(track.duck, duck))
+    .filter(
+      (track) => track.kind === "music" && track.locked !== true && !sameDuck(track.duck, duck),
+    )
     .map((track) => ({ _tag: "setTrackProps", trackId: track.id, props: { duck } }));
 }

@@ -38,10 +38,14 @@ const LOUDNESS: Record<string, number | null> = {
   "cam.mp4": -20,
   "second.mp4": -16,
   "quiet.mp4": null,
+  "murmur.mp4": -60,
   "whoosh.wav": -10,
   "bed.wav": -30,
   "hush.wav": null,
+  "faint.wav": -55,
 };
+/** Written but never measured: a clip with no audio stream. */
+const UNMEASURED = ["broll.mp4"];
 
 const bytesOf = (name: string) => Buffer.from(`synthetic ${name}`);
 const fingerprintOf = (bytes: Buffer) => ({
@@ -68,7 +72,7 @@ const audio = (id: string, durationFrames: number, hasAudio = true) => ({
 
 const writeFiles = (root: string) => {
   NodeFS.mkdirSync(NodePath.join(root, "assets"), { recursive: true });
-  for (const name of Object.keys(LOUDNESS)) {
+  for (const name of [...Object.keys(LOUDNESS), ...UNMEASURED]) {
     NodeFS.writeFileSync(NodePath.join(root, "assets", name), bytesOf(name));
   }
 };
@@ -148,6 +152,7 @@ const cutEdit = (extra: EditOp[] = []): EditOp[] => [
   { _tag: "putMedia", media: audio("whoosh", 15) },
   { _tag: "putMedia", media: audio("bed", 900) },
   { _tag: "putMedia", media: audio("hush", 30) },
+  { _tag: "putMedia", media: audio("faint", 30) },
   { _tag: "putMedia", media: audio("mute", 30, false) },
   { _tag: "addTrack", track: { kind: "video", id: "V1", items: [] } },
   {
@@ -256,7 +261,9 @@ describe("AudioTrackService.placeAudio", () => {
             "nope is not in this edit's media. Import it first with video_import.",
           ],
           [{ media: "mute" }, "mute has no sound, so it can't be a sound effect or music."],
-          [{ media: "hush" }, "hush is silent, so there is nothing to hear."],
+          [{ media: "hush" }, "hush is silent or nearly silent, so there is nothing to hear."],
+          // -55 LUFS is under the export's -50 LUFS quiet line: room noise, never lifted.
+          [{ media: "faint" }, "faint is silent or nearly silent, so there is nothing to hear."],
           [
             { media: "whoosh", at: 40 },
             "Frame 40 of cam was cut from the edit, so nothing was added. Pick a moment that is still in it (video_transcript_read).",
@@ -359,12 +366,18 @@ describe("AudioTrackService.placeAudio", () => {
     ),
   );
 
-  it.effect("levels against the export's target when the voice clip is silent", () =>
+  it.effect.each([
+    ["silent", "quiet.mp4", true],
+    ["only room noise (-60 LUFS)", "murmur.mp4", true],
+    ["no audio stream (B-roll, a screen recording)", "broll.mp4", false],
+  ] as const)("levels against -14 LUFS when the voice clip is %s", ([, file, hasAudio]) =>
     withProject((project) =>
       Effect.gen(function* () {
+        const clip = video("cam", file);
         yield* setUp(project, [
-          { _tag: "putMedia", media: video("cam", "quiet.mp4") },
+          { _tag: "putMedia", media: { ...clip, probe: { ...clip.probe, hasAudio } } },
           { _tag: "putMedia", media: audio("whoosh", 15) },
+          { _tag: "putMedia", media: audio("bed", 900) },
           { _tag: "addTrack", track: { kind: "video", id: "V1", items: [] } },
           {
             _tag: "insertItem",
@@ -379,6 +392,15 @@ describe("AudioTrackService.placeAudio", () => {
         );
         // -14 - 9 - (-10)
         expect(placed.item.gainDb).toBe(-13);
+        const music = yield* project.sounds.placeAudio(
+          project.projectId,
+          { media: "bed", track: "music" },
+          { reply },
+        );
+        // -14 - 18 - (-30)
+        expect(music.item.gainDb).toBe(-2);
+        // A clip with no audio stream is never sent to the engine, which would refuse it.
+        expect(project.measured.includes(file)).toBe(hasAudio);
       }),
     ),
   );
@@ -448,6 +470,38 @@ describe("AudioTrackService.duckMusic", () => {
           .duckMusic(project.projectId, { depthDb: 6 }, { reply })
           .pipe(Effect.flip);
         expect(deep.message).toBe("depthDb is how far the music dips, in dB from -40 to -1.");
+        expect(editJson(project.root)).toBe(before);
+      }),
+    ),
+  );
+
+  it.effect("refuses in plain words when the only music track is locked", () =>
+    withProject((project) =>
+      Effect.gen(function* () {
+        yield* setUp(project);
+        writeTranscript(project.root, [[5, 12]]);
+        yield* project.sounds.placeAudio(
+          project.projectId,
+          { media: "bed", track: "music" },
+          { reply },
+        );
+        const placed = yield* project.edits.read(project.projectId);
+        yield* project.edits.apply(
+          project.projectId,
+          [{ _tag: "setTrackProps", trackId: "M1", props: { locked: true } }],
+          { origin: "timeline", baseRevision: placed.revision },
+        );
+        const before = editJson(project.root);
+        const locked = yield* project.sounds
+          .duckMusic(project.projectId, {}, { reply })
+          .pipe(Effect.flip);
+        expect(locked).toEqual(
+          new SoundError({
+            reason: "locked",
+            detail:
+              "The music track is locked. Ask the user to unlock it on the timeline, then dip the music again.",
+          }),
+        );
         expect(editJson(project.root)).toBe(before);
       }),
     ),

@@ -242,4 +242,15 @@ describe("duck", () => {
     expect(duckOps(after, duck)).toEqual([]);
     expect(duckOps(after, { ...duck, depthDb: -9 })).toHaveLength(2);
   });
+
+  it("leaves locked music tracks alone, as placement does", () => {
+    const document = documentWith(fps30, [
+      { kind: "music", id: "M1", locked: true, items: [] },
+      { kind: "music", id: "M2", items: [] },
+    ]);
+    const duck = duckOver(document, ranges, -12);
+    expect(duckOps(document, duck)).toEqual([
+      { _tag: "setTrackProps", trackId: "M2", props: { duck } },
+    ]);
+  });
 });

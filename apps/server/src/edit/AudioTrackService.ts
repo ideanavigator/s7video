@@ -27,7 +27,13 @@ import * as Schema from "effect/Schema";
 import * as EngineService from "../engine/EngineService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import { mediaFingerprint } from "../transcript/mediaFingerprint.ts";
-import { DUCK_DEPTH_DB, SILENT_VOICE_LUFS, defaultLevelDb, itemGainDb } from "./audioLevels.ts";
+import {
+  DUCK_DEPTH_DB,
+  SILENT_VOICE_LUFS,
+  defaultLevelDb,
+  isAudible,
+  itemGainDb,
+} from "./audioLevels.ts";
 import { duckOps, duckOver, placementOps, videoEndFrame } from "./audioPlacement.ts";
 import { loadCaptionTranscripts } from "./captionTrack.ts";
 import * as EditDocumentService from "./EditDocumentService.ts";
@@ -248,11 +254,16 @@ const make = Effect.gen(function* () {
     if (mediaFrames < 1) {
       return yield* refuse("no-sound", `${nameOf(asset)} has no length. Import it again.`);
     }
+    // A clip with no sound (B-roll, a screen recording) or only room noise levels against −14.
     const voice = document.media.find((entry) => entry.id === clip)!;
-    const voiceLufs = (yield* loudnessOf(root, voice)) ?? SILENT_VOICE_LUFS;
+    const measuredVoice = voice.probe.hasAudio ? yield* loudnessOf(root, voice) : null;
+    const voiceLufs = isAudible(measuredVoice) ? measuredVoice : SILENT_VOICE_LUFS;
     const assetLufs = yield* loudnessOf(root, asset);
-    if (assetLufs === null) {
-      return yield* refuse("no-sound", `${nameOf(asset)} is silent, so there is nothing to hear.`);
+    if (!isAudible(assetLufs)) {
+      return yield* refuse(
+        "no-sound",
+        `${nameOf(asset)} is silent or nearly silent, so there is nothing to hear.`,
+      );
     }
     const track = input.track ?? "sfx";
     const placement = placementOps(document, {
@@ -296,10 +307,19 @@ const make = Effect.gen(function* () {
     }
     const snapshot = yield* edits.read(projectId);
     const { document } = snapshot;
-    if (!document.tracks.some((track) => track.kind === "music" && track.items.length > 0)) {
+    const music = document.tracks.filter(
+      (track) => track.kind === "music" && track.items.length > 0,
+    );
+    if (music.length === 0) {
       return yield* refuse(
         "no-music",
         "There is no music in the edit yet. Place it with video_place_audio first.",
+      );
+    }
+    if (music.every((track) => track.locked === true)) {
+      return yield* refuse(
+        "locked",
+        "The music track is locked. Ask the user to unlock it on the timeline, then dip the music again.",
       );
     }
     const root = yield* projectRoot(projectId);

@@ -532,6 +532,7 @@ export class SoundError extends Schema.TaggedError<SoundError>()("SoundError", {
     "cut",
     "out-of-range",
     "no-music",
+    "locked",
     "no-transcript",
   ]),
   detail: Schema.String,
