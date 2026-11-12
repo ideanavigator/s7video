@@ -105,9 +105,20 @@ def test_items_are_trimmed_at_the_end_of_the_video_and_still_fade_out(tmp_path: 
     music = {**MUSIC, "items": [{**MUSIC["items"][0], "duration": 400}]}  # type: ignore[dict-item]
     late = {"kind": "sfx", "id": "S2", "items": [{"id": "z", "media": "tick", "start": 300, "duration": 5, "in": 0}]}
     plan, graph = _plan(_edit_with_sound(tmp_path, tracks=[long_sfx, music, late]))
-    assert [(item.start, item.frames, item.source_in, item.fade_out) for item in plan.audio] == [(290, 10, 3, 0), (0, 300, 0, 30)]
+    assert [(item.start, item.frames, item.source_in, item.fade_out, item.cut_short) for item in plan.audio] == [
+        (290, 10, 3, 0, True),
+        (0, 300, 0, 30, True),
+    ]
     total = plan.sample_at(300)
+    # Music: its own 1 s fade-out, moved to end where the video ends.
     assert f"afade=t=out:ss={total - (total - plan.sample_at(270))}:ns={total - plan.sample_at(270)}" in graph
+    # The sound effect has no fade-out of its own, so it gets 10 ms (480 samples) at the cut.
+    sfx = next(line for line in graph.splitlines() if line.endswith("[x0];") or line.endswith("[x0]"))
+    played = plan.sample_at(300) - plan.sample_at(290)
+    assert f"afade=t=out:ss={played - 480}:ns=480" in sfx
+    # An item that plays whole keeps its sharp end: nothing cut it.
+    whole, _ = _plan(_edit_with_sound(tmp_path, tracks=[SFX]))
+    assert not whole.audio[0].cut_short
 
 
 def test_muted_music_track_is_left_out(tmp_path: Path) -> None:

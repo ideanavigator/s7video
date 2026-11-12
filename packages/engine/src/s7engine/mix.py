@@ -25,6 +25,9 @@ SAMPLE_RATE = 48_000
 DUCK_FRAME_SAMPLES = 64
 #: A ramp of zero frames is drawn over one sample, so the envelope stays continuous.
 _SHORTEST_RAMP = Fraction(1, SAMPLE_RATE)
+#: An item the video's end cuts short, with no fade-out of its own, fades over this so it never
+#: clicks: the same 10 ms as the export's joins.
+CUT_FADE_SECONDS = Fraction(1, 100)
 
 
 def sample_at(frame: int, rate: Fraction) -> int:
@@ -52,6 +55,8 @@ class AudioItem:
     fade_in: int = 0
     fade_out: int = 0
     duck: Duck | None = None
+    #: The video's end cut the item short.
+    cut_short: bool = False
 
 
 def _merged(ranges: list[dict[str, Any]]) -> tuple[tuple[int, int], ...]:
@@ -77,7 +82,8 @@ def duck_of(track: dict[str, Any]) -> Duck | None:
 def audio_items(edit: dict[str, Any], total_frames: int) -> list[AudioItem]:
     """The sound effect and music items that play, trimmed at the end of the video.
 
-    A trimmed item still fades out: its fade-out ends where the video ends.
+    An item cut short there fades out at that end: over its own fade-out, or over 10 ms
+    (``CUT_FADE_SECONDS``) when it has none.
     """
     items: list[AudioItem] = []
     for track in edit["tracks"]:
@@ -100,6 +106,7 @@ def audio_items(edit: dict[str, Any], total_frames: int) -> list[AudioItem]:
                     fade_in=fade_in,
                     fade_out=fade_out,
                     duck=duck,
+                    cut_short=frames < int(item["duration"]),
                 )
             )
     return items
@@ -199,6 +206,9 @@ def item_chain(item: AudioItem, input_index: int, rate: Fraction, total_frames: 
         steps.append(f"afade=t=in:ns={sample_at(item.start + item.fade_in, rate) - first}")
     if item.fade_out:
         length = first + samples - sample_at(item.start + item.frames - item.fade_out, rate)
+        steps.append(f"afade=t=out:ss={samples - length}:ns={length}")
+    elif item.cut_short:
+        length = min(round(CUT_FADE_SECONDS * SAMPLE_RATE), samples // 2)
         steps.append(f"afade=t=out:ss={samples - length}:ns={length}")
     if first:
         steps.append(f"adelay=delays={first}S|{first}S")
