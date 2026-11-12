@@ -11,6 +11,7 @@ import { TranscriptService } from "../transcript/TranscriptService.ts";
 import { AudioTrackService } from "../edit/AudioTrackService.ts";
 import { ClipPlacementService } from "../edit/ClipPlacementService.ts";
 import { CaptionTrackService } from "../edit/CaptionTrackService.ts";
+import { ZoomService } from "../edit/ZoomService.ts";
 import { SilenceCutService } from "../edit/SilenceCutService.ts";
 import { MediaLibraryService } from "../media/MediaLibraryService.ts";
 import { ServerEnvironment } from "../environment/ServerEnvironment.ts";
@@ -53,6 +54,7 @@ export const toolHandlerServices = Layer.mergeAll(
   Layer.mock(CaptionTrackService)({}),
   Layer.mock(AudioTrackService)({}),
   Layer.mock(ClipPlacementService)({}),
+  Layer.mock(ZoomService)({}),
   Layer.mock(MediaLibraryService)({}),
   Layer.mock(GitVcsDriver)({}),
   Layer.mock(GitWorkflowService)({}),

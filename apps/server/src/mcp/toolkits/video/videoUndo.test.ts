@@ -31,6 +31,7 @@ import * as ThreadManagementService from "../../../orchestration-v2/ThreadManage
 import * as ManagedProjectFolders from "../../../project/ManagedProjectFolders.ts";
 import * as TranscriptService from "../../../transcript/TranscriptService.ts";
 import * as AudioTrackService from "../../../edit/AudioTrackService.ts";
+import * as ZoomService from "../../../edit/ZoomService.ts";
 import * as CaptionTrackService from "../../../edit/CaptionTrackService.ts";
 import * as ClipPlacementService from "../../../edit/ClipPlacementService.ts";
 import * as SilenceCutService from "../../../edit/SilenceCutService.ts";
@@ -226,7 +227,9 @@ const withProject = <A, E>(
             Layer.mock(SilenceCutService.SilenceCutService)({}),
           ),
     ).pipe(Layer.provideMerge(editLayer));
-    const withSound = AudioTrackService.layer.pipe(Layer.provideMerge(services));
+    const withSound = Layer.mergeAll(AudioTrackService.layer, ZoomService.layer).pipe(
+      Layer.provideMerge(services),
+    );
     return yield* Effect.gen(function* () {
       const folders = yield* ManagedProjectFolders.ManagedProjectFolders;
       const edits = yield* EditDocumentService.EditDocumentService;

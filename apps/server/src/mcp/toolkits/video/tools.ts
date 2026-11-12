@@ -4,6 +4,7 @@
 // and descriptions say what they read: video, clip, frame, edit, job. Keep them short; every byte
 // is sent with each turn (AgentContextBudget.test.ts).
 import {
+  CaptionPresetId,
   EditAspectRatio,
   EditRational,
   EditVersionAuthor,
@@ -25,6 +26,7 @@ import * as CaptionTrackService from "../../../edit/CaptionTrackService.ts";
 import * as ClipPlacementService from "../../../edit/ClipPlacementService.ts";
 import * as EditDocumentService from "../../../edit/EditDocumentService.ts";
 import * as SilenceCutService from "../../../edit/SilenceCutService.ts";
+import * as ZoomService from "../../../edit/ZoomService.ts";
 import * as EngineService from "../../../engine/EngineService.ts";
 import * as ExportService from "../../../export/ExportService.ts";
 import * as MediaLibraryService from "../../../media/MediaLibraryService.ts";
@@ -382,6 +384,41 @@ const VideoVersionRestoreTool = Tool.make("video_version_restore", {
   .annotate(Tool.Title, "Restore version")
   .annotateMerge(videoAnnotations(false));
 
+// S7V-037: user-triggered only. `range` is clip frames as video_transcript_read shows them, mapped
+// through the edit; `clip` names that clip when the edit has several. Splits and zooms in one checkpoint.
+const VideoZoomTool = Tool.make("video_zoom", {
+  description: "Zoom in on video only if user asks. range: clip frames 9-30",
+  parameters: Schema.Struct({
+    range: Schema.String,
+    clip: Schema.optional(Schema.String),
+    scale: Schema.optional(Schema.Finite),
+    anchorX: Schema.optional(Schema.Finite),
+    anchorY: Schema.optional(Schema.Finite),
+  }),
+  success: Schema.Struct({
+    revision: Schema.Int,
+    items: Schema.Int,
+    message: Schema.String,
+    cleanup: Cleanup,
+  }),
+  failure: OrchestratorMcpFailure,
+  dependencies: [...dependencies, ZoomService.ZoomService],
+})
+  .annotate(Tool.Title, "Zoom in")
+  .annotateMerge(videoAnnotations(false));
+
+// S7V-037: user-triggered only. Sets the caption track's look; adds the captions with it when the
+// edit has none (PO 2026-11-12). One checkpoint.
+const VideoCaptionStyleTool = Tool.make("video_caption_style", {
+  description: "Set video caption look only if user asks.",
+  parameters: Schema.Struct({ preset: CaptionPresetId }),
+  success: EditStep,
+  failure: OrchestratorMcpFailure,
+  dependencies: [...dependencies, CaptionTrackService.CaptionTrackService],
+})
+  .annotate(Tool.Title, "Caption look")
+  .annotateMerge(videoAnnotations(false));
+
 /** Tools that return JSON. A new tool goes here, with its handler in `handlers.ts`. */
 export const VideoStandardToolkit = Toolkit.make(
   VideoImportTool,
@@ -402,6 +439,8 @@ export const VideoStandardToolkit = Toolkit.make(
   VideoDuckMusicTool,
   VideoVersionsTool,
   VideoVersionRestoreTool,
+  VideoZoomTool,
+  VideoCaptionStyleTool,
 );
 
 /** `video_frame` returns image content, so it registers on its own (`registerVideoFrame`). */
@@ -427,6 +466,8 @@ export const VideoToolkit = Toolkit.make(
   VideoDuckMusicTool,
   VideoVersionsTool,
   VideoVersionRestoreTool,
+  VideoZoomTool,
+  VideoCaptionStyleTool,
   VideoFrameTool,
 );
 

@@ -33,6 +33,51 @@ export function timelineFrameOf(
 }
 
 /**
+ * Clip frames `[from, to)` of `media` (at the clip's `rate`) as the timeline ranges that play them
+ * (S7V-037), in timeline order; empty when the edit cut them all. A frame placed more than once
+ * counts only where it first plays.
+ */
+export function timelineRangesOf(
+  document: EditDocument,
+  media: string,
+  from: number,
+  to: number,
+  rate: EditRational,
+): EditFrameRange[] {
+  const low = toRate(from, rate, document.fps);
+  let unplaced: Array<readonly [number, number]> = [
+    [low, Math.max(low + 1, toRate(to, rate, document.fps))],
+  ];
+  const ranges: EditFrameRange[] = [];
+  for (const run of captionRuns(document)) {
+    if (run.media !== media) continue;
+    const runEnd = run.sourceIn + run.frames;
+    const rest: Array<readonly [number, number]> = [];
+    for (const [a, b] of unplaced) {
+      const start = Math.max(a, run.sourceIn);
+      const end = Math.min(b, runEnd);
+      if (start >= end) {
+        rest.push([a, b]);
+        continue;
+      }
+      ranges.push({ start: run.start + start - run.sourceIn, end: run.start + end - run.sourceIn });
+      if (a < start) rest.push([a, start]);
+      if (end < b) rest.push([end, b]);
+    }
+    unplaced = rest;
+  }
+  return ranges.sort((left, right) => left.start - right.start);
+}
+
+/** `mm:ss.cc` on the timeline, as a reply names a place: 00:04.20. */
+export const timecode = (frames: number, fps: EditRational) => {
+  const centis = Math.round((frames * fps.den * 100) / fps.num);
+  const minutes = Math.floor(centis / 6000);
+  const rest = (centis - minutes * 6000) / 100;
+  return `${String(minutes).padStart(2, "0")}:${rest.toFixed(2).padStart(5, "0")}`;
+};
+
+/**
  * Timeline frame `frame` of `media` snapped to the start of the word playing there, or else of
  * the next word heard (PO 2026-11-12), or null after the last word. Word starts are the caption's,
  * so a word that crosses a cut starts where its kept part starts.
