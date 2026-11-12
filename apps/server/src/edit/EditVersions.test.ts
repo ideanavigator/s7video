@@ -863,10 +863,12 @@ describe("versions named in chat", () => {
           ["nope", 'No version in this project is named "nope".'],
         ] as const) {
           for (const attempt of [
-            edits.findVersion(projectId, ref),
-            edits.restoreVersionRef(projectId, ref, { baseRevision: current.revision }),
+            Effect.flip(edits.findVersion(projectId, ref)),
+            Effect.flip(
+              edits.restoreVersionRef(projectId, ref, { baseRevision: current.revision }),
+            ),
           ]) {
-            const error = yield* Effect.flip(attempt);
+            const error = yield* attempt;
             assert.strictEqual(
               error._tag === "EditUnavailableError" && error.reason,
               "unknown-version",

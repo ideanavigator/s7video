@@ -17,6 +17,7 @@ import {
   OrchestratorMcpFailure,
   type SoundError,
 } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -236,7 +237,7 @@ const versionLine = (version: EditVersion) => ({
   n: version.n,
   ...(version.tag === undefined ? {} : { tag: version.tag }),
   author: version.author,
-  at: new Date(version.at).toISOString(),
+  at: DateTime.formatIso(DateTime.makeUnsafe(version.at)),
   change:
     version.changes.length > 1
       ? `${version.changes[0]} (+${version.changes.length - 1} more)`
