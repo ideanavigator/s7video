@@ -372,7 +372,8 @@ def test_media_with_unicode_path(tmp_path: Path, fmt: str) -> None:
     result = run_export(project, edit, fmt)
     if fmt != "otio":
         xml_root(result["files"][0])
-        subprocess.run(["/usr/bin/xmllint", "--noout", result["files"][0]], check=True) if Path("/usr/bin/xmllint").exists() else None
+        if Path("/usr/bin/xmllint").exists():
+            subprocess.run(["/usr/bin/xmllint", "--noout", result["files"][0]], check=True)
     back = read_back(result["files"][0], rate)
     urls = {clip.media_reference.target_url for clip in back.find_clips()}
     assert {otio_map.url_path(url) for url in urls} == {os.path.realpath(project / edit["media"][0]["path"])}

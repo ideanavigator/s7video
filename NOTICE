@@ -39,6 +39,31 @@ Bundled font
   Licensed under the SIL Open Font License, Version 1.1
   (packages/engine/assets/fonts/OFL.txt)
 
+Engine Python packages (packages/engine/uv.lock)
+
+  OpenTimelineIO 0.18.1 (opentimelineio), used by "Export for editors"
+  https://github.com/AcademySoftwareFoundation/OpenTimelineIO
+  Licensed under the Apache License, Version 2.0. Its NOTICE reads:
+    OpenTimelineIO
+    Copyright Contributors to the OpenTimelineIO project.
+    All rights reserved.
+    This product includes software developed at: Pixar (http://www.pixar.com/).
+
+  Its adapters otio-fcpx-xml-adapter, otio-fcp-adapter and otio-cmx3600-adapter 1.0.0
+  Copyright Contributors to the OpenTimelineIO project
+  Licensed under the Apache License, Version 2.0, and used unmodified; s7video corrects the
+  FCPXML adapter's frame maths at run time with its own MIT code
+  (packages/engine/src/s7engine/fcpx_exact.py).
+
+  OpenTimelineIO's compiled modules (_otio, _opentime) build in these libraries, whose licence
+  texts its wheel does not ship:
+  - Imath, Copyright Contributors to the OpenEXR Project, BSD-3-Clause
+    (https://github.com/AcademySoftwareFoundation/Imath)
+  - RapidJSON, Copyright (C) 2015 THL A29 Limited, a Tencent company, and Milo Yip, MIT
+    (https://github.com/Tencent/rapidjson)
+  - pybind11, Copyright (c) 2016 Wenzel Jakob, BSD-3-Clause
+    (https://github.com/pybind/pybind11)
+
 Third-party notices
 
 The app lists every bundled package, font, sound and asset with its full licence text under
