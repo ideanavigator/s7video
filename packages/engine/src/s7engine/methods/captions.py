@@ -40,7 +40,7 @@ from ._media import PATH_SCHEMA
 
 #: Bump when the drawing changes in a way the hashed inputs don't show: the ASS builder's code,
 #: the FFmpeg arguments below. Style files and fonts are hashed, so editing them needs no bump.
-#: 2: looks other than s7-neutral, and one still per word state (S7V-037).
+#: 2: looks other than s7-neutral, one still per word state, and straight alpha from a matte (S7V-037).
 RENDER_VERSION = 2
 #: Looks kept per project (one per canvas size and style); the oldest are removed.
 KEEP_LOOKS = 4
@@ -160,7 +160,6 @@ def _draw(
         timed = [captions_ass.Cue(cue.words, number, number + 1, cue.lit) for number, (_, cue) in enumerate(stills)]
         captions_ass.write_cues(workdir / "captions.ass", timed, Fraction(1), width, height, style_id)
         captions_ass.link_fonts(workdir / "fonts")
-        source = f"color=c=black@0:s={width}x{height}:r=1:d={len(stills)},format=rgba"
         run_tool(
             "ffmpeg",
             [
@@ -168,13 +167,8 @@ def _draw(
                 "-hide_banner",
                 "-loglevel",
                 "error",
-                "-f",
-                "lavfi",
-                "-i",
-                source,
-                "-vf",
-                # Relative names, as the export: a temp path could hold filter syntax.
-                "subtitles=filename=captions.ass:fontsdir=fonts:alpha=1",
+                "-filter_complex",
+                _matte_graph(width, height, len(stills)),
                 "-start_number",
                 "0",
                 "-f",
@@ -193,6 +187,27 @@ def _draw(
             os.replace(still, folder / name)
     finally:
         shutil.rmtree(workdir, ignore_errors=True)
+
+
+def _matte_graph(width: int, height: int, count: int) -> str:
+    """The stills as straight-alpha RGBA: libass draws each over black and over white, as the
+    export draws it over the video, and the two give alpha and colour exactly (255·α = 255 − (W −
+    B), c = 255·B / 255·α). Composited over any frame, a still is then what libass blends there.
+
+    Not the ``subtitles`` filter's ``alpha=1``: it blends alpha as one more colour channel, so a
+    still holds premultiplied colour with straight alpha, and a semi-transparent colour's opacity
+    twice (S7V-037: a 72 % box came out at 52 %, lighter in the player than in the export).
+    """
+    # Relative names, as the export: a temp path could hold filter syntax.
+    drawn = f"s={width}x{height}:r=1:d={count},format=rgb24,subtitles=filename=captions.ass:fontsdir=fonts,format=gbrp"
+    return (
+        f"color=c=black:{drawn},split[over_black][colour_in];"
+        f"color=c=white:{drawn}[over_white];"
+        "[over_white][over_black]blend=all_mode=difference,negate,split[alpha_planes][alpha_divisor];"
+        "[colour_in][alpha_divisor]blend=all_mode=divide[colour];"
+        "[alpha_planes]extractplanes=g[alpha];"
+        "[colour][alpha]alphamerge,format=rgba"
+    )
 
 
 def preview_band(width: int, height: int, style_id: str) -> tuple[int, int, int, int]:

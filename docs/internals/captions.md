@@ -102,8 +102,12 @@ band; the same ASS through the same libass is pixel-equal before scaling.
   A track and the fallback on the same edit give the same stills (`test_captions.py`).
 - The engine's `captions.render` builds the export's chunks and its ASS events in the edit's look
   (`cues`, `build_cues`), retimes one event per second, and has FFmpeg's `subtitles` filter draw
-  them onto a transparent
-  `color=black@0` canvas (`alpha=1`) as RGBA PNGs: about 0.2 s for 54 at 1080×1920 on an M4 Max.
+  them twice, over black and over white, as the export draws them over the video. The two give
+  each pixel's alpha and colour exactly (a matte: 255·α = 255 − (white − black), colour = black ÷
+  α), saved as straight-alpha RGBA PNGs, so a still composited over any frame is what libass
+  blends there. **Not `subtitles`' own `alpha=1`:** it blends alpha as one more colour channel, so
+  its PNGs held premultiplied colour, and a semi-transparent colour's opacity twice (the boxed
+  look's 72 % box came out at 52 %, lighter in the player than in the export; S7V-037).
 - The engine keeps the stills in `.s7cache/captions/<look>/<cue>.png`. `look` hashes the canvas
   size, the look's id and style file's bytes, the bundled fonts and `RENDER_VERSION` in
   `methods/captions.py`; `cue` hashes the event's words and its lit word. Timing never changes a
@@ -135,5 +139,5 @@ band; the same ASS through the same libass is pixel-equal before scaling.
 - Golden `caption-overlay-parity` composites each still on the uncaptioned export and compares it
   with the captioned export at 9:16, 1:1 and 16:9, in every look.
 
-Shipped builds need the `alpha` option of the `subtitles` filter in the bundled LGPL FFmpeg
-(S7V-016); it is part of FFmpeg's libass filter and needs nothing else.
+Shipped builds need FFmpeg's `subtitles` (libass), `blend`, `negate`, `extractplanes` and
+`alphamerge` filters in the bundled LGPL FFmpeg (S7V-016); all are part of FFmpeg's own filters.
