@@ -771,6 +771,8 @@ export const layerStandard = McpToolAccess.toLayer(VideoStandardToolkit, {
   video_add_captions: handlers.video_add_captions,
   video_place_audio: handlers.video_place_audio,
   video_duck_music: handlers.video_duck_music,
+  video_versions: McpToolAccess.readsAsCaller(() => Effect.die("todo")),
+  video_version_restore: McpToolAccess.actsAsCaller(() => Effect.die("todo")),
 });
 
 export const layerFrame = McpToolAccess.toLayer(VideoFrameToolkit, {
