@@ -10,6 +10,7 @@ import {
   type ProviderInteractionMode,
   ProviderInstanceId,
   ThreadId,
+  validateEditDocument,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -822,6 +823,106 @@ describe("video_undo and video_redo", () => {
           expect(textOf(refused).join("")).toContain(message);
         }
         expect(readFile(root, "edit.json")).toBe(before);
+      }),
+    ),
+  );
+
+  // S7V-093: a new project's edit has no tracks; the first assemble adds V1 in the same step.
+  it.effect("video_assemble on an edit with no tracks adds V1 and the parts as one step", () =>
+    withProject(({ root, thread, edits, call }) =>
+      Effect.gen(function* () {
+        NodeFS.mkdirSync(NodePath.join(root, "assets"), { recursive: true });
+        NodeFS.writeFileSync(NodePath.join(root, "assets", "cam.mp4"), "cam");
+        const initial = yield* edits.read(thread.projectId);
+        const imported = yield* edits.apply(
+          thread.projectId,
+          [{ _tag: "putMedia", media: wideClip }],
+          { origin: "import", baseRevision: initial.revision },
+        );
+        expect(imported.document.tracks).toEqual([]);
+        const before = readFile(root, "edit.json");
+
+        // Only the edit's end, frame 0, is a place to add on an empty edit; nothing is written.
+        const past = yield* call("video_assemble", {
+          items: [{ mediaId: "cam", in: 0, duration: 300 }],
+          at: 30,
+        });
+        expect(past.isError).toBe(true);
+        expect(textOf(past).join("")).toBe(
+          "at must be where a video item starts, or the end of the edit (frame 0).",
+        );
+        expect(readFile(root, "edit.json")).toBe(before);
+
+        const result = yield* call("video_assemble", {
+          items: [{ mediaId: "cam", in: 0, duration: 300 }],
+        });
+        expect(result.isError, textOf(result).join("")).toBe(false);
+        const after = yield* edits.read(thread.projectId);
+        expect(after.revision).toBe(imported.revision + 1);
+        const { itemIds } = result.structuredContent as { itemIds: string[] };
+        expect(result.structuredContent).toEqual({ revision: after.revision, itemIds });
+        expect(after.document.tracks).toEqual([
+          {
+            kind: "video",
+            id: "V1",
+            items: [{ id: itemIds[0], media: "cam", start: 0, duration: 300, in: 0 }],
+          },
+        ]);
+        // The first clip gives the edit its shape, as the first silence cut does (S7V-061).
+        expect(after.document.canvas).toEqual({ width: 1894, height: 1080 });
+        expect(validateEditDocument(JSON.parse(readFile(root, "edit.json"))).ok).toBe(true);
+
+        // One undo takes the clip, the track and the shape back off together.
+        const undone = yield* call("video_undo");
+        expect(undone.isError).toBe(false);
+        expect(readFile(root, "edit.json")).toBe(before);
+      }),
+    ),
+  );
+
+  it.effect("video_assemble on an audio-only edit adds V1 and leaves the music as it is", () =>
+    withProject(({ root, thread, edits, call }) =>
+      Effect.gen(function* () {
+        NodeFS.mkdirSync(NodePath.join(root, "assets"), { recursive: true });
+        NodeFS.writeFileSync(NodePath.join(root, "assets", "cam.mp4"), "cam");
+        const song = {
+          id: "song",
+          kind: "audio",
+          path: "assets/song.mp3",
+          fingerprint: { sha256: "cd".repeat(32), size: 2048 },
+          probe: { durationFrames: 600, hasVideo: false, hasAudio: true },
+        } as const;
+        const music = {
+          kind: "music" as const,
+          id: "M1",
+          items: [{ id: "bed", media: "song", start: 0, duration: 600, in: 0, gainDb: -18 }],
+        };
+        const initial = yield* edits.apply(
+          thread.projectId,
+          [
+            { _tag: "putMedia", media },
+            { _tag: "putMedia", media: song },
+            { _tag: "addTrack", track: music },
+          ],
+          { origin: "agent", baseRevision: (yield* edits.read(thread.projectId)).revision },
+        );
+
+        const result = yield* call("video_assemble", {
+          items: [{ mediaId: "cam", in: 0, duration: 90 }],
+          at: 0,
+        });
+        expect(result.isError, textOf(result).join("")).toBe(false);
+        const after = yield* edits.read(thread.projectId);
+        expect(after.revision).toBe(initial.revision + 1);
+        expect(after.document.tracks.map((track) => [track.kind, track.id])).toEqual([
+          ["music", "M1"],
+          ["video", "V1"],
+        ]);
+        expect(after.document.tracks[0]).toEqual(music);
+        expect(after.document.tracks[1]!.items.map((item) => [item.start, item.duration])).toEqual([
+          [0, 90],
+        ]);
+        expect(validateEditDocument(JSON.parse(readFile(root, "edit.json"))).ok).toBe(true);
       }),
     ),
   );
