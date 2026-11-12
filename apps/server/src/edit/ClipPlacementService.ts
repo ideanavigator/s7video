@@ -64,6 +64,8 @@ export class ClipPlacementService extends Context.Service<
   }
 >()("t3/edit/ClipPlacementService") {}
 
+const isRefusal = Schema.is(ClipPlacementError);
+
 const refuse = (reason: ClipPlacementError["reason"], detail: string) =>
   new ClipPlacementError({ reason, detail });
 
@@ -170,7 +172,7 @@ const make = Effect.gen(function* () {
   )(function* (projectId, input, options) {
     const { revision, document } = yield* edits.read(projectId);
     const planned = addClipsOps(document, revision, input);
-    if (planned instanceof ClipPlacementError) return yield* planned;
+    if (isRefusal(planned)) return yield* planned;
     const count = input.parts.length;
     const snapshot = yield* edits.apply(projectId, planned.ops, {
       origin: options.origin,

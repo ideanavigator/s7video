@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 /** S7V-093: the ops that put clip parts on the timeline (the service applies them as one step). */
 import { type EditDocument, emptyEditDocument, validateEditDocument } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
 import { applyEditOps } from "./applyEditOps.ts";
@@ -15,6 +16,8 @@ const wide = {
   probe: { durationFrames: 300, hasVideo: true, hasAudio: true, width: 1920, height: 1080 },
 };
 
+const isRefusal = Schema.is(ClipPlacementError);
+
 const newEdit = (chosen: boolean): EditDocument => ({
   ...emptyEditDocument({ fps: { num: 30, den: 1 }, canvas: { width: 1080, height: 1920 } }),
   media: [wide],
@@ -25,7 +28,7 @@ const applied = (document: EditDocument, revision: number) => {
   const planned = addClipsOps(document, revision, {
     parts: [{ mediaId: "cam", in: 0, duration: 90 }],
   });
-  if (planned instanceof ClipPlacementError) throw planned;
+  if (isRefusal(planned)) throw planned;
   const result = applyEditOps(document, planned.ops);
   if (result._tag !== "applied") throw new Error(result.error.message);
   expect(validateEditDocument(result.document).ok).toBe(true);
