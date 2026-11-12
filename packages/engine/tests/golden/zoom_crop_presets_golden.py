@@ -188,8 +188,9 @@ def test_zoom_crops_exactly(media, tmp_path: Path) -> None:
     shots = {"plain": _frames(plain, list(samples), tmp_path / "plain"), "zoomed": _frames(zoomed, list(samples), tmp_path / "zoomed")}
     plan = export.plan_segments(edit, W, H)
     wanted: dict[str, tuple[int, zoom.Crop | None]] = {}
-    for frame, (punch, step, _inside) in samples.items():
-        crop = zoom.frame_crop(W, H, punch, step)
+    for frame, (punch, step, inside) in samples.items():
+        # Outside a zoom, the reference it must not match is the zoom's own target rectangle.
+        crop = zoom.frame_crop(W, H, punch, step) if inside else zoom.crop_at(W, H, punch.scale, punch.anchor_x, punch.anchor_y)
         wanted[f"ref-{frame}"] = (_source_frame(plan, frame), crop)
         for dx, dy in ((2, 0), (-2, 0), (0, 2), (0, -2)):
             near = zoom.Crop(crop.scaled_width, crop.scaled_height, crop.x + dx, crop.y + dy)
@@ -212,6 +213,11 @@ def test_zoom_crops_exactly(media, tmp_path: Path) -> None:
         rects.append([frame, crop.scaled_width, crop.scaled_height, crop.x, crop.y])
         exact = _ssim(got, refs[f"ref-{frame}"])
         bare = _ssim(got, unzoomed)
+        if (crop.scaled_width, crop.scaled_height) == (W, H):
+            # A ramp's first frame is at scale 1: the unzoomed picture, which the plain export shows too.
+            print(f"zoom-crop-presets frame {frame} (x{punch.scale}, ramp step 0): unzoomed, SSIM {exact:.4f}, vs the plain export {bare:.4f}")
+            assert exact >= MIN_SSIM and bare >= MIN_SSIM, (frame, exact, bare)
+            continue
         nears = [_ssim(got, path) for name, path in refs.items() if name.startswith(f"near-{frame}-")]
         print(
             f"zoom-crop-presets frame {frame} (x{punch.scale}, ramp step {min(step, punch.ramp_frames) if punch.ramp_frames else '-'}):"
