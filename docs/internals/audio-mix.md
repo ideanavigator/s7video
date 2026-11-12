@@ -21,8 +21,11 @@ export mixes them under the voice and brings the whole mix to −14 LUFS. Nothin
   in `.s7cache/loudness/<sha256>.json` and checks the file's fingerprint and size first.
 - **Trap:** `ebur128` measures in 400 ms blocks, so a file shorter than one block reads −70 LUFS
   (nothing). `media.loudness` loops files under 3 s to 3 s; a looped sound reads as loud as it is
-  while it plays. A silent sound is refused. A silent voice clip is replaced by −14 LUFS as the
-  reference.
+  while it plays.
+- At or below −50 LUFS, the export's quiet line, a file counts as silent, so its noise is never
+  lifted. Such a sound is refused. A voice clip that is silent, only room noise, or has no audio
+  stream at all (B-roll, a screen recording) levels against −14 LUFS instead. A clip with no audio
+  stream is never sent to `media.loudness`, which would refuse it.
 
 ## Placement
 
@@ -48,9 +51,11 @@ export mixes them under the voice and brings the whole mix to −14 LUFS. Nothin
 
 ## Ducking
 
-- `video_duck_music` writes `duck` on every music track. The ranges are the clips' transcript
-  words on the timeline (`mapCaptionWords`), merged across gaps under 300 ms. Attack is 150 ms and
-  release 400 ms, in whole frames.
+- `video_duck_music` writes `duck` on every unlocked music track. The ranges are the clips'
+  transcript words on the timeline (`mapCaptionWords`), merged across gaps under 300 ms. Attack is
+  150 ms and release 400 ms, in whole frames.
+- Locked music tracks are left alone, as placement leaves them. With only locked music, ducking
+  refuses in plain words.
 - The curve is fixed: per range, down to the depth over the attack before speech starts, held, and
   back up over the release after it ends. Where two curves overlap the deeper one wins. There is no
   compressor and no sidechain, so it never pumps.
@@ -73,7 +78,8 @@ silent.
   (S7V-036 Check 2).
 - The duck envelope is a balanced `if(lt(t,…))` tree of linear pieces. FFmpeg evaluates only the
   branch it takes, so each frame costs log₂ of the piece count, even with hundreds of ranges.
-- An item cut short by the end of the video still fades out, ending where the video ends.
+- An item cut short by the end of the video fades out there: over its own fade-out (music's
+  1 s), or over 10 ms when it has none (a sound effect), so it never clicks.
 - Overlay tracks are still refused.
 
 The golden `mix-sfx-music-lufs` checks it end to end on `talking-head-01` with synthetic sounds:

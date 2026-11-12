@@ -87,7 +87,7 @@ from; the per-ticket entries and how this file is compiled are in
   Mac. (S7V-032)
 - Drop sound effects and music into the chat and ask the assistant to use them. It places them on
   their rows at sensible levels, dips the music while you speak, and exports at a steady −14 LUFS.
-  (S7V-036)
+  For now you hear them in the exported video; the Editor's player doesn't play them yet. (S7V-036)
 
 ### Changed
 

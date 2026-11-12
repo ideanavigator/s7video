@@ -239,6 +239,12 @@ New: `docs/engineering/` (standards), `docs/changelog/` (per-ticket entries), `d
 `scripts/planning.ts` (`pnpm tickets`, `ticket:*`, `doc:new`) and `scripts/check-doc-links.ts`
 (`pnpm docs:linkcheck`).
 
+`docs/README.md`, upstream's docs index, is edited in place. It has the s7video title and a
+contributor section that points to the agent rules, standards and planning. Its provider list
+matches the kept providers. The Connect, mobile and relay pages are gone, and it links each s7video
+`docs/internals/` page: media import, edit history, timeline, captions, and sound and music
+(S7V-036).
+
 ## Edit projects (S7V-024)
 
 - **Every new named project is an edit project.** `ManagedProjectFolders.createNamedProject` adds `edit.json`, `project.json`, `styles/`, `assets/`, `.s7cache/` and `exports/`. It also adds a whitelist `.gitignore`, and commits those files with T3's starter `README.md` and `assets/icon.svg`. It only adds files: nothing of T3's scaffold is removed. Scratch projects and existing projects are not converted.
@@ -468,7 +474,7 @@ wire them in:
 
 - `server.ts` builds the edit, media, silence-cut, caption, sound (S7V-036), export, transcript and
   engine layers above the core runtime, so WebSocket handlers, agent tools and the asset route
-  share one instance of each. `mcp/McpTools.testkit.ts` mocks each of them for the tool tests.
+  share one instance of each.
 - `ws.ts` adds thin handlers for `edit.*`, `media.*`, `export.*`, `transcript.get` and
   `transcribe.*`.
 - `observability/RpcInstrumentation.ts` gives these methods the `engine`, `edit` and `media`
