@@ -99,7 +99,7 @@ const make = Effect.gen(function* () {
       });
     }
     if (transcripts.size === 0) {
-      const noVideo = snapshot.document.tracks.every(
+      const noVideo = document.tracks.every(
         (track) => track.kind !== "video" || track.items.length === 0,
       );
       return yield* new CaptionsError({
