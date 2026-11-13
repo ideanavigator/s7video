@@ -92,6 +92,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.engineJobsSubscribe]: "engine",
   [WS_METHODS.engineJobsCancel]: "engine",
   [WS_METHODS.exportStart]: "engine",
+  [WS_METHODS.exportInterchange]: "engine",
   [WS_METHODS.exportStatus]: "engine",
   [WS_METHODS.captionsStills]: "engine",
   [WS_METHODS.captionsPresets]: "engine",

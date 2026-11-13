@@ -362,6 +362,54 @@ wheels = [
 ]
 
 [[package]]
+name = "opentimelineio"
+version = "0.18.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/de/41/73e65b707f3491792d4b34bea75edc2a1cc6ce10848ba199c3de8e3bee58/opentimelineio-0.18.1.tar.gz", hash = "sha256:a4e5086e2accd4ca9853ab48bf531e0c148eff47889363a6da3a03f662fbf5e8", size = 2921656, upload-time = "2025-11-09T16:38:53.364Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/42/f9/1171d246952382214ff2936dc24a1a2b5b439968a7aeda28d472339b50b4/opentimelineio-0.18.1-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:1798102411fdd7fdace2441925f910b6daa71ca67c29cd523702a5a19e4e1ded", size = 1236369, upload-time = "2025-11-09T16:38:38.444Z" },
+    { url = "https://files.pythonhosted.org/packages/67/b3/bfed144b9d65c710e0023b5ec664aa8cf27a43a6a8e544af18c5ccf3c6e1/opentimelineio-0.18.1-cp312-cp312-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:8ba406c33afc15de91273a06df8b45ecee2a15fa11005be9e2b307f8f53ead8f", size = 775702, upload-time = "2025-11-09T16:38:39.778Z" },
+    { url = "https://files.pythonhosted.org/packages/8f/a9/5fec93c437a92d4dd36470be54327ef5f1f23c2159f696de2797e2a3f727/opentimelineio-0.18.1-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:8f0924f818b496cf771612d489082bdb83f42b6bd97ed06589dd2e2c086742c9", size = 842762, upload-time = "2025-11-09T16:38:41.244Z" },
+    { url = "https://files.pythonhosted.org/packages/6c/24/d6a390f7f9c00b90b068c6f59456ad4d3fd600358728480983d17f6c6ca5/opentimelineio-0.18.1-cp312-cp312-win_amd64.whl", hash = "sha256:f59a24d0be0b1efd70657214c5ef193ee37f5b88948ad603c31218fd910bdd36", size = 608280, upload-time = "2025-11-09T16:38:42.718Z" },
+]
+
+[[package]]
+name = "otio-cmx3600-adapter"
+version = "1.0.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "opentimelineio" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/20/5a/a65b817af6d70a3e8696c81dc0e43242967b2b3ae6100bf0f35f6330e91a/otio_cmx3600_adapter-1.0.0.tar.gz", hash = "sha256:a10cca794617795bbc147d784ec33e6381a57eb6157e87d2b74b65b02516b621", size = 46108, upload-time = "2023-07-07T21:53:12.952Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/8f/b8/e48c78c703ad27d2c3748663717006a23509a15d62ba94689b88dd6bb336/otio_cmx3600_adapter-1.0.0-py3-none-any.whl", hash = "sha256:440ed9d862170d9d03d319a51bf77a19f917b162b73a578e3ebe9a79fa01625b", size = 24829, upload-time = "2023-07-07T21:53:11.399Z" },
+]
+
+[[package]]
+name = "otio-fcp-adapter"
+version = "1.0.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "opentimelineio" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/31/22/2788d6f095154cce77763e400bd28b4e2b2e6eec8a5d6def0d6e42718e72/otio_fcp_adapter-1.0.0.tar.gz", hash = "sha256:38544c1064cc85e169428c8c3436bd7c36b90bad99a253851db130d9d7298ce6", size = 80061, upload-time = "2023-07-07T19:31:32.952Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/45/fe/4a5b261c97352dbd649c8a5ef408877fa21192ca470b23f22d333fc0ec76/otio_fcp_adapter-1.0.0-py3-none-any.whl", hash = "sha256:6a425e3020be590e10c9076ac2aada22c1d5d7799abae9f3fbd51f08e07ffdeb", size = 28281, upload-time = "2023-07-07T19:31:31.429Z" },
+]
+
+[[package]]
+name = "otio-fcpx-xml-adapter"
+version = "1.0.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "opentimelineio" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/bc/df/666dd35fc30afcda85cbe1d4b25b5ac75b9e58ab25fb96c38ce82efd6dac/otio_fcpx_xml_adapter-1.0.0.tar.gz", hash = "sha256:78919c194f078f57ce9a6464c1c607a494499aaab3d8c35159ce5e71d5fcd235", size = 22036, upload-time = "2023-07-07T21:59:50.99Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/a8/1b/ebfc7b8280de2549e89431d78f0d59eeb8bc3e0333a73064492b13b3ac7a/otio_fcpx_xml_adapter-1.0.0-py3-none-any.whl", hash = "sha256:9891fcba190e1a2ebc339d2da42398ce98927dfb0055d57d8b37ea8769477f73", size = 18593, upload-time = "2023-07-07T21:59:49.652Z" },
+]
+
+[[package]]
 name = "packaging"
 version = "26.3"
 source = { registry = "https://pypi.org/simple" }
@@ -536,6 +584,10 @@ dependencies = [
     { name = "mlx" },
     { name = "mlx-audio" },
     { name = "numpy" },
+    { name = "opentimelineio" },
+    { name = "otio-cmx3600-adapter" },
+    { name = "otio-fcp-adapter" },
+    { name = "otio-fcpx-xml-adapter" },
     { name = "pysubs2" },
 ]
 
@@ -551,6 +603,10 @@ requires-dist = [
     { name = "mlx", specifier = "==0.32.4" },
     { name = "mlx-audio", specifier = "==0.6.4" },
     { name = "numpy", specifier = ">=2.2" },
+    { name = "opentimelineio", specifier = "==0.18.1" },
+    { name = "otio-cmx3600-adapter", specifier = "==1.0.0" },
+    { name = "otio-fcp-adapter", specifier = "==1.0.0" },
+    { name = "otio-fcpx-xml-adapter", specifier = "==1.0.0" },
     { name = "pysubs2", specifier = ">=1.8,<1.9" },
 ]
 

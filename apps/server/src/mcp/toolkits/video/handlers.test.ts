@@ -15,6 +15,7 @@ import {
   type EngineJobsEvent,
   EnvironmentId,
   type ExportStartInput,
+  type InterchangeExportInput,
   type MediaFrameInput,
   type MediaProbeResult,
   ProjectId,
@@ -165,7 +166,7 @@ interface Fixture {
   readonly outside: string;
   readonly calls: Array<readonly ["probe", string] | readonly ["frame", MediaFrameInput]>;
   readonly cancelled: Array<string>;
-  readonly exports: Array<ExportStartInput>;
+  readonly exports: Array<ExportStartInput | InterchangeExportInput>;
   readonly engine: { failNextProbe: boolean; modelsReady: boolean };
   readonly started: Array<{ readonly kind: string; readonly projectId: ProjectId | undefined }>;
   readonly documents: Map<ProjectId, EditDocument>;
@@ -303,6 +304,17 @@ const layerFor = (fixture: Fixture, cancelSignal: Deferred.Deferred<string>) => 
         const id = EngineJobId.make(`engine-job-export-${fixture.exports.length}`);
         jobs.push({ ...job(id, input.projectId), kind: "export", stage: "render" });
         return Effect.succeed({ jobId: id, path: "exports/my-reel-20261106-0930.mp4" });
+      }),
+    startInterchange: (input) =>
+      Effect.suspend(() => {
+        fixture.exports.push(input);
+        const id = EngineJobId.make(`engine-job-export-${fixture.exports.length}`);
+        jobs.push({ ...job(id, input.projectId), kind: "export", stage: "timeline" });
+        return Effect.succeed({
+          jobId: id,
+          files: ["exports/my-reel-20261106-0930.edl"],
+          dropped: ["all sound: the clips' own audio, sound effects and music"],
+        });
       }),
   });
   return Layer.mergeAll(
@@ -614,6 +626,7 @@ describe("video toolkit", () => {
           "video_duck_music",
           "video_edit_read",
           "video_export",
+          "video_export_interchange",
           "video_frame",
           "video_import",
           "video_job_cancel",
@@ -645,6 +658,9 @@ describe("video toolkit", () => {
         expect(described.video_canvas).toContain("only if user asks");
         const exportTool = tools.find((tool) => tool.name === "video_export");
         expect(Object.keys(exportTool?.inputSchema.properties ?? {})).toEqual(["captions"]);
+        // S7V-040: user-triggered only, like video_export.
+        expect(described.video_export_interchange).toContain("only if user asks");
+        expect(described.video_export_interchange).toContain("job");
         expect(described.video_transcribe).toContain("Transcribe");
         expect(described.video_transcript_read).toContain("transcript");
         expect(described.video_undo).toMatch(/\bundo\b.*\bedit\b/iu);
@@ -1065,6 +1081,7 @@ describe("video toolkit", () => {
           ["video_job_status", {}],
           ["video_job_cancel", { jobId: "engine-job-1" }],
           ["video_export", {}],
+          ["video_export_interchange", { format: "edl" }],
           ["video_canvas", { ratio: "16:9" }],
           ["video_transcribe", { media: "cam" }],
           ["video_transcript_read", { media: "cam" }],
@@ -1546,6 +1563,41 @@ describe("video toolkit", () => {
       ),
   );
 
+  it.effect("video_export_interchange starts the caller's project's export for editors", () =>
+    withTools(({ fixture, call }) =>
+      Effect.gen(function* () {
+        const started = yield* call(threadA, "video_export_interchange", { format: "edl" });
+        expect(started.isError).toBe(false);
+        // The reply says where the file lands and what does not carry over, as the notice does.
+        expect(started.structuredContent).toEqual({
+          jobId: "engine-job-export-1",
+          files: ["exports/my-reel-20261106-0930.edl"],
+          dropped: ["all sound: the clips' own audio, sound effects and music"],
+        });
+        expect(fixture.exports).toEqual([{ projectId: projectA, format: "edl" }]);
+        const followed = yield* call(threadA, "video_job_status", { jobId: "engine-job-export-1" });
+        expect(followed.structuredContent).toMatchObject({
+          jobs: [{ id: "engine-job-export-1", kind: "export", projectId: projectA }],
+        });
+        const ass = yield* call(threadA, "video_export_interchange", {
+          format: "fcpxml",
+          captions: "ass",
+        });
+        expect(ass.isError).toBe(false);
+        expect(fixture.exports[1]).toEqual({
+          projectId: projectA,
+          format: "fcpxml",
+          captions: "ass",
+        });
+        const unknown = yield* call(threadA, "video_export_interchange", { format: "aaf" }).pipe(
+          Effect.flip,
+        );
+        expect(String(unknown)).toContain("Invalid parameters");
+        expect(fixture.exports).toHaveLength(2);
+      }),
+    ),
+  );
+
   it.effect("should refuse video_export outside a video project", () =>
     withTools(({ fixture, call }) =>
       Effect.gen(function* () {
@@ -1641,6 +1693,7 @@ it.effect("should hide tools without the video capability", () =>
         "video_duck_music",
         "video_edit_read",
         "video_export",
+        "video_export_interchange",
         "video_frame",
         "video_import",
         "video_job_cancel",

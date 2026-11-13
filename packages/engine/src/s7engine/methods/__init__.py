@@ -7,7 +7,7 @@ from __future__ import annotations
 import os
 
 from ..rpc import Method
-from . import captions, export, filmstrip, frame, loudness, peaks, ping, probe, proxy, silence, thumbnail, transcribe
+from . import captions, export, filmstrip, frame, interchange, loudness, peaks, ping, probe, proxy, silence, thumbnail, transcribe
 
 
 def all_methods() -> list[Method]:
@@ -16,6 +16,8 @@ def all_methods() -> list[Method]:
         probe.METHOD,
         frame.METHOD,
         export.METHOD,
+        interchange.CHECK,
+        interchange.EXPORT,
         captions.METHOD,
         captions.PREVIEW_METHOD,
         *transcribe.METHODS,

@@ -475,11 +475,12 @@ wire them in:
 - `server.ts` builds the edit, media, silence-cut, caption, sound (S7V-036), clip placement
   (S7V-093), zoom (S7V-037), export, transcript and engine layers above the core runtime, so WebSocket handlers, agent tools and the asset route
   share one instance of each.
-- `ws.ts` adds thin handlers for `edit.*`, `media.*`, `export.*`, `transcript.get` and
-  `transcribe.*`.
+- `ws.ts` adds thin handlers for `edit.*`, `media.*`, `export.*` (including S7V-040's
+  `export.interchange`, "Export for editors"), `transcript.get` and `transcribe.*`.
 - `observability/RpcInstrumentation.ts` gives these methods the `engine`, `edit` and `media`
   metric groups; `auth/RpcAuthorization.ts` and `contracts/clientRpcPermissions.ts` give reads
-  read scope and changes operate scope.
+  read scope and changes operate scope. S7V-040 adds `export.interchange` to the `engine` group and
+  to operate scope, with one assertion in `auth/RpcAuthorization.test.ts`.
 - `packages/contracts/src/rpc.ts` (the sprint's RPC definitions and `WS_METHODS` entries) and
   `packages/contracts/src/index.ts` (re-exports of the new contract modules) are the biggest
   upstream-file changes, and the likeliest merge-conflict spots in an upstream merge.

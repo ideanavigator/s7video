@@ -82,6 +82,9 @@ describe("RPC authorization scopes", () => {
   it("lets readers see an export's status but only operators start one", () => {
     expect(requiredScopeForRpcMethod(WS_METHODS.exportStatus)).toBe(AuthOrchestrationReadScope);
     expect(requiredScopeForRpcMethod(WS_METHODS.exportStart)).toBe(AuthOrchestrationOperateScope);
+    expect(requiredScopeForRpcMethod(WS_METHODS.exportInterchange)).toBe(
+      AuthOrchestrationOperateScope,
+    );
   });
 
   it("lets readers see transcripts but only operators transcribe or download models", () => {

@@ -76,6 +76,10 @@ export const editEnvironment = {
     label: "environment-data:export:start",
     tag: WS_METHODS.exportStart,
   }),
+  exportInterchange: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "environment-data:export:interchange",
+    tag: WS_METHODS.exportInterchange,
+  }),
   cancelJob: createEnvironmentRpcCommand(connectionAtomRuntime, {
     label: "environment-data:engine:cancel",
     tag: WS_METHODS.engineJobsCancel,

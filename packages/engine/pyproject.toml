@@ -13,6 +13,10 @@ dependencies = [
   "mlx-audio==0.6.4",
   "huggingface_hub>=2.4,<3",
   "numpy>=2.2",
+  "opentimelineio==0.18.1",
+  "otio-fcpx-xml-adapter==1.0.0",
+  "otio-fcp-adapter==1.0.0",
+  "otio-cmx3600-adapter==1.0.0",
 ]
 
 [dependency-groups]

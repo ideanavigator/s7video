@@ -11,6 +11,8 @@ import {
   EngineJob,
   EngineJobId,
   EngineJobState,
+  InterchangeCaptions,
+  InterchangeFormat,
   MediaProbeResult,
   OrchestratorMcpFailure,
 } from "@t3tools/contracts";
@@ -161,6 +163,25 @@ const VideoExportTool = Tool.make("video_export", {
   dependencies: [...dependencies, ExportService.ExportService],
 })
   .annotate(Tool.Title, "Export video")
+  .annotateMerge(videoAnnotations(false));
+
+// S7V-040: user-triggered only, like video_export. `dropped` says in plain words what the format
+// cannot carry; captions go in a file beside it, never in the timeline.
+const VideoExportInterchangeTool = Tool.make("video_export_interchange", {
+  description: "Export video edit for another editor only if user asks. Returns a job.",
+  parameters: Schema.Struct({
+    format: InterchangeFormat,
+    captions: Schema.optional(InterchangeCaptions),
+  }),
+  success: Schema.Struct({
+    jobId: EngineJobId,
+    files: Schema.Array(Schema.String),
+    dropped: Schema.Array(Schema.String),
+  }),
+  failure: OrchestratorMcpFailure,
+  dependencies: [...dependencies, ExportService.ExportService],
+})
+  .annotate(Tool.Title, "Export for editors")
   .annotateMerge(videoAnnotations(false));
 
 // Starts a job (S7V-026); the agent follows it with video_job_status. A cached clip answers at once.
@@ -427,6 +448,7 @@ export const VideoStandardToolkit = Toolkit.make(
   VideoJobStatusTool,
   VideoJobCancelTool,
   VideoExportTool,
+  VideoExportInterchangeTool,
   VideoTranscribeTool,
   VideoTranscriptReadTool,
   VideoUndoTool,
@@ -454,6 +476,7 @@ export const VideoToolkit = Toolkit.make(
   VideoJobStatusTool,
   VideoJobCancelTool,
   VideoExportTool,
+  VideoExportInterchangeTool,
   VideoTranscribeTool,
   VideoTranscriptReadTool,
   VideoUndoTool,

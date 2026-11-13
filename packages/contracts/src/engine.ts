@@ -219,6 +219,21 @@ export const ExportRenderResult = Schema.Struct({
 });
 export type ExportRenderResult = typeof ExportRenderResult.Type;
 
+/** `interchange.check` (S7V-040): what the export would not carry, and the caption chunks it has. */
+export const InterchangeCheckResult = Schema.Struct({
+  dropped: Schema.Array(Schema.String),
+  captions: NonNegativeInt,
+});
+export type InterchangeCheckResult = typeof InterchangeCheckResult.Type;
+
+/** `interchange.export`: the files written (absolute), the timeline file first. */
+export const InterchangeEngineResult = Schema.Struct({
+  files: Schema.Array(TrimmedNonEmptyString),
+  dropped: Schema.Array(Schema.String),
+  captions: NonNegativeInt,
+});
+export type InterchangeEngineResult = typeof InterchangeEngineResult.Type;
+
 /** Every engine method's response schema, for checks that apply to all of them. */
 export const ENGINE_RESPONSE_SCHEMAS = {
   "engine.ping": EnginePingResult,
@@ -231,6 +246,8 @@ export const ENGINE_RESPONSE_SCHEMAS = {
   "media.filmstrip": MediaFilmstripResult,
   "job.cancel": EngineJobCancelResult,
   "export.render": ExportRenderResult,
+  "interchange.check": InterchangeCheckResult,
+  "interchange.export": InterchangeEngineResult,
 } as const;
 
 export const ENGINE_RPC_ERROR_CODES = {
@@ -422,6 +439,31 @@ export const ExportStartInput = Schema.Struct({
 });
 export type ExportStartInput = typeof ExportStartInput.Type;
 
+/** "Export for editors" (S7V-040): the timeline file's format. */
+export const InterchangeFormat = Schema.Literals(["otio", "fcpxml", "fcp7xml", "edl"]);
+export type InterchangeFormat = typeof InterchangeFormat.Type;
+
+/** The captions file written beside it; SRT unless asked (PO, 2026-11-08). */
+export const InterchangeCaptions = Schema.Literals(["srt", "ass", "none"]);
+export type InterchangeCaptions = typeof InterchangeCaptions.Type;
+
+export const InterchangeExportInput = Schema.Struct({
+  projectId: ProjectId,
+  format: InterchangeFormat,
+  captions: Schema.optional(InterchangeCaptions),
+  /** Only list what would not carry over, for the notice before the export; starts nothing. */
+  check: Schema.optional(Schema.Boolean),
+});
+export type InterchangeExportInput = typeof InterchangeExportInput.Type;
+
+/** Paths are project-relative (`exports/…`); no job and no files for a check. */
+export const InterchangeExportResult = Schema.Struct({
+  jobId: Schema.optional(EngineJobId),
+  files: Schema.Array(TrimmedNonEmptyString),
+  dropped: Schema.Array(Schema.String),
+});
+export type InterchangeExportResult = typeof InterchangeExportResult.Type;
+
 export const ExportStartResult = Schema.Struct({
   jobId: EngineJobId,
   /** Where the video will land, relative to the project folder (`exports/…mp4`). */
@@ -451,6 +493,9 @@ export const ExportStatus = Schema.Struct({
   path: TrimmedNonEmptyString,
   state: EngineJobState,
   result: Schema.optional(ExportResult),
+  /** "Export for editors" (S7V-040): every file it writes, `path` first, and what did not carry over. */
+  files: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
+  dropped: Schema.optional(Schema.Array(Schema.String)),
   /** The plain reason a failed export stopped. */
   message: Schema.optional(Schema.String),
 });

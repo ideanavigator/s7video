@@ -93,6 +93,9 @@ from; the per-ticket entries and how this file is compiled are in
 - Ask the assistant to zoom in on a moment and the export tightens on your face there. Choose from
   four caption looks we designed, each with a preview next to Export; the look you pick shows over
   the player and in the export. For now the zoom shows only in the exported video. (S7V-037)
+- Export an edit for Final Cut Pro, Premiere, DaVinci Resolve or as an EDL, with captions as a
+  separate SRT or ASS file beside it. Every cut lands on the same frame, and before it exports the
+  app says in plain words what won't carry over, such as volume changes and zooms. (S7V-040)
 
 ### Changed
 
