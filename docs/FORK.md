@@ -491,6 +491,9 @@ The Editor is the main view of a video project (S7V-076). These upstream files h
 - `ChatMarkdown.tsx` and `chat/ChatMarkdownMedia.tsx` send a link to a clip in Media to the
   Editor's player (`openMediaLinkInEditor`) before opening the file viewer.
 - `chat/ChatRightPanel.tsx` and `hooks/usePreviewPanelInlineSize.ts` add `defaultWidthFraction`.
+- `ChatMarkdown.browser.test.tsx` adds one case (S7V-099): the agent's caption looks reply, a
+  markdown image per look of its preview's path in the project, draws each through the host image
+  route. `ChatMarkdown.tsx` itself is unchanged.
 
 ## Edit, export and transcription wiring (S7V-024 to S7V-028, S7V-046)
 
@@ -521,10 +524,10 @@ small wiring as the other `edit.*` methods: `edit.versions`, `edit.versionGet`, 
 `RpcInstrumentation.ts` also puts `edit.historyClean` and `edit.historyDismiss` (S7V-050) in the
 `edit` group. The caption stills (S7V-075) get the same wiring: `captions.stills` in
 `contracts/rpc.ts`, a thin handler in `ws.ts`, read scope in `auth/RpcAuthorization.ts` and the
-`engine` group in `observability/RpcInstrumentation.ts`. The caption looks (S7V-037) add two more
-the same way: `captions.presets` (read scope, `engine` group) and `captions.setStyle` (operate
-scope in `contracts/clientRpcPermissions.ts`, `edit` group), and `ws.test.ts` mocks the caption
-track service its handlers now read.
+`engine` group in `observability/RpcInstrumentation.ts`. The caption looks (S7V-037) added
+`captions.presets` and `captions.setStyle` the same way for the Editor's look strip; S7V-099
+removed the strip (captions are shaped in the chat) and took both methods back out of those five
+files. `ws.test.ts` still mocks the caption track service the server layer builds.
 
 ## Edit control files are write-protected (S7V-077)
 
