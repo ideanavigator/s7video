@@ -37,8 +37,10 @@ OTIO is an export format only (ADR-005); nothing reads these files back into s7v
 - **Lost in Premiere and Resolve, and listed (S7V-097).** Neither editor reads another app's OTIO
   metadata, and OTIO's own schema has no field for gain, fades, ducking, zoom, the canvas or a
   caption look. So OTIO lists the same effects as XML, plus overlay placement and caption clips
-  that show no words. Markers, their colours and muted tracks use OTIO's own fields and aren't
-  listed.
+  that show no words. The caption look is listed even with an ASS file: Premiere doesn't import
+  ASS and Resolve doesn't apply its styles. Muted tracks are written turned off (`enabled`), which
+  neither editor is documented to read, so they're listed too. Markers and their colours use
+  OTIO's own fields, which Premiere reads, and aren't listed.
 - **FCPXML, FCP7 XML and EDL** get `otio_map.for_editor`'s timeline: what plays, and nothing the
   adapters can't write.
   - **Left out:** caption and overlay tracks (both crash the XML writers), muted tracks, and

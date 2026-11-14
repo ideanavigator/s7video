@@ -9,7 +9,7 @@
         "zooms",
         "the frame shape (1080×1920): the editor opens its own default size",
         "fitting each clip to the frame (fill and crop)",
-        "the caption look (an SRT file has no style; choose ASS to keep it)"
+        "the caption look (Premiere and Resolve don't read caption styles; export the video to keep it)"
       ],
       "fcpxml": [
         "volume changes and fades",
@@ -51,7 +51,7 @@
         "zooms",
         "the frame shape (1080×1920): the editor opens its own default size",
         "fitting each clip to the frame (fill and crop)",
-        "the caption look (an SRT file has no style; choose ASS to keep it)"
+        "the caption look (Premiere and Resolve don't read caption styles; export the video to keep it)"
       ],
       "fcpxml": [
         "volume changes and fades",

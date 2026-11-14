@@ -37,7 +37,7 @@ const INTERCHANGE_CHOICES: ReadonlyArray<{
   {
     format: "otio",
     title: "Premiere or DaVinci Resolve",
-    detail: "OpenTimelineIO, keeps the most",
+    detail: "OpenTimelineIO, keeps markers and every track",
   },
   { format: "fcp7xml", title: "Final Cut 7 and older editors", detail: "FCP7 XML" },
   { format: "edl", title: "EDL", detail: "CMX 3600, picture cuts only" },

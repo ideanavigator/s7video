@@ -669,7 +669,7 @@ describe("EditorPanel", () => {
       "music dipping under speech (ducking)",
       "zooms",
       "the words on the timeline's caption clips (the captions file beside it has them)",
-      "the caption look (an SRT file has no style; choose ASS to keep it)",
+      "the caption look (Premiere and Resolve don't read caption styles; export the video to keep it)",
     ];
     commands.interchange.mockResolvedValueOnce({
       _tag: "Success",

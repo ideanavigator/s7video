@@ -407,7 +407,11 @@ def dropped(edit: dict[str, Any], fmt: str, captions: str, caption_chunks: int, 
         for item in _all_items(edit, "video")
     ):
         out.append("fitting each clip to the frame (fill and crop)")
-    if fmt != "otio":
+    if fmt == "otio":
+        # Written turned off (``enabled``), which neither editor is documented to read.
+        if any(track.get("muted") and track["items"] for track in edit["tracks"] if track["kind"] != "caption"):
+            out.append("muted tracks (they're in the file turned off; mute them again in the editor if they play)")
+    else:
         if edit["markers"]:
             out.append("marker colours")
             if fmt != "fcp7xml" and (gaps := _markers_on_gaps(edit)):
@@ -424,7 +428,10 @@ def dropped(edit: dict[str, Any], fmt: str, captions: str, caption_chunks: int, 
         )
     elif caption_chunks and fmt != "otio":
         out.append("captions on the timeline (they are in the captions file beside it)" if captions != "none" else "captions (no captions file chosen)")
-    if caption_chunks and captions == "srt":
+    if fmt == "otio" and (caption_chunks or _all_items(edit, "caption")):
+        # Premiere doesn't import ASS, and Resolve doesn't apply its styles.
+        out.append("the caption look (Premiere and Resolve don't read caption styles; export the video to keep it)")
+    elif caption_chunks and captions == "srt":
         out.append("the caption look (an SRT file has no style; choose ASS to keep it)")
     if caption_chunks and captions == "ass":
         out.append("the caption font, Inter Bold, is named in the ASS file but not included")
