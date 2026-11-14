@@ -302,6 +302,7 @@ const VideoAssembleTool = Tool.make("video_assemble", {
   success: Schema.Struct({
     revision: Schema.Int,
     itemIds: Schema.Array(Schema.String),
+    message: Schema.optional(Schema.String),
     cleanup: Cleanup,
   }),
   failure: OrchestratorMcpFailure,

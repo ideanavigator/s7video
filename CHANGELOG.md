@@ -187,6 +187,10 @@ from; the per-ticket entries and how this file is compiled are in
 - A second, tighter silence cut no longer fails with a duplicate id, and the agent waits for a
   first transcription to finish instead of stopping halfway, and says so if it failed or was
   stopped. (S7V-058)
+- Exporting for Premiere or DaVinci Resolve (OTIO) now lists what won't show up there, such as
+  zooms, volume changes, music dips and the caption look, instead of saying everything carries
+  over. After a cut or an insert in an edit with music, the assistant re-fits the music dips, and
+  asking it to cut less no longer undoes a later change such as a zoom. (S7V-097)
 
 ### Security
 

@@ -26,6 +26,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 
+import { RE_DUCK_REMINDER } from "../../../edit/audioPlacement.ts";
 import * as AudioTrackService from "../../../edit/AudioTrackService.ts";
 import { CANVAS_FOR_RATIO } from "../../../edit/canvasForClip.ts";
 import * as CaptionTrackService from "../../../edit/CaptionTrackService.ts";
@@ -686,9 +687,10 @@ const handlers = {
           { origin: "agent", reply: project.reply },
         )
         .pipe(
-          Effect.map(({ snapshot, itemIds }) => ({
+          Effect.map(({ snapshot, itemIds, reDuck }) => ({
             revision: snapshot.revision,
             itemIds,
+            ...(reDuck ? { message: RE_DUCK_REMINDER } : {}),
             ...cleanupOf(snapshot),
           })),
           Effect.mapError(

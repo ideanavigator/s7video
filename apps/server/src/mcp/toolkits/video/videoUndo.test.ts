@@ -1037,6 +1037,67 @@ describe("video_undo and video_redo", () => {
     ),
   );
 
+  // S7V-097: an insert before the end moves the speech but not the duck ranges.
+  it.effect("assemble insert reply asks to re-duck", () =>
+    withProject(({ root, thread, edits, call }) =>
+      Effect.gen(function* () {
+        NodeFS.mkdirSync(NodePath.join(root, "assets"), { recursive: true });
+        NodeFS.writeFileSync(NodePath.join(root, "assets", "cam.mp4"), "cam");
+        const song = {
+          id: "song",
+          kind: "audio",
+          path: "assets/song.mp3",
+          fingerprint: { sha256: "cd".repeat(32), size: 2048 },
+          probe: { durationFrames: 600, hasVideo: false, hasAudio: true },
+        } as const;
+        const music: EditOp = {
+          _tag: "addTrack",
+          track: {
+            kind: "music",
+            id: "M1",
+            duck: { depthDb: -12, attackFrames: 5, releaseFrames: 12, ranges: [{ start: 30, end: 60 }] },
+            items: [{ id: "bed", media: "song", start: 0, duration: 60, in: 0, gainDb: -18 }],
+          },
+        };
+        const current = yield* edits.read(thread.projectId);
+        yield* edits.apply(
+          thread.projectId,
+          [...setup, { _tag: "putMedia", media: song }, keep([[0, 30], [100, 30]]), music],
+          { origin: "agent", baseRevision: current.revision },
+        );
+        const assemble = (at?: number) =>
+          call("video_assemble", {
+            items: [{ mediaId: "cam", in: 500, duration: 10 }],
+            ...(at === undefined ? {} : { at }),
+          }).pipe(
+            Effect.map((result) => {
+              expect(result.isError, textOf(result).join("")).toBe(false);
+              return result.structuredContent as { message?: string };
+            }),
+          );
+
+        const before = readFile(root, "edit.json");
+        expect((yield* assemble(30)).message).toBe(
+          "The music dips are still on their old frames: run video_duck_music again.",
+        );
+        yield* call("video_undo");
+        expect(readFile(root, "edit.json")).toBe(before);
+        // At the end nothing moves, so the dips still fit.
+        expect((yield* assemble()).message).toBeUndefined();
+        yield* call("video_undo");
+
+        // No re-duck line without ducked music.
+        const plain = yield* edits.read(thread.projectId);
+        yield* edits.apply(
+          thread.projectId,
+          [{ _tag: "setTrackProps", trackId: "M1", props: { duck: null } }],
+          { origin: "agent", baseRevision: plain.revision },
+        );
+        expect((yield* assemble(30)).message).toBeUndefined();
+      }),
+    ),
+  );
+
   // Round-2 review: "make it a reel and remove the silences" on a wide clip stays a reel.
   it.effect("video_canvas on the default shape still keeps the first cut from reshaping", () =>
     withProject(

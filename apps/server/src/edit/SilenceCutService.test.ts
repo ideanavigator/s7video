@@ -244,6 +244,62 @@ describe("SilenceCutService", () => {
     ),
   );
 
+  // S7V-097: duck ranges stay on their frames, so a cut under ducked music says to duck again.
+  describe("with music", () => {
+    const song = {
+      id: "song",
+      kind: "audio",
+      path: "assets/song.mp3",
+      fingerprint: { sha256: "cd".repeat(32), size: 2048 },
+      probe: { durationFrames: FRAMES, hasVideo: false, hasAudio: true },
+    } as const;
+    const duck = { depthDb: -12, attackFrames: 5, releaseFrames: 12, ranges: [{ start: 30, end: 90 }] };
+    const withMusic = (ducked: boolean): ReadonlyArray<EditOp> => [
+      { _tag: "putMedia", media: camera },
+      { _tag: "putMedia", media: song },
+      {
+        _tag: "addTrack",
+        track: {
+          kind: "music",
+          id: "M1",
+          ...(ducked ? { duck } : {}),
+          items: [{ id: "bed", media: "song", start: 0, duration: FRAMES, in: 0, gainDb: -18 }],
+        },
+      },
+    ];
+
+    it.effect("silence cut reply asks to re-duck when music is ducked", () =>
+      withProject(
+        ({ projectId, silences }) =>
+          Effect.gen(function* () {
+            const cut = yield* silences.removeSilences({ projectId });
+            assert.isTrue(cut.changed);
+            assert.strictEqual(
+              cut.message,
+              "Removed 3.4 s in 4 cuts. This only cuts more; it never restores earlier cuts. The music dips are still on their old frames: run video_duck_music again.",
+            );
+            // Nothing new cut: the dips still match, so no reminder.
+            const again = yield* silences.removeSilences({ projectId });
+            assert.isFalse(again.changed);
+            assert.notInclude(again.message, "video_duck_music");
+          }),
+        withMusic(true),
+      ),
+    );
+
+    it.effect("no re-duck line without ducked music", () =>
+      withProject(
+        ({ projectId, silences }) =>
+          Effect.gen(function* () {
+            const cut = yield* silences.removeSilences({ projectId });
+            assert.isTrue(cut.changed);
+            assert.notInclude(cut.message, "video_duck_music");
+          }),
+        withMusic(false),
+      ),
+    );
+  });
+
   it.effect("a tighter second pass cuts more with unique ids and never restores a cut", () =>
     withProject(({ projectId, root, scenario, edits, silences }) =>
       Effect.gen(function* () {

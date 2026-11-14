@@ -27,7 +27,15 @@ The user asked you to cut the pauses from their clip. Do it with the video tools
    - a named clip: `media`.
 
    If the clip was already cut and the user wants pauses back ("looser", "keep the pause
-   after ..."), call `video_undo` first, then `video_remove_silences` with the new setting.
+   after ..."), call `video_versions`. Only when the newest version's `change` is that cut and
+   nothing more, call `video_undo`, then `video_remove_silences` with the new setting. If anything
+   came after the cut (a zoom, a caption look, sound), never undo: that takes out the newest
+   change, not the cut. Tell the user that going back to before the cut also takes out those later changes, and
+   ask. If they agree, call `video_version_restore` with the version just before the cut, then
+   `video_remove_silences` with the new setting, then make the later changes again.
+
+   If its result says to run `video_duck_music` again, do it, so the music dips under the new
+   speech.
 
    If it says the sound is still being measured, call `video_job_status` with that `jobId` and
    `waitSeconds: 30` until the job ends. If it `succeeded`, call `video_remove_silences` again;
@@ -40,7 +48,8 @@ The user asked you to cut the pauses from their clip. Do it with the video tools
    own shape.
 
 4. Reply in one or two plain sentences: how many seconds you removed and how many cuts you made,
-   taken from the tool's result. If the result says a pause you asked to keep was cut by an
+   taken from the tool's result, and say the music dips were fitted to the new cut if you ran
+   `video_duck_music`. If the result says a pause you asked to keep was cut by an
    earlier edit, tell the user it stays cut and offer to undo back to before that cut, then ask
    again. Describe a pause by the word next to it or in seconds, never by frame numbers. When
    the result says `changed: true`, end with: "Say undo to put it back." When nothing new was
