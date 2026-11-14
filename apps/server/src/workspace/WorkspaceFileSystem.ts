@@ -22,6 +22,12 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
 import { makeIsServerInternalPath } from "../auth/serverInternalPaths.ts";
+import {
+  EDIT_FILE,
+  HISTORY_DIR,
+  isVideoProjectFolder,
+  PROJECT_FILE,
+} from "../edit/EditProjectLayout.ts";
 import * as KnownWorkspaces from "./KnownWorkspaces.ts";
 import * as WorkspaceEntries from "./WorkspaceEntries.ts";
 import * as WorkspacePaths from "./WorkspacePaths.ts";
@@ -34,6 +40,11 @@ const isGitMetadataName = (segment: string) => {
   const name = (segment.split(":")[0] ?? "").replace(/[. ]+$/, "").toUpperCase();
   return name === ".GIT" || name === "GIT~1";
 };
+
+// S7V-077: the edit service owns these files. Compared the same way as git's names.
+const foldedName = (segment: string) =>
+  (segment.split(":")[0] ?? "").replace(/[. ]+$/, "").toLowerCase();
+const EDIT_CONTROL_FILES = new Set([EDIT_FILE, PROJECT_FILE]);
 
 export class WorkspaceFileSystemOperationError extends Schema.TaggedError<WorkspaceFileSystemOperationError>()(
   "WorkspaceFileSystemOperationError",
@@ -100,9 +111,23 @@ export class WorkspaceBinaryFileError extends Schema.TaggedError<WorkspaceBinary
   }
 }
 
+export class WorkspaceProtectedFileError extends Schema.TaggedError<WorkspaceProtectedFileError>()(
+  "WorkspaceProtectedFileError",
+  {
+    workspaceRoot: Schema.String,
+    relativePath: Schema.String,
+    resolvedPath: Schema.String,
+  },
+) {
+  override get message(): string {
+    return "This file is managed by the Editor. Change your edit in the Editor or ask the assistant.";
+  }
+}
+
 export const WorkspaceFileSystemError = Schema.Union([
   WorkspaceFileSystemOperationError,
   WorkspaceFilePathEscapeError,
+  WorkspaceProtectedFileError,
   WorkspacePathNotFileError,
   WorkspaceBinaryFileError,
 ]);
@@ -458,6 +483,15 @@ export const make = Effect.gen(function* () {
     );
   });
 
+  // A video project's edit.json and project.json, and its history store, change only through the
+  // edit service, so S7V-054's outside-edit guard can trust the history (S7V-077).
+  const isEditControlPath = (absolutePath: string): Effect.Effect<boolean> => {
+    const segments = absolutePath.split(path.sep).map(foldedName);
+    if (segments.includes(HISTORY_DIR)) return Effect.succeed(true);
+    if (!EDIT_CONTROL_FILES.has(segments.at(-1) ?? "")) return Effect.succeed(false);
+    return isVideoProjectFolder(fileSystem)(path.dirname(absolutePath));
+  };
+
   // Resolve existing ancestors and reject dangling links so creation cannot follow symlinks outside root.
   const resolveWriteTarget = Effect.fn("WorkspaceFileSystem.resolveWriteTarget")(function* (
     input: ProjectWriteFileInput,
@@ -534,6 +568,13 @@ export const make = Effect.gen(function* () {
         workspaceRoot: input.cwd,
         relativePath: input.relativePath,
         resolvedWorkspaceRoot: realWorkspaceRoot,
+        resolvedPath: realTargetPath,
+      });
+    }
+    if ((yield* isEditControlPath(realTargetPath)) || (yield* isEditControlPath(namedTargetPath))) {
+      return yield* new WorkspaceProtectedFileError({
+        workspaceRoot: input.cwd,
+        relativePath: input.relativePath,
         resolvedPath: realTargetPath,
       });
     }

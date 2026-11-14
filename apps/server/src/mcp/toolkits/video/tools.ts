@@ -4,11 +4,15 @@
 // and descriptions say what they read: video, clip, frame, edit, job. Keep them short; every byte
 // is sent with each turn (AgentContextBudget.test.ts).
 import {
+  CaptionPresetId,
   EditAspectRatio,
   EditRational,
+  EditVersionAuthor,
   EngineJob,
   EngineJobId,
   EngineJobState,
+  InterchangeCaptions,
+  InterchangeFormat,
   MediaProbeResult,
   OrchestratorMcpFailure,
 } from "@t3tools/contracts";
@@ -19,9 +23,12 @@ import * as Schema from "effect/Schema";
 import { McpSchema, Tool, Toolkit } from "effect/ai";
 
 import * as ServerConfig from "../../../config.ts";
+import * as AudioTrackService from "../../../edit/AudioTrackService.ts";
 import * as CaptionTrackService from "../../../edit/CaptionTrackService.ts";
+import * as ClipPlacementService from "../../../edit/ClipPlacementService.ts";
 import * as EditDocumentService from "../../../edit/EditDocumentService.ts";
 import * as SilenceCutService from "../../../edit/SilenceCutService.ts";
+import * as ZoomService from "../../../edit/ZoomService.ts";
 import * as EngineService from "../../../engine/EngineService.ts";
 import * as ExportService from "../../../export/ExportService.ts";
 import * as MediaLibraryService from "../../../media/MediaLibraryService.ts";
@@ -158,6 +165,25 @@ const VideoExportTool = Tool.make("video_export", {
   .annotate(Tool.Title, "Export video")
   .annotateMerge(videoAnnotations(false));
 
+// S7V-040: user-triggered only, like video_export. `dropped` says in plain words what the format
+// cannot carry; captions go in a file beside it, never in the timeline.
+const VideoExportInterchangeTool = Tool.make("video_export_interchange", {
+  description: "Export video edit for another editor only if user asks. Returns a job.",
+  parameters: Schema.Struct({
+    format: InterchangeFormat,
+    captions: Schema.optional(InterchangeCaptions),
+  }),
+  success: Schema.Struct({
+    jobId: EngineJobId,
+    files: Schema.Array(Schema.String),
+    dropped: Schema.Array(Schema.String),
+  }),
+  failure: OrchestratorMcpFailure,
+  dependencies: [...dependencies, ExportService.ExportService],
+})
+  .annotate(Tool.Title, "Export for editors")
+  .annotateMerge(videoAnnotations(false));
+
 // Starts a job (S7V-026); the agent follows it with video_job_status. A cached clip answers at once.
 const VideoTranscribeTool = Tool.make("video_transcribe", {
   description: "Transcribe a video clip's speech. Returns jobId, or cached.",
@@ -279,7 +305,7 @@ const VideoAssembleTool = Tool.make("video_assemble", {
     cleanup: Cleanup,
   }),
   failure: OrchestratorMcpFailure,
-  dependencies,
+  dependencies: [...dependencies, ClipPlacementService.ClipPlacementService],
 })
   .annotate(Tool.Title, "Assemble clips")
   .annotateMerge(videoAnnotations(false));
@@ -295,6 +321,125 @@ const VideoAddCaptionsTool = Tool.make("video_add_captions", {
   .annotate(Tool.Title, "Add captions")
   .annotateMerge(videoAnnotations(false));
 
+// S7V-036: user-triggered only. `at` is a clip frame as video_transcript_read shows it, mapped
+// through the edit; `clip` names that clip when the edit has several. One checkpoint.
+const VideoPlaceAudioTool = Tool.make("video_place_audio", {
+  description: "Add SFX or music to video only if user asks. at: clip frame",
+  parameters: Schema.Struct({
+    media: Schema.String,
+    at: Schema.optional(Schema.Int),
+    clip: Schema.optional(Schema.String),
+    track: Schema.optional(Schema.Literals(["sfx", "music"])),
+    gainDb: Schema.optional(Schema.Finite),
+  }),
+  success: Schema.Struct({
+    revision: Schema.Int,
+    item: Schema.Struct({
+      id: Schema.String,
+      trackId: Schema.String,
+      start: Schema.Int,
+      duration: Schema.Int,
+      gainDb: Schema.Number,
+    }),
+    message: Schema.String,
+    cleanup: Cleanup,
+  }),
+  failure: OrchestratorMcpFailure,
+  dependencies: [...dependencies, AudioTrackService.AudioTrackService],
+})
+  .annotate(Tool.Title, "Place sound")
+  .annotateMerge(videoAnnotations(false));
+
+// S7V-036: user-triggered only. Fixed dips under the transcript's speech; run again after a cut.
+const VideoDuckMusicTool = Tool.make("video_duck_music", {
+  description: "Dip video music under speech only if user asks.",
+  parameters: Schema.Struct({ depthDb: Schema.optional(Schema.Finite) }),
+  success: Schema.Struct({
+    revision: Schema.Int,
+    ranges: Schema.Int,
+    message: Schema.String,
+    cleanup: Cleanup,
+  }),
+  failure: OrchestratorMcpFailure,
+  dependencies: [...dependencies, AudioTrackService.AudioTrackService],
+})
+  .annotate(Tool.Title, "Duck music")
+  .annotateMerge(videoAnnotations(false));
+
+// S7V-070: `version` is v12, 12 or the version's name (its tag in the Versions tab).
+const VersionLine = Schema.Struct({
+  n: Schema.Int,
+  tag: Schema.optional(Schema.String),
+  author: EditVersionAuthor,
+  at: Schema.String,
+  change: Schema.String,
+  main: Schema.optional(Schema.Boolean),
+});
+
+const VideoVersionsTool = Tool.make("video_versions", {
+  description: "List video edit versions, or one version's details (v12 or name).",
+  parameters: Schema.Struct({ version: Schema.optional(Schema.String) }),
+  success: Schema.Struct({
+    versions: Schema.optional(Schema.Array(VersionLine)),
+    version: Schema.optional(Schema.Struct({ ...VersionLine.fields, details: Schema.String })),
+  }),
+  failure: OrchestratorMcpFailure,
+  dependencies,
+})
+  .annotate(Tool.Title, "List versions")
+  .annotateMerge(READS);
+
+// S7V-070: S7V-069's make-current. Adds a version "Restored from vN"; never deletes or renumbers.
+const VideoVersionRestoreTool = Tool.make("video_version_restore", {
+  description: "Make a video edit version current (v12 or name). Use this, not git.",
+  parameters: Schema.Struct({ version: Schema.String }),
+  success: Schema.Struct({
+    revision: Schema.Int,
+    version: Schema.optional(Schema.Int),
+    message: Schema.String,
+    cleanup: Cleanup,
+  }),
+  failure: OrchestratorMcpFailure,
+  dependencies,
+})
+  .annotate(Tool.Title, "Restore version")
+  .annotateMerge(videoAnnotations(false));
+
+// S7V-037: user-triggered only. `range` is clip frames as video_transcript_read shows them, mapped
+// through the edit; `clip` names that clip when the edit has several. Splits and zooms in one checkpoint.
+const VideoZoomTool = Tool.make("video_zoom", {
+  description: "Zoom in on video only if user asks. range: clip frames 9-30",
+  parameters: Schema.Struct({
+    range: Schema.String,
+    clip: Schema.optional(Schema.String),
+    scale: Schema.optional(Schema.Finite),
+    anchorX: Schema.optional(Schema.Finite),
+    anchorY: Schema.optional(Schema.Finite),
+  }),
+  success: Schema.Struct({
+    revision: Schema.Int,
+    items: Schema.Int,
+    message: Schema.String,
+    cleanup: Cleanup,
+  }),
+  failure: OrchestratorMcpFailure,
+  dependencies: [...dependencies, ZoomService.ZoomService],
+})
+  .annotate(Tool.Title, "Zoom in")
+  .annotateMerge(videoAnnotations(false));
+
+// S7V-037: user-triggered only. Sets the caption track's look; adds the captions with it when the
+// edit has none (PO 2026-11-12). One checkpoint.
+const VideoCaptionStyleTool = Tool.make("video_caption_style", {
+  description: "Set video caption look only if user asks.",
+  parameters: Schema.Struct({ preset: CaptionPresetId }),
+  success: EditStep,
+  failure: OrchestratorMcpFailure,
+  dependencies: [...dependencies, CaptionTrackService.CaptionTrackService],
+})
+  .annotate(Tool.Title, "Caption look")
+  .annotateMerge(videoAnnotations(false));
+
 /** Tools that return JSON. A new tool goes here, with its handler in `handlers.ts`. */
 export const VideoStandardToolkit = Toolkit.make(
   VideoImportTool,
@@ -303,6 +448,7 @@ export const VideoStandardToolkit = Toolkit.make(
   VideoJobStatusTool,
   VideoJobCancelTool,
   VideoExportTool,
+  VideoExportInterchangeTool,
   VideoTranscribeTool,
   VideoTranscriptReadTool,
   VideoUndoTool,
@@ -311,6 +457,12 @@ export const VideoStandardToolkit = Toolkit.make(
   VideoCanvasTool,
   VideoAssembleTool,
   VideoAddCaptionsTool,
+  VideoPlaceAudioTool,
+  VideoDuckMusicTool,
+  VideoVersionsTool,
+  VideoVersionRestoreTool,
+  VideoZoomTool,
+  VideoCaptionStyleTool,
 );
 
 /** `video_frame` returns image content, so it registers on its own (`registerVideoFrame`). */
@@ -324,6 +476,7 @@ export const VideoToolkit = Toolkit.make(
   VideoJobStatusTool,
   VideoJobCancelTool,
   VideoExportTool,
+  VideoExportInterchangeTool,
   VideoTranscribeTool,
   VideoTranscriptReadTool,
   VideoUndoTool,
@@ -332,6 +485,12 @@ export const VideoToolkit = Toolkit.make(
   VideoCanvasTool,
   VideoAssembleTool,
   VideoAddCaptionsTool,
+  VideoPlaceAudioTool,
+  VideoDuckMusicTool,
+  VideoVersionsTool,
+  VideoVersionRestoreTool,
+  VideoZoomTool,
+  VideoCaptionStyleTool,
   VideoFrameTool,
 );
 

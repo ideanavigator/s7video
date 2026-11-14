@@ -78,12 +78,18 @@ export const EditMedia = Schema.Struct({
 });
 export type EditMedia = typeof EditMedia.Type;
 
+/**
+ * The longest zoom ramp: the export draws one still zoom per ramp frame, each a frame-sized
+ * branch of its graph (S7V-037 review: about 13 MB each), so a ramp stays within two seconds.
+ */
+const MAX_ZOOM_RAMP_FRAMES = 60;
+
 /** A punch-in over a whole video item; the anchor is normalised to the frame (S7V-037). */
 export const EditZoom = Schema.Struct({
   scale: Schema.Finite.check(Schema.isBetween({ minimum: 1, maximum: 2 })),
   anchorX: UnitInterval,
   anchorY: UnitInterval,
-  rampFrames: Frame,
+  rampFrames: Frame.check(Schema.isLessThanOrEqualTo(MAX_ZOOM_RAMP_FRAMES)),
 });
 export type EditZoom = typeof EditZoom.Type;
 
@@ -365,6 +371,14 @@ function frameIssues(raw: unknown): EditValidationIssue[] {
             owner,
             "frame",
             `${label(owner)} has ${key} ${frame}. Times are whole frame numbers, 0 or more.`,
+          ),
+        );
+      } else if (key === "rampFrames" && frame > MAX_ZOOM_RAMP_FRAMES) {
+        issues.push(
+          issue(
+            owner,
+            "frame",
+            `${label(owner)} has rampFrames ${frame}. A zoom ramps over at most ${MAX_ZOOM_RAMP_FRAMES} frames.`,
           ),
         );
       }

@@ -14,6 +14,7 @@ import {
   createEnvironmentRpcSubscriptionAtomFamily,
 } from "@t3tools/client-runtime/state/runtime";
 import {
+  type CaptionPresetsResult,
   type CaptionStillsResult,
   type EditDocument,
   type EditSnapshot,
@@ -75,6 +76,10 @@ export const editEnvironment = {
     label: "environment-data:export:start",
     tag: WS_METHODS.exportStart,
   }),
+  exportInterchange: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "environment-data:export:interchange",
+    tag: WS_METHODS.exportInterchange,
+  }),
   cancelJob: createEnvironmentRpcCommand(connectionAtomRuntime, {
     label: "environment-data:engine:cancel",
     tag: WS_METHODS.engineJobsCancel,
@@ -123,6 +128,11 @@ export const editEnvironment = {
   historyDismiss: createEnvironmentRpcCommand(connectionAtomRuntime, {
     label: "environment-data:edit:history-dismiss",
     tag: WS_METHODS.editHistoryDismiss,
+  }),
+  /** The look picker (S7V-037): one change and one undo, adding captions when there are none. */
+  setCaptionStyle: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "environment-data:captions:set-style",
+    tag: WS_METHODS.captionsSetStyle,
   }),
 };
 
@@ -276,6 +286,35 @@ const captionStillsQuery = createEnvironmentRpcQueryAtomFamily(connectionAtomRun
   refreshTrigger: ({ environmentId, input }) =>
     captionStillsTriggerAtom(JSON.stringify([environmentId, input.projectId])),
 });
+
+/** The looks' previews are drawn at the edit's canvas, so they change only with its size. */
+const captionPresetsTriggerAtom = Atom.family((key: string) => {
+  const [environmentId, projectId] = JSON.parse(key) as [EnvironmentId, string];
+  return Atom.make((get) => {
+    const edit = get(
+      projectEditAtom(scopedProjectKey({ environmentId, projectId: projectId as ProjectId })),
+    );
+    if (edit._tag !== "ready") return "";
+    const { width, height } = edit.snapshot.document.canvas;
+    return `${width}x${height}`;
+  }).pipe(Atom.withLabel(`web-caption-presets-trigger:${key}`));
+});
+
+const captionPresetsQuery = createEnvironmentRpcQueryAtomFamily(connectionAtomRuntime, {
+  label: "environment-data:captions:presets",
+  tag: WS_METHODS.captionsPresets,
+  refreshTrigger: ({ environmentId, input }) =>
+    captionPresetsTriggerAtom(JSON.stringify([environmentId, input.projectId])),
+});
+
+/** Each caption look's name and preview, or null while they load or can't be read. */
+export function useCaptionPresets(ref: ScopedProjectRef): CaptionPresetsResult | null {
+  const result = useAtomValue(
+    captionPresetsQuery({ environmentId: ref.environmentId, input: { projectId: ref.projectId } }),
+  );
+  const value = AsyncResult.value(result);
+  return value._tag === "None" ? null : value.value;
+}
 
 export type CaptionStillsState =
   | { readonly _tag: "none" }

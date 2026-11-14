@@ -91,6 +91,32 @@ it.layer(NodeServices.layer)("built-in skills", (it) => {
           displayName: "Add captions",
         },
         {
+          name: "video:add-sound-and-music",
+          path: path.join(builtInSkillsRoot(path, pluginDir), "add-sound-and-music", "SKILL.md"),
+          enabled: true,
+          scope: "system",
+          description: "Add sound and music - place the user's own. Use only if the user asks.",
+          displayName: "Add sound and music",
+        },
+        {
+          name: "video:caption-style",
+          path: path.join(builtInSkillsRoot(path, pluginDir), "caption-style", "SKILL.md"),
+          enabled: true,
+          scope: "system",
+          description:
+            "Caption style - set the look of the user's captions. Use only if the user asks.",
+          displayName: "Caption style",
+        },
+        {
+          name: "video:punch-in-zoom",
+          path: path.join(builtInSkillsRoot(path, pluginDir), "punch-in-zoom", "SKILL.md"),
+          enabled: true,
+          scope: "system",
+          description:
+            "Punch-in zoom - zoom in on a moment of the user's video. Use only if the user asks.",
+          displayName: "Punch-in zoom",
+        },
+        {
           name: "video:remove-silences",
           path: path.join(builtInSkillsRoot(path, pluginDir), "remove-silences", "SKILL.md"),
           enabled: true,

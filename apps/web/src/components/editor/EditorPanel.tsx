@@ -17,7 +17,14 @@ import {
   type ProjectId,
   type ScopedProjectRef,
 } from "@t3tools/contracts";
-import { ClapperboardIcon, FilmIcon, PlusIcon, TriangleAlertIcon, UploadIcon } from "lucide-react";
+import {
+  ClapperboardIcon,
+  FilmIcon,
+  PlusIcon,
+  SendToBackIcon,
+  TriangleAlertIcon,
+  UploadIcon,
+} from "lucide-react";
 import * as Schema from "effect/Schema";
 import { useEffect, useId, useState, type DragEvent, type ReactNode } from "react";
 
@@ -53,10 +60,13 @@ import { Button } from "../ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "../ui/empty";
 import { Spinner } from "../ui/spinner";
 import { toastManager } from "../ui/toast";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { BROWSER_ADD_MEDIA_HINT } from "./addMediaHint";
 import { AssetsTab, useAssetsActions } from "./AssetsTab";
 import { CaptionOverlay } from "./CaptionOverlay";
+import { CaptionStylePicker } from "./CaptionStylePicker";
 import { EditPlayer } from "./EditPlayer";
+import { ExportForEditorsDialog } from "./ExportForEditorsDialog";
 import { HistoryCleanupBanner } from "./HistoryCleanupBanner";
 import { ImportDialog } from "./ImportDialog";
 import { MultiClipPlayer, type MultiClipSource } from "./MultiClipPlayer";
@@ -543,6 +553,7 @@ function ExportButton(props: { readonly projectRef: ScopedProjectRef }) {
   // Set from the click until the job stops running, so a repeat click can't resend the cancel.
   const [cancellingJobId, setCancellingJobId] = useState<EngineJobId | null>(null);
   const cancelling = cancellingJobId !== null && cancellingJobId === (job?.id ?? started?.jobId);
+  const [editorsOpen, setEditorsOpen] = useState(false);
 
   const exportEdit = async (captions?: false) => {
     const result = await start({
@@ -584,54 +595,81 @@ function ExportButton(props: { readonly projectRef: ScopedProjectRef }) {
   const outcome = (() => {
     if (running || job === null) return null;
     if (job.state === "succeeded") {
-      return <>Exported to {status?.path ?? started?.path ?? "the exports folder"}</>;
+      const files = status?.files?.join(", ") ?? status?.path ?? started?.path;
+      return <>Exported to {files ?? "the exports folder"}</>;
     }
     if (job.state === "cancelled") return <>Export cancelled</>;
     return <>Export failed{status?.message ? `: ${status.message}` : ""}</>;
   })();
 
   return (
-    <div className="flex min-w-0 items-center gap-2">
-      {running ? (
-        <div className="flex min-w-0 flex-1 items-center gap-2">
-          <div
-            role="progressbar"
-            aria-label="Export"
-            aria-valuemin={0}
-            aria-valuemax={100}
-            aria-valuenow={progress}
-            className="h-1.5 w-24 overflow-hidden rounded-full bg-muted"
-          >
-            <div className="h-full bg-primary" style={{ width: `${progress}%` }} />
+    <>
+      <ExportForEditorsDialog
+        projectRef={props.projectRef}
+        open={editorsOpen}
+        onClose={() => setEditorsOpen(false)}
+        onStarted={setStarted}
+      />
+      <div className="flex min-w-0 items-center gap-2">
+        {running ? (
+          <div className="flex min-w-0 flex-1 items-center gap-2">
+            <div
+              role="progressbar"
+              aria-label="Export"
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={progress}
+              className="h-1.5 w-24 overflow-hidden rounded-full bg-muted"
+            >
+              <div className="h-full bg-primary" style={{ width: `${progress}%` }} />
+            </div>
+            <span className="text-xs text-muted-foreground tabular-nums">{progress}%</span>
           </div>
-          <span className="text-xs text-muted-foreground tabular-nums">{progress}%</span>
-        </div>
-      ) : outcome !== null ? (
-        <span
-          role="status"
-          className="min-w-0 truncate text-xs text-muted-foreground data-[state=failed]:text-destructive-foreground"
-          data-state={job?.state}
-        >
-          {outcome}
-        </span>
-      ) : null}
-      {running ? (
-        <Button
-          size="compact"
-          variant="outline"
-          aria-label="Cancel export"
-          disabled={cancelling}
-          onClick={() => void cancelExport()}
-        >
-          Cancel
-        </Button>
-      ) : (
-        <Button size="compact" variant="outline" onClick={() => void exportEdit()}>
-          <UploadIcon aria-hidden />
-          Export
-        </Button>
-      )}
-    </div>
+        ) : outcome !== null ? (
+          <span
+            role="status"
+            className="min-w-0 truncate text-xs text-muted-foreground data-[state=failed]:text-destructive-foreground"
+            data-state={job?.state}
+          >
+            {outcome}
+          </span>
+        ) : null}
+        {running ? (
+          <Button
+            size="compact"
+            variant="outline"
+            aria-label="Cancel export"
+            disabled={cancelling}
+            onClick={() => void cancelExport()}
+          >
+            Cancel
+          </Button>
+        ) : (
+          <>
+            <Button size="compact" variant="outline" onClick={() => void exportEdit()}>
+              <UploadIcon aria-hidden />
+              Export
+            </Button>
+            {/* An icon, so the export's status keeps its room in the header. */}
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    size="icon-sm"
+                    variant="outline"
+                    aria-label="Export for editors"
+                    onClick={() => setEditorsOpen(true)}
+                  >
+                    <SendToBackIcon aria-hidden />
+                  </Button>
+                }
+              />
+              <TooltipPopup side="bottom">Export for editors</TooltipPopup>
+            </Tooltip>
+          </>
+        )}
+      </div>
+    </>
   );
 }
 
@@ -865,7 +903,10 @@ export default function EditorPanel(props: {
         {edit._tag === "ready" &&
         previewingVersion === null &&
         (view._tag === "play-timeline" || (view._tag === "play" && view.mode === "edit")) ? (
-          <ExportButton projectRef={projectRef} />
+          <div className="flex min-w-0 items-center gap-2">
+            <CaptionStylePicker projectRef={projectRef} document={edit.snapshot.document} />
+            <ExportButton projectRef={projectRef} />
+          </div>
         ) : null}
       </div>
       <RefusedChangeNotice snapshot={edit._tag === "ready" ? edit.snapshot : null} />

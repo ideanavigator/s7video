@@ -3,26 +3,37 @@
 // Thin handlers: resolve the caller's project and media (VideoProjectScope), call one engine or
 // edit service method, map its errors. The Editor panel reaches the same services directly.
 import {
+  CAPTION_PRESET_NAMES,
+  type CaptionsError,
+  type EditConflict,
   type EditDocument,
-  type EditOp,
   type EditSnapshot,
+  type EditUnavailableError,
+  type EditVersion,
   type EngineError,
   type TranscriptError,
   type EngineJob,
   type EngineJobId,
   type MediaLibraryError,
   OrchestratorMcpFailure,
+  type SoundError,
+  type ZoomError,
 } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 
+import * as AudioTrackService from "../../../edit/AudioTrackService.ts";
 import { CANVAS_FOR_RATIO } from "../../../edit/canvasForClip.ts";
 import * as CaptionTrackService from "../../../edit/CaptionTrackService.ts";
+import * as ClipPlacementService from "../../../edit/ClipPlacementService.ts";
 import * as EditDocumentService from "../../../edit/EditDocumentService.ts";
 import * as SilenceCutService from "../../../edit/SilenceCutService.ts";
+import { parseZoomRange, ZOOM_RANGE_FORMAT } from "../../../edit/zoomOps.ts";
+import * as ZoomService from "../../../edit/ZoomService.ts";
 import * as EngineService from "../../../engine/EngineService.ts";
 import * as ExportService from "../../../export/ExportService.ts";
 import * as TranscriptService from "../../../transcript/TranscriptService.ts";
@@ -60,6 +71,33 @@ const transcriptFailure = (error: EngineError | TranscriptError) =>
         code: error.reason === "media_refused" ? "invalid_request" : "orchestration_error",
         message: error.message,
       });
+
+/** Plain refusals (no such sound, frame cut, no transcript) are the agent's to fix; the rest is ours. */
+const soundFailure = (error: SoundError | EngineError | EditDocumentService.EditApplyError) =>
+  error._tag === "EngineError"
+    ? engineFailure(error)
+    : new OrchestratorMcpFailure({
+        code:
+          error._tag === "SoundError" ||
+          error._tag === "EditConflict" ||
+          error._tag === "EditValidationError"
+            ? "invalid_request"
+            : "orchestration_error",
+        message: error._tag === "EditUnavailableError" ? error.explanation : error.message,
+      });
+
+/** A plain refusal (no transcript, cut, out of range) or a conflict is the agent's to fix. */
+const editRefusal = (error: CaptionsError | ZoomError | EditDocumentService.EditApplyError) =>
+  new OrchestratorMcpFailure({
+    code:
+      error._tag === "CaptionsError" ||
+      error._tag === "ZoomError" ||
+      error._tag === "EditConflict" ||
+      error._tag === "EditValidationError"
+        ? "invalid_request"
+        : "orchestration_error",
+    message: error._tag === "EditUnavailableError" ? error.explanation : error.message,
+  });
 
 const noSuchJob = () =>
   new OrchestratorMcpFailure({
@@ -209,6 +247,62 @@ const stepEdit = (direction: "undo" | "redo") =>
       );
     }),
   );
+
+const VERSION_LIST_SIZE = 20;
+
+/** A version's line: its first change, and how many more it made. */
+const versionLine = (version: EditVersion) => ({
+  n: version.n,
+  ...(version.tag === undefined ? {} : { tag: version.tag }),
+  author: version.author,
+  at: DateTime.formatIso(DateTime.makeUnsafe(version.at)),
+  change:
+    version.changes.length > 1
+      ? `${version.changes[0]} (+${version.changes.length - 1} more)`
+      : (version.changes[0] ?? ""),
+  ...(version.current ? { main: true } : {}),
+});
+
+const MADE_BY = {
+  assistant: "the assistant",
+  you: "the user",
+  outside: "a change outside the app",
+} as const;
+
+/** S7V-070: the details a chat gets for one version. Cuts are counted as kept pieces of video. */
+const versionDetails = (version: EditVersion, document: EditDocument) => {
+  const frames = editDurationFrames(document);
+  const seconds = (frames * document.fps.den) / document.fps.num;
+  const pieces = document.tracks
+    .filter((track) => track.kind === "video")
+    .reduce((total, track) => total + track.items.length, 0);
+  const captions = document.tracks.some(
+    (track) => track.kind === "caption" && track.items.length > 0,
+  );
+  return [
+    `v${version.n}${version.tag === undefined ? "" : ` "${version.tag}"`}${version.current ? " (main)" : ""}, by ${MADE_BY[version.author]}${version.restoredFrom === undefined ? "" : `, restored from v${version.restoredFrom}`}.`,
+    `Changes: ${version.changes.join("; ")}.`,
+    `${count(pieces, "kept piece")} of video, ${count(frames, "frame")} (${seconds.toFixed(1)} s), captions ${captions ? "on" : "off"}.`,
+  ].join(" ");
+};
+
+/** A number won over a version whose name reads the same: say which was used. */
+const alsoNamedNote = (alsoNamed: number | undefined) =>
+  alsoNamed === undefined
+    ? ""
+    : ` v${alsoNamed} also has this name; say v${alsoNamed} for that one.`;
+
+const versionFailure = (error: EditUnavailableError | EditConflict) =>
+  new OrchestratorMcpFailure({
+    code:
+      error._tag === "EditConflict" ||
+      error.reason === "unknown-version" ||
+      error.reason === "library-conflict" ||
+      error.reason === "outside-change-refused"
+        ? "invalid_request"
+        : "orchestration_error",
+    message: error._tag === "EditUnavailableError" ? error.explanation : error.message,
+  });
 
 const handlers = {
   // Always a copy: chat attachments live in the app's store, which may clean them up later.
@@ -432,6 +526,34 @@ const handlers = {
         );
     }),
   ),
+  // S7V-040: writes into exports/ like video_export, so plan-mode and read-only callers are refused.
+  video_export_interchange: McpToolAccess.actsAsCaller(({ format, captions }) =>
+    Effect.gen(function* () {
+      yield* refusePlanMode("export");
+      const project = yield* callerProject();
+      const exports = yield* ExportService.ExportService;
+      const started = yield* exports
+        .startInterchange({
+          projectId: project.projectId,
+          format,
+          ...(captions === undefined ? {} : { captions }),
+        })
+        .pipe(
+          Effect.mapError((error) =>
+            error._tag === "EngineError"
+              ? engineFailure(error)
+              : new OrchestratorMcpFailure({ code: "orchestration_error", message: error.message }),
+          ),
+        );
+      if (started.jobId === undefined) {
+        return yield* new OrchestratorMcpFailure({
+          code: "orchestration_error",
+          message: "The export did not start. Try again.",
+        });
+      }
+      return { jobId: started.jobId, files: started.files, dropped: started.dropped };
+    }),
+  ),
   // Acts on the environment: it loads a 4-6 GB model and writes the project's .s7cache, and the
   // matching transcribe.run RPC needs operate scope, so plan-mode and read-only callers are refused.
   video_transcribe: McpToolAccess.actsAsCaller(({ media }) =>
@@ -554,114 +676,28 @@ const handlers = {
     Effect.gen(function* () {
       yield* refusePlanMode("assemble clips");
       const project = yield* callerProject();
-      const { revision, document } = project.snapshot;
-      const invalid = (message: string) =>
-        new OrchestratorMcpFailure({ code: "invalid_request", message });
-      if (items.length === 0) return yield* invalid("Give at least one clip part to assemble.");
-      const track = document.tracks.find((entry) => entry.kind === "video");
-      if (track === undefined) return yield* invalid("This edit has no video track.");
-      const mediaIds: string[] = [];
-      for (const item of items) {
-        if (item.in < 0 || item.duration < 1) {
-          return yield* invalid("Each part needs in >= 0 and duration >= 1, in edit frames.");
-        }
-        // Scope check first: refuses anything outside the project, without saying whether it exists.
-        yield* resolveMedia(project, item.mediaId);
-        const media = document.media.find(
-          (entry) => entry.id === item.mediaId || entry.path === item.mediaId,
-        );
-        if (media === undefined) {
-          return yield* invalid(`${item.mediaId} is not in this edit's media. Import it first.`);
-        }
-        mediaIds.push(media.id);
-      }
-      const end = track.items.reduce((last, item) => Math.max(last, item.start + item.duration), 0);
-      const taken = new Set(document.tracks.flatMap((entry) => entry.items.map((item) => item.id)));
-      const itemIds: string[] = [];
-      for (let index = 0; itemIds.length < items.length; index++) {
-        const id = `asm${revision}-${index}`;
-        if (!taken.has(id)) itemIds.push(id);
-      }
-      const from = at ?? end;
-      const length = items.reduce((total, item) => total + item.duration, 0);
-      // Mid-edit inserts go only where a video item starts. Everything from there on, on every
-      // track, moves right by the inserted length (S7V-034): one moveItem per item, or per link
-      // group, since moveItem carries linked items; the inserts then fill the opened gap.
-      const shifts: EditOp[] = [];
-      if (from !== end) {
-        if (!track.items.some((item) => item.start === from)) {
-          return yield* invalid(
-            `at must be where a video item starts, or the end of the edit (frame ${end}).`,
-          );
-        }
-        const groups = new Map<string, Array<{ id: string; start: number; end: number }>>();
-        const kindOf = new Map<string, string>();
-        for (const entry of document.tracks) {
-          for (const item of entry.items) {
-            const linkId = "linkId" in item ? item.linkId : undefined;
-            const key = linkId === undefined ? `item:${item.id}` : `link:${linkId}`;
-            const group = groups.get(key) ?? [];
-            group.push({ id: item.id, start: item.start, end: item.start + item.duration });
-            groups.set(key, group);
-            kindOf.set(item.id, entry.kind);
-          }
-        }
-        for (const group of groups.values()) {
-          const first = group.reduce((low, member) => (member.start < low.start ? member : low));
-          if (first.start >= from) {
-            shifts.push({ _tag: "moveItem", itemId: first.id, start: first.start + length });
-            continue;
-          }
-          // A music bed plays on under the new clips; anything else cut by `at` would drift.
-          const across = group.find(
-            (member) => member.end > from && kindOf.get(member.id) !== "music",
-          );
-          if (across !== undefined) {
-            return yield* invalid(
-              `"${across.id}" runs across frame ${from}, so clips can't be added there. Pick a frame where it has ended, or the end (frame ${end}).`,
-            );
-          }
-        }
-        if (document.markers.some((marker) => marker.start >= from)) {
-          shifts.push({
-            _tag: "setMarkers",
-            markers: document.markers.map((marker) =>
-              marker.start >= from ? { ...marker, start: marker.start + length } : marker,
-            ),
-          });
-        }
-      }
-      let position = from;
-      const inserts = items.map((item, index) => {
-        const op = {
-          _tag: "insertItem" as const,
-          trackId: track.id,
-          item: {
-            id: itemIds[index]!,
-            media: mediaIds[index]!,
-            start: position,
-            duration: item.duration,
-            in: item.in,
-          },
-        };
-        position += item.duration;
-        return op;
-      });
-      const edits = yield* EditDocumentService.EditDocumentService;
-      return yield* edits
-        .apply(project.projectId, [...shifts, ...inserts], {
-          origin: "agent",
-          baseRevision: revision,
-          reply: project.reply,
-          summary: `Added ${count(items.length, "clip part")} to the timeline`,
-        })
+      // Scope check first: refuses anything outside the project, without saying whether it exists.
+      for (const item of items) yield* resolveMedia(project, item.mediaId);
+      const clips = yield* ClipPlacementService.ClipPlacementService;
+      return yield* clips
+        .addClips(
+          project.projectId,
+          { parts: items, ...(at === undefined ? {} : { at }) },
+          { origin: "agent", reply: project.reply },
+        )
         .pipe(
-          Effect.map((after) => ({ revision: after.revision, itemIds, ...cleanupOf(after) })),
+          Effect.map(({ snapshot, itemIds }) => ({
+            revision: snapshot.revision,
+            itemIds,
+            ...cleanupOf(snapshot),
+          })),
           Effect.mapError(
             (error) =>
               new OrchestratorMcpFailure({
                 code:
-                  error._tag === "EditConflict" || error._tag === "EditValidationError"
+                  error._tag === "ClipPlacementError" ||
+                  error._tag === "EditConflict" ||
+                  error._tag === "EditValidationError"
                     ? "invalid_request"
                     : "orchestration_error",
                 message: error._tag === "EditUnavailableError" ? error.explanation : error.message,
@@ -676,20 +712,9 @@ const handlers = {
       yield* refusePlanMode("add captions");
       const project = yield* callerProject();
       const captions = yield* CaptionTrackService.CaptionTrackService;
-      const result = yield* captions.addCaptions(project.projectId, { reply: project.reply }).pipe(
-        Effect.mapError(
-          (error) =>
-            new OrchestratorMcpFailure({
-              code:
-                error._tag === "CaptionsError" ||
-                error._tag === "EditConflict" ||
-                error._tag === "EditValidationError"
-                  ? "invalid_request"
-                  : "orchestration_error",
-              message: error._tag === "EditUnavailableError" ? error.explanation : error.message,
-            }),
-        ),
-      );
+      const result = yield* captions
+        .addCaptions(project.projectId, { reply: project.reply })
+        .pipe(Effect.mapError(editRefusal));
       const hint = yield* cleanupAfterChange(project, result.changed);
       return {
         revision: result.revision,
@@ -697,6 +722,151 @@ const handlers = {
           ? `Added ${result.captions} captions to the edit. They follow later cuts; say undo to remove them.`
           : `The edit already has these ${result.captions} captions.`,
         ...hint,
+      };
+    }),
+  ),
+  // Writes the edit (one checkpoint), so plan-mode and read-only callers are refused.
+  video_place_audio: McpToolAccess.actsAsCaller(({ media, at, clip, track, gainDb }) =>
+    Effect.gen(function* () {
+      yield* refusePlanMode("add sound");
+      const project = yield* callerProject();
+      // Scope check first: refuses anything outside the project, without saying whether it exists.
+      yield* resolveMedia(project, media);
+      if (clip !== undefined) yield* resolveMedia(project, clip);
+      const sounds = yield* AudioTrackService.AudioTrackService;
+      const placed = yield* sounds
+        .placeAudio(project.projectId, { media, at, clip, track, gainDb }, { reply: project.reply })
+        .pipe(Effect.mapError(soundFailure));
+      return {
+        ...placed,
+        message: `${placed.message} Say undo to take it out.`,
+        ...(yield* cleanupAfterChange(project)),
+      };
+    }),
+  ),
+  // Writes the edit (one checkpoint), so plan-mode and read-only callers are refused.
+  video_duck_music: McpToolAccess.actsAsCaller(({ depthDb }) =>
+    Effect.gen(function* () {
+      yield* refusePlanMode("duck the music");
+      const project = yield* callerProject();
+      const sounds = yield* AudioTrackService.AudioTrackService;
+      const ducked = yield* sounds
+        .duckMusic(project.projectId, { depthDb }, { reply: project.reply })
+        .pipe(Effect.mapError(soundFailure));
+      return {
+        revision: ducked.revision,
+        ranges: ducked.ranges,
+        message: ducked.changed ? `${ducked.message} Say undo to take it out.` : ducked.message,
+        ...(yield* cleanupAfterChange(project, ducked.changed)),
+      };
+    }),
+  ),
+  // Read-only: works in plan mode and for read-only clients.
+  video_versions: McpToolAccess.readsAsCaller(({ version }) =>
+    Effect.gen(function* () {
+      const project = yield* callerProject();
+      const edits = yield* EditDocumentService.EditDocumentService;
+      if (version === undefined || version.trim() === "") {
+        const all = yield* edits.versions(project.projectId).pipe(Effect.mapError(versionFailure));
+        return { versions: all.slice(0, VERSION_LIST_SIZE).map(versionLine) };
+      }
+      const found = yield* edits
+        .findVersion(project.projectId, version)
+        .pipe(Effect.mapError(versionFailure));
+      return {
+        version: {
+          ...versionLine(found.version),
+          details: `${versionDetails(found.version, found.document)}${alsoNamedNote(found.alsoNamed)}`,
+        },
+      };
+    }),
+  ),
+  // Writes the edit (one checkpoint, one version), so plan-mode and read-only callers are refused.
+  video_version_restore: McpToolAccess.actsAsCaller(({ version }) =>
+    Effect.gen(function* () {
+      yield* refusePlanMode("restore a version");
+      if (version.trim() === "") {
+        return yield* new OrchestratorMcpFailure({
+          code: "invalid_request",
+          message: "Say which version to make main: v12 or its name.",
+        });
+      }
+      const project = yield* callerProject();
+      const edits = yield* EditDocumentService.EditDocumentService;
+      const restored = yield* edits
+        .restoreVersionRef(project.projectId, version, {
+          reply: project.reply,
+          baseRevision: project.snapshot.revision,
+        })
+        .pipe(Effect.mapError(versionFailure));
+      const { snapshot } = restored;
+      const chosen = `v${restored.version.n}`;
+      const note = alsoNamedNote(restored.alsoNamed);
+      const saved = snapshot.version === undefined ? {} : { version: snapshot.version };
+      if (!restored.changed) {
+        return {
+          revision: snapshot.revision,
+          ...saved,
+          message: restored.version.current
+            ? `${chosen} is already the main version; nothing changed.${note}`
+            : `${chosen} is the same as the main version${snapshot.version === undefined ? "" : ` (v${snapshot.version})`}; nothing changed.${note}`,
+        };
+      }
+      return {
+        revision: snapshot.revision,
+        ...saved,
+        message: `${chosen} is now the main version${snapshot.version === undefined ? "" : `, saved as v${snapshot.version}`}: ${editSummary(snapshot)}. Say undo to go back.${note}`,
+        ...cleanupOf(snapshot),
+      };
+    }),
+  ),
+  // Writes the edit (one checkpoint), so plan-mode and read-only callers are refused.
+  video_zoom: McpToolAccess.actsAsCaller(({ range, clip, scale, anchorX, anchorY }) =>
+    Effect.gen(function* () {
+      yield* refusePlanMode("zoom in");
+      const project = yield* callerProject();
+      if (clip !== undefined) yield* resolveMedia(project, clip);
+      const frames = parseZoomRange(range);
+      if (frames === null) {
+        return yield* new OrchestratorMcpFailure({
+          code: "invalid_request",
+          message: ZOOM_RANGE_FORMAT,
+        });
+      }
+      const zooms = yield* ZoomService.ZoomService;
+      const zoomed = yield* zooms
+        .zoom(
+          project.projectId,
+          { ...frames, clip, scale, anchorX, anchorY },
+          { reply: project.reply },
+        )
+        .pipe(Effect.mapError(editRefusal));
+      return {
+        ...zoomed,
+        message: `${zoomed.message} Say undo to take it out.`,
+        ...(yield* cleanupAfterChange(project)),
+      };
+    }),
+  ),
+  // Writes the edit (one checkpoint), so plan-mode and read-only callers are refused.
+  video_caption_style: McpToolAccess.actsAsCaller(({ preset }) =>
+    Effect.gen(function* () {
+      yield* refusePlanMode("change the caption look");
+      const project = yield* callerProject();
+      const captions = yield* CaptionTrackService.CaptionTrackService;
+      const result = yield* captions
+        .setStyle(project.projectId, preset, { reply: project.reply, origin: "agent" })
+        .pipe(Effect.mapError(editRefusal));
+      const name = CAPTION_PRESET_NAMES[preset];
+      const message = result.added
+        ? `Added ${result.captions} captions in the ${name} look. Say undo to take them out.`
+        : result.changed
+          ? `The captions now use the ${name} look, over the player and in the export. Say undo to go back.`
+          : `The captions already use the ${name} look.`;
+      return {
+        revision: result.revision,
+        message,
+        ...(yield* cleanupAfterChange(project, result.changed)),
       };
     }),
   ),
@@ -709,6 +879,7 @@ export const layerStandard = McpToolAccess.toLayer(VideoStandardToolkit, {
   video_job_status: handlers.video_job_status,
   video_job_cancel: handlers.video_job_cancel,
   video_export: handlers.video_export,
+  video_export_interchange: handlers.video_export_interchange,
   video_transcribe: handlers.video_transcribe,
   video_transcript_read: handlers.video_transcript_read,
   video_undo: handlers.video_undo,
@@ -717,6 +888,12 @@ export const layerStandard = McpToolAccess.toLayer(VideoStandardToolkit, {
   video_canvas: handlers.video_canvas,
   video_assemble: handlers.video_assemble,
   video_add_captions: handlers.video_add_captions,
+  video_place_audio: handlers.video_place_audio,
+  video_duck_music: handlers.video_duck_music,
+  video_versions: handlers.video_versions,
+  video_version_restore: handlers.video_version_restore,
+  video_zoom: handlers.video_zoom,
+  video_caption_style: handlers.video_caption_style,
 });
 
 export const layerFrame = McpToolAccess.toLayer(VideoFrameToolkit, {

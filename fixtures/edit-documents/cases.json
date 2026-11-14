@@ -135,6 +135,12 @@
       "valid": false,
       "reason": "schema",
       "itemId": "b1"
+    },
+    {
+      "file": "27-zoom-ramp-too-long.json",
+      "valid": false,
+      "reason": "frame",
+      "itemId": "b1"
     }
   ]
 }

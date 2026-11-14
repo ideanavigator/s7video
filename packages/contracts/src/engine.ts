@@ -219,6 +219,21 @@ export const ExportRenderResult = Schema.Struct({
 });
 export type ExportRenderResult = typeof ExportRenderResult.Type;
 
+/** `interchange.check` (S7V-040): what the export would not carry, and the caption chunks it has. */
+export const InterchangeCheckResult = Schema.Struct({
+  dropped: Schema.Array(Schema.String),
+  captions: NonNegativeInt,
+});
+export type InterchangeCheckResult = typeof InterchangeCheckResult.Type;
+
+/** `interchange.export`: the files written (absolute), the timeline file first. */
+export const InterchangeEngineResult = Schema.Struct({
+  files: Schema.Array(TrimmedNonEmptyString),
+  dropped: Schema.Array(Schema.String),
+  captions: NonNegativeInt,
+});
+export type InterchangeEngineResult = typeof InterchangeEngineResult.Type;
+
 /** Every engine method's response schema, for checks that apply to all of them. */
 export const ENGINE_RESPONSE_SCHEMAS = {
   "engine.ping": EnginePingResult,
@@ -231,6 +246,8 @@ export const ENGINE_RESPONSE_SCHEMAS = {
   "media.filmstrip": MediaFilmstripResult,
   "job.cancel": EngineJobCancelResult,
   "export.render": ExportRenderResult,
+  "interchange.check": InterchangeCheckResult,
+  "interchange.export": InterchangeEngineResult,
 } as const;
 
 export const ENGINE_RPC_ERROR_CODES = {
@@ -422,6 +439,31 @@ export const ExportStartInput = Schema.Struct({
 });
 export type ExportStartInput = typeof ExportStartInput.Type;
 
+/** "Export for editors" (S7V-040): the timeline file's format. */
+export const InterchangeFormat = Schema.Literals(["otio", "fcpxml", "fcp7xml", "edl"]);
+export type InterchangeFormat = typeof InterchangeFormat.Type;
+
+/** The captions file written beside it; SRT unless asked (PO, 2026-11-08). */
+export const InterchangeCaptions = Schema.Literals(["srt", "ass", "none"]);
+export type InterchangeCaptions = typeof InterchangeCaptions.Type;
+
+export const InterchangeExportInput = Schema.Struct({
+  projectId: ProjectId,
+  format: InterchangeFormat,
+  captions: Schema.optional(InterchangeCaptions),
+  /** Only list what would not carry over, for the notice before the export; starts nothing. */
+  check: Schema.optional(Schema.Boolean),
+});
+export type InterchangeExportInput = typeof InterchangeExportInput.Type;
+
+/** Paths are project-relative (`exports/…`); no job and no files for a check. */
+export const InterchangeExportResult = Schema.Struct({
+  jobId: Schema.optional(EngineJobId),
+  files: Schema.Array(TrimmedNonEmptyString),
+  dropped: Schema.Array(Schema.String),
+});
+export type InterchangeExportResult = typeof InterchangeExportResult.Type;
+
 export const ExportStartResult = Schema.Struct({
   jobId: EngineJobId,
   /** Where the video will land, relative to the project folder (`exports/…mp4`). */
@@ -451,6 +493,9 @@ export const ExportStatus = Schema.Struct({
   path: TrimmedNonEmptyString,
   state: EngineJobState,
   result: Schema.optional(ExportResult),
+  /** "Export for editors" (S7V-040): every file it writes, `path` first, and what did not carry over. */
+  files: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
+  dropped: Schema.optional(Schema.Array(Schema.String)),
   /** The plain reason a failed export stopped. */
   message: Schema.optional(Schema.String),
 });
@@ -485,10 +530,10 @@ export const CaptionsRenderResult = Schema.Struct({
 export type CaptionsRenderResult = typeof CaptionsRenderResult.Type;
 
 /**
- * `captions.stills`: the captions the export burns in (the caption items, or the transcripts when
- * there are none), in timeline frames (`end` exclusive), each naming one of `stills`, a PNG of the
- * whole canvas drawn by the export's own renderer, base64. `missing` names the clips with sound
- * whose transcript can't be read, so their captions can't follow the edit.
+ * `captions.stills`: the export's captions in timeline frames (`end` exclusive), each naming one
+ * of `stills`, a whole-canvas PNG fetched from `stillsUrl` + its name (S7V-079). `folder/name`
+ * hashes all its pixels depend on, so it is a cache key for good. `missing` names the clips with
+ * sound whose transcript can't be read, so their captions can't follow the edit.
  */
 export const CaptionStillsResult = Schema.Struct({
   key: Schema.String,
@@ -497,6 +542,8 @@ export const CaptionStillsResult = Schema.Struct({
   chunks: Schema.Array(
     Schema.Struct({ start: NonNegativeInt, end: NonNegativeInt, still: NonNegativeInt }),
   ),
+  folder: Schema.String,
+  stillsUrl: Schema.String,
   stills: Schema.Array(Schema.String),
   missing: Schema.Array(Schema.String),
 });
@@ -505,6 +552,96 @@ export type CaptionStillsResult = typeof CaptionStillsResult.Type;
 /** "Add captions" refused (S7V-075): a clip on the video track has no transcript, or none has sound. */
 export class CaptionsError extends Schema.TaggedError<CaptionsError>()("CaptionsError", {
   reason: Schema.Literals(["no-transcript", "no-clips"]),
+  detail: Schema.String,
+}) {
+  override get message(): string {
+    return this.detail;
+  }
+}
+
+/**
+ * Our caption looks (S7V-037), one JSON file each in the engine's `styles/captions/`. A test keeps
+ * this list and that folder the same.
+ */
+export const CaptionPresetId = Schema.Literals([
+  "s7-neutral",
+  "s7-box",
+  "s7-karaoke",
+  "s7-minimal",
+]);
+export type CaptionPresetId = typeof CaptionPresetId.Type;
+
+/** Each look's plain name, as the Editor's strip and the agent's replies call it. */
+export const CAPTION_PRESET_NAMES: Readonly<Record<CaptionPresetId, string>> = {
+  "s7-neutral": "Plain",
+  "s7-box": "Boxed",
+  "s7-karaoke": "Highlighted word",
+  "s7-minimal": "Minimal",
+};
+
+/** `captions.preview`: one look's sample caption at a canvas, as a small PNG in `cacheDir/<folder>/`. */
+export const CaptionsPreviewResult = Schema.Struct({
+  folder: TrimmedNonEmptyString,
+  png: TrimmedNonEmptyString,
+});
+export type CaptionsPreviewResult = typeof CaptionsPreviewResult.Type;
+
+/** `captions.presets`: each look's plain name and preview, a base64 PNG, for the Editor's strip. */
+export const CaptionPresetsResult = Schema.Struct({
+  presets: Schema.Array(
+    Schema.Struct({
+      id: CaptionPresetId,
+      name: TrimmedNonEmptyString,
+      /** Base64 PNG; empty when the preview could not be drawn (the strip shows the name only). */
+      png: Schema.String,
+    }),
+  ),
+});
+export type CaptionPresetsResult = typeof CaptionPresetsResult.Type;
+
+/** `captions.setStyle`: the Editor's strip picks a look; captions are added when the edit has none. */
+export const CaptionStyleInput = Schema.Struct({ projectId: ProjectId, preset: CaptionPresetId });
+export type CaptionStyleInput = typeof CaptionStyleInput.Type;
+
+export const CaptionStyleResult = Schema.Struct({
+  revision: Schema.Int,
+  /** The captions were added from the transcripts in the same change. */
+  added: Schema.Boolean,
+  changed: Schema.Boolean,
+});
+export type CaptionStyleResult = typeof CaptionStyleResult.Type;
+
+/** A punch-in zoom the agent can't add, with the plain next step (S7V-037). */
+export class ZoomError extends Schema.TaggedError<ZoomError>()("ZoomError", {
+  reason: Schema.Literals(["range", "out-of-range", "which-clip", "cut", "no-video"]),
+  detail: Schema.String,
+}) {
+  override get message(): string {
+    return this.detail;
+  }
+}
+
+/** `media.loudness` (S7V-036): integrated loudness (EBU R128) of a file's first audio stream. */
+export const MediaLoudnessInput = Schema.Struct({ path: TrimmedNonEmptyString });
+export type MediaLoudnessInput = typeof MediaLoudnessInput.Type;
+
+/** `null` for silence: nothing above the −70 LUFS gate. */
+export const MediaLoudnessResult = Schema.Struct({ integratedLufs: Schema.NullOr(Schema.Finite) });
+export type MediaLoudnessResult = typeof MediaLoudnessResult.Type;
+
+/** A sound effect or music the agent can't place or duck, with the plain next step (S7V-036). */
+export class SoundError extends Schema.TaggedError<SoundError>()("SoundError", {
+  reason: Schema.Literals([
+    "unknown-media",
+    "no-sound",
+    "no-video",
+    "which-clip",
+    "cut",
+    "out-of-range",
+    "no-music",
+    "locked",
+    "no-transcript",
+  ]),
   detail: Schema.String,
 }) {
   override get message(): string {

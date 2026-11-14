@@ -30,6 +30,8 @@ import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as CaptionTrackService from "./CaptionTrackService.ts";
 import * as EditDocumentService from "./EditDocumentService.ts";
 import { historyLog, layerEditTest } from "./editHarness.testkit.ts";
+import { ASSEMBLE_FIRST } from "./videoTrack.ts";
+import { zoomOps } from "./zoomOps.ts";
 
 const FPS = { num: 30, den: 1 };
 const reply = { threadId: ThreadId.make("thread-captions"), runId: RunId.make("run-captions") };
@@ -221,10 +223,24 @@ describe("CaptionTrackService (S7V-075)", () => {
         const before = yield* setUp(project, cutEdit([mediaEntry("cam", false)]));
         const error = yield* project.captions.addCaptions(project.projectId, {}).pipe(Effect.flip);
         assert.strictEqual(error._tag === "CaptionsError" && error.reason, "no-clips");
+        assert.include(error.message, "no clip with sound is on the timeline");
         assert.strictEqual(
           (yield* project.edits.read(project.projectId)).revision,
           before.revision,
         );
+      }),
+    ),
+  );
+
+  // S7V-093: the Editor can't put a clip on an empty timeline, so the agent is told to do it.
+  it.effect("on an empty timeline, says to place the clip with video_assemble first", () =>
+    withProject((project) =>
+      Effect.gen(function* () {
+        writeClip(project.root, "cam");
+        yield* setUp(project, [{ _tag: "putMedia", media: mediaEntry("cam") }]);
+        const error = yield* project.captions.addCaptions(project.projectId, {}).pipe(Effect.flip);
+        assert.strictEqual(error._tag === "CaptionsError" && error.reason, "no-clips");
+        assert.include(error.message, ASSEMBLE_FIRST);
       }),
     ),
   );
@@ -464,5 +480,144 @@ describe("CaptionTrackService (S7V-075)", () => {
         ]);
       }),
     ),
+  );
+});
+
+// S7V-037: a caption look is on the caption track; with no captions, picking one adds them.
+describe("CaptionTrackService.setStyle (S7V-037)", () => {
+  it.effect("with no captions, adds them in the look: one change, one version, one undo", () =>
+    withProject((project) =>
+      Effect.gen(function* () {
+        writeClip(project.root, "cam");
+        const before = yield* setUp(project);
+        const textBefore = readEdit(project.root);
+        const steps = historyLog(project.root)!.entries.length;
+        const result = yield* project.captions.setStyle(project.projectId, "s7-box", {
+          origin: "timeline",
+        });
+        assert.deepStrictEqual(result, {
+          revision: before.revision + 1,
+          captions: 3,
+          changed: true,
+          added: true,
+        });
+        const after = yield* project.edits.read(project.projectId);
+        const [track] = captionTracks(after.document);
+        assert.deepStrictEqual(
+          { style: track!.style, metadata: track!.metadata },
+          { style: "s7-box", metadata: { s7: { source: "transcript" } } },
+        );
+        assert.deepStrictEqual(
+          captionsOf(after.document),
+          captionItemsFor(after.document, transcripts),
+        );
+        assert.strictEqual(historyLog(project.root)!.entries.length, steps + 1);
+        const [newest] = yield* project.edits.versions(project.projectId);
+        assert.deepStrictEqual(
+          { author: newest!.author, changes: newest!.changes },
+          { author: "you", changes: ["Added captions in the Boxed look"] },
+        );
+
+        // "Add captions" later rebuilds that same track: one track, and the look stays.
+        yield* project.captions.addCaptions(project.projectId, {});
+        const again = yield* project.edits.read(project.projectId);
+        assert.strictEqual(captionTracks(again.document).length, 1);
+        assert.strictEqual(captionTracks(again.document)[0]!.style, "s7-box");
+
+        yield* project.edits.undo(project.projectId);
+        assert.strictEqual(readEdit(project.root), textBefore);
+      }),
+    ),
+  );
+
+  it.effect("on captioned edits, changes only the look; the same look changes nothing", () =>
+    withProject((project) =>
+      Effect.gen(function* () {
+        writeClip(project.root, "cam");
+        yield* setUp(project);
+        const added = yield* project.captions.addCaptions(project.projectId, {});
+        const items = captionsOf((yield* project.edits.read(project.projectId)).document);
+        // No look on the track is the plain one.
+        const plain = yield* project.captions.setStyle(project.projectId, "s7-neutral", {
+          origin: "agent",
+        });
+        assert.deepStrictEqual(plain, {
+          revision: added.revision,
+          captions: 3,
+          changed: false,
+          added: false,
+        });
+        const karaoke = yield* project.captions.setStyle(project.projectId, "s7-karaoke", {
+          origin: "agent",
+          reply,
+        });
+        assert.deepStrictEqual(karaoke, {
+          revision: added.revision + 1,
+          captions: 3,
+          changed: true,
+          added: false,
+        });
+        const after = yield* project.edits.read(project.projectId);
+        assert.strictEqual(captionTracks(after.document)[0]!.style, "s7-karaoke");
+        assert.deepStrictEqual(captionsOf(after.document), items);
+        const [newest] = yield* project.edits.versions(project.projectId);
+        assert.deepStrictEqual(newest!.changes, ["Changed the caption look to Highlighted word"]);
+        yield* project.edits.undo(project.projectId);
+        const undone = yield* project.edits.read(project.projectId);
+        assert.isUndefined(captionTracks(undone.document)[0]!.style);
+      }),
+    ),
+  );
+
+  it.effect("a later cut and a zoom's splits keep the look and the captions", () =>
+    withProject((project) =>
+      Effect.gen(function* () {
+        writeClip(project.root, "cam");
+        yield* setUp(project);
+        yield* project.captions.setStyle(project.projectId, "s7-minimal", { origin: "agent" });
+        const styled = yield* project.edits.read(project.projectId);
+        const captions = captionTracks(styled.document)[0]!.items;
+        // A zoom's splits continue the source: the rebuild finds nothing to change.
+        const [first] = styled.document.tracks.find((track) => track.kind === "video")!.items;
+        const zoom = { scale: 1.5, anchorX: 0.5, anchorY: 0.3, rampFrames: 0 };
+        const zoomed = yield* project.edits.apply(
+          project.projectId,
+          zoomOps(styled.document, [{ start: first!.start + 10, end: first!.start + 30 }], zoom)
+            .ops,
+          { origin: "agent", baseRevision: styled.revision },
+        );
+        assert.deepStrictEqual(captionTracks(zoomed.document)[0]!.items, captions);
+        assert.strictEqual(captionTracks(zoomed.document)[0]!.style, "s7-minimal");
+        // A cut rebuilds the items; the track keeps its look.
+        const video = zoomed.document.tracks.find((track) => track.kind === "video")!;
+        const last = [...video.items].sort((a, b) => b.start - a.start)[0]!;
+        const cut = yield* project.edits.apply(
+          project.projectId,
+          [{ _tag: "deleteItem", itemIds: [last.id], ripple: true }],
+          { origin: "timeline", baseRevision: zoomed.revision },
+        );
+        assert.strictEqual(captionTracks(cut.document)[0]!.style, "s7-minimal");
+        assert.isBelow(captionTracks(cut.document)[0]!.items.length, captions.length);
+      }),
+    ),
+  );
+
+  it.effect(
+    "refuses a clip with no transcript when it would add captions, and changes nothing",
+    () =>
+      withProject((project) =>
+        Effect.gen(function* () {
+          writeClip(project.root, "cam", false);
+          const before = yield* setUp(project);
+          const error = yield* project.captions
+            .setStyle(project.projectId, "s7-box", { origin: "timeline" })
+            .pipe(Effect.flip);
+          assert.strictEqual(error._tag, "CaptionsError");
+          assert.include(error.message, "then pick the look again");
+          const after = yield* project.edits.read(project.projectId);
+          assert.strictEqual(after.revision, before.revision);
+          assert.strictEqual(captionTracks(after.document).length, 0);
+        }),
+      ),
   );
 });

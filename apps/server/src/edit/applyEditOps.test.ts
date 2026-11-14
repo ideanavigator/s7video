@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 s7video contributors
 // SPDX-License-Identifier: MIT
 import { type EditDocument, type EditOp, validateEditDocument } from "@t3tools/contracts";
+import { cutRangesOps } from "@t3tools/shared/editWordCuts";
 import { describe, expect, it } from "vite-plus/test";
 
 import { applyEditOps } from "./applyEditOps.ts";
@@ -70,6 +71,58 @@ describe("applyEditOps", () => {
         expect(Number.isInteger(frame)).toBe(true);
       }
     }
+  });
+
+  // S7V-037 (AC-11): a later silence cut re-lays the clip; a punch-in stays on exactly its frames.
+  it("a later setKeepRanges keeps the zoom on every kept part of a zoomed item", () => {
+    const zoom = { scale: 1.5, anchorX: 0.5, anchorY: 0.3, rampFrames: 0 };
+    const zoomed = run([
+      keep([[0, 300]]),
+      { _tag: "splitItem", itemId: "v1", atFrame: 200, newItemId: "vz1" },
+      { _tag: "splitItem", itemId: "v1", atFrame: 100, newItemId: "vz2" },
+      { _tag: "setItemProps", itemId: "vz2", props: { zoom } },
+    ]);
+    const withZoom = (document: EditDocument) =>
+      document.tracks[0]!.items.map((item) => ({
+        ...items(document).find((entry) => entry.id === item.id),
+        zoom: "zoom" in item ? item.zoom : undefined,
+      }));
+    // Kept ranges cross the zoom's edges (source 100 and 200): each is cut there.
+    const cut = run(
+      [
+        keep([
+          [0, 50],
+          [80, 70],
+          [170, 80],
+          [260, 40],
+        ]),
+      ],
+      zoomed,
+    );
+    expect(withZoom(cut)).toEqual([
+      { id: "v1", start: 0, duration: 50, in: 0, zoom: undefined },
+      { id: "v2", start: 50, duration: 20, in: 80, zoom: undefined },
+      { id: "v3", start: 70, duration: 50, in: 100, zoom },
+      { id: "v4", start: 120, duration: 30, in: 170, zoom },
+      { id: "v5", start: 150, duration: 50, in: 200, zoom: undefined },
+      { id: "v6", start: 200, duration: 40, in: 260, zoom: undefined },
+    ]);
+    // A zoomed range that stays whole keeps its id as well as its zoom.
+    const kept = run(
+      [
+        keep([
+          [0, 50],
+          [100, 100],
+          [250, 50],
+        ]),
+      ],
+      zoomed,
+    );
+    expect(withZoom(kept)[1]).toEqual({ id: "vz2", start: 50, duration: 100, in: 100, zoom });
+    // With no zoom anywhere, a range is never cut up.
+    expect(items(run([keep([[0, 120]])], run([keep([[0, 300]])])))).toEqual([
+      { id: "v1", start: 0, duration: 120, in: 0 },
+    ]);
   });
 
   it("keeps ids and props of ranges that stay, and restores a removed range in place", () => {
@@ -160,6 +213,52 @@ describe("applyEditOps", () => {
     ]);
     const gap = run([{ _tag: "deleteItem", itemIds: ["v1"], ripple: false }], rippled);
     expect(items(gap)).toEqual([{ id: "v2", start: 50, duration: 90, in: 210 }]);
+  });
+
+  it("applies many right-to-left splits on one item and one ripple delete of many ids (S7V-078)", () => {
+    // A 300-frame piece with a gain and a label, then another clip right after it on the track.
+    const withOther: EditDocument = {
+      ...base,
+      media: [...base.media, { ...base.media[0]!, id: "other" }],
+    };
+    const start = run(
+      [
+        keep([[0, 300]]),
+        { _tag: "setItemProps", itemId: "v1", props: { gainDb: -3, label: "intro" } },
+        {
+          _tag: "insertItem",
+          trackId: "V1",
+          item: { media: "other", start: 300, duration: 50, in: 0 },
+        } as EditOp,
+      ],
+      withOther,
+    );
+    const ops = cutRangesOps(start, "cam", [
+      [10, 20],
+      [50, 80],
+      [200, 300],
+    ]);
+    // Right to left: every split names v1, the part that still ends where the next cut begins.
+    expect(ops).toEqual([
+      { _tag: "splitItem", itemId: "v1", atFrame: 200, newItemId: "vt1" },
+      { _tag: "splitItem", itemId: "v1", atFrame: 80, newItemId: "vt2" },
+      { _tag: "splitItem", itemId: "v1", atFrame: 50, newItemId: "vt3" },
+      { _tag: "splitItem", itemId: "v1", atFrame: 20, newItemId: "vt4" },
+      { _tag: "splitItem", itemId: "v1", atFrame: 10, newItemId: "vt5" },
+      { _tag: "deleteItem", itemIds: ["vt1", "vt3", "vt5"], ripple: true },
+    ]);
+    const cut = run(ops, start);
+    expect(items(cut)).toEqual([
+      { id: "v1", start: 0, duration: 10, in: 0 },
+      { id: "vt4", start: 10, duration: 30, in: 20 },
+      { id: "vt2", start: 40, duration: 120, in: 80 },
+      // 140 frames removed, so the other clip closes up by exactly that.
+      { id: "v2", start: 160, duration: 50, in: 0 },
+    ]);
+    // Every part keeps the piece's props.
+    for (const item of cut.tracks[0]!.items.slice(0, 3)) {
+      expect(item).toMatchObject({ gainDb: -3, label: "intro" });
+    }
   });
 
   it("restores a range beside its neighbours and keeps manual moves (S7V-038)", () => {

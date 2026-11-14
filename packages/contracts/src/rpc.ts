@@ -12,12 +12,18 @@ import {
   EngineJobsCancelResult,
   EngineJobsEvent,
   EngineJobsSubscribeInput,
+  CaptionPresetsResult,
+  CaptionsError,
   CaptionStillsResult,
+  CaptionStyleInput,
+  CaptionStyleResult,
   ExportStartError,
   ExportStartInput,
   ExportStartResult,
   ExportStatus,
   ExportStatusInput,
+  InterchangeExportInput,
+  InterchangeExportResult,
 } from "./engine.ts";
 import {
   TranscribeModelsDismissInput,
@@ -650,8 +656,12 @@ export const WS_METHODS = {
   engineJobsCancel: "engine.jobs.cancel",
   exportStart: "export.start",
   exportStatus: "export.status",
+  exportInterchange: "export.interchange",
   // Caption stills for the player (S7V-075)
   captionsStills: "captions.stills",
+  // Caption looks: the Editor's strip of previews, and picking one (S7V-037)
+  captionsPresets: "captions.presets",
+  captionsSetStyle: "captions.setStyle",
 
   // Edit document (S7V-024)
   editGet: "edit.get",
@@ -2047,6 +2057,18 @@ const WsExportStartRpc = Rpc.make(WS_METHODS.exportStart, {
   ]),
 });
 
+// "Export for editors" (S7V-040): the job as export.start's, followed with export.status.
+const WsExportInterchangeRpc = Rpc.make(WS_METHODS.exportInterchange, {
+  payload: InterchangeExportInput,
+  success: InterchangeExportResult,
+  error: Schema.Union([
+    EditUnavailableError,
+    ExportStartError,
+    EngineError,
+    EnvironmentAuthorizationError,
+  ]),
+});
+
 const WsExportStatusRpc = Rpc.make(WS_METHODS.exportStatus, {
   payload: ExportStatusInput,
   success: Schema.NullOr(ExportStatus),
@@ -2057,6 +2079,25 @@ const WsCaptionsStillsRpc = Rpc.make(WS_METHODS.captionsStills, {
   payload: EditProjectInput,
   success: CaptionStillsResult,
   error: Schema.Union([EditUnavailableError, EngineError, EnvironmentAuthorizationError]),
+});
+
+const WsCaptionsPresetsRpc = Rpc.make(WS_METHODS.captionsPresets, {
+  payload: EditProjectInput,
+  success: CaptionPresetsResult,
+  error: Schema.Union([EditUnavailableError, EnvironmentAuthorizationError]),
+});
+
+const WsCaptionsSetStyleRpc = Rpc.make(WS_METHODS.captionsSetStyle, {
+  payload: CaptionStyleInput,
+  success: CaptionStyleResult,
+  error: Schema.Union([
+    EditUnavailableError,
+    CaptionsError,
+    EditConflict,
+    EditValidationError,
+    EditOpError,
+    EnvironmentAuthorizationError,
+  ]),
 });
 
 const EditRpcError = Schema.Union([EditUnavailableError, EnvironmentAuthorizationError]);
@@ -2403,8 +2444,11 @@ export const WsRpcGroup = RpcGroup.make(
   WsEngineJobsSubscribeRpc,
   WsEngineJobsCancelRpc,
   WsExportStartRpc,
+  WsExportInterchangeRpc,
   WsExportStatusRpc,
   WsCaptionsStillsRpc,
+  WsCaptionsPresetsRpc,
+  WsCaptionsSetStyleRpc,
   WsEditGetRpc,
   WsEditApplyRpc,
   WsEditSubscribeRpc,

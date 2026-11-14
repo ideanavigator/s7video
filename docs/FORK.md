@@ -239,6 +239,12 @@ New: `docs/engineering/` (standards), `docs/changelog/` (per-ticket entries), `d
 `scripts/planning.ts` (`pnpm tickets`, `ticket:*`, `doc:new`) and `scripts/check-doc-links.ts`
 (`pnpm docs:linkcheck`).
 
+`docs/README.md`, upstream's docs index, is edited in place. It has the s7video title and a
+contributor section that points to the agent rules, standards and planning. Its provider list
+matches the kept providers. The Connect, mobile and relay pages are gone. It links six s7video
+`docs/internals/` pages: media import, edit history, timeline, captions, sound and music
+(S7V-036), and punch-in zoom (S7V-037).
+
 ## Edit projects (S7V-024)
 
 - **Every new named project is an edit project.** `ManagedProjectFolders.createNamedProject` adds `edit.json`, `project.json`, `styles/`, `assets/`, `.s7cache/` and `exports/`. It also adds a whitelist `.gitignore`, and commits those files with T3's starter `README.md` and `assets/icon.svg`. It only adds files: nothing of T3's scaffold is removed. Scratch projects and existing projects are not converted.
@@ -386,6 +392,9 @@ upstream files have small edits:
 - `evals/mcp-tool-use/run.ts`: `visibleT3Tools({ video: true })` offers only
   `VIDEO_PROJECT_TOOL_NAMES`, and the context report prints a second line for a video project's
   thread, so the eval measures what that thread is really offered.
+- `evals/mcp-tool-use/README.md`: the "Video cases (s7video)" section describes the video eval
+  cases: the `video-export-*` cases (S7V-061), `VID-01` to `VID-03` (S7V-072), and `VID-04` to
+  `VID-06` for restoring and comparing versions from chat (S7V-070).
 
 The ACP first-prompt text (`t3AcpPromptWithInstructions`) still carries the orchestration text; ACP
 gets the filtered list from the server.
@@ -406,6 +415,7 @@ tools. These upstream files have small edits:
 - `provider/CodexProvider.ts` (`probeCodexSkillsForCwd`), `Drivers/CodexDriver.ts`, `Drivers/CodexManagedProvider.ts`: the same call before `skills/list` in edit projects.
 - `scripts/build-desktop-artifact.ts` stages the folder and ships it as the `skills` extra resource, outside `app.asar`; `apps/desktop/src/backend/DesktopBackendConfiguration.ts` sets `S7VIDEO_SKILLS_DIR` when packaged.
 - `provider/agentContextBudget.json` gains `builtInSkillListingBytes`, the per-session cost of listing the skills.
+- `provider/ClaudeCapabilitiesProbe.test.ts` checks the skills an edit project lists; S7V-036 adds `add-sound-and-music`, S7V-037 `caption-style` and `punch-in-zoom`.
 - `apps/web/src/components/chat/useComposerMenuItems.ts` and `ComposerCommandMenu.tsx`: a `/` menu skill row with a `displayName` (built-in skills read it from `agents/openai.yaml`) shows that name instead of `/skill:<name>`. Skills without one keep the upstream label; search is unchanged.
 
 ## Media import (S7V-025)
@@ -465,13 +475,15 @@ The Editor is the main view of a video project (S7V-076). These upstream files h
 The services are new code (`edit/`, `export/`, `transcript/`, `engine/`). The upstream files only
 wire them in:
 
-- `server.ts` builds the edit, media, silence-cut, export, transcript and engine layers above the
-  core runtime, so WebSocket handlers, agent tools and the asset route share one instance of each.
-- `ws.ts` adds thin handlers for `edit.*`, `media.*`, `export.*`, `transcript.get` and
-  `transcribe.*`.
+- `server.ts` builds the edit, media, silence-cut, caption, sound (S7V-036), clip placement
+  (S7V-093), zoom (S7V-037), export, transcript and engine layers above the core runtime, so WebSocket handlers, agent tools and the asset route
+  share one instance of each.
+- `ws.ts` adds thin handlers for `edit.*`, `media.*`, `export.*` (including S7V-040's
+  `export.interchange`, "Export for editors"), `transcript.get` and `transcribe.*`.
 - `observability/RpcInstrumentation.ts` gives these methods the `engine`, `edit` and `media`
   metric groups; `auth/RpcAuthorization.ts` and `contracts/clientRpcPermissions.ts` give reads
-  read scope and changes operate scope.
+  read scope and changes operate scope. S7V-040 adds `export.interchange` to the `engine` group and
+  to operate scope, with one assertion in `auth/RpcAuthorization.test.ts`.
 - `packages/contracts/src/rpc.ts` (the sprint's RPC definitions and `WS_METHODS` entries) and
   `packages/contracts/src/index.ts` (re-exports of the new contract modules) are the biggest
   upstream-file changes, and the likeliest merge-conflict spots in an upstream merge.
@@ -487,7 +499,33 @@ small wiring as the other `edit.*` methods: `edit.versions`, `edit.versionGet`, 
 `RpcInstrumentation.ts` also puts `edit.historyClean` and `edit.historyDismiss` (S7V-050) in the
 `edit` group. The caption stills (S7V-075) get the same wiring: `captions.stills` in
 `contracts/rpc.ts`, a thin handler in `ws.ts`, read scope in `auth/RpcAuthorization.ts` and the
-`engine` group in `observability/RpcInstrumentation.ts`.
+`engine` group in `observability/RpcInstrumentation.ts`. The caption looks (S7V-037) add two more
+the same way: `captions.presets` (read scope, `engine` group) and `captions.setStyle` (operate
+scope in `contracts/clientRpcPermissions.ts`, `edit` group), and `ws.test.ts` mocks the caption
+track service its handlers now read.
+
+## Edit control files are write-protected (S7V-077)
+
+Upstream's `projects.writeFile` writes any file in a known workspace. In a video project, it now
+refuses `edit.json` and `project.json` at the project's root and anything under `.s7history/`, so
+only the edit service changes them and S7V-054's outside-edit guard can trust the history. The check
+sits next to the `.git` refusal in `resolveWriteTarget` and works the same way: case-folded, and on
+both the real and the named path, so a link to one of these files is refused too. Upstream files
+with small, additive edits:
+
+- `apps/server/src/workspace/WorkspaceFileSystem.ts`: the check and `WorkspaceProtectedFileError`.
+- `packages/contracts/src/project.ts`: a `protected_file` failure.
+- `apps/server/src/ws.ts`: `projectFileFailureContext` maps the error to `protected_file` with the
+  plain message.
+- `apps/web/src/components/files/fileSaveSessions.ts`: a refused save shows that message in a toast.
+- `apps/server/src/workspace/WorkspaceFileSystem.test.ts`, `apps/server/src/ws.test.ts` and
+  `apps/web/src/components/files/fileSaveSessions.test.ts`: tests for the refusal, its
+  `protected_file` failure and its message.
+
+**Out of reach of this check:** the `vcs.*` RPCs (a git checkout or pull can rewrite `edit.json`)
+and `terminal.write` (a shell can write any file), as well as the agent's own file tools. They are
+not path-checked writes, and `.s7history/` is git-ignored, so they cannot be guarded by path. S7V-054
+already treats an `edit.json` change made through them as an outside edit.
 
 ## Media data assets (S7V-035)
 
@@ -502,6 +540,21 @@ additive edits:
   request as before.
 - `apps/web/src/assets/assetUrls.ts`: `useAssetUrlMinter` mints URLs on demand for code outside
   React (the timeline's media-tiles worker); `refresh` mints a new token for an expired URL.
+
+## Caption stills by key (S7V-079)
+
+The player's caption stills are served by the existing asset route, so two upstream files have
+small, additive edits:
+
+- `assets/AssetAccess.ts`: a `caption-stills` claim names a project and a look folder, so one
+  signed token covers that folder's stills; `issueCaptionStillsUrl` mints it for `captions.stills`.
+  Serving it calls `export/captionStillFile.ts` (new code), which re-resolves the project,
+  refuses anything but the engine's own file names, and opens the still with `openMediaFile`, as
+  `project-media-exact` does, so the response streams the checked descriptor.
+- `assets/AssetAccess.test.ts`: the shared test setup changes, so an upstream merge may conflict
+  there: new imports (`Project`, `issueCaptionStillsUrl`, `ProjectService`), a `projectRoots` map,
+  and a `ProjectService` mock in `layerTest`. A new `caption stills (S7V-079)` block tests serving a
+  still and refusing bad paths, links and tokens.
 
 ## Window focus (S7V-074)
 

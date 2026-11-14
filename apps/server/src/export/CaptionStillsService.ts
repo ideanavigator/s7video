@@ -1,11 +1,15 @@
 // SPDX-FileCopyrightText: 2026 s7video contributors
 // SPDX-License-Identifier: MIT
 /**
- * The player's caption stills (S7V-075): what the export burns in (caption items, or the
- * transcripts), drawn by the engine with the export's ASS and libass, cached per text in
- * `.s7cache/captions/`. Inline base64: about 13 MB for a 10-minute talk (`captions.md`).
+ * The player's caption stills (S7V-075), drawn by the engine with the export's ASS and libass and
+ * cached in `.s7cache/captions/`. The reply names them and the player fetches them by key
+ * (S7V-079, `captions.md`). The looks' previews (S7V-037) are drawn the same way, sent inline.
  */
 import {
+  CAPTION_PRESET_NAMES,
+  CaptionPresetId,
+  type CaptionPresetsResult,
+  CaptionsPreviewResult,
   CaptionsRenderResult,
   type CaptionStillsResult,
   type EditDocument,
@@ -15,10 +19,10 @@ import {
 } from "@t3tools/contracts";
 import { transcriptCaptionTrackOf } from "@t3tools/shared/captionWords";
 import * as Context from "effect/Context";
+import * as Base64 from "effect/encoding/Base64";
 import * as Crypto from "effect/Crypto";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
-import * as Base64 from "effect/encoding/Base64";
 import * as Hex from "effect/encoding/Hex";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -27,10 +31,13 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 
+import { issueCaptionStillsUrl } from "../assets/AssetAccess.ts";
+import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import { loadCaptionTranscripts } from "../edit/captionTrack.ts";
 import * as EditDocumentService from "../edit/EditDocumentService.ts";
 import * as EngineService from "../engine/EngineService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
+import { captionCacheDir, isCaptionLookName, readCaptionPreview } from "./captionStillFile.ts";
 import { transcriptMediaFor } from "./ExportService.ts";
 
 const encodeKeyInput = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
@@ -45,6 +52,10 @@ export class CaptionStillsService extends Context.Service<
     readonly stills: (
       projectId: ProjectId,
     ) => Effect.Effect<CaptionStillsResult, EditUnavailableError | EngineError>;
+    /** Each look's preview at the edit's canvas; a look that can't be drawn has no picture. */
+    readonly presets: (
+      projectId: ProjectId,
+    ) => Effect.Effect<CaptionPresetsResult, EditUnavailableError>;
   }
 >()("t3/export/CaptionStillsService") {}
 
@@ -61,6 +72,7 @@ const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const crypto = yield* Crypto.Crypto;
+  const secretStore = yield* ServerSecretStore.ServerSecretStore;
   // One render at a time: the player asks again after each change.
   const rendering = yield* Semaphore.make(1);
 
@@ -112,8 +124,19 @@ const make = Effect.gen(function* () {
         (track) => track.kind === "caption" && track.muted !== true && track.items.length > 0,
       );
     const { width, height } = document.canvas;
-    if (!drawable) return { key: "none", width, height, chunks: [], stills: [], missing };
-    const cacheDir = path.join(root, ".s7cache", "captions");
+    if (!drawable) {
+      return {
+        key: "none",
+        width,
+        height,
+        chunks: [],
+        folder: "",
+        stillsUrl: "",
+        stills: [],
+        missing,
+      };
+    }
+    const cacheDir = captionCacheDir(path, root);
     const timeout = Duration.millis(
       BASE_TIMEOUT_MS + TIMEOUT_MS_PER_WORD * wordCount(document, transcripts),
     );
@@ -125,16 +148,14 @@ const make = Effect.gen(function* () {
         timeout,
       ),
     );
-    const names = [...new Set(rendered.chunks.map((chunk) => chunk.png))];
-    const folder = path.join(cacheDir, path.basename(rendered.folder));
-    const files = yield* Effect.forEach(names, (name) =>
-      fileSystem.readFile(path.join(folder, path.basename(name))),
-    ).pipe(Effect.mapError(() => unreadable(projectId)));
+    // The route serves only the engine's own names; anything else would show as a blank still.
+    if (!isCaptionLookName(rendered.folder)) return yield* unreadable(projectId);
+    const names = [...new Set(rendered.chunks.map((chunk) => path.basename(chunk.png)))];
     const at = new Map(names.map((name, number) => [name, number]));
     const chunks = rendered.chunks.map((chunk) => ({
       start: chunk.start,
       end: chunk.end,
-      still: at.get(chunk.png)!,
+      still: at.get(path.basename(chunk.png))!,
     }));
     // The look folder and the chunks name everything the player shows.
     const keyText = yield* encodeKeyInput([rendered.folder, rendered.chunks]).pipe(Effect.orDie);
@@ -142,17 +163,55 @@ const make = Effect.gen(function* () {
     const key = yield* crypto
       .digest("SHA-256", keyBytes)
       .pipe(Effect.map(Hex.encode), Effect.orDie);
+    const stillsUrl = yield* issueCaptionStillsUrl(projectId, rendered.folder).pipe(
+      Effect.provideService(ServerSecretStore.ServerSecretStore, secretStore),
+      Effect.mapError(() => unreadable(projectId)),
+    );
     return {
       key: chunks.length === 0 ? "none" : key,
       width: rendered.width,
       height: rendered.height,
       chunks,
-      stills: files.map((file) => Base64.encode(file)),
+      folder: rendered.folder,
+      stillsUrl,
+      stills: names,
       missing,
     };
   });
 
-  return CaptionStillsService.of({ stills });
+  const presets: CaptionStillsService["Service"]["presets"] = Effect.fn(
+    "CaptionStillsService.presets",
+  )(function* (projectId) {
+    const { document } = yield* edits.read(projectId);
+    const cacheDir = captionCacheDir(path, yield* rootOf(projectId));
+    const { width, height } = document.canvas;
+    const previews = yield* Effect.forEach(CaptionPresetId.literals, (id) =>
+      rendering
+        .withPermit(
+          engine.call(
+            "captions.preview",
+            { preset: id, width, height, cacheDir },
+            CaptionsPreviewResult,
+          ),
+        )
+        .pipe(
+          Effect.flatMap((drawn) => readCaptionPreview(projectId, drawn.folder, drawn.png)),
+          Effect.provideService(ProjectService.ProjectService, projects),
+          Effect.provideService(FileSystem.FileSystem, fileSystem),
+          Effect.provideService(Path.Path, path),
+          // No libass, or a failed draw: the strip shows the look's name only.
+          Effect.orElseSucceed(() => null),
+          Effect.map((png) => ({
+            id,
+            name: CAPTION_PRESET_NAMES[id],
+            png: png === null ? "" : Base64.encode(png),
+          })),
+        ),
+    );
+    return { presets: previews };
+  });
+
+  return CaptionStillsService.of({ stills, presets });
 });
 
 export const layer = Layer.effect(CaptionStillsService, make);

@@ -354,7 +354,21 @@ export function wordCutOps(
   mediaId: string,
   range: FrameSpan,
 ): ReadonlyArray<EditOp> {
-  const [from, to] = range;
+  return cutRangesOps(document, mediaId, [range]);
+}
+
+/**
+ * `wordCutOps` for many source ranges (S7V-078), on `trackId` only when given. Each item's cuts
+ * are split right to left, so every split lands in the part keeping the item's id; one ripple
+ * delete then closes up later items by exactly the frames removed. Order and gaps stay.
+ */
+export function cutRangesOps(
+  document: EditDocument,
+  mediaId: string,
+  ranges: ReadonlyArray<FrameSpan>,
+  trackId?: string,
+): ReadonlyArray<EditOp> {
+  const cuts = union(ranges);
   const taken = allIds(document);
   let counter = 0;
   const fresh = () => {
@@ -367,31 +381,36 @@ export function wordCutOps(
   const splits: EditOp[] = [];
   const deleted: string[] = [];
   for (const track of document.tracks) {
-    if (track.kind !== "video") continue;
+    if (track.kind !== "video" || (trackId !== undefined && track.id !== trackId)) continue;
     for (const item of [...track.items].sort((a, b) => a.start - b.start)) {
       if (item.media !== mediaId) continue;
-      const itemEnd = item.in + item.duration;
-      const cutFrom = Math.max(from, item.in);
-      const cutTo = Math.min(to, itemEnd);
-      if (cutTo <= cutFrom) continue;
-      if (cutTo < itemEnd) {
-        splits.push({
-          _tag: "splitItem",
-          itemId: item.id,
-          atFrame: item.start + cutTo - item.in,
-          newItemId: fresh(),
-        });
+      // Where the part that keeps the item's id ends now, in source frames.
+      let end = item.in + item.duration;
+      for (let index = cuts.length - 1; index >= 0; index--) {
+        const [from, to] = cuts[index]!;
+        const cutFrom = Math.max(from, item.in);
+        const cutTo = Math.min(to, end);
+        if (cutTo <= cutFrom) continue;
+        if (cutTo < end) {
+          splits.push({
+            _tag: "splitItem",
+            itemId: item.id,
+            atFrame: item.start + cutTo - item.in,
+            newItemId: fresh(),
+          });
+        }
+        if (cutFrom > item.in) {
+          const middle = fresh();
+          splits.push({
+            _tag: "splitItem",
+            itemId: item.id,
+            atFrame: item.start + cutFrom - item.in,
+            newItemId: middle,
+          });
+          deleted.push(middle);
+        } else deleted.push(item.id);
+        end = cutFrom;
       }
-      if (cutFrom > item.in) {
-        const middle = fresh();
-        splits.push({
-          _tag: "splitItem",
-          itemId: item.id,
-          atFrame: item.start + cutFrom - item.in,
-          newItemId: middle,
-        });
-        deleted.push(middle);
-      } else deleted.push(item.id);
     }
   }
   if (deleted.length === 0) return [];

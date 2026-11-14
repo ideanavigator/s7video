@@ -67,7 +67,13 @@ it.effect("lists the built-in skills in edit projects only (S7V-048)", () =>
     yield* fileSystem.writeFileString(path.join(cwd, "edit.json"), "{}\n");
     yield* fileSystem.writeFileString(path.join(cwd, "project.json"), projectFileContents(0));
     const video = yield* probeClaudeWorkspaceSnapshot(settings, machine, cwd, { HOME: home });
-    assert.deepEqual(names(video), ["video:add-captions", "video:remove-silences"]);
+    assert.deepEqual(names(video), [
+      "video:add-captions",
+      "video:add-sound-and-music",
+      "video:caption-style",
+      "video:punch-in-zoom",
+      "video:remove-silences",
+    ]);
   }).pipe(
     Effect.ensuring(Effect.sync(() => vi.mocked(query).mockRestore())),
     Effect.scoped,

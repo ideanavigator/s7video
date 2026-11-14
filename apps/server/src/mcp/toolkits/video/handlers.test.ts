@@ -15,11 +15,14 @@ import {
   type EngineJobsEvent,
   EnvironmentId,
   type ExportStartInput,
+  type InterchangeExportInput,
   type MediaFrameInput,
   type MediaProbeResult,
   ProjectId,
   ProviderInstanceId,
   CaptionsError,
+  SoundError,
+  ZoomError,
   SilenceCutError,
   ThreadId,
 } from "@t3tools/contracts";
@@ -40,8 +43,12 @@ import * as NodePath from "node:path";
 
 import * as ServerConfig from "../../../config.ts";
 import * as EditDocumentService from "../../../edit/EditDocumentService.ts";
+import * as AudioTrackService from "../../../edit/AudioTrackService.ts";
 import * as CaptionTrackService from "../../../edit/CaptionTrackService.ts";
+import * as ClipPlacementService from "../../../edit/ClipPlacementService.ts";
 import * as SilenceCutService from "../../../edit/SilenceCutService.ts";
+import * as ZoomService from "../../../edit/ZoomService.ts";
+import { ZOOM_RANGE_FORMAT } from "../../../edit/zoomOps.ts";
 import * as EngineService from "../../../engine/EngineService.ts";
 import * as ExportService from "../../../export/ExportService.ts";
 import * as MediaLibraryService from "../../../media/MediaLibraryService.ts";
@@ -159,7 +166,7 @@ interface Fixture {
   readonly outside: string;
   readonly calls: Array<readonly ["probe", string] | readonly ["frame", MediaFrameInput]>;
   readonly cancelled: Array<string>;
-  readonly exports: Array<ExportStartInput>;
+  readonly exports: Array<ExportStartInput | InterchangeExportInput>;
   readonly engine: { failNextProbe: boolean; modelsReady: boolean };
   readonly started: Array<{ readonly kind: string; readonly projectId: ProjectId | undefined }>;
   readonly documents: Map<ProjectId, EditDocument>;
@@ -174,6 +181,9 @@ interface Fixture {
     label: string | undefined;
   }>;
   readonly silences: Array<SilenceCutService.RemoveSilencesInput>;
+  readonly sounds: Array<readonly [string, ProjectId, unknown]>;
+  /** Zooms and caption looks asked of the services (S7V-037). */
+  readonly looks: Array<readonly [string, ProjectId, unknown]>;
   diskShort: boolean;
   /** Runs as each job subscription starts. */
   onSubscribe: Effect.Effect<void>;
@@ -248,6 +258,8 @@ const makeFixture = (): Fixture => {
     sharedInB,
     imports: [],
     silences: [],
+    sounds: [],
+    looks: [],
     diskShort: false,
     onSubscribe: Effect.void,
     recent: [],
@@ -293,6 +305,17 @@ const layerFor = (fixture: Fixture, cancelSignal: Deferred.Deferred<string>) => 
         jobs.push({ ...job(id, input.projectId), kind: "export", stage: "render" });
         return Effect.succeed({ jobId: id, path: "exports/my-reel-20261106-0930.mp4" });
       }),
+    startInterchange: (input) =>
+      Effect.suspend(() => {
+        fixture.exports.push(input);
+        const id = EngineJobId.make(`engine-job-export-${fixture.exports.length}`);
+        jobs.push({ ...job(id, input.projectId), kind: "export", stage: "timeline" });
+        return Effect.succeed({
+          jobId: id,
+          files: ["exports/my-reel-20261106-0930.edl"],
+          dropped: ["all sound: the clips' own audio, sound effects and music"],
+        });
+      }),
   });
   return Layer.mergeAll(
     exportService,
@@ -320,6 +343,41 @@ const layerFor = (fixture: Fixture, cancelSignal: Deferred.Deferred<string>) => 
               });
         }),
     }),
+    // Project B has no transcript and no music: the service's plain refusals.
+    Layer.mock(AudioTrackService.AudioTrackService)({
+      placeAudio: (projectId, input) => {
+        fixture.sounds.push(["place", projectId, input]);
+        return projectId === projectB
+          ? Effect.fail(
+              new SoundError({
+                reason: "cut",
+                detail: "Frame 40 of other was cut from the edit, so nothing was added.",
+              }),
+            )
+          : Effect.succeed({
+              revision: 10,
+              item: { id: "sfx1", trackId: "S1", start: 42, duration: 5, gainDb: -5.3 },
+              message: 'Added "whoosh" on the sound effect track at 1.8 s, 9 dB under the voice.',
+            });
+      },
+      duckMusic: (projectId, input) => {
+        fixture.sounds.push(["duck", projectId, input]);
+        return projectId === projectB
+          ? Effect.fail(
+              new SoundError({
+                reason: "no-music",
+                detail: "There is no music in the edit yet. Place it with video_place_audio first.",
+              }),
+            )
+          : Effect.succeed({
+              revision: 11,
+              ranges: 13,
+              changed: true,
+              message: "The music now dips 12 dB under speech in 13 places.",
+            });
+      },
+    }),
+    Layer.mock(ClipPlacementService.ClipPlacementService)({}),
     Layer.mock(CaptionTrackService.CaptionTrackService)({
       addCaptions: (projectId) =>
         projectId === projectB
@@ -330,6 +388,34 @@ const layerFor = (fixture: Fixture, cancelSignal: Deferred.Deferred<string>) => 
               }),
             )
           : Effect.succeed({ revision: 9, captions: 12, changed: true }),
+      // Project A has captions; project B has none, so its first look adds them.
+      setStyle: (projectId, preset, options) => {
+        fixture.looks.push(["style", projectId, { preset, origin: options.origin }]);
+        return Effect.succeed({
+          revision: 12,
+          captions: 12,
+          changed: preset !== "s7-neutral",
+          added: projectId === projectB,
+        });
+      },
+    }),
+    // Project B's range was cut: the service's plain refusal.
+    Layer.mock(ZoomService.ZoomService)({
+      zoom: (projectId, input) => {
+        fixture.looks.push(["zoom", projectId, input]);
+        return projectId === projectB
+          ? Effect.fail(
+              new ZoomError({
+                reason: "cut",
+                detail: "That moment was cut from the edit, so nothing was zoomed.",
+              }),
+            )
+          : Effect.succeed({
+              revision: 13,
+              items: 1,
+              message: "Zoomed in 1.25x from 00:04.00 to 00:06.00.",
+            });
+      },
     }),
     Layer.mock(MediaLibraryService.MediaLibraryService)({
       plan: (input) =>
@@ -400,6 +486,7 @@ const layerFor = (fixture: Fixture, cancelSignal: Deferred.Deferred<string>) => 
           canRedo: false,
           ...(fixture.cleanup === undefined ? {} : { cleanup: fixture.cleanup }),
         } satisfies EditSnapshot),
+      versions: () => Effect.succeed([]),
     }),
     Layer.mock(EngineService.EngineService)({
       probe: (input) =>
@@ -535,18 +622,25 @@ describe("video toolkit", () => {
           "video_add_captions",
           "video_assemble",
           "video_canvas",
+          "video_caption_style",
+          "video_duck_music",
           "video_edit_read",
           "video_export",
+          "video_export_interchange",
           "video_frame",
           "video_import",
           "video_job_cancel",
           "video_job_status",
+          "video_place_audio",
           "video_probe",
           "video_redo",
           "video_remove_silences",
           "video_transcribe",
           "video_transcript_read",
           "video_undo",
+          "video_version_restore",
+          "video_versions",
+          "video_zoom",
         ]);
         // ToolSearch finds deferred tools by these words, so each says what it reads.
         for (const tool of tools) {
@@ -564,6 +658,9 @@ describe("video toolkit", () => {
         expect(described.video_canvas).toContain("only if user asks");
         const exportTool = tools.find((tool) => tool.name === "video_export");
         expect(Object.keys(exportTool?.inputSchema.properties ?? {})).toEqual(["captions"]);
+        // S7V-040: user-triggered only, like video_export.
+        expect(described.video_export_interchange).toContain("only if user asks");
+        expect(described.video_export_interchange).toContain("job");
         expect(described.video_transcribe).toContain("Transcribe");
         expect(described.video_transcript_read).toContain("transcript");
         expect(described.video_undo).toMatch(/\bundo\b.*\bedit\b/iu);
@@ -849,6 +946,28 @@ describe("video toolkit", () => {
     ),
   );
 
+  // S7V-070: listing versions is a read; making one main changes the edit.
+  it.effect("video_version_restore refuses a read-only client; video_versions does not", () =>
+    withTools(({ call }) =>
+      Effect.gen(function* () {
+        const readOnly = { sessionId: "session-ro", label: "Viewer", access: "read-only" as const };
+        const refused = yield* call(
+          threadA,
+          "video_version_restore",
+          { version: "v1" },
+          undefined,
+          readOnly,
+        );
+        expect(refused.isError).toBe(true);
+        expect(textOf(refused)).toEqual([
+          "This tool changes the environment, and this MCP client was approved for read-only access.",
+        ]);
+        const listed = yield* call(threadA, "video_versions", {}, undefined, readOnly);
+        expect(listed.structuredContent).toEqual({ versions: [] });
+      }),
+    ),
+  );
+
   it.effect("video_remove_silences cuts the caller's project and reports the result", () =>
     withTools(({ fixture, call }) =>
       Effect.gen(function* () {
@@ -962,6 +1081,7 @@ describe("video toolkit", () => {
           ["video_job_status", {}],
           ["video_job_cancel", { jobId: "engine-job-1" }],
           ["video_export", {}],
+          ["video_export_interchange", { format: "edl" }],
           ["video_canvas", { ratio: "16:9" }],
           ["video_transcribe", { media: "cam" }],
           ["video_transcript_read", { media: "cam" }],
@@ -971,6 +1091,12 @@ describe("video toolkit", () => {
           ["video_remove_silences", {}],
           ["video_assemble", { items: [] }],
           ["video_add_captions", {}],
+          ["video_place_audio", { media: "cam" }],
+          ["video_duck_music", {}],
+          ["video_versions", {}],
+          ["video_version_restore", { version: "v1" }],
+          ["video_zoom", { range: "0-30" }],
+          ["video_caption_style", { preset: "s7-box" }],
         ] as const) {
           // A hidden tool is not callable at all: the server answers as for an unknown tool.
           const error = yield* call(threadA, tool, args, ["orchestration"]).pipe(Effect.flip);
@@ -980,6 +1106,77 @@ describe("video toolkit", () => {
         expect(fixture.cancelled).toEqual([]);
         expect(fixture.exports).toEqual([]);
         expect(fixture.imports).toEqual([]);
+        expect(fixture.sounds).toEqual([]);
+        expect(fixture.looks).toEqual([]);
+      }),
+    ),
+  );
+
+  // S7V-036: one service call for the caller's own project; its plain refusals reach the agent.
+  it.effect("video_place_audio places through the service and offers undo", () =>
+    withTools(({ fixture, call }) =>
+      Effect.gen(function* () {
+        const placed = yield* call(threadA, "video_place_audio", {
+          media: "cam",
+          at: 40,
+          track: "sfx",
+        });
+        expect(placed.isError).toBe(false);
+        expect(placed.structuredContent).toEqual({
+          revision: 10,
+          item: { id: "sfx1", trackId: "S1", start: 42, duration: 5, gainDb: -5.3 },
+          message:
+            'Added "whoosh" on the sound effect track at 1.8 s, 9 dB under the voice. Say undo to take it out.',
+        });
+        expect(fixture.sounds).toEqual([
+          [
+            "place",
+            projectA,
+            { media: "cam", at: 40, clip: undefined, track: "sfx", gainDb: undefined },
+          ],
+        ]);
+        const refused = yield* call(threadB, "video_place_audio", { media: "other", at: 40 });
+        expect(refused.isError).toBe(true);
+        expect(textOf(refused)).toEqual([
+          "Frame 40 of other was cut from the edit, so nothing was added.",
+        ]);
+      }),
+    ),
+  );
+
+  it.effect("video_place_audio refuses media outside the project before the service", () =>
+    withTools(({ fixture, call }) =>
+      Effect.gen(function* () {
+        for (const args of [
+          { media: NodePath.join(fixture.outside, "secret.mp4") },
+          { media: "cam", clip: "escape" },
+          { media: "linked" },
+        ]) {
+          const refused = yield* call(threadA, "video_place_audio", args);
+          expect(refused.isError, JSON.stringify(args)).toBe(true);
+        }
+        expect(fixture.sounds).toEqual([]);
+      }),
+    ),
+  );
+
+  it.effect("video_duck_music ducks through the service and says when there is no music", () =>
+    withTools(({ fixture, call }) =>
+      Effect.gen(function* () {
+        const ducked = yield* call(threadA, "video_duck_music", {});
+        expect(ducked.structuredContent).toEqual({
+          revision: 11,
+          ranges: 13,
+          message: "The music now dips 12 dB under speech in 13 places. Say undo to take it out.",
+        });
+        const refused = yield* call(threadB, "video_duck_music", { depthDb: -9 });
+        expect(textOf(refused)).toEqual([
+          "There is no music in the edit yet. Place it with video_place_audio first.",
+        ]);
+        expect(fixture.sounds).toEqual([
+          ["duck", projectA, { depthDb: undefined }],
+          ["duck", projectB, { depthDb: -9 }],
+        ]);
       }),
     ),
   );
@@ -1001,6 +1198,96 @@ describe("video toolkit", () => {
           expect(textOf(refused)).toEqual(["Transcribe the clip first: cam has no transcript."]);
         }),
       ),
+  );
+
+  // S7V-037: one service call each, for the caller's own project, with the defaults left to it.
+  it.effect("video_zoom parses one range, zooms through the service and offers undo", () =>
+    withTools(({ fixture, call }) =>
+      Effect.gen(function* () {
+        const zoomed = yield* call(threadA, "video_zoom", { range: " 120 - 180 ", anchorY: 0.4 });
+        expect(zoomed.isError).toBe(false);
+        expect(zoomed.structuredContent).toEqual({
+          revision: 13,
+          items: 1,
+          message: "Zoomed in 1.25x from 00:04.00 to 00:06.00. Say undo to take it out.",
+        });
+        const cut = yield* call(threadB, "video_zoom", { range: "40-60" });
+        expect(textOf(cut)).toEqual(["That moment was cut from the edit, so nothing was zoomed."]);
+        expect(fixture.looks).toEqual([
+          [
+            "zoom",
+            projectA,
+            {
+              from: 120,
+              to: 180,
+              clip: undefined,
+              scale: undefined,
+              anchorX: undefined,
+              anchorY: 0.4,
+            },
+          ],
+          [
+            "zoom",
+            projectB,
+            {
+              from: 40,
+              to: 60,
+              clip: undefined,
+              scale: undefined,
+              anchorX: undefined,
+              anchorY: undefined,
+            },
+          ],
+        ]);
+        // A list, a reversed range or a clip outside the project never reaches the service.
+        for (const args of [
+          { range: "9-30,60-90" },
+          { range: "60-30" },
+          { range: "30" },
+          { range: "0-30", clip: NodePath.join(fixture.outside, "secret.mp4") },
+        ]) {
+          const refused = yield* call(threadA, "video_zoom", args);
+          expect(refused.isError, JSON.stringify(args)).toBe(true);
+        }
+        expect(textOf(yield* call(threadA, "video_zoom", { range: "9-30,60-90" }))).toEqual([
+          ZOOM_RANGE_FORMAT,
+        ]);
+        expect(fixture.looks).toHaveLength(2);
+      }),
+    ),
+  );
+
+  it.effect("video_caption_style picks the look by name and says when it added captions", () =>
+    withTools(({ fixture, call }) =>
+      Effect.gen(function* () {
+        const boxed = yield* call(threadA, "video_caption_style", { preset: "s7-box" });
+        expect(boxed.structuredContent).toEqual({
+          revision: 12,
+          message:
+            "The captions now use the Boxed look, over the player and in the export. Say undo to go back.",
+        });
+        const same = yield* call(threadA, "video_caption_style", { preset: "s7-neutral" });
+        expect(same.structuredContent).toEqual({
+          revision: 12,
+          message: "The captions already use the Plain look.",
+        });
+        const added = yield* call(threadB, "video_caption_style", { preset: "s7-karaoke" });
+        expect(added.structuredContent).toEqual({
+          revision: 12,
+          message: "Added 12 captions in the Highlighted word look. Say undo to take them out.",
+        });
+        // Only our looks: anything else fails the tool's own schema and reaches no service.
+        const unknown = yield* call(threadA, "video_caption_style", { preset: "kigaru" }).pipe(
+          Effect.flip,
+        );
+        expect(String(unknown)).toMatch(/preset/u);
+        expect(fixture.looks).toEqual([
+          ["style", projectA, { preset: "s7-box", origin: "agent" }],
+          ["style", projectA, { preset: "s7-neutral", origin: "agent" }],
+          ["style", projectB, { preset: "s7-karaoke", origin: "agent" }],
+        ]);
+      }),
+    ),
   );
 
   it.effect(
@@ -1276,6 +1563,41 @@ describe("video toolkit", () => {
       ),
   );
 
+  it.effect("video_export_interchange starts the caller's project's export for editors", () =>
+    withTools(({ fixture, call }) =>
+      Effect.gen(function* () {
+        const started = yield* call(threadA, "video_export_interchange", { format: "edl" });
+        expect(started.isError).toBe(false);
+        // The reply says where the file lands and what does not carry over, as the notice does.
+        expect(started.structuredContent).toEqual({
+          jobId: "engine-job-export-1",
+          files: ["exports/my-reel-20261106-0930.edl"],
+          dropped: ["all sound: the clips' own audio, sound effects and music"],
+        });
+        expect(fixture.exports).toEqual([{ projectId: projectA, format: "edl" }]);
+        const followed = yield* call(threadA, "video_job_status", { jobId: "engine-job-export-1" });
+        expect(followed.structuredContent).toMatchObject({
+          jobs: [{ id: "engine-job-export-1", kind: "export", projectId: projectA }],
+        });
+        const ass = yield* call(threadA, "video_export_interchange", {
+          format: "fcpxml",
+          captions: "ass",
+        });
+        expect(ass.isError).toBe(false);
+        expect(fixture.exports[1]).toEqual({
+          projectId: projectA,
+          format: "fcpxml",
+          captions: "ass",
+        });
+        const unknown = yield* call(threadA, "video_export_interchange", { format: "aaf" }).pipe(
+          Effect.flip,
+        );
+        expect(String(unknown)).toContain("Invalid parameters");
+        expect(fixture.exports).toHaveLength(2);
+      }),
+    ),
+  );
+
   it.effect("should refuse video_export outside a video project", () =>
     withTools(({ fixture, call }) =>
       Effect.gen(function* () {
@@ -1367,18 +1689,25 @@ it.effect("should hide tools without the video capability", () =>
         "video_add_captions",
         "video_assemble",
         "video_canvas",
+        "video_caption_style",
+        "video_duck_music",
         "video_edit_read",
         "video_export",
+        "video_export_interchange",
         "video_frame",
         "video_import",
         "video_job_cancel",
         "video_job_status",
+        "video_place_audio",
         "video_probe",
         "video_redo",
         "video_remove_silences",
         "video_transcribe",
         "video_transcript_read",
         "video_undo",
+        "video_version_restore",
+        "video_versions",
+        "video_zoom",
       ]);
       expect(yield* listed("plainToken")).toEqual([]);
       NodeFS.rmSync(NodePath.dirname(fixture.rootA), { recursive: true, force: true });

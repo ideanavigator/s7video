@@ -81,6 +81,21 @@ from; the per-ticket entries and how this file is compiled are in
 - "Add captions" now adds captions to the edit: a Captions row on the timeline and captions over
   the player, exactly as they will export. They follow your cuts, and one undo removes them.
   (S7V-075)
+- A timeline under the player shows every change the assistant makes. Move, trim, split and delete
+  clips by hand, or cut by deleting words in the transcript; every change can be undone and becomes
+  a numbered version, an edit can use several clips, and none of it needs developer tools on your
+  Mac. (S7V-032)
+- Drop sound effects and music into the chat and ask the assistant to use them. It places them on
+  their rows at sensible levels, dips the music while you speak, and exports at a steady −14 LUFS.
+  For now you hear them in the exported video; the Editor's player doesn't play them yet. (S7V-036)
+- Ask the assistant about your versions by number or name, or say "make v12 current" or "go back
+  to the first cut": it brings that version back as the newest one, and nothing is lost. (S7V-070)
+- Ask the assistant to zoom in on a moment and the export tightens on your face there. Choose from
+  four caption looks we designed, each with a preview next to Export; the look you pick shows over
+  the player and in the export. For now the zoom shows only in the exported video. (S7V-037)
+- Export an edit for Final Cut Pro, Premiere, DaVinci Resolve or as an EDL, with captions as a
+  separate SRT or ASS file beside it. Every cut lands on the same frame, and before it exports the
+  app says in plain words what won't carry over, such as volume changes and zooms. (S7V-040)
 
 ### Changed
 
@@ -108,6 +123,9 @@ from; the per-ticket entries and how this file is compiled are in
 - Video projects open with the Editor beside the chat. Its first list shows your versions, newest
   marked Main, and you can make any older one main again. Drop a video anywhere on the Editor to
   add it. The Editor stays open after the assistant edits. (S7V-076)
+- Captions in the player update faster on long videos: after a cut, the player fetches only the
+  caption pictures the cut makes new and reuses the rest, instead of getting all of them again.
+  (S7V-079)
 
 ### Removed
 
@@ -122,6 +140,15 @@ from; the per-ticket entries and how this file is compiled are in
 
 ### Fixed
 
+- The files that hold your edit and its history can change only through the Editor or the
+  assistant. Saving them from the file view shows a plain message instead. (S7V-077)
+- If you rearranged parts of a clip on the timeline, removing silences now keeps your order and
+  gaps instead of putting the parts back in their original order. (S7V-078)
+- In a new project, the assistant now places your video on the timeline itself before adding
+  captions, music or sound effects, as one step you can undo. It used to stop and ask you to drag
+  the video there, which the Editor can't do. (S7V-093)
+- No change for users: a first message with an attachment was reported as showing its text twice,
+  but the doubling came from a test script, not the app. (S7V-062)
 - While you look at an older version, the timeline only lets you look: a drag, trim, split or
   delete no longer changes your main edit, and a click on the timeline takes you back to it.
   Version messages say "main", like the Versions tab. (S7V-087)

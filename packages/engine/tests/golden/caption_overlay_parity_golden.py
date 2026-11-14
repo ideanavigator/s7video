@@ -1,15 +1,16 @@
 # SPDX-FileCopyrightText: 2026 s7video contributors
 # SPDX-License-Identifier: MIT
-"""Golden ``caption-overlay-parity`` (S7V-075): the player's caption still, laid over the video,
-looks like the exported frame with the captions burned in.
+"""Golden ``caption-overlay-parity`` (S7V-075, every look since S7V-037): the player's caption
+still, laid over the video, looks like the exported frame with the captions burned in.
 
 ``talking-head-01`` cut to 4 ranges (240 frames at 24000/1001), captioned from its stored
-transcript as "add captions" does, exported at 9:16, 1:1 and 16:9 with and without captions.
-For the middle frame of each chunk, the still from ``captions.render`` is composited (straight
-alpha, as the browser draws an ``<img>``) on the uncaptioned export's frame and compared with the
-captioned export's frame in the caption band (the safe zone's bottom third): SSIM ≥ 0.98.
-The chunk's first and last frames in the export match its start and end (±1), the times the
-overlay switches on.
+transcript as "add captions" does, in each of our four looks, exported at 9:16, 1:1 and 16:9
+with and without captions. For the middle frame of each still (a chunk, or in the highlighted
+look one word being said), the still from ``captions.render`` is composited (straight alpha, as
+the browser draws an ``<img>``) on the uncaptioned export's frame and compared with the captioned
+export's frame in the caption band (the safe zone's bottom third): SSIM ≥ 0.98. Each still's
+first and last frames in the export match its start and end (±1), the times the overlay switches
+on; the switch is read on the blue channel, where the highlighted word differs from white text.
 
 Run with ``pnpm test:golden -- caption-overlay-parity``.
 """
@@ -100,7 +101,12 @@ def _text_error(exported: Path, shown: Path, plain: Path, band: tuple[int, int, 
 def _band_masks(video: Path, band: tuple[int, int, int, int]) -> list[bytes]:
     left, top, right, bottom = band
     size = ((right - left) // 4, (bottom - top) // 4)
-    chain = f"crop={right - left}:{bottom - top}:{left}:{top},scale={size[0]}:{size[1]}:flags=area,format=gray"
+    # Blue: white text is bright there and the highlighted (yellow) word dark, so a word state
+    # changes the mask as a new chunk does.
+    chain = (
+        f"crop={right - left}:{bottom - top}:{left}:{top},scale={size[0]}:{size[1]}:flags=area,"
+        "format=gbrp,extractplanes=b"
+    )
     raw = subprocess.run(
         [harness._tool("ffmpeg"), "-v", "error", "-i", str(video), "-vf", chain, "-f", "rawvideo", "-"],
         check=True,
@@ -110,8 +116,18 @@ def _band_masks(video: Path, band: tuple[int, int, int, int]) -> list[bytes]:
     return [raw[index * step : (index + 1) * step] for index in range(len(raw) // step)]
 
 
+#: The uncaptioned export per canvas, shared by the four looks' cases.
+_PLAIN: dict[tuple[int, int], Path] = {}
+
+
+@pytest.fixture(scope="module")
+def plain_dir(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    return tmp_path_factory.mktemp("plain")
+
+
+@pytest.mark.parametrize("style", ["s7-neutral", "s7-box", "s7-karaoke", "s7-minimal"])
 @pytest.mark.parametrize(("width", "height"), [(1080, 1920), (1080, 1080), (1920, 1080)])
-def test_caption_overlay_parity(media, tmp_path: Path, width: int, height: int) -> None:
+def test_caption_overlay_parity(media, tmp_path: Path, plain_dir: Path, width: int, height: int, style: str) -> None:
     source = media("talking-head-01")
     disk = os.statvfs(tmp_path)
     assert disk.f_bavail * disk.f_frsize > 15 * 2**30, "under 15 GB free; not rendering"
@@ -123,21 +139,32 @@ def test_caption_overlay_parity(media, tmp_path: Path, width: int, height: int) 
     }
     ranges = keep_ranges(SOURCE_FRAMES // 4, SEGMENTS, TOTAL)
     edit = make_edit(source=source, ranges=ranges, fps=RATE, duration_frames=SOURCE_FRAMES, width=width, height=height)
-    edit["tracks"].append({"kind": "caption", "id": "C1", "items": track_items(export.plan_segments(edit, width, height), transcript)})
+    edit["tracks"].append(
+        {"kind": "caption", "id": "C1", "style": style, "items": track_items(export.plan_segments(edit, width, height), transcript)}
+    )
 
     stills = captions._render({"edit": edit, "cacheDir": str(tmp_path / "stills")}, JobContext.detached())
+    assert stills["folder"] == captions.look_key(width, height, style)
     still_dir = tmp_path / "stills" / stills["folder"]
     chunks = stills["chunks"]
     assert len(chunks) >= 6
-    videos = {}
-    for name, burn in (("captioned", True), ("plain", False)):
-        videos[name] = tmp_path / f"{name}.mp4"
+    if style == "s7-karaoke":
+        # One still per word being said: more stills than the other looks' chunks.
+        assert len(chunks) > len(captions_ass.cues(captions.chunks_of(edit), captions_ass.DEFAULT_STYLE))
+    videos = {"captioned": tmp_path / "captioned.mp4"}
+    export._render(
+        {"edit": edit, "projectDir": str(tmp_path), "outputPath": str(videos["captioned"]), "captions": True},
+        JobContext.detached(),
+    )
+    if (width, height) not in _PLAIN:
+        _PLAIN[(width, height)] = plain_dir / f"plain-{width}x{height}.mp4"
         export._render(
-            {"edit": edit, "projectDir": str(tmp_path), "outputPath": str(videos[name]), "captions": burn},
+            {"edit": edit, "projectDir": str(tmp_path), "outputPath": str(_PLAIN[(width, height)]), "captions": False},
             JobContext.detached(),
         )
+    videos["plain"] = _PLAIN[(width, height)]
 
-    safe = captions_ass.layout_for(width, height).safe
+    safe = captions_ass.layout_for(width, height, captions_ass.load_style(style)).safe
     band = (safe[0], safe[1] + (safe[3] - safe[1]) * 2 // 3, safe[2], safe[3])
     scores, bare, errors = [], [], []
     for index, chunk in enumerate(chunks):
@@ -149,7 +176,7 @@ def test_caption_overlay_parity(media, tmp_path: Path, width: int, height: int) 
         bare.append(_band_ssim(exported, plain, band))
         errors.append(_text_error(exported, shown, plain, band))
     print(
-        f"caption-overlay-parity {width}x{height}: {len(chunks)} chunks, band SSIM min {min(scores):.4f}"
+        f"caption-overlay-parity {width}x{height} {style}: {len(chunks)} stills, band SSIM min {min(scores):.4f}"
         f" (without the overlay: max {max(bare):.4f}); text pixels mean error max {max(errors):.1f}/255"
     )
     assert min(scores) >= MIN_SSIM, scores
@@ -167,5 +194,4 @@ def test_caption_overlay_parity(media, tmp_path: Path, width: int, height: int) 
             if 0 < edge < TOTAL:
                 window = range(max(1, edge - 1), min(TOTAL, edge + 2))
                 assert any(masks[frame] != masks[frame - 1] for frame in window), (chunk, edge)
-    for video in videos.values():
-        video.unlink()
+    videos["captioned"].unlink()
