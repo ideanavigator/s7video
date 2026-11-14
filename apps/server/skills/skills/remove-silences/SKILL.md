@@ -27,12 +27,19 @@ The user asked you to cut the pauses from their clip. Do it with the video tools
    - a named clip: `media`.
 
    If the clip was already cut and the user wants pauses back ("looser", "keep the pause
-   after ..."), call `video_versions`. Only when the newest version's `change` is that cut and
-   nothing more, call `video_undo`, then `video_remove_silences` with the new setting. If anything
-   came after the cut (a zoom, a caption look, sound), never undo: that takes out the newest
-   change, not the cut. Tell the user that going back to before the cut also takes out those later changes, and
-   ask. If they agree, call `video_version_restore` with the version just before the cut, then
-   `video_remove_silences` with the new setting, then make the later changes again.
+   after ..."), check before you undo: an undo takes out the newest change, which may not be the
+   cut. A version holds every change from one reply, so call `video_versions`, then `video_versions` with the newest
+   version (`version: "vN"`) to read its `Changes:` list.
+   - If the cut is the last change, or only the `video_duck_music` you ran for it follows it,
+     call `video_undo` once for each of those (once, or twice with the re-duck), then
+     `video_remove_silences` with the new setting. Do not ask.
+   - Otherwise read the `Changes:` of the version with the cut too. Every change in it other
+     than the cut and its re-duck, and every change in later versions, must come back. Name them
+     in editing words and ask, for example: "To cut less tightly I'll go back to before the cut,
+     cut again more loosely, then put back the reel shape and the zoom at 0:08. OK?" If the user
+     agrees, call `video_version_restore` with the version before the one with the cut, then
+     `video_remove_silences` with the new setting, then redo each change you named, and say
+     which ones you put back.
 
    If its result says to run `video_duck_music` again, do it, so the music dips under the new
    speech.

@@ -170,14 +170,26 @@ it.layer(NodeServices.layer)("built-in skills", (it) => {
       assert.include(flat, "was cut by an earlier edit");
       assert.include(flat, "offer to undo back to before that cut, then ask again");
       assert.include(flat, "never by frame numbers");
-      // S7V-097: loosening undoes only when the cut is the last change; otherwise it asks first.
+      // S7V-097: loosening undoes only the cut (and its own re-duck) when nothing else came after
+      // it; otherwise it restores, re-cuts and puts back every other change in those versions.
       assert.notInclude(flat, "call `video_undo` first");
+      assert.include(flat, "A version holds every change from one reply");
+      assert.include(flat, 'then `video_versions` with the newest version (`version: "vN"`)');
       assert.include(
         flat,
-        "Only when the newest version's `change` is that cut and nothing more, call `video_undo`",
+        "If the cut is the last change, or only the `video_duck_music` you ran for it follows it, call `video_undo` once for each of those (once, or twice with the re-duck)",
       );
-      assert.include(flat, "never undo: that takes out the newest change, not the cut.");
-      assert.include(flat, "call `video_version_restore` with the version just before the cut");
+      assert.include(flat, "Do not ask.");
+      assert.include(
+        flat,
+        "Every change in it other than the cut and its re-duck, and every change in later versions, must come back.",
+      );
+      assert.include(flat, "Name them in editing words and ask");
+      assert.include(flat, "then put back the reel shape and the zoom at 0:08. OK?");
+      assert.include(
+        flat,
+        "call `video_version_restore` with the version before the one with the cut, then `video_remove_silences` with the new setting, then redo each change you named, and say which ones you put back.",
+      );
       // S7V-097: the cut's reply asks to re-duck ducked music, and the skill follows it.
       assert.include(flat, "If its result says to run `video_duck_music` again, do it");
       // S7V-061: editing never exports; captions come with the export the user asks for.
