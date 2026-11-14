@@ -12,6 +12,11 @@ This product is built on the following open-source project:
 s7video started as a fork of T3 Code. Files that came from T3 Code remain under T3 Code's copyright
 and the MIT License; what the fork changed is recorded in docs/FORK.md.
 
+The s7video icons and logo (assets/prod, assets/nightly, assets/dev and the web favicons made from
+them) are Copyright (c) 2026 s7video contributors and are not under the MIT License; they are
+trademarks of the s7video project (see TRADEMARK.md and LICENSES/LicenseRef-s7video-Trademark.txt).
+s7video does not use T3 Code's icons or wordmark.
+
 It also includes code adapted from:
 
   OpenCut classic (timeline ruler intervals, snapping and track layout constants; the timeline

@@ -26,13 +26,13 @@ const developmentMacIconPngPath = NodePath.join(
   repoRoot,
   brand.icons.directory,
   "dev",
-  "blueprint-macos-1024.png",
+  "icon-macos-1024.png",
 );
 const productionMacIconPngPath = NodePath.join(
   repoRoot,
   brand.icons.directory,
   "prod",
-  "black-macos-1024.png",
+  "icon-macos-1024.png",
 );
 // oxlint-disable-next-line t3code/no-global-process-runtime -- Standalone launcher script has no Effect runtime.
 const hostPlatform = NodeOS.platform();

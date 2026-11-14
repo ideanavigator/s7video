@@ -44,6 +44,22 @@ precedence = "closest"
 SPDX-FileCopyrightText = "2026 s7video contributors"
 SPDX-License-Identifier = "MIT"
 
+# s7video's icons (S7V-100): ours and a trademark, not MIT (TRADEMARK.md). The exports in the
+# channel folders and their copies in apps/web/public are generated from the Icon Composer projects.
+[[annotations]]
+path = [
+  "assets/prod/**",
+  "assets/nightly/**",
+  "assets/dev/**",
+  "apps/web/public/apple-touch-icon.png",
+  "apps/web/public/favicon-16x16.png",
+  "apps/web/public/favicon-32x32.png",
+  "apps/web/public/favicon.ico",
+]
+precedence = "override"
+SPDX-FileCopyrightText = "2026 s7video contributors"
+SPDX-License-Identifier = "LicenseRef-s7video-Trademark"
+
 # Office viewers adapted from opencode (MIT); the licence is in LICENSE.opencode beside them.
 [[annotations]]
 path = "apps/web/src/components/files/office/**"
