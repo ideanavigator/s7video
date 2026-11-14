@@ -392,6 +392,9 @@ upstream files have small edits:
 - `evals/mcp-tool-use/run.ts`: `visibleT3Tools({ video: true })` offers only
   `VIDEO_PROJECT_TOOL_NAMES`, and the context report prints a second line for a video project's
   thread, so the eval measures what that thread is really offered.
+- `evals/mcp-tool-use/README.md`: the "Video cases (s7video)" section describes the video eval
+  cases: the `video-export-*` cases (S7V-061), `VID-01` to `VID-03` (S7V-072), and `VID-04` to
+  `VID-06` for versions by name (S7V-070).
 
 The ACP first-prompt text (`t3AcpPromptWithInstructions`) still carries the orchestration text; ACP
 gets the filtered list from the server.
@@ -515,6 +518,8 @@ with small, additive edits:
 - `apps/server/src/ws.ts`: `projectFileFailureContext` maps the error to `protected_file` with the
   plain message.
 - `apps/web/src/components/files/fileSaveSessions.ts`: a refused save shows that message in a toast.
+- `apps/server/src/workspace/WorkspaceFileSystem.test.ts` and
+  `apps/web/src/components/files/fileSaveSessions.test.ts`: tests for the refusal and its message.
 
 **Out of reach of this check:** the `vcs.*` RPCs (a git checkout or pull can rewrite `edit.json`)
 and `terminal.write` (a shell can write any file), as well as the agent's own file tools. They are
@@ -537,14 +542,16 @@ additive edits:
 
 ## Caption stills by key (S7V-079)
 
-The player's caption stills are served by the existing asset route, so one upstream file has a
-small, additive edit:
+The player's caption stills are served by the existing asset route, so two upstream files have
+small, additive edits:
 
 - `assets/AssetAccess.ts`: a `caption-stills` claim names a project and a look folder, so one
   signed token covers that folder's stills; `issueCaptionStillsUrl` mints it for `captions.stills`.
   Serving it calls `export/captionStillFile.ts` (new code), which re-resolves the project,
   refuses anything but the engine's own file names, and opens the still with `openMediaFile`, as
   `project-media-exact` does, so the response streams the checked descriptor.
+- `assets/AssetAccess.test.ts`: a `caption stills (S7V-079)` block tests serving a still and
+  refusing bad paths, links and tokens.
 
 ## Window focus (S7V-074)
 
