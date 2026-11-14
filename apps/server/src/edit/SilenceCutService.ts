@@ -29,6 +29,7 @@ import * as EngineService from "../engine/EngineService.ts";
 import { projectFor, resolveMedia } from "../mcp/VideoProjectScope.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as TranscriptService from "../transcript/TranscriptService.ts";
+import { hasDuckedMusic, RE_DUCK_REMINDER } from "./audioPlacement.ts";
 import * as EditDocumentService from "./EditDocumentService.ts";
 import { DEFAULT_MIN_GAP_SECONDS, type FrameRange, planSilenceCuts } from "./silencePlan.ts";
 import { firstClipCanvasOps, videoTrackFor } from "./videoTrack.ts";
@@ -356,6 +357,7 @@ const make = Effect.gen(function* () {
           ? "No more pauses to cut; the edit is unchanged."
           : `Removed ${seconds(counts.removedFrames)} s in ${counts.cuts} cuts${plan.keptRequests > 0 ? `, keeping ${plan.keptRequests} pause(s) as asked` : ""}. This only cuts more; it never restores earlier cuts.`,
         ...alreadyCutSentence(plan.alreadyCut),
+        ...(counts.cuts > 0 && hasDuckedMusic(document) ? [RE_DUCK_REMINDER] : []),
       ].join(" "),
     };
     // Nothing new to remove: the edit stays exactly as it is.
