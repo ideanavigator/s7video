@@ -207,19 +207,39 @@ the code it guarded.
   `configs/example-whitelabel.config.ts`.
 - `pnpm brand:check` fails on hard-coded `T3 Code`, `T3 Tools`, `t3.codes`, `pingdotgg/t3code`, a bare
   `t3code`, T3's accent colours, missing icons, empty URLs, unlicensed fonts and theme text below
-  WCAG AA. Comments are not checked. Allowed and pending paths, each with a reason or owner, are listed
+  WCAG AA, and (S7V-100) on "T3" as a product name in code, T3 mark components, T3's wordmark
+  artwork and T3's icon files by hash. Comments are not checked. Allowed and pending paths, each with a reason or owner, are listed
   in `scripts/brand-check.ts`.
 - Kept on purpose for upstream merges: package names `@t3tools/*`, the server package `t3`, env vars
   other than `S7VIDEO_HOME`/`S7VIDEO_CONFIG`, `t3code:`/`t3code.` storage keys and trace attributes,
   `t3code/*` lint rule ids, the `t3.json` project file, the `"t3code"` message attribution in the event
   log, and recognisers for upstream `t3code/` branch and MCP tool names.
-- Still T3's: the icon files in `assets/` (routed through `icons.directory`; replace with s7video art),
-  the CLI's release-archive and npm names (`t3-<version>-<platform>`, `t3@<version>` for npm), and
+- Still T3's: the CLI's release-archive and npm names (`t3-<version>-<platform>`, `t3@<version>` for npm), and
   the GNOME extension's caller names, which are static and must be edited for a white-label build.
 
 ### User-visible effects
 
 No sign-in screen. No account, Connect, guest link or "publish agent activity" options. Saved Connect-only machines disappear; direct and SSH machines stay. Websites in the in-app browser can no longer use passkeys.
+
+## s7video icons and wordmark (S7V-100)
+
+T3 Code's icons and wordmark are T3 Tools Inc.'s marks, so they are removed from the UI and the app's
+icon set; T3 Code stays credited in About, `NOTICE` and the licence files.
+
+| Upstream                                                                                                                                    | s7video                                                                                                                                                                                                                                   |
+| ------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `assets/{prod,nightly,dev}`: T3's Icon Composer projects, exports (`t3-black-*`, `black-*`, `blueprint-*`, `nightly-*`) and `prod/logo.svg` | Removed. s7video's placeholder projects (`mark.svg`, `frame.svg`, dev `stripes.svg`) and exports named `icon-*` in every channel folder. Ours, a trademark, not MIT (`REUSE.toml`, `NOTICE`, `LICENSES/LicenseRef-s7video-Trademark.txt`) |
+| `apps/web/public` favicons and touch icon                                                                                                   | Re-exported from the dev icon                                                                                                                                                                                                             |
+| `apps/web/src/components/T3Wordmark.tsx`, `T3AppIcon.tsx`                                                                                   | Removed. `AppWordmark` (the product name from the brand config) and `AppIcon` (the channel's touch icon)                                                                                                                                  |
+| `SidebarChrome.tsx`, `standalone-page.tsx`, `WelcomeWizard.tsx`                                                                             | `AppWordmark` instead of T3's mark and the word "Code"                                                                                                                                                                                    |
+| `V2LifecycleRow.tsx`, `TimelineToolActivityIcon.tsx`, `SourceControlAppAccessNotice.tsx`, `SourceControlAppSignInSettings.tsx`              | `AppIcon` instead of T3's mark or icon                                                                                                                                                                                                    |
+| `apps/desktop/resources/dmg/dmg-background-{latest,nightly}.svg`                                                                            | The product name instead of T3's wordmark                                                                                                                                                                                                 |
+| `scripts/lib/brand-assets.ts`, `apps/desktop/src/app/DesktopAssets.ts`, `apps/desktop/scripts/electron-launcher.mjs`, `t3.json`             | New icon file names; `DesktopAssets` reads `icons.directory` instead of `assets`                                                                                                                                                          |
+| `scripts/export-brand-icons.ts`, `assets/README.md`                                                                                         | Also writes the macOS PNGs: the 824 px rendition centred on a 1024 px canvas with `sips`, because `ictool` has no `macOS pre-Tahoe` preset. No native shadow                                                                              |
+| About 45 server, web, desktop and package files with "T3" in messages, tool titles, agent instructions and CLI text                         | The product name from the brand config; contracts (no config access) say "Connect" or "the app". `CodexAuthCallbackPage.ts` shows the product name                                                                                        |
+| `packages/shared/src/themePalettes.ts`                                                                                                      | The optional "T3 Chat" palette is labelled "Rose" (id unchanged, so a saved choice still loads)                                                                                                                                           |
+| `apps/desktop/src/app/DesktopCliCommand.ts`                                                                                                 | The Windows PATH helper's PowerShell type is `WinEnv.Native` instead of `T3.Env`                                                                                                                                                          |
+| `packages/client-runtime/src/errors/transport.ts`                                                                                           | The WebSocket error matcher accepts any server name                                                                                                                                                                                       |
 
 ## Community files and agent rules (S7V-006, S7V-008)
 

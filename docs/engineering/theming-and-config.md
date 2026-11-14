@@ -53,7 +53,10 @@ adds them.
 
 `pnpm brand:check` (S7V-003) fails the build on a missing icon size, an empty URL, a bundled font
 without a licence, a theme below AA contrast, or `T3 Code` / `t3code` / `T3 Tools` outside the allowed
-places (licences, NOTICE, `docs/FORK.md`, the credits screen and upstream-tracking code). Reviewers
+places (licences, NOTICE, `docs/FORK.md`, the credits screen and upstream-tracking code). Since
+S7V-100 it also fails on "T3" as a product name in code strings, on a `T3Wordmark`/`T3AppIcon`-style
+component, on T3's wordmark artwork, on an icon file that matches one of T3 Code's icons by hash, and
+on a dev or nightly icon identical to the release one. Use `AppWordmark` and `AppIcon` in the UI. Reviewers
 also check new code by eye, since a check cannot catch every hard-coded colour.
 
 ## White-label builds
