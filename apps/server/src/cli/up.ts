@@ -233,7 +233,7 @@ const setUp = Effect.fn("cli.up")(function* (flags: {
       }
       if (outcome === "skipped") {
         yield* Console.log(
-          "The installed service runs another T3 home, so it was not restarted. Pass its --base-dir.",
+          `The installed service runs another ${BRAND.app.productName} home, so it was not restarted. Pass its --base-dir.`,
         );
       }
     }

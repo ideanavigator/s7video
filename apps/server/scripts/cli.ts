@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { BRAND } from "@t3tools/shared/brand";
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
@@ -206,7 +207,7 @@ const publishCmd = Command.make(
 ).pipe(Command.withDescription("Publish the t3 launcher to npm."));
 
 const cli = Command.make("cli").pipe(
-  Command.withDescription("T3 server build & publish CLI."),
+  Command.withDescription(`${BRAND.app.productName} server build & publish CLI.`),
   Command.withSubcommands([buildCmd, buildExeCmd, publishCmd]),
 );
 

@@ -1,3 +1,4 @@
+import { BRAND } from "@t3tools/shared/brand";
 import type {
   NodeId,
   OrchestrationV2ProviderFailure,
@@ -120,8 +121,7 @@ function curatedCauseMessages(cause: unknown): {
         }
         case "ContextHandoffDeliveryUncertainError":
           return {
-            known:
-              "T3 could not confirm whether conversation history reached the provider. Retry the turn to recover the session.",
+            known: `${BRAND.app.productName} could not confirm whether conversation history reached the provider. Retry the turn to recover the session.`,
             category: categoryMessage(),
           };
         case "ProviderAdapterProtocolError": {
