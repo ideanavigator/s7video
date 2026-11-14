@@ -183,7 +183,7 @@ function SidebarBrandMark({ onBackdrop }: { onBackdrop: boolean }) {
     <AppWordmark
       className={cn(
         "min-w-0 truncate text-sm [text-box:trim-both_cap_alphabetic] supports-[text-box:trim-both_cap_alphabetic]:py-1",
-        onBackdrop ? "text-white" : "text-foreground",
+        onBackdrop ? "sidebar-stage-wordmark text-white" : "text-foreground",
       )}
     />
   );
