@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 s7video contributors
 // SPDX-License-Identifier: MIT
 // @effect-diagnostics nodeBuiltinImport:off - Builds small fixture trees on disk.
+import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
@@ -9,8 +10,12 @@ import { BRAND } from "@t3tools/shared/brand";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  CHANNEL_ICONS,
+  T3_ICON_SHA256,
+  checkChannelIconsDiffer,
   checkFontLicences,
   checkIcons,
+  checkUpstreamIcons,
   checkThemeContrast,
   checkUrls,
   findBannedText,
@@ -18,6 +23,7 @@ import {
   scanFiles,
   stripComments,
 } from "./brand-check.ts";
+import { REPOSITORY_ROOT } from "./lib/brand-config.ts";
 
 function fixtureTree(files: Record<string, string>): string {
   const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "s7video-brand-check-"));
@@ -115,6 +121,100 @@ describe("brand-check", () => {
       'const branch = "t3/add-search";',
     ].join("\n");
     expect(findBannedText("x.ts", source)).toEqual([]);
+  });
+
+  it("fails on a UI file that imports a T3 wordmark or icon component", () => {
+    const files = {
+      "apps/web/src/components/Header.tsx": [
+        'import { T3Wordmark } from "./T3Wordmark";',
+        'import { T3AppIcon } from "~/components/T3AppIcon";',
+        "export const Header = () => <T3Wordmark />;",
+      ].join("\n"),
+      "apps/web/src/components/Footer.tsx": 'import { AppWordmark } from "./AppWordmark";\n',
+    };
+    const { problems } = scanFiles(fixtureTree(files), Object.keys(files));
+    expect(problems.map(({ file, line }) => `${file}:${line}`)).toEqual([
+      "apps/web/src/components/Header.tsx:1",
+      "apps/web/src/components/Header.tsx:2",
+      "apps/web/src/components/Header.tsx:3",
+    ]);
+  });
+
+  it.each([
+    ['const label = "Read a T3 thread";'],
+    ["const message = `Restart T3 and retry.`;"],
+    ['const owner = "T3\'s browser";'],
+    ["const row = <span>T3 system footprint</span>;"],
+    ['const mark = <Mark aria-label="T3" />;'],
+  ])("fails on T3 as a product name: %s", (source) => {
+    expect(findBannedText("x.tsx", source).map(({ message }) => message)).toEqual([
+      'hard-coded "T3" as a product name; read it from the brand config',
+    ]);
+  });
+
+  it("allows T3 in comments, identifiers, headers and env names", () => {
+    const source = [
+      "// Mirrors T3's behaviour.",
+      'const header = "T3-Mode-Limit";',
+      'const type = "[T3.Env]";',
+      'const env = process.env["T3_ACP_MCP_NODE"];',
+      "const T3_CHAT_THEME = 1;",
+    ].join("\n");
+    expect(findBannedText("x.ts", source)).toEqual([]);
+    expect(findBannedText("notes.md", "T3 was the upstream.")).toEqual([]);
+  });
+
+  it("fails on T3's wordmark artwork in any file", () => {
+    const svg = '<svg><path d="M33.4509 93V47.56H15.5309V37H64.3309"/></svg>';
+    expect(findBannedText("apps/desktop/resources/dmg/background.svg", svg)).toHaveLength(1);
+  });
+
+  it("fails on an icon file whose bytes match T3 Code's icons", () => {
+    const root = fixtureTree({
+      "assets/prod/icon-web-favicon-16x16.png": "upstream bytes",
+      "assets/prod/icon-macos-1024.png": "our bytes",
+      "apps/web/public/favicon.ico": "upstream bytes",
+    });
+    const upstream = new Set([
+      NodeCrypto.createHash("sha256").update("upstream bytes").digest("hex"),
+    ]);
+    expect(checkUpstreamIcons(root, ["assets", "apps/web/public", "missing"], upstream)).toEqual([
+      {
+        file: "assets/prod/icon-web-favicon-16x16.png",
+        message: "is T3 Code's icon artwork; export s7video's icons instead",
+      },
+      {
+        file: "apps/web/public/favicon.ico",
+        message: "is T3 Code's icon artwork; export s7video's icons instead",
+      },
+    ]);
+    expect(T3_ICON_SHA256.size).toBe(25);
+    expect(checkUpstreamIcons(REPOSITORY_ROOT, ["assets", "apps/web/public"])).toEqual([]);
+  });
+
+  it("fails when a dev or nightly icon is the release icon", () => {
+    const root = fixtureTree({
+      "prod.png": "orange",
+      "dev.png": "orange",
+      "nightly.png": "dark",
+    });
+    expect(
+      checkChannelIconsDiffer(root, {
+        release: ["prod.png"],
+        development: ["dev.png"],
+        nightly: ["nightly.png"],
+      }),
+    ).toEqual([
+      { file: "dev.png", message: "the development icon is identical to the release one" },
+    ]);
+  });
+
+  it("keeps dev and nightly icons distinct from prod in this repository", () => {
+    for (const files of Object.values(CHANNEL_ICONS)) {
+      for (const file of files)
+        expect(NodeFS.existsSync(NodePath.join(REPOSITORY_ROOT, file))).toBe(true);
+    }
+    expect(checkChannelIconsDiffer(REPOSITORY_ROOT, CHANNEL_ICONS)).toEqual([]);
   });
 
   it("fails on T3 Code's identity colours outside the theme files", () => {
