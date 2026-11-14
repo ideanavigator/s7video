@@ -23,7 +23,7 @@ from ..edit_schema import validate_edit_document
 from ..jobs import JobContext
 from ..rpc import INVALID_PARAMS, OUTPUT_ERROR, Method, RpcError
 from ._media import PATH_SCHEMA
-from .export import METHOD as RENDER_METHOD, caption_style, export_chunks, timeline_plan
+from .export import METHOD as RENDER_METHOD, caption_custom, caption_style, export_chunks, timeline_plan
 
 FORMATS = ["otio", "fcpxml", "fcp7xml", "edl"]
 CAPTIONS = ["srt", "ass", "none"]
@@ -145,7 +145,9 @@ def _export(params: dict[str, Any], job: JobContext) -> dict[str, Any]:
             from .. import captions_ass
 
             canvas = edit["canvas"]
-            subs = captions_ass.build_ass(chunks, rate, int(canvas["width"]), int(canvas["height"]), caption_style(edit))
+            subs = captions_ass.build_ass(
+                chunks, rate, int(canvas["width"]), int(canvas["height"]), caption_style(edit), caption_custom(edit)
+            )
         else:
             subs = build_srt(chunks, rate)
         subs.save(partials[1], format_=captions)

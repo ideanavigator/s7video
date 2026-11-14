@@ -220,13 +220,23 @@ def caption_items(edit: dict[str, Any]) -> list[dict[str, Any]]:
     return items
 
 
+def _shown_caption_tracks(edit: dict[str, Any]) -> list[dict[str, Any]]:
+    tracks = [track for track in edit["tracks"] if track["kind"] == "caption" and not track.get("muted")]
+    return [track for track in tracks if track["items"]] or tracks
+
+
 def caption_style(edit: dict[str, Any]) -> str:
     """The edit's one caption look (S7V-037): the style of the first shown caption track with items,
     else of a caption track that names one (the transcript track before its clips have words)."""
-    tracks = [track for track in edit["tracks"] if track["kind"] == "caption" and not track.get("muted")]
-    shown = [track for track in tracks if track["items"]] or tracks
+    shown = _shown_caption_tracks(edit)
     style = next((track["style"] for track in shown if track.get("style")), captions_ass.DEFAULT_STYLE)
     return _checked_style(style)
+
+
+def caption_custom(edit: dict[str, Any]) -> dict[str, Any] | None:
+    """The user's colours, size and place on top of that look (S7V-099), by the same rule; ``None``
+    when no track has any, so an edit from before them draws exactly as it did."""
+    return next((track["custom"] for track in _shown_caption_tracks(edit) if track.get("custom")), None)
 
 
 def has_caption_items(edit: dict[str, Any]) -> bool:
@@ -676,7 +686,9 @@ def _render(params: dict[str, Any], job: JobContext) -> dict[str, Any]:
         ass_file = None
         if chunks:
             ass_file = "captions.ass"
-            captions_ass.write_ass(os.path.join(workdir, ass_file), chunks, plan.rate, width, height, caption_style(edit))
+            captions_ass.write_ass(
+                os.path.join(workdir, ass_file), chunks, plan.rate, width, height, caption_style(edit), caption_custom(edit)
+            )
             captions_ass.link_fonts(Path(workdir) / "fonts")
         with open(os.path.join(workdir, "render.txt"), "w", encoding="utf-8") as file:
             file.write(build_graph(plan, inputs, assignment, video=True, ass_file=ass_file))

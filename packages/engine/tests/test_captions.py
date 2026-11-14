@@ -200,6 +200,46 @@ def test_the_stills_follow_the_tracks_style(tmp_path: Path) -> None:
     assert _render(edit, cache)["drawn"] == 0
 
 
+def test_the_look_hashes_custom_only_when_a_track_has_it() -> None:
+    # S7V-099: an edit from before `custom` keeps its cached stills.
+    assert captions.look_key(W, H, "s7-box", None) == captions.look_key(W, H, "s7-box") == captions.look_key(W, H, "s7-box", {})
+    bigger = captions.look_key(W, H, "s7-box", {"size": 1.4, "position": "top"})
+    assert bigger != captions.look_key(W, H, "s7-box")
+    assert bigger != captions.look_key(W, H, "s7-box", {"size": 1.2, "position": "top"})
+    assert bigger == captions.look_key(W, H, "s7-box", {"position": "top", "size": 1.4})
+
+
+@pytest.mark.usefixtures("tools")
+def test_the_stills_follow_the_tracks_custom(tmp_path: Path) -> None:
+    edit = _edit(tmp_path, [(0, 90)], [{"id": "c1", "start": 0, "duration": 20, "text": "hello there"}])
+    cache = tmp_path / "cache"
+    plain = _render(edit, cache)
+    custom = {"textColor": "#FF8800", "position": "top", "size": 1.4}
+    edit["tracks"][1]["custom"] = custom
+    styled = _render(edit, cache)
+    assert styled["folder"] == captions.look_key(W, H, "s7-neutral", custom) != plain["folder"]
+    plain_alpha = _alpha(cache / plain["folder"] / plain["chunks"][0]["png"])
+    alpha = _alpha(cache / styled["folder"] / styled["chunks"][0]["png"])
+    rows = {i // W for i, a in enumerate(alpha) if a > 0}
+    layout = captions_ass.layout_for(W, H, captions_ass.styled("s7-neutral", custom))
+    # At the top of the safe zone, bigger than the plain look's bottom line, and orange.
+    assert min(rows) >= layout.safe[1] and max(rows) < H // 2
+    assert min(i // W for i, a in enumerate(plain_alpha) if a > 0) > H // 2
+    assert sum(a > 0 for a in alpha) > sum(a > 0 for a in plain_alpha)
+    assert FFMPEG is not None
+    rgba = subprocess.run(
+        [FFMPEG, "-v", "error", "-i", str(cache / styled["folder"] / styled["chunks"][0]["png"]), "-f", "rawvideo", "-pix_fmt", "rgba", "-"],
+        check=True,
+        capture_output=True,
+    ).stdout
+    solid = [rgba[i : i + 3] for i in range(0, len(rgba), 4) if rgba[i + 3] == 255]
+    assert max(solid, key=solid.count) == bytes([0xFF, 0x88, 0x00])
+    # The export reads the same custom from the edit.
+    assert export.caption_custom(edit) == custom
+    del edit["tracks"][1]["custom"]
+    assert export.caption_custom(edit) is None and _render(edit, cache)["drawn"] == 0
+
+
 @pytest.mark.usefixtures("tools")
 def test_karaoke_draws_one_still_per_word_state(tmp_path: Path) -> None:
     words = [{"text": "Say", "start": 0, "duration": 8}, {"text": "it", "start": 10, "duration": 5}, {"text": "loud", "start": 15, "duration": 10}]

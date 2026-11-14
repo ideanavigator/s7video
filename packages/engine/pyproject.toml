@@ -17,6 +17,8 @@ dependencies = [
   "otio-fcpx-xml-adapter==1.0.0",
   "otio-fcp-adapter==1.0.0",
   "otio-cmx3600-adapter==1.0.0",
+  # Captions already in a clip's picture (S7V-099): Apple Vision reads frames on the device. MIT.
+  "pyobjc-framework-Vision>=11; sys_platform == 'darwin'",
 ]
 
 [dependency-groups]

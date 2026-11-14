@@ -10,6 +10,9 @@ dropped; times turned into integer frames at the video's rate, counted from its 
 The result is cached at `<cacheDir>/<fingerprint sha256>.json` and returned as a path, with the
 clip's per-frame sound levels beside it in `<sha256>.levels.json` (`silence.py`, S7V-055). A cache hit
 for the same media and model never loads the model. Only frames reach the cache, never seconds.
+
+A clip with a picture is also checked for captions already in it (`burned_in.py`, S7V-099): the
+transcript keeps `burnedInCaptions` when the check could run. A cache hit is never re-checked.
 """
 
 from __future__ import annotations
@@ -26,7 +29,7 @@ from dataclasses import dataclass, field
 from fractions import Fraction
 from typing import TYPE_CHECKING, Any
 
-from .. import models, timebase
+from .. import burned_in, models, timebase
 from ..ffmpeg import ffprobe_json, run_tool
 from ..jobs import JobContext
 from ..rpc import INVALID_PARAMS, OUTPUT_ERROR, Method, RpcError
@@ -334,6 +337,7 @@ def _transcribe_chunk(asr: Any, aligner: Any, piece: np.ndarray, aligning: Calla
 class AudioInfo:
     clock: FrameClock
     duration_frames: int
+    has_video: bool = False
 
 
 def _media_clock(path: str, job: JobContext) -> AudioInfo:
@@ -378,7 +382,7 @@ def _media_clock(path: str, job: JobContext) -> AudioInfo:
     audio_start = max(Fraction(0), start_of(audio) - container_start)
     video_start = max(Fraction(0), start_of(video) - container_start) if video else Fraction(0)
     clock = FrameClock(rate=rate, audio_start=audio_start, video_start=video_start)
-    return AudioInfo(clock=clock, duration_frames=timebase.seconds_to_frame(duration, rate))
+    return AudioInfo(clock=clock, duration_frames=timebase.seconds_to_frame(duration, rate), has_video=video is not None)
 
 
 def decode_audio(path: str, job: JobContext) -> np.ndarray:
@@ -501,6 +505,12 @@ def _run(params: dict[str, Any], job: JobContext) -> dict[str, Any]:
         "words": words_to_frames(words, info.clock),
         "createdAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     }
+    if info.has_video:
+        job.progress(0.98, "looking for captions in the picture")
+        burned = burned_in.detect(path, transcript["words"], info.clock.rate, info.clock.video_start, job)
+        if burned is not None:
+            transcript["burnedInCaptions"] = burned
+        job.raise_if_cancelled()
     # Levels first: a transcript on disk always has its levels next to it.
     _write_cache(levels_path(cache_dir, fingerprint), levels, job)
     _write_cache(target, transcript, job)

@@ -12,10 +12,14 @@ The looks are the JSON files in ``styles/captions/`` (the registry: a new look i
 use only the bundled fonts. A look with a ``highlight`` shows each chunk once per word, with the
 word being said in that colour: one event per word state, so each starts on its word's own frame
 (``\\k`` karaoke times syllables in centiseconds from the event's start and leaves past words lit).
+
+A caption track's ``custom`` (S7V-099) changes a look's colours, size and place on top of its file
+(``styled``): the export, the player's stills and the editors' ASS all draw through ``build_cues``.
 """
 
 from __future__ import annotations
 
+import copy
 import json
 import math
 import re
@@ -33,6 +37,12 @@ STYLES_DIR = Path(__file__).resolve().parent / "styles" / "captions"
 DEFAULT_STYLE = "s7-neutral"
 #: Our looks' ids; user styles under the project's ``styles/`` folder are not read yet.
 _PRESET_ID = re.compile(r"^s7-[a-z0-9-]+$")
+#: Where a caption track's ``custom.position`` puts the lines, inside the safe zone (S7V-099).
+_ALIGNMENT = {
+    "top": pysubs2.Alignment.TOP_CENTER,
+    "middle": pysubs2.Alignment.MIDDLE_CENTER,
+    "bottom": pysubs2.Alignment.BOTTOM_CENTER,
+}
 
 _SENTENCE_END = re.compile(r"[.!?…]$|[,;:]$")
 # Inter Bold advances, as a share of the font size, rounded up: used only to shrink a chunk whose
@@ -88,6 +98,8 @@ class Layout:
     margin_left: int
     margin_right: int
     margin_bottom: int
+    #: The top line's margin, for captions placed at the top (S7V-099).
+    margin_top: int
     #: The safe zone as (left, top, right, bottom) pixels of the canvas.
     safe: tuple[int, int, int, int]
 
@@ -159,8 +171,36 @@ def layout_for(width: int, height: int, style: dict[str, Any] | None = None) -> 
         margin_left=left + edge_pixels + _SLACK,
         margin_right=right + edge_pixels + math.ceil(shadow) + _SLACK,
         margin_bottom=bottom + edge_pixels + math.ceil(shadow),
+        margin_top=top + edge_pixels,
         safe=(left, top, width - right, height - bottom),
     )
+
+
+def styled(style_id: str = DEFAULT_STYLE, custom: dict[str, Any] | None = None) -> dict[str, Any]:
+    """The look ``style_id`` with a caption track's ``custom`` on top (S7V-099), as a copy.
+
+    ``textColor`` is the text's colour, ``highlightColor`` the lit word's (looks with a highlight),
+    ``boxColor`` the box's (looks with a box, keeping its opacity); ``size`` scales the font, the
+    shadow and the outline or padding; ``position`` is read by ``build_cues``. The edit's schema
+    has checked the values.
+    """
+    style = load_style(style_id)
+    if not custom:
+        return style
+    style = copy.deepcopy(style)
+    if "textColor" in custom:
+        style["colour"]["text"] = custom["textColor"]
+    if "highlightColor" in custom and "highlight" in style:
+        style["highlight"]["colour"] = custom["highlightColor"]
+    if "boxColor" in custom and "box" in style:
+        style["box"]["colour"] = custom["boxColor"]
+    size = float(custom.get("size", 1))
+    for spec in style["layouts"].values():
+        for key in ("fontSize", "shadow", "pad", "outline"):
+            if key in spec:
+                spec[key] = spec[key] * size
+    style["position"] = custom.get("position", "bottom")
+    return style
 
 
 def _words_of(item: dict[str, Any]) -> list[Word]:
@@ -319,14 +359,30 @@ def _cue_text(cue: Cue, style: dict[str, Any]) -> str:
     )
 
 
-def build_ass(chunks: list[Chunk], rate: Fraction, width: int, height: int, style_id: str = DEFAULT_STYLE) -> pysubs2.SSAFile:
-    return build_cues(cues(chunks, style_id), rate, width, height, style_id)
+def build_ass(
+    chunks: list[Chunk],
+    rate: Fraction,
+    width: int,
+    height: int,
+    style_id: str = DEFAULT_STYLE,
+    custom: dict[str, Any] | None = None,
+) -> pysubs2.SSAFile:
+    return build_cues(cues(chunks, style_id), rate, width, height, style_id, custom)
 
 
-def build_cues(events: list[Cue], rate: Fraction, width: int, height: int, style_id: str = DEFAULT_STYLE) -> pysubs2.SSAFile:
-    """The ASS file for ``events`` in look ``style_id``; the export and the player's stills both use it."""
-    style = load_style(style_id)
+def build_cues(
+    events: list[Cue],
+    rate: Fraction,
+    width: int,
+    height: int,
+    style_id: str = DEFAULT_STYLE,
+    custom: dict[str, Any] | None = None,
+) -> pysubs2.SSAFile:
+    """The ASS file for ``events`` in look ``style_id`` with ``custom`` on top; the export and the
+    player's stills both use it."""
+    style = styled(style_id, custom)
     layout = layout_for(width, height, style)
+    position = style.get("position", "bottom")
     box = style.get("box")
     # With a box (border style 3), the outline colour fills the box and the outline is its padding.
     if box:
@@ -352,10 +408,11 @@ def build_cues(events: list[Cue], rate: Fraction, width: int, height: int, style
             borderstyle=3 if box else 1,
             outline=layout.edge,
             shadow=layout.shadow,
-            alignment=pysubs2.Alignment.BOTTOM_CENTER,
+            alignment=_ALIGNMENT[position],
             marginl=layout.margin_left,
             marginr=layout.margin_right,
-            marginv=layout.margin_bottom,
+            # libass ignores the vertical margin of a line in the middle.
+            marginv=layout.margin_top if position == "top" else layout.margin_bottom,
         )
     }
     for cue in events:
@@ -375,9 +432,25 @@ def link_fonts(folder: Path) -> None:
             (folder / font.name).symlink_to(font)
 
 
-def write_ass(path: Path, chunks: list[Chunk], rate: Fraction, width: int, height: int, style_id: str = DEFAULT_STYLE) -> None:
-    build_ass(chunks, rate, width, height, style_id).save(str(path), format_="ass")
+def write_ass(
+    path: Path,
+    chunks: list[Chunk],
+    rate: Fraction,
+    width: int,
+    height: int,
+    style_id: str = DEFAULT_STYLE,
+    custom: dict[str, Any] | None = None,
+) -> None:
+    build_ass(chunks, rate, width, height, style_id, custom).save(str(path), format_="ass")
 
 
-def write_cues(path: Path, events: list[Cue], rate: Fraction, width: int, height: int, style_id: str = DEFAULT_STYLE) -> None:
-    build_cues(events, rate, width, height, style_id).save(str(path), format_="ass")
+def write_cues(
+    path: Path,
+    events: list[Cue],
+    rate: Fraction,
+    width: int,
+    height: int,
+    style_id: str = DEFAULT_STYLE,
+    custom: dict[str, Any] | None = None,
+) -> None:
+    build_cues(events, rate, width, height, style_id, custom).save(str(path), format_="ass")

@@ -12,6 +12,13 @@ export's frame in the caption band (the safe zone's bottom third): SSIM ≥ 0.98
 first and last frames in the export match its start and end (±1), the times the overlay switches
 on; the switch is read on the blue channel, where the highlighted word differs from white text.
 
+S7V-099 adds two of the user's own styles at 9:16 and 16:9: orange text at the top of the plain
+look, and the boxed look at size 1.4 with a blue box. For the top, the band is the rows the
+captions cover (±24 px): the safe zone's top third is mostly face, where the two encodes differ
+more than a small caption does. A custom colour is compared in the export's 4:2:0, where both
+frames' chroma is subsampled alike: the export softens a saturated colour's edges, the player's
+full-colour still doesn't (blue SSIM 0.82–0.93 for orange text in RGB, red and green 0.97–0.99).
+
 Run with ``pnpm test:golden -- caption-overlay-parity``.
 """
 
@@ -67,9 +74,11 @@ def _composite(frame: Path, still: Path, out: Path) -> Path:
     return out
 
 
-def _band_ssim(a: Path, b: Path, band: tuple[int, int, int, int]) -> float:
+def _band_ssim(a: Path, b: Path, band: tuple[int, int, int, int], delivered: bool = False) -> float:
     left, top, right, bottom = band
-    crop = f"crop={right - left}:{bottom - top}:{left}:{top}"
+    # `delivered`: both in the export's 4:2:0, which softens a saturated colour's edges in the export
+    # only; the player draws the still at full colour (S7V-099).
+    crop = f"crop={right - left}:{bottom - top}:{left}:{top}" + (",format=yuv420p" if delivered else "")
     run = subprocess.run(
         [harness._tool("ffmpeg"), "-hide_banner", "-i", str(a), "-i", str(b), "-filter_complex",
          f"[0]{crop}[x];[1]{crop}[y];[x][y]ssim", "-f", "null", "-"],
@@ -116,6 +125,24 @@ def _band_masks(video: Path, band: tuple[int, int, int, int]) -> list[bytes]:
     return [raw[index * step : (index + 1) * step] for index in range(len(raw) // step)]
 
 
+#: Rows above and below the captions' own in a band measured on them.
+BAND_MARGIN = 24
+
+
+def _caption_rows(still_dir: Path, chunks: list[dict], width: int) -> tuple[int, int]:
+    """The first and last rows any still draws on (alpha above zero)."""
+    rows: set[int] = set()
+    for name in {chunk["png"] for chunk in chunks}:
+        alpha = subprocess.run(
+            [harness._tool("ffmpeg"), "-v", "error", "-i", str(still_dir / name), "-vf",
+             "format=rgba,alphaextract,format=gray", "-f", "rawvideo", "-"],
+            check=True,
+            capture_output=True,
+        ).stdout
+        rows.update(index // width for index, value in enumerate(alpha) if value > 0)
+    return min(rows), max(rows) + 1
+
+
 #: The uncaptioned export per canvas, shared by the four looks' cases.
 _PLAIN: dict[tuple[int, int], Path] = {}
 
@@ -128,7 +155,26 @@ def plain_dir(tmp_path_factory: pytest.TempPathFactory) -> Path:
 @pytest.mark.parametrize("style", ["s7-neutral", "s7-box", "s7-karaoke", "s7-minimal"])
 @pytest.mark.parametrize(("width", "height"), [(1080, 1920), (1080, 1080), (1920, 1080)])
 def test_caption_overlay_parity(media, tmp_path: Path, plain_dir: Path, width: int, height: int, style: str) -> None:
-    source = media("talking-head-01")
+    _parity(media("talking-head-01"), tmp_path, plain_dir, width, height, style, None)
+
+
+#: S7V-099: a colour with the top position, and a bigger box in another colour.
+CUSTOM = {
+    "orange-top": ("s7-neutral", {"textColor": "#FF8800", "position": "top"}),
+    "big-blue-box": ("s7-box", {"size": 1.4, "boxColor": "#1E3A8A"}),
+}
+
+
+@pytest.mark.parametrize("name", list(CUSTOM))
+@pytest.mark.parametrize(("width", "height"), [(1080, 1920), (1920, 1080)])
+def test_caption_overlay_parity_custom(media, tmp_path: Path, plain_dir: Path, width: int, height: int, name: str) -> None:
+    style, custom = CUSTOM[name]
+    _parity(media("talking-head-01"), tmp_path, plain_dir, width, height, style, custom)
+
+
+def _parity(
+    source: Path, tmp_path: Path, plain_dir: Path, width: int, height: int, style: str, custom: dict | None
+) -> None:
     disk = os.statvfs(tmp_path)
     assert disk.f_bavail * disk.f_frsize > 15 * 2**30, "under 15 GB free; not rendering"
     stored = json.loads(TRANSCRIPT.read_text(encoding="utf-8"))
@@ -139,12 +185,13 @@ def test_caption_overlay_parity(media, tmp_path: Path, plain_dir: Path, width: i
     }
     ranges = keep_ranges(SOURCE_FRAMES // 4, SEGMENTS, TOTAL)
     edit = make_edit(source=source, ranges=ranges, fps=RATE, duration_frames=SOURCE_FRAMES, width=width, height=height)
-    edit["tracks"].append(
-        {"kind": "caption", "id": "C1", "style": style, "items": track_items(export.plan_segments(edit, width, height), transcript)}
-    )
+    track = {"kind": "caption", "id": "C1", "style": style, "items": track_items(export.plan_segments(edit, width, height), transcript)}
+    if custom:
+        track["custom"] = custom
+    edit["tracks"].append(track)
 
     stills = captions._render({"edit": edit, "cacheDir": str(tmp_path / "stills")}, JobContext.detached())
-    assert stills["folder"] == captions.look_key(width, height, style)
+    assert stills["folder"] == captions.look_key(width, height, style, custom)
     still_dir = tmp_path / "stills" / stills["folder"]
     chunks = stills["chunks"]
     assert len(chunks) >= 6
@@ -164,19 +211,26 @@ def test_caption_overlay_parity(media, tmp_path: Path, plain_dir: Path, width: i
         )
     videos["plain"] = _PLAIN[(width, height)]
 
-    safe = captions_ass.layout_for(width, height, captions_ass.load_style(style)).safe
-    band = (safe[0], safe[1] + (safe[3] - safe[1]) * 2 // 3, safe[2], safe[3])
+    safe = captions_ass.layout_for(width, height, captions_ass.styled(style, custom)).safe
+    if (custom or {}).get("position") == "top":
+        # The top third of the safe zone is mostly face and hair, where two encodes differ more
+        # than a caption does; compare on the rows the captions cover instead.
+        top, bottom = _caption_rows(still_dir, chunks, width)
+        band = (safe[0], max(0, top - BAND_MARGIN), safe[2], min(height, bottom + BAND_MARGIN))
+    else:
+        band = (safe[0], safe[1] + (safe[3] - safe[1]) * 2 // 3, safe[2], safe[3])
     scores, bare, errors = [], [], []
     for index, chunk in enumerate(chunks):
         middle = (chunk["start"] + chunk["end"]) // 2
         exported = _frame_png(videos["captioned"], middle, tmp_path / f"e{index}.png")
         plain = _frame_png(videos["plain"], middle, tmp_path / f"p{index}.png")
         shown = _composite(plain, still_dir / chunk["png"], tmp_path / f"o{index}.png")
-        scores.append(_band_ssim(exported, shown, band))
-        bare.append(_band_ssim(exported, plain, band))
+        coloured = any(key.endswith("Color") for key in custom or {})
+        scores.append(_band_ssim(exported, shown, band, coloured))
+        bare.append(_band_ssim(exported, plain, band, coloured))
         errors.append(_text_error(exported, shown, plain, band))
     print(
-        f"caption-overlay-parity {width}x{height} {style}: {len(chunks)} stills, band SSIM min {min(scores):.4f}"
+        f"caption-overlay-parity {width}x{height} {style}{' ' + json.dumps(custom) if custom else ''}: {len(chunks)} stills, band SSIM min {min(scores):.4f}"
         f" (without the overlay: max {max(bare):.4f}); text pixels mean error max {max(errors):.1f}/255"
     )
     assert min(scores) >= MIN_SSIM, scores
