@@ -187,3 +187,32 @@ it("runs a side chat's composer chords only from its composer, and never thread 
   expect(toggles).toEqual(["model"]);
   expect(stops).toEqual([]);
 });
+
+// S7V-101: the Editor and the file view own their keys; elsewhere letters still go to the composer.
+it("leaves keys pressed in the Editor to the Editor, and types other keys into the composer", async () => {
+  const composerKeys: string[] = [];
+  const editorKeys: string[] = [];
+  await using _screen = await render(
+    <>
+      <Chat composerKeys={composerKeys} />
+      <div data-editor-keys>
+        <div
+          role="group"
+          aria-label="Timeline tracks"
+          tabIndex={-1}
+          ref={focusOnMount}
+          onKeyDown={(event) => editorKeys.push(event.key)}
+        />
+      </div>
+    </>,
+    options,
+  );
+
+  await userEvent.keyboard("s");
+  expect(editorKeys).toEqual(["s"]);
+  expect(composerKeys).toEqual([]);
+
+  (document.activeElement as HTMLElement).blur();
+  await userEvent.keyboard("a");
+  expect(composerKeys).toEqual(["a"]);
+});

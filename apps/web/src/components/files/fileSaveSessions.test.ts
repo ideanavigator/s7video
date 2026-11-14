@@ -63,6 +63,18 @@ describe("file save sessions", () => {
     expect(h.onPendingChange).toHaveBeenLastCalledWith("file.txt", false);
   });
 
+  it("writes a held file's edit at once on flush (Mod+S, S7V-101)", async () => {
+    using h = setup();
+    h.sessions.acquire(target, h.onPendingChange);
+    h.sessions.change(target, "saved now");
+    h.sessions.flush(target);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(h.writes()).toEqual([[target, "saved now"]]);
+    expect(h.onPendingChange).toHaveBeenLastCalledWith("file.txt", false);
+    await vi.advanceTimersByTimeAsync(500);
+    expect(h.persist).toHaveBeenCalledTimes(1);
+  });
+
   it("flushes on the last release and drops edits from retired editors", async () => {
     using h = setup();
     const releaseFirst = h.sessions.acquire(target, h.onPendingChange);

@@ -351,6 +351,8 @@ export function createTimelineController(options: TimelineControllerOptions): Ti
   const onPointerDown = (event: PointerEvent) => {
     if (event.button !== 0 || scroller === null) return;
     measureScroller();
+    // A click anywhere on the timeline gives it the keys: S splits, Delete deletes (S7V-101).
+    scroller.focus({ preventScroll: true });
     const x = laneXOfClient(event.clientX);
     if (x === null) return;
     seekToFrame(frameAtPx(scrollLeftNow + x, pxPerFrame, lastFrame()));

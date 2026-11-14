@@ -1,3 +1,4 @@
+import { EDITOR_KEYS_SELECTOR } from "~/lib/editorKeys";
 import { surfaceShortcutKey } from "~/lib/surfaceShortcutKey";
 
 export const TYPE_TO_FOCUS_EDITABLE_SELECTOR = [
@@ -65,6 +66,7 @@ export function shouldRedirectInputToComposer(event: Event): boolean {
   if (eventPathContainsSelector(event, SECRET_REQUEST_SELECTOR)) return false;
   if (eventPathContainsSelector(event, TYPE_TO_FOCUS_EDITABLE_SELECTOR)) return false;
   if (eventPathContainsSelector(event, TYPE_TO_FOCUS_INTERACTIVE_SELECTOR)) return false;
+  if (eventPathContainsSelector(event, EDITOR_KEYS_SELECTOR)) return false;
   if (document.querySelector(TYPE_TO_FOCUS_FLOATING_LAYER_SELECTOR)) return false;
   return true;
 }
