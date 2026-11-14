@@ -26,6 +26,8 @@ export interface CaptionTranscripts {
   readonly transcripts: ReadonlyMap<string, CaptionTranscript>;
   /** Media on the video track with sound but no cached transcript (or an unreadable one). */
   readonly missing: ReadonlyArray<string>;
+  /** Media whose picture already shows captions (S7V-099); unchecked clips are not listed. */
+  readonly burnedIn: ReadonlyArray<string>;
 }
 
 /** The cached transcripts of the media the edit's captions come from. */
@@ -39,6 +41,7 @@ export const loadCaptionTranscripts = Effect.fn("captionTrack.loadCaptionTranscr
     media.path !== undefined ? path.resolve(root, media.path) : path.resolve(media.reference ?? "");
   const transcripts = new Map<string, CaptionTranscript>();
   const missing: string[] = [];
+  const burnedIn: string[] = [];
   for (const id of captionMediaOf(document)) {
     const media = document.media.find((entry) => entry.id === id)!;
     const found = yield* mediaFingerprint(locate(media)).pipe(
@@ -46,9 +49,12 @@ export const loadCaptionTranscripts = Effect.fn("captionTrack.loadCaptionTranscr
       Effect.orElseSucceed(() => null),
     );
     if (found === null) missing.push(id);
-    else transcripts.set(id, found);
+    else {
+      transcripts.set(id, found);
+      if (found.burnedInCaptions?.found === true) burnedIn.push(id);
+    }
   }
-  return { transcripts, missing } satisfies CaptionTranscripts;
+  return { transcripts, missing, burnedIn } satisfies CaptionTranscripts;
 });
 
 const videoItemsOf = (document: EditDocument) =>

@@ -6,6 +6,7 @@
  * them equal, so the track exports the same captions as the transcript fallback.
  */
 import type {
+  EditCaptionCustom,
   EditCaptionTrack,
   EditDocument,
   EditOp,
@@ -211,6 +212,16 @@ export function captionLookOf(document: EditDocument): string {
   const withItems = shown.filter((track) => track.items.length > 0);
   const tracks = withItems.length > 0 ? withItems : shown;
   return tracks.find((track) => track.style !== undefined)?.style ?? "s7-neutral";
+}
+
+/** The user's own colours, size and place on that look (S7V-099), by the same rule (`export.caption_custom`). */
+export function captionCustomOf(document: EditDocument): EditCaptionCustom | undefined {
+  const shown = document.tracks.filter(
+    (track): track is EditCaptionTrack => track.kind === "caption" && track.muted !== true,
+  );
+  const withItems = shown.filter((track) => track.items.length > 0);
+  const tracks = withItems.length > 0 ? withItems : shown;
+  return tracks.find((track) => track.custom !== undefined)?.custom;
 }
 
 /** The first free track id `C1`, `C2`…; ids share one space across the edit. */

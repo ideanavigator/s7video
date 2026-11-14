@@ -82,9 +82,8 @@ vi.mock(import("../../editor/editStore"), async (importOriginal) => ({
   useTranscriptionJobs: () => ({ transcribe: null, download: null }),
   // The Versions tab (S7V-069) has its own tests; here it stays loading but for screenshots.
   useProjectVersions: () => state.versions,
-  // The caption overlay (S7V-075) and the look picker (S7V-037) have their own tests.
+  // The caption overlay (S7V-075) has its own tests.
   useCaptionStills: () => ({ _tag: "none" }),
-  useCaptionPresets: () => null,
 }));
 vi.mock(import("../../state/media"), () => ({
   useMediaLibrary: () => state.library,
@@ -436,12 +435,10 @@ describe("EditorPanel", () => {
     await using screen = await renderPanel();
     await expect.element(screen.getByRole("group", { name: "Player: clip-0.mov" })).toBeVisible();
     await expect.element(screen.getByRole("button", { name: "Export" })).toBeVisible();
-    // S7V-037: the caption looks sit beside Export; with no captions yet, none is in use.
-    await expect.element(screen.getByRole("group", { name: "Caption look" })).toBeVisible();
-    await expect.element(screen.getByText("Pick a look to add captions.")).toBeVisible();
-    await expect
-      .element(screen.getByRole("button", { name: "Caption style: Plain" }))
-      .toHaveAttribute("aria-pressed", "false");
+    // S7V-099: captions are shaped in the chat; no caption looks sit beside Export.
+    expect(screen.getByRole("group", { name: "Caption look" }).query()).toBeNull();
+    expect(screen.getByText("Pick a look to add captions.").query()).toBeNull();
+    expect(screen.getByRole("button", { name: /^Caption style/u }).query()).toBeNull();
   });
 
   it("plays an edit from several clips on the player clock, each clip with its own state", async () => {
@@ -991,10 +988,9 @@ describe("EditorPanel", () => {
     await using screen = await renderPanel();
     await expect.element(screen.getByRole("status").getByText("Previewing v2")).toBeVisible();
     await expect.element(await videoOf(screen)).toBeInTheDocument();
-    // Export would write the current edit, so it waits until the preview ends; so do the looks.
+    // Export would write the current edit, so it waits until the preview ends.
     expect(screen.getByRole("button", { name: "Export" }).query()).toBeNull();
     expect(screen.getByRole("button", { name: "Export for editors" }).query()).toBeNull();
-    expect(screen.getByRole("group", { name: "Caption look" }).query()).toBeNull();
     const playhead = document.querySelector<HTMLElement>("[data-testid=timeline-playhead]")!;
     await expect.poll(() => playhead.hidden).toBe(true);
     await screen.getByRole("button", { name: "Back to main" }).click();
@@ -1276,6 +1272,28 @@ describe("EditorPanel", () => {
           }
         },
       );
+
+      // S7V-099: captions are shaped in the chat; the header keeps only Export.
+      it.each([
+        ["dark", 1440, 900],
+        ["light", 1440, 900],
+        ["dark", 1180, 760],
+        ["light", 1180, 760],
+      ] as const)("screenshots: the header without caption looks (%s, %i)", async (theme, w, h) => {
+        await page.viewport(w, h);
+        document.documentElement.classList.toggle("dark", theme === "dark");
+        setState([asset("clip-0")], true);
+        try {
+          await using screen = await layout();
+          await expect.element(screen.getByRole("button", { name: "Export" })).toBeVisible();
+          expect(screen.getByRole("group", { name: "Caption look" }).query()).toBeNull();
+          await page.screenshot({
+            path: `../../../../../test-results/s7v-099/editor-${theme}-${w}.png`,
+          });
+        } finally {
+          document.documentElement.classList.remove("dark");
+        }
+      });
     });
   });
 });

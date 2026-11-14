@@ -3,12 +3,12 @@
 /**
  * The player's caption stills (S7V-075), drawn by the engine with the export's ASS and libass and
  * cached in `.s7cache/captions/`. The reply names them and the player fetches them by key
- * (S7V-079, `captions.md`). The looks' previews (S7V-037) are drawn the same way, sent inline.
+ * (S7V-079, `captions.md`). The looks' previews (S7V-037) are drawn the same way; the agent
+ * shows them in the chat by their paths (S7V-099).
  */
 import {
   CAPTION_PRESET_NAMES,
   CaptionPresetId,
-  type CaptionPresetsResult,
   CaptionsPreviewResult,
   CaptionsRenderResult,
   type CaptionStillsResult,
@@ -19,7 +19,6 @@ import {
 } from "@t3tools/contracts";
 import { transcriptCaptionTrackOf } from "@t3tools/shared/captionWords";
 import * as Context from "effect/Context";
-import * as Base64 from "effect/encoding/Base64";
 import * as Crypto from "effect/Crypto";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -37,7 +36,7 @@ import { loadCaptionTranscripts } from "../edit/captionTrack.ts";
 import * as EditDocumentService from "../edit/EditDocumentService.ts";
 import * as EngineService from "../engine/EngineService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
-import { captionCacheDir, isCaptionLookName, readCaptionPreview } from "./captionStillFile.ts";
+import { captionCacheDir, captionPreviewPath, isCaptionLookName } from "./captionStillFile.ts";
 import { transcriptMediaFor } from "./ExportService.ts";
 
 const encodeKeyInput = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
@@ -46,6 +45,13 @@ const encodeKeyInput = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown)
 const BASE_TIMEOUT_MS = 30_000;
 const TIMEOUT_MS_PER_WORD = 100;
 
+export interface CaptionLookPreview {
+  readonly id: CaptionPresetId;
+  readonly name: string;
+  /** The preview PNG's real path, or null when it could not be drawn. */
+  readonly path: string | null;
+}
+
 export class CaptionStillsService extends Context.Service<
   CaptionStillsService,
   {
@@ -53,9 +59,9 @@ export class CaptionStillsService extends Context.Service<
       projectId: ProjectId,
     ) => Effect.Effect<CaptionStillsResult, EditUnavailableError | EngineError>;
     /** Each look's preview at the edit's canvas; a look that can't be drawn has no picture. */
-    readonly presets: (
+    readonly previews: (
       projectId: ProjectId,
-    ) => Effect.Effect<CaptionPresetsResult, EditUnavailableError>;
+    ) => Effect.Effect<ReadonlyArray<CaptionLookPreview>, EditUnavailableError>;
   }
 >()("t3/export/CaptionStillsService") {}
 
@@ -179,13 +185,13 @@ const make = Effect.gen(function* () {
     };
   });
 
-  const presets: CaptionStillsService["Service"]["presets"] = Effect.fn(
-    "CaptionStillsService.presets",
+  const previews: CaptionStillsService["Service"]["previews"] = Effect.fn(
+    "CaptionStillsService.previews",
   )(function* (projectId) {
     const { document } = yield* edits.read(projectId);
     const cacheDir = captionCacheDir(path, yield* rootOf(projectId));
     const { width, height } = document.canvas;
-    const previews = yield* Effect.forEach(CaptionPresetId.literals, (id) =>
+    return yield* Effect.forEach(CaptionPresetId.literals, (id) =>
       rendering
         .withPermit(
           engine.call(
@@ -195,23 +201,18 @@ const make = Effect.gen(function* () {
           ),
         )
         .pipe(
-          Effect.flatMap((drawn) => readCaptionPreview(projectId, drawn.folder, drawn.png)),
+          Effect.flatMap((drawn) => captionPreviewPath(projectId, drawn.folder, drawn.png)),
           Effect.provideService(ProjectService.ProjectService, projects),
           Effect.provideService(FileSystem.FileSystem, fileSystem),
           Effect.provideService(Path.Path, path),
-          // No libass, or a failed draw: the strip shows the look's name only.
+          // No libass, or a failed draw: the look is named without its picture.
           Effect.orElseSucceed(() => null),
-          Effect.map((png) => ({
-            id,
-            name: CAPTION_PRESET_NAMES[id],
-            png: png === null ? "" : Base64.encode(png),
-          })),
+          Effect.map((path): CaptionLookPreview => ({ id, name: CAPTION_PRESET_NAMES[id], path })),
         ),
     );
-    return { presets: previews };
   });
 
-  return CaptionStillsService.of({ stills, presets });
+  return CaptionStillsService.of({ stills, previews });
 });
 
 export const layer = Layer.effect(CaptionStillsService, make);

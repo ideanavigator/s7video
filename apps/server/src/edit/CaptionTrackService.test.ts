@@ -26,6 +26,7 @@ import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
+import * as CaptionStillsService from "../export/CaptionStillsService.ts";
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as CaptionTrackService from "./CaptionTrackService.ts";
 import * as EditDocumentService from "./EditDocumentService.ts";
@@ -57,8 +58,11 @@ const mediaEntry = (id: string, hasAudio = true) => ({
   probe: { durationFrames: 900, hasVideo: true, hasAudio, fps: FPS },
 });
 
-/** Writes the clip and, unless `transcribed` is false, its cached transcript. */
-const writeClip = (root: string, id: string, transcribed = true) => {
+/**
+ * Writes the clip and, unless `transcribed` is false, its cached transcript; `burnedIn` is the
+ * transcript's check for captions in the picture (S7V-099), none when missing.
+ */
+const writeClip = (root: string, id: string, transcribed = true, burnedIn?: boolean) => {
   const bytes = clipBytes(id);
   NodeFS.mkdirSync(NodePath.join(root, "assets"), { recursive: true });
   NodeFS.writeFileSync(NodePath.join(root, "assets", `${id}.mp4`), bytes);
@@ -73,6 +77,13 @@ const writeClip = (root: string, id: string, transcribed = true) => {
     durationFrames: 900,
     words: WORDS.map((word) => ({ ...word, confidence: 1, speaker: "S1" })),
     createdAt: "2026-11-09T00:00:00.000Z",
+    ...(burnedIn === undefined
+      ? {}
+      : {
+          burnedInCaptions: burnedIn
+            ? { found: true, confidence: 0.9, region: { y0: 0.7, y1: 0.8 } }
+            : { found: false, confidence: 0 },
+        }),
   };
   const dir = NodePath.join(root, ".s7cache", "transcripts");
   NodeFS.mkdirSync(dir, { recursive: true });
@@ -85,6 +96,17 @@ const writeClip = (root: string, id: string, transcribed = true) => {
 const transcripts: ReadonlyMap<string, CaptionTranscript> = new Map([
   ["cam", { fps: FPS, words: WORDS }],
 ]);
+
+/** The looks' previews, as `CaptionStillsService` finds them drawn (S7V-099). */
+const PREVIEWS = [
+  { id: "s7-neutral", name: "Plain", path: "/p/plain.png" },
+  { id: "s7-box", name: "Boxed", path: "/p/boxed.png" },
+  { id: "s7-karaoke", name: "Highlighted word", path: "/p/lit.png" },
+  { id: "s7-minimal", name: "Minimal", path: null },
+] as const;
+const stillsLayer = Layer.mock(CaptionStillsService.CaptionStillsService)({
+  previews: () => Effect.succeed(PREVIEWS),
+});
 
 interface Project {
   readonly projectId: ProjectId;
@@ -107,7 +129,12 @@ const withProject = <A, E>(body: (project: Project) => Effect.Effect<A, E>) =>
         captions: yield* CaptionTrackService.CaptionTrackService,
       });
     }).pipe(
-      Effect.provide(CaptionTrackService.layer.pipe(Layer.provideMerge(layerEditTest(baseDir)))),
+      Effect.provide(
+        CaptionTrackService.layer.pipe(
+          Layer.provide(stillsLayer),
+          Layer.provideMerge(layerEditTest(baseDir)),
+        ),
+      ),
     );
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer));
 
@@ -492,14 +519,20 @@ describe("CaptionTrackService.setStyle (S7V-037)", () => {
         const before = yield* setUp(project);
         const textBefore = readEdit(project.root);
         const steps = historyLog(project.root)!.entries.length;
-        const result = yield* project.captions.setStyle(project.projectId, "s7-box", {
-          origin: "timeline",
-        });
+        const result = yield* project.captions.setStyle(
+          project.projectId,
+          { preset: "s7-box" },
+          {
+            origin: "timeline",
+          },
+        );
         assert.deepStrictEqual(result, {
           revision: before.revision + 1,
           captions: 3,
           changed: true,
           added: true,
+          preset: "s7-box",
+          custom: {},
         });
         const after = yield* project.edits.read(project.projectId);
         const [track] = captionTracks(after.document);
@@ -538,24 +571,36 @@ describe("CaptionTrackService.setStyle (S7V-037)", () => {
         const added = yield* project.captions.addCaptions(project.projectId, {});
         const items = captionsOf((yield* project.edits.read(project.projectId)).document);
         // No look on the track is the plain one.
-        const plain = yield* project.captions.setStyle(project.projectId, "s7-neutral", {
-          origin: "agent",
-        });
+        const plain = yield* project.captions.setStyle(
+          project.projectId,
+          { preset: "s7-neutral" },
+          {
+            origin: "agent",
+          },
+        );
         assert.deepStrictEqual(plain, {
           revision: added.revision,
           captions: 3,
           changed: false,
           added: false,
+          preset: "s7-neutral",
+          custom: {},
         });
-        const karaoke = yield* project.captions.setStyle(project.projectId, "s7-karaoke", {
-          origin: "agent",
-          reply,
-        });
+        const karaoke = yield* project.captions.setStyle(
+          project.projectId,
+          { preset: "s7-karaoke" },
+          {
+            origin: "agent",
+            reply,
+          },
+        );
         assert.deepStrictEqual(karaoke, {
           revision: added.revision + 1,
           captions: 3,
           changed: true,
           added: false,
+          preset: "s7-karaoke",
+          custom: {},
         });
         const after = yield* project.edits.read(project.projectId);
         assert.strictEqual(captionTracks(after.document)[0]!.style, "s7-karaoke");
@@ -574,7 +619,11 @@ describe("CaptionTrackService.setStyle (S7V-037)", () => {
       Effect.gen(function* () {
         writeClip(project.root, "cam");
         yield* setUp(project);
-        yield* project.captions.setStyle(project.projectId, "s7-minimal", { origin: "agent" });
+        yield* project.captions.setStyle(
+          project.projectId,
+          { preset: "s7-minimal" },
+          { origin: "agent" },
+        );
         const styled = yield* project.edits.read(project.projectId);
         const captions = captionTracks(styled.document)[0]!.items;
         // A zoom's splits continue the source: the rebuild finds nothing to change.
@@ -610,13 +659,153 @@ describe("CaptionTrackService.setStyle (S7V-037)", () => {
           writeClip(project.root, "cam", false);
           const before = yield* setUp(project);
           const error = yield* project.captions
-            .setStyle(project.projectId, "s7-box", { origin: "timeline" })
+            .setStyle(project.projectId, { preset: "s7-box" }, { origin: "timeline" })
             .pipe(Effect.flip);
           assert.strictEqual(error._tag, "CaptionsError");
           assert.include(error.message, "then pick the look again");
           const after = yield* project.edits.read(project.projectId);
           assert.strictEqual(after.revision, before.revision);
           assert.strictEqual(captionTracks(after.document).length, 0);
+        }),
+      ),
+  );
+});
+
+// S7V-099: captions in the user's words, and never over captions the picture already has unasked.
+describe("CaptionTrackService in the chat (S7V-099)", () => {
+  it.effect("refuses to add captions over a clip's own until confirmed; changes nothing", () =>
+    withProject((project) =>
+      Effect.gen(function* () {
+        writeClip(project.root, "cam", true, true);
+        const before = yield* setUp(project);
+        const text = readEdit(project.root);
+        const steps = historyLog(project.root)!.entries.length;
+        for (const refused of [
+          yield* project.captions.addCaptions(project.projectId, {}).pipe(Effect.flip),
+          yield* project.captions
+            .setStyle(project.projectId, { preset: "s7-box" }, { origin: "agent" })
+            .pipe(Effect.flip),
+          yield* project.captions.looks(project.projectId, {}).pipe(Effect.flip),
+        ]) {
+          assert.strictEqual(refused._tag, "CaptionsError");
+          assert.include(
+            refused.message,
+            "This clip already has captions in the picture. Add more on top?",
+          );
+          assert.include(refused.message, "confirm: true");
+        }
+        assert.strictEqual(readEdit(project.root), text);
+        assert.strictEqual(historyLog(project.root)!.entries.length, steps);
+
+        const looks = yield* project.captions.looks(project.projectId, { confirm: true });
+        assert.deepStrictEqual(looks, { revision: before.revision, looks: PREVIEWS });
+        const added = yield* project.captions.setStyle(
+          project.projectId,
+          { preset: "s7-box" },
+          { origin: "agent", confirm: true },
+        );
+        assert.deepInclude(added, { added: true, changed: true, captions: 3 });
+        // Captions the user already has: restyling or rebuilding them asks nothing.
+        const restyled = yield* project.captions.setStyle(
+          project.projectId,
+          { preset: "s7-minimal" },
+          { origin: "agent" },
+        );
+        assert.isTrue(restyled.changed);
+        assert.isFalse((yield* project.captions.addCaptions(project.projectId, {})).changed);
+      }),
+    ),
+  );
+
+  it.effect("a clip checked with none, or never checked, adds captions as before", () =>
+    withProject((project) =>
+      Effect.gen(function* () {
+        writeClip(project.root, "cam", true, false);
+        yield* setUp(project);
+        assert.isTrue((yield* project.captions.addCaptions(project.projectId, {})).changed);
+      }),
+    ),
+  );
+
+  it.effect("the looks change nothing and still ask for a transcript first", () =>
+    withProject((project) =>
+      Effect.gen(function* () {
+        writeClip(project.root, "cam", false);
+        const before = yield* setUp(project);
+        const refused = yield* project.captions.looks(project.projectId, {}).pipe(Effect.flip);
+        assert.include(refused.message, "Transcribe the clip first");
+        assert.include(refused.message, "ask for the looks again");
+        writeClip(project.root, "cam");
+        const looks = yield* project.captions.looks(project.projectId, {});
+        assert.deepStrictEqual(looks, { revision: before.revision, looks: PREVIEWS });
+        assert.strictEqual(
+          (yield* project.edits.read(project.projectId)).revision,
+          before.revision,
+        );
+      }),
+    ),
+  );
+
+  it.effect(
+    "colours, size and place are stored with the look, each change one version and one undo",
+    () =>
+      withProject((project) =>
+        Effect.gen(function* () {
+          writeClip(project.root, "cam");
+          yield* setUp(project);
+          const boxed = yield* project.captions.setStyle(
+            project.projectId,
+            { preset: "s7-box", custom: { textColor: "#FF8800", position: "top" } },
+            { origin: "agent", reply },
+          );
+          assert.deepInclude(boxed, {
+            added: true,
+            preset: "s7-box",
+            custom: { textColor: "#FF8800", position: "top" },
+          });
+          const first = yield* project.edits.read(project.projectId);
+          assert.deepInclude(captionTracks(first.document)[0]!, {
+            style: "s7-box",
+            custom: { textColor: "#FF8800", position: "top" },
+          });
+          const steps = historyLog(project.root)!.entries.length;
+          // "Make them a bit bigger": the look and the other changes stay.
+          const bigger = yield* project.captions.setStyle(
+            project.projectId,
+            { custom: { size: 1.2 } },
+            { origin: "agent", reply: { ...reply, runId: RunId.make("run-bigger") } },
+          );
+          assert.deepInclude(bigger, {
+            changed: true,
+            added: false,
+            preset: "s7-box",
+            custom: { textColor: "#FF8800", position: "top", size: 1.2 },
+          });
+          assert.strictEqual(historyLog(project.root)!.entries.length, steps + 1);
+          const [newest] = yield* project.edits.versions(project.projectId);
+          assert.deepStrictEqual(newest!.changes, [
+            "Changed the caption look to Boxed (text colour #FF8800, at the top, size 1.2)",
+          ]);
+          const same = yield* project.captions.setStyle(
+            project.projectId,
+            { custom: { size: 1.2 } },
+            { origin: "agent" },
+          );
+          assert.isFalse(same.changed);
+          // Undo takes back only the size.
+          yield* project.edits.undo(project.projectId);
+          const undone = yield* project.edits.read(project.projectId);
+          assert.deepStrictEqual(undone.document, first.document);
+          // The look's own size and place clear them from the track.
+          yield* project.captions.setStyle(
+            project.projectId,
+            { custom: { position: "bottom", textColor: "#FFFFFF" } },
+            { origin: "agent" },
+          );
+          const plainer = yield* project.edits.read(project.projectId);
+          assert.deepStrictEqual(captionTracks(plainer.document)[0]!.custom, {
+            textColor: "#FFFFFF",
+          });
         }),
       ),
   );

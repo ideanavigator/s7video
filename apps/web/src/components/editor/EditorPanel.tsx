@@ -64,7 +64,6 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { BROWSER_ADD_MEDIA_HINT } from "./addMediaHint";
 import { AssetsTab, useAssetsActions } from "./AssetsTab";
 import { CaptionOverlay } from "./CaptionOverlay";
-import { CaptionStylePicker } from "./CaptionStylePicker";
 import { EditPlayer } from "./EditPlayer";
 import { ExportForEditorsDialog } from "./ExportForEditorsDialog";
 import { HistoryCleanupBanner } from "./HistoryCleanupBanner";
@@ -904,7 +903,6 @@ export default function EditorPanel(props: {
         previewingVersion === null &&
         (view._tag === "play-timeline" || (view._tag === "play" && view.mode === "edit")) ? (
           <div className="flex min-w-0 items-center gap-2">
-            <CaptionStylePicker projectRef={projectRef} document={edit.snapshot.document} />
             <ExportButton projectRef={projectRef} />
           </div>
         ) : null}

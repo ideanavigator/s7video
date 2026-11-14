@@ -529,7 +529,12 @@ function applyOne(document: DraftDocument, op: EditOp): void {
     case "setCaptionStyle": {
       const track = findTrack(document, op.trackId);
       requireKind(track, ["caption"], "a caption style");
-      (track as Record<string, unknown>).style = op.style;
+      const draft = track as Record<string, unknown>;
+      draft.style = op.style;
+      if (op.custom !== undefined) {
+        if (Object.keys(op.custom).length > 0) draft.custom = op.custom;
+        else delete draft.custom;
+      }
       return;
     }
     case "setTrackProps": {

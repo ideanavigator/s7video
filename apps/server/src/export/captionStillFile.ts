@@ -4,7 +4,7 @@
  * Where the player's caption stills live, and the only files the asset route serves for them
  * (S7V-079): `<project>/.s7cache/captions/<look>/<text>.png`, both names 32 hex digits, as the
  * engine's `captions.render` names them (`methods/captions.py`). A look's preview (S7V-037) sits
- * in the same folder as `preview-<16 hex>.png`.
+ * in the same folder as `preview-<16 hex>.png`; the agent shows it in the chat (S7V-099).
  */
 import type { ProjectId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -12,7 +12,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 
-import { openMediaFile, readMediaFileHeader } from "../assets/MediaFile.ts";
+import { openMediaFile } from "../assets/MediaFile.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 
 const LOOK_NAME = /^[0-9a-f]{32}$/;
@@ -63,8 +63,11 @@ export const openCaptionStill = Effect.fn("captionStillFile.openCaptionStill")(f
   return yield* openCacheFile(projectId, folder, name);
 });
 
-/** A look's preview PNG, opened and read the same way, or null. */
-export const readCaptionPreview = Effect.fn("captionStillFile.readCaptionPreview")(function* (
+/**
+ * A look's preview PNG (S7V-099), checked the same way, as the real path the chat shows it from
+ * (a markdown image the agent writes; the chat signs its own URL each time it draws it), or null.
+ */
+export const captionPreviewPath = Effect.fn("captionStillFile.captionPreviewPath")(function* (
   projectId: ProjectId,
   folder: string,
   name: string,
@@ -74,10 +77,7 @@ export const readCaptionPreview = Effect.fn("captionStillFile.readCaptionPreview
     Effect.gen(function* () {
       const opened = yield* openCacheFile(projectId, folder, name);
       if (opened === null || opened.file.info.size > BigInt(MAX_PREVIEW_BYTES)) return null;
-      const size = Number(opened.file.info.size);
-      return yield* readMediaFileHeader(opened.path, opened.file, size).pipe(
-        Effect.orElseSucceed(() => null),
-      );
+      return opened.path;
     }),
   );
 });

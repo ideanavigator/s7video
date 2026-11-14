@@ -473,6 +473,23 @@ describe("applyEditOps", () => {
     expect(frozen).toEqual(base);
   });
 
+  it("sets a caption track's own colours, size and place with its look (S7V-099)", () => {
+    const custom = { textColor: "#FF8800", size: 1.4, position: "top" as const };
+    const styled = run([{ _tag: "setCaptionStyle", trackId: "C1", style: "s7-box", custom }]);
+    expect(styled.tracks.find((track) => track.id === "C1")).toMatchObject({
+      style: "s7-box",
+      custom,
+    });
+    // A look alone keeps them; an empty `custom` clears them, so the track is as before.
+    const kept = run([{ _tag: "setCaptionStyle", trackId: "C1", style: "s7-neutral" }], styled);
+    expect(kept.tracks.find((track) => track.id === "C1")).toMatchObject({ custom });
+    const cleared = run(
+      [{ _tag: "setCaptionStyle", trackId: "C1", style: "s7-neutral", custom: {} }],
+      kept,
+    );
+    expect(cleared.tracks.find((track) => track.id === "C1")).not.toHaveProperty("custom");
+  });
+
   describe("linked items (S7V-034)", () => {
     // A video item with its audio on an sfx track, linked; one unlinked video item after them.
     const linked: EditDocument = {

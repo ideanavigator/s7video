@@ -29,6 +29,7 @@ import * as Stream from "effect/Stream";
 import { RE_DUCK_REMINDER } from "../../../edit/audioPlacement.ts";
 import * as AudioTrackService from "../../../edit/AudioTrackService.ts";
 import { CANVAS_FOR_RATIO } from "../../../edit/canvasForClip.ts";
+import { describeCaptionCustom, parseCaptionCustom } from "../../../edit/captionCustom.ts";
 import * as CaptionTrackService from "../../../edit/CaptionTrackService.ts";
 import * as ClipPlacementService from "../../../edit/ClipPlacementService.ts";
 import * as EditDocumentService from "../../../edit/EditDocumentService.ts";
@@ -36,6 +37,7 @@ import * as SilenceCutService from "../../../edit/SilenceCutService.ts";
 import { parseZoomRange, ZOOM_RANGE_FORMAT } from "../../../edit/zoomOps.ts";
 import * as ZoomService from "../../../edit/ZoomService.ts";
 import * as EngineService from "../../../engine/EngineService.ts";
+import type * as CaptionStillsService from "../../../export/CaptionStillsService.ts";
 import * as ExportService from "../../../export/ExportService.ts";
 import * as TranscriptService from "../../../transcript/TranscriptService.ts";
 import * as MediaLibraryService from "../../../media/MediaLibraryService.ts";
@@ -99,6 +101,19 @@ const editRefusal = (error: CaptionsError | ZoomError | EditDocumentService.Edit
         : "orchestration_error",
     message: error._tag === "EditUnavailableError" ? error.explanation : error.message,
   });
+
+/**
+ * The looks for the agent's reply (S7V-099): each with its preview as a markdown image of its real
+ * path, which the chat draws through its own signed URL (Claude and Codex threads alike). A path
+ * that would break the markdown is left out; the look is still named.
+ */
+const looksMessage = (looks: ReadonlyArray<CaptionStillsService.CaptionLookPreview>) =>
+  [
+    "Nothing changed. Put these lines in your reply as they are, then ask which look the user wants, or what they have in mind (colours, size, top, middle or bottom):",
+    ...looks.map(({ name, path }) =>
+      path === null || /[<>\r\n]/u.test(path) ? `- ${name}` : `- ${name}: ![${name}](<${path}>)`,
+    ),
+  ].join("\n");
 
 const noSuchJob = () =>
   new OrchestratorMcpFailure({
@@ -709,13 +724,13 @@ const handlers = {
     }),
   ),
   // Writes the edit (one checkpoint), so plan-mode and read-only callers are refused.
-  video_add_captions: McpToolAccess.actsAsCaller(() =>
+  video_add_captions: McpToolAccess.actsAsCaller(({ confirm }) =>
     Effect.gen(function* () {
       yield* refusePlanMode("add captions");
       const project = yield* callerProject();
       const captions = yield* CaptionTrackService.CaptionTrackService;
       const result = yield* captions
-        .addCaptions(project.projectId, { reply: project.reply })
+        .addCaptions(project.projectId, { reply: project.reply, confirm: confirm === true })
         .pipe(Effect.mapError(editRefusal));
       const hint = yield* cleanupAfterChange(project, result.changed);
       return {
@@ -850,21 +865,40 @@ const handlers = {
       };
     }),
   ),
-  // Writes the edit (one checkpoint), so plan-mode and read-only callers are refused.
-  video_caption_style: McpToolAccess.actsAsCaller(({ preset }) =>
+  // Writes the edit (one checkpoint), so plan-mode and read-only callers are refused; listing the
+  // looks changes nothing and works in plan mode too.
+  video_caption_style: McpToolAccess.actsAsCaller(({ preset, custom, confirm }) =>
     Effect.gen(function* () {
-      yield* refusePlanMode("change the caption look");
       const project = yield* callerProject();
       const captions = yield* CaptionTrackService.CaptionTrackService;
+      if (preset === undefined && custom === undefined) {
+        const listed = yield* captions
+          .looks(project.projectId, { confirm: confirm === true })
+          .pipe(Effect.mapError(editRefusal));
+        return { revision: listed.revision, message: looksMessage(listed.looks) };
+      }
+      yield* refusePlanMode("change the caption look");
+      const parsed = custom === undefined ? undefined : parseCaptionCustom(custom);
+      if (parsed !== undefined && "error" in parsed) {
+        return yield* new OrchestratorMcpFailure({
+          code: "invalid_request",
+          message: parsed.error,
+        });
+      }
       const result = yield* captions
-        .setStyle(project.projectId, preset, { reply: project.reply, origin: "agent" })
+        .setStyle(
+          project.projectId,
+          { preset, ...(parsed === undefined ? {} : { custom: parsed.custom }) },
+          { reply: project.reply, origin: "agent", confirm: confirm === true },
+        )
         .pipe(Effect.mapError(editRefusal));
-      const name = CAPTION_PRESET_NAMES[preset];
+      const own = describeCaptionCustom(result.custom);
+      const look = `the ${CAPTION_PRESET_NAMES[result.preset]} look${own === "" ? "" : ` (${own})`}`;
       const message = result.added
-        ? `Added ${result.captions} captions in the ${name} look. Say undo to take them out.`
+        ? `Added ${result.captions} captions in ${look}. Say undo to take them out.`
         : result.changed
-          ? `The captions now use the ${name} look, over the player and in the export. Say undo to go back.`
-          : `The captions already use the ${name} look.`;
+          ? `The captions now use ${look}, over the player and in the export. Say undo to go back.`
+          : `The captions already use ${look}.`;
       return {
         revision: result.revision,
         message,

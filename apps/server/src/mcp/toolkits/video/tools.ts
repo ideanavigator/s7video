@@ -313,8 +313,11 @@ const VideoAssembleTool = Tool.make("video_assemble", {
 
 // S7V-075: user-triggered only. Writes the caption track from the clips' transcripts (one
 // checkpoint); later cuts rebuild it. A clip with no transcript is refused: transcribe it first.
+// S7V-099: a clip whose picture already shows captions is refused until `confirm` (the user said yes).
+const Confirm = Schema.optional(Schema.Boolean);
 const VideoAddCaptionsTool = Tool.make("video_add_captions", {
   description: "Add captions to the video edit only if user asks.",
+  parameters: Schema.Struct({ confirm: Confirm }),
   success: EditStep,
   failure: OrchestratorMcpFailure,
   dependencies: [...dependencies, CaptionTrackService.CaptionTrackService],
@@ -430,10 +433,16 @@ const VideoZoomTool = Tool.make("video_zoom", {
   .annotateMerge(videoAnnotations(false));
 
 // S7V-037: user-triggered only. Sets the caption track's look; adds the captions with it when the
-// edit has none (PO 2026-11-12). One checkpoint.
+// edit has none (PO 2026-11-12). One checkpoint. S7V-099: `custom` (colours, size, place) is
+// checked by the handler with plain reasons and named in the skill, as its fields would cost about
+// 250 B on every turn (AgentContextBudget); with neither `preset` nor `custom` it lists the looks.
 const VideoCaptionStyleTool = Tool.make("video_caption_style", {
   description: "Set video caption look only if user asks.",
-  parameters: Schema.Struct({ preset: CaptionPresetId }),
+  parameters: Schema.Struct({
+    preset: Schema.optional(CaptionPresetId),
+    custom: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
+    confirm: Confirm,
+  }),
   success: EditStep,
   failure: OrchestratorMcpFailure,
   dependencies: [...dependencies, CaptionTrackService.CaptionTrackService],

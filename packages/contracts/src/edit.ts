@@ -205,10 +205,32 @@ export const EditVideoTrack = Schema.Struct({
 });
 export type EditVideoTrack = typeof EditVideoTrack.Type;
 
+/** `#RRGGBB`, as a caption's colours are stored. */
+export const EditHexColor = Schema.String.check(Schema.isPattern(/^#[0-9A-F]{6}$/u));
+
+export const CAPTION_SIZE_RANGE = { minimum: 0.6, maximum: 1.6 } as const;
+export const CaptionPosition = Schema.Literals(["top", "middle", "bottom"]);
+export type CaptionPosition = typeof CaptionPosition.Type;
+
+/**
+ * The user's own colours, size and place on top of the track's look (S7V-099). `highlightColor`
+ * is the lit word's in a look that lights it, `boxColor` the box's in a look with one; `size`
+ * scales the text. The export and the player draw it with the same ASS builder.
+ */
+export const EditCaptionCustom = Schema.Struct({
+  textColor: Schema.optionalKey(EditHexColor),
+  highlightColor: Schema.optionalKey(EditHexColor),
+  boxColor: Schema.optionalKey(EditHexColor),
+  size: Schema.optionalKey(Schema.Finite.check(Schema.isBetween(CAPTION_SIZE_RANGE))),
+  position: Schema.optionalKey(CaptionPosition),
+});
+export type EditCaptionCustom = typeof EditCaptionCustom.Type;
+
 export const EditCaptionTrack = Schema.Struct({
   kind: Schema.Literal("caption"),
   ...trackFields,
   style: Schema.optionalKey(EditStyleRef),
+  custom: Schema.optionalKey(EditCaptionCustom),
   items: Schema.Array(EditCaptionItem),
 });
 export type EditCaptionTrack = typeof EditCaptionTrack.Type;

@@ -33,6 +33,7 @@ import * as TranscriptService from "../../../transcript/TranscriptService.ts";
 import * as AudioTrackService from "../../../edit/AudioTrackService.ts";
 import * as ZoomService from "../../../edit/ZoomService.ts";
 import * as CaptionTrackService from "../../../edit/CaptionTrackService.ts";
+import * as CaptionStillsService from "../../../export/CaptionStillsService.ts";
 import * as ClipPlacementService from "../../../edit/ClipPlacementService.ts";
 import * as SilenceCutService from "../../../edit/SilenceCutService.ts";
 import * as McpHttpServer from "../../McpHttpServer.ts";
@@ -207,7 +208,9 @@ const withProject = <A, E>(
       }),
       Layer.mock(ExportService.ExportService)({}),
       Layer.mock(MediaLibraryService.MediaLibraryService)({}),
-      CaptionTrackService.layer,
+      CaptionTrackService.layer.pipe(
+        Layer.provide(Layer.mock(CaptionStillsService.CaptionStillsService)({})),
+      ),
       ClipPlacementService.layer,
       silences === "real"
         ? SilenceCutService.layer.pipe(Layer.provideMerge(spokenClip))
