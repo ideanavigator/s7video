@@ -29,11 +29,16 @@ OTIO is an export format only (ADR-005); nothing reads these files back into s7v
 
 ## What each format carries
 
-- **`.otio` keeps everything.** Each track and item becomes an OTIO track and clip with exact
-  frame ranges. Whatever OTIO has no place for rides in `metadata["s7video"]`: roles, caption
-  words and looks, gain, fades, `duck`, `zoom`, overlays, `linkId`, the media table and item
-  order. So edit.json → OTIO → edit.json is an empty diff. Captions are clips with a
+- **`.otio` keeps everything in the file.** Each track and item becomes an OTIO track and clip
+  with exact frame ranges. Whatever OTIO has no place for rides in `metadata["s7video"]`: roles,
+  caption words and looks, gain, fades, `duck`, `zoom`, overlays, `linkId`, the media table and
+  item order. So edit.json → OTIO → edit.json is an empty diff. Captions are clips with a
   `GeneratorReference`. The clips' own sound gets a derived audio track that the way back skips.
+- **Lost in Premiere and Resolve, and listed (S7V-097).** Neither editor reads another app's OTIO
+  metadata, and OTIO's own schema has no field for gain, fades, ducking, zoom, the canvas or a
+  caption look. So OTIO lists the same effects as XML, plus overlay placement and caption clips
+  that show no words. Markers, their colours and muted tracks use OTIO's own fields and aren't
+  listed.
 - **FCPXML, FCP7 XML and EDL** get `otio_map.for_editor`'s timeline: what plays, and nothing the
   adapters can't write.
   - **Left out:** caption and overlay tracks (both crash the XML writers), muted tracks, and

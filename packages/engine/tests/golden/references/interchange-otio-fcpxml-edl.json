@@ -3,7 +3,14 @@
     "clips": 26,
     "captionChunks": 101,
     "dropped": {
-      "otio": [],
+      "otio": [
+        "volume changes and fades",
+        "music dipping under speech (ducking)",
+        "zooms",
+        "the frame shape (1080×1920): the editor opens its own default size",
+        "fitting each clip to the frame (fill and crop)",
+        "the caption look (an SRT file has no style; choose ASS to keep it)"
+      ],
       "fcpxml": [
         "volume changes and fades",
         "music dipping under speech (ducking)",
@@ -38,7 +45,14 @@
     "clips": 26,
     "captionChunks": 102,
     "dropped": {
-      "otio": [],
+      "otio": [
+        "volume changes and fades",
+        "music dipping under speech (ducking)",
+        "zooms",
+        "the frame shape (1080×1920): the editor opens its own default size",
+        "fitting each clip to the frame (fill and crop)",
+        "the caption look (an SRT file has no style; choose ASS to keep it)"
+      ],
       "fcpxml": [
         "volume changes and fades",
         "music dipping under speech (ducking)",

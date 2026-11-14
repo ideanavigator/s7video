@@ -209,8 +209,31 @@ def test_roundtrip_edit_otio_edit_is_empty_diff(tmp_path: Path, rate: Fraction) 
     edit = full_edit(tmp_path, rate)
     result = run_export(tmp_path, edit, "otio")
     back = otio_map.from_otio(read_back(result["files"][0], rate))
-    assert canonical(back) == canonical(edit)
-    assert result["dropped"] == [], "OTIO keeps everything"
+    assert canonical(back) == canonical(edit), "the file keeps everything for s7video"
+
+
+def test_otio_not_carried_lists_zoom_volume_duck_and_caption_look(tmp_path: Path) -> None:
+    """S7V-097: Premiere and Resolve don't read ``metadata["s7video"]``, so what lives only there is listed."""
+    edit = full_edit(tmp_path, Fraction(25))
+    assert run_export(tmp_path, edit, "otio")["dropped"] == [
+        "volume changes and fades",
+        "music dipping under speech (ducking)",
+        "zooms",
+        "how overlays sit over the video, and the words of text overlays",
+        "the frame shape (1080×1920): the editor opens its own default size",
+        "fitting each clip to the frame (fill and crop)",
+        "the words on the timeline's caption clips (the captions file beside it has them)",
+        "the caption look (an SRT file has no style; choose ASS to keep it)",
+    ]
+    dropped = interchange._check({"edit": edit, "projectDir": str(tmp_path), "format": "otio", "captions": "none"}, JobContext.detached())["dropped"]
+    assert "the words on the timeline's caption clips (no captions file chosen)" in dropped
+    assert not any(entry.startswith("the caption look") for entry in dropped)
+
+
+def test_otio_not_carried_is_empty_for_a_plain_cut(tmp_path: Path) -> None:
+    edit = simple_edit(tmp_path, Fraction(25), [(0, 40, 10), (40, 30, 90)])
+    edit["markers"] = [{"id": "k1", "start": 3, "duration": 0, "label": "look here", "color": "red"}]
+    assert run_export(tmp_path, edit, "otio", captions="none")["dropped"] == []
 
 
 @pytest.mark.parametrize("rate", [Fraction(25), Fraction(30), Fraction(30000, 1001)], ids=str)
@@ -472,6 +495,9 @@ def test_transcript_captions_without_caption_items(tmp_path: Path) -> None:
     assert burned, "the transcript gives captions"
     check = interchange._check({"edit": edit, "projectDir": str(tmp_path), "format": "fcpxml", "transcripts": transcripts}, JobContext.detached())
     assert check["captions"] == len(burned)
+    # No caption clips on the OTIO timeline: the captions are only in the file beside it.
+    otio_check = interchange._check({"edit": edit, "projectDir": str(tmp_path), "format": "otio", "transcripts": transcripts}, JobContext.detached())
+    assert otio_check["dropped"] == ["the caption look (an SRT file has no style; choose ASS to keep it)"]
     result = run_export(tmp_path, edit, "fcpxml", transcripts=transcripts)
     cues = pysubs2.load(result["files"][1], format_="srt").events
     assert [(math.floor(Fraction(cue.start, 1000) * rate), math.floor(Fraction(cue.end, 1000) * rate)) for cue in cues] == [

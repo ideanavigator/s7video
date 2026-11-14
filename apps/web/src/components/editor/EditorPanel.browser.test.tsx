@@ -661,6 +661,32 @@ describe("EditorPanel", () => {
     expect(commands.interchange).toHaveBeenCalledTimes(1);
   });
 
+  // S7V-097: Premiere and Resolve ignore s7video's OTIO metadata, so the engine lists those losses.
+  it("dialog lists OTIO losses instead of saying everything carries over", async () => {
+    setState([asset("clip-0")], true);
+    commands.interchange.mockReset();
+    const losses = [
+      "music dipping under speech (ducking)",
+      "zooms",
+      "the words on the timeline's caption clips (the captions file beside it has them)",
+      "the caption look (an SRT file has no style; choose ASS to keep it)",
+    ];
+    commands.interchange.mockResolvedValueOnce({
+      _tag: "Success",
+      value: { files: [], dropped: losses },
+    });
+    await using screen = await renderPanel();
+    await screen.getByRole("button", { name: "Export for editors" }).click();
+    const dialog = screen.getByRole("dialog", { name: "Export for editors" });
+    await dialog.getByRole("radio", { name: /Premiere or DaVinci Resolve/u }).click();
+    await dialog.getByRole("button", { name: "Next" }).click();
+    const list = dialog.getByRole("list", {
+      name: "What won't carry over to Premiere or DaVinci Resolve:",
+    });
+    for (const loss of losses) await expect.element(list.getByText(loss)).toBeVisible();
+    await expect.element(dialog.getByText(/Everything carries over/u)).not.toBeInTheDocument();
+  });
+
   it("shows why the editors export couldn't be checked, and lets the user try again", async () => {
     setState([asset("clip-0")], true);
     commands.interchange.mockReset();
