@@ -105,6 +105,8 @@ const PANEL_PADDING_PX = 16;
 const TABS_MIN_PX = 56;
 /** Padding, header, tab bar and gaps above the timeline. */
 const ABOVE_CHROME_PX = 124;
+/** The tabs start from about one version row, then grow with what the player leaves. */
+const TABPANEL_STYLE = { flex: `1 1 ${TABS_MIN_PX}px` } as const;
 
 interface PanelSize {
   readonly width: number;
@@ -942,8 +944,11 @@ export default function EditorPanel(props: {
         ) : null}
       </div>
       <ExportResult projectRef={projectRef} projectExport={projectExport} />
-      {/* Notices give way before the player: they shrink and scroll. */}
-      <div className="flex min-h-11 shrink flex-col gap-2 overflow-y-auto empty:hidden">
+      {/* Notices give way first: they shrink well ahead of the tabs and the timeline, and scroll. */}
+      <div
+        className="flex min-h-11 flex-col gap-2 overflow-y-auto empty:hidden"
+        style={{ flex: "0 10 auto" }}
+      >
         <SpeechModelPrompt projectRef={projectRef} />
         <RefusedChangeNotice snapshot={edit._tag === "ready" ? edit.snapshot : null} />
         <HistoryCleanupBanner
@@ -958,7 +963,7 @@ export default function EditorPanel(props: {
       <div
         className="flex min-h-0 flex-col"
         style={{
-          flex: "100 0 0%",
+          flex: "1000 0 0%",
           minHeight: playerRoom?.min,
           maxHeight: playerRoom?.max,
         }}
@@ -988,7 +993,8 @@ export default function EditorPanel(props: {
         id="editor-tabpanel-transcript"
         aria-labelledby="editor-tab-transcript"
         hidden={tab !== "transcript"}
-        className="min-h-0 flex-1"
+        className="min-h-0"
+        style={TABPANEL_STYLE}
       >
         {view._tag === "play-timeline" ? (
           <TimelineTranscriptTab
@@ -1009,7 +1015,8 @@ export default function EditorPanel(props: {
         id="editor-tabpanel-media"
         aria-labelledby="editor-tab-media"
         hidden={tab !== "media"}
-        className="min-h-0 flex-1"
+        className="min-h-0"
+        style={TABPANEL_STYLE}
       >
         <AssetsTab
           projectRef={projectRef}
@@ -1024,7 +1031,8 @@ export default function EditorPanel(props: {
         id="editor-tabpanel-versions"
         aria-labelledby="editor-tab-versions"
         hidden={tab !== "versions"}
-        className="min-h-0 flex-1"
+        className="min-h-0"
+        style={TABPANEL_STYLE}
       >
         <VersionsTab
           projectRef={projectRef}
