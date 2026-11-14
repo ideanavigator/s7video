@@ -394,7 +394,7 @@ upstream files have small edits:
   thread, so the eval measures what that thread is really offered.
 - `evals/mcp-tool-use/README.md`: the "Video cases (s7video)" section describes the video eval
   cases: the `video-export-*` cases (S7V-061), `VID-01` to `VID-03` (S7V-072), and `VID-04` to
-  `VID-06` for versions by name (S7V-070).
+  `VID-06` for restoring and comparing versions from chat (S7V-070).
 
 The ACP first-prompt text (`t3AcpPromptWithInstructions`) still carries the orchestration text; ACP
 gets the filtered list from the server.
@@ -518,8 +518,9 @@ with small, additive edits:
 - `apps/server/src/ws.ts`: `projectFileFailureContext` maps the error to `protected_file` with the
   plain message.
 - `apps/web/src/components/files/fileSaveSessions.ts`: a refused save shows that message in a toast.
-- `apps/server/src/workspace/WorkspaceFileSystem.test.ts` and
-  `apps/web/src/components/files/fileSaveSessions.test.ts`: tests for the refusal and its message.
+- `apps/server/src/workspace/WorkspaceFileSystem.test.ts`, `apps/server/src/ws.test.ts` and
+  `apps/web/src/components/files/fileSaveSessions.test.ts`: tests for the refusal, its
+  `protected_file` failure and its message.
 
 **Out of reach of this check:** the `vcs.*` RPCs (a git checkout or pull can rewrite `edit.json`)
 and `terminal.write` (a shell can write any file), as well as the agent's own file tools. They are
@@ -550,8 +551,10 @@ small, additive edits:
   Serving it calls `export/captionStillFile.ts` (new code), which re-resolves the project,
   refuses anything but the engine's own file names, and opens the still with `openMediaFile`, as
   `project-media-exact` does, so the response streams the checked descriptor.
-- `assets/AssetAccess.test.ts`: a `caption stills (S7V-079)` block tests serving a still and
-  refusing bad paths, links and tokens.
+- `assets/AssetAccess.test.ts`: the shared test setup changes, so an upstream merge may conflict
+  there: new imports (`Project`, `issueCaptionStillsUrl`, `ProjectService`), a `projectRoots` map,
+  and a `ProjectService` mock in `layerTest`. A new `caption stills (S7V-079)` block tests serving a
+  still and refusing bad paths, links and tokens.
 
 ## Window focus (S7V-074)
 
