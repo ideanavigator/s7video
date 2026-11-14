@@ -146,6 +146,10 @@ describe("brand-check", () => {
     ['const owner = "T3\'s browser";'],
     ["const row = <span>T3 system footprint</span>;"],
     ['const mark = <Mark aria-label="T3" />;'],
+    ['const hint = "Restart T3.";'],
+    ["const hint = 'Quit T3.';"],
+    ['const note = "A T3-managed folder";'],
+    ['const hint = "Quit T3, then reopen it.";'],
   ])("fails on T3 as a product name: %s", (source) => {
     expect(findBannedText("x.tsx", source).map(({ message }) => message)).toEqual([
       'hard-coded "T3" as a product name; read it from the brand config',
@@ -162,6 +166,24 @@ describe("brand-check", () => {
     ].join("\n");
     expect(findBannedText("x.ts", source)).toEqual([]);
     expect(findBannedText("notes.md", "T3 was the upstream.")).toEqual([]);
+  });
+
+  it.each([
+    ["apps/web/index.html", "<title>T3</title>"],
+    ["apps/web/public/page.html", "<p>Restart T3.</p>"],
+    ["apps/desktop/resources/dmg/background.svg", '<text x="1">Drag T3 here</text>'],
+  ])("fails on T3 as a product name in markup: %s", (file, markup) => {
+    expect(findBannedText(file, markup)).toHaveLength(1);
+  });
+
+  it("checks markup text but not markup comments", () => {
+    const svg = [
+      "<svg>",
+      "  <!-- Was T3's mark. -->",
+      '  <text data-id="T3.Env">s7video</text>',
+      "</svg>",
+    ];
+    expect(findBannedText("art.svg", svg.join("\n"))).toEqual([]);
   });
 
   it("fails on T3's wordmark artwork in any file", () => {

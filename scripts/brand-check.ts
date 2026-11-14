@@ -42,11 +42,11 @@ const BANNED_TEXT: ReadonlyArray<{ readonly pattern: RegExp; readonly label: str
   { pattern: /M33\.4509 93V47\.56H15\.5309/g, label: "T3's wordmark artwork" },
 ];
 
-/** Checked in JS/TS code only, comments stripped: what a user sees, not prose about upstream. */
+/** Checked in code, HTML and SVG, comments stripped: what a user sees, not prose about upstream. */
 const BANNED_CODE: ReadonlyArray<{ readonly pattern: RegExp; readonly label: string }> = [
   // "T3 Code" and "T3 Tools" have their own rules; `T3.Env`, `T3-Mode-Limit` or `T3_` are not names.
   {
-    pattern: /(?<![\w.$/-])T3(?![\w./-]| Code\b| Tools\b)/g,
+    pattern: /(?<![\w.$/-])T3(?![\w/]|\.[A-Za-z_]|-[A-Z]| Code\b| Tools\b)/g,
     label: '"T3" as a product name',
   },
   {
@@ -203,6 +203,7 @@ export const PENDING_PATHS: ReadonlyArray<{ readonly pattern: RegExp; readonly o
 const BINARY_EXTENSIONS =
   /\.(png|jpe?g|gif|ico|icns|webp|woff2?|ttf|otf|wasm|node|zip|gz|tgz|sqlite|mp4|mov|mp3|wav|pdf|car)$/i;
 const SCRIPT_EXTENSIONS = /\.([cm]?[jt]sx?)$/;
+const MARKUP_EXTENSIONS = /\.(html|svg)$/;
 const FONT_EXTENSIONS = /\.(woff2?|ttf|otf)$/i;
 
 /** Blanks comments in JS/TS so only code and user-visible strings are checked. */
@@ -242,10 +243,20 @@ export function stripComments(source: string): string {
   return out;
 }
 
+/** Blanks `<!-- -->` comments, keeping line numbers. */
+function stripMarkupComments(source: string): string {
+  return source.replaceAll(/<!--[\s\S]*?-->/g, (comment) => comment.replaceAll(/[^\n]/g, " "));
+}
+
 export function findBannedText(file: string, contents: string): BrandCheckProblem[] {
-  const isCode = SCRIPT_EXTENSIONS.test(file);
-  const text = isCode ? stripComments(contents) : contents;
-  const patterns = isCode ? [...BANNED_TEXT, ...BANNED_CODE] : BANNED_TEXT;
+  const isScript = SCRIPT_EXTENSIONS.test(file);
+  const isMarkup = MARKUP_EXTENSIONS.test(file);
+  const text = isScript
+    ? stripComments(contents)
+    : isMarkup
+      ? stripMarkupComments(contents)
+      : contents;
+  const patterns = isScript || isMarkup ? [...BANNED_TEXT, ...BANNED_CODE] : BANNED_TEXT;
   const problems: BrandCheckProblem[] = [];
   const lines = text.split("\n");
   lines.forEach((lineText, index) => {
