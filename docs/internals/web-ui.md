@@ -86,7 +86,10 @@ closes every tab, so a closed Editor stays closed after a reload. Proactive pane
 active tab from the Editor, and a chat link to a clip in Media plays it in the Editor
 ([`clipLinks.ts`](../../apps/web/src/editor/clipLinks.ts)). Other projects keep T3's layout.
 
-The Editor's tabs keep room for two version rows in a short panel and four in a 900 px window
-(`tabsRoomPx` in `EditorPanel.tsx`, sized from the row height in `VersionsTab.tsx`). The player
-shrinks and letterboxes first, and the timeline cannot be dragged into that room; a saved timeline
-height still applies wherever it fits.
+The player gets space first (UX guide rule 3, S7V-101). Its box follows the canvas shape, and its
+picture never gets shorter than `PLAYER_SHARE` (45%) of the Editor's height (`playerRoomPx` in
+`EditorPanel.tsx`), at 1180x760 too. A 16:9 picture in a narrow Editor fills the width instead,
+and its area still keeps the share. The notices shrink and scroll, the tabs get what is left (about
+one version row in a 760 px window), and the timeline gives way down to its toolbar, ruler and
+video row, with the other rows scrolling (`TIMELINE_FLOOR_PX` in `TimelinePane.tsx`). A saved
+timeline height still applies wherever it fits.

@@ -224,7 +224,9 @@ function TagForm(props: {
   const trimmed = value.trim();
   return (
     <DialogPopup>
+      {/* The form takes the popup's column layout, so Save and Cancel sit inside it (S7V-101). */}
       <form
+        className="flex min-h-0 flex-col"
         onSubmit={(event) => {
           event.preventDefault();
           props.onSave(trimmed === "" ? null : trimmed);

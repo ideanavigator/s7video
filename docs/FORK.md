@@ -601,6 +601,23 @@ working in; only user actions take focus. These upstream desktop files have smal
 - `scripts/dev-electron.mjs` sets `S7VIDEO_DESKTOP_DEV_RESTART=1` on a watcher relaunch;
   `app/DesktopConfig.ts` reads it and `app/DesktopEnvironment.ts` exposes `isDevelopmentRestart`.
 
+## The Editor owns its keys (S7V-101)
+
+While focus is in the Editor panel or the file view (both marked `data-editor-keys`, see
+`apps/web/src/lib/editorKeys.ts`), their shortcuts act there and never reach the chat. These
+upstream files have small edits:
+
+- `components/chat/composerFocusRedirect.ts`: type-to-focus leaves keys pressed in such a region
+  alone, so S splits on the timeline instead of typing into the composer.
+- `components/ChatView.logic.ts`: `shouldRefocusComposerOnWindowFocus` keeps focus in such a region
+  when the window comes back.
+- `components/chat/useComposerStash.ts`: Mod+S does not stash a prompt from such a region.
+- `components/AppSidebarLayout.tsx`: Mod+Z there undoes the edit, not a thread action.
+- `components/files/FilePreviewPanel.tsx`: the editable file surface is such a region, and Mod+S
+  saves the file at once through `flushFileSaveSession` (`components/files/fileSaveSessions.ts`).
+- Tests: `components/ChatView.logic.browser.test.ts`,
+  `components/chat/useChatShortcuts.browser.test.tsx` and `components/files/fileSaveSessions.test.ts`.
+
 ## Dev profile per worktree (S7V-073)
 
 A desktop dev app started from a linked git worktree gets its own Electron profile, so it neither

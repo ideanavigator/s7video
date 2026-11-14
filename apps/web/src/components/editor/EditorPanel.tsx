@@ -39,6 +39,7 @@ import {
   useEditPlayerStore,
   useProjectExport,
   useProjectEdit,
+  type ProjectExport,
 } from "../../editor/editStore";
 import {
   editPlaybackPlan,
@@ -66,6 +67,7 @@ import { AssetsTab, useAssetsActions } from "./AssetsTab";
 import { CaptionOverlay } from "./CaptionOverlay";
 import { EditPlayer } from "./EditPlayer";
 import { ExportForEditorsDialog } from "./ExportForEditorsDialog";
+import { ExportResult } from "./ExportResult";
 import { HistoryCleanupBanner } from "./HistoryCleanupBanner";
 import { ImportDialog } from "./ImportDialog";
 import { MultiClipPlayer, type MultiClipSource } from "./MultiClipPlayer";
@@ -90,19 +92,35 @@ const TABS: ReadonlyArray<{ readonly id: EditorTab; readonly label: string }> = 
 
 export const DROP_OVERLAY_TEXT = "Drop to add to this project. Nothing is uploaded.";
 
-/** One version row with its gap (`VersionsTab`), for the room the tabs keep (S7V-076). */
-const VERSION_ROW_PX = 62;
-/** The player, letterboxed, never gets shorter than this. */
-const PLAYER_MIN_PX = 96;
+/**
+ * The player gets space first (UX guide rule 3, S7V-101): its picture never gets shorter than this
+ * share of the Editor. Banners and the tabs shrink and the timeline scrolls before it does.
+ */
+export const PLAYER_SHARE = 0.45;
+/** The player's controls under the picture, with their gap. */
+const PLAYER_CONTROLS_PX = 30;
+/** The panel's padding on each axis. */
+const PANEL_PADDING_PX = 16;
+/** The tabs keep about one version row when the window allows it. */
+const TABS_MIN_PX = 56;
 /** Padding, header, tab bar and gaps above the timeline. */
 const ABOVE_CHROME_PX = 124;
 
-/**
- * The room the tabs keep before the player shrinks: two version rows in a short panel, up to four
- * in a 900 px window. Beyond that the player takes its full size and the tabs the rest.
- */
-const tabsRoomPx = (panelHeight: number): number =>
-  Math.min(4 * VERSION_ROW_PX, Math.max(2 * VERSION_ROW_PX, panelHeight - 592)) + 8;
+interface PanelSize {
+  readonly width: number;
+  readonly height: number;
+}
+
+/** The player area's least and most height: its share of the panel, and its canvas at full width. */
+function playerRoomPx(
+  panel: PanelSize,
+  canvas: { readonly width: number; readonly height: number } | undefined,
+): { readonly min: number; readonly max: number | undefined } {
+  const min = Math.ceil(PLAYER_SHARE * panel.height) + PLAYER_CONTROLS_PX;
+  if (canvas === undefined) return { min, max: undefined };
+  const fullWidth = ((panel.width - PANEL_PADDING_PX) * canvas.height) / canvas.width;
+  return { min, max: Math.max(min, Math.ceil(fullWidth) + PLAYER_CONTROLS_PX) };
+}
 
 function PlayerMessage(props: {
   readonly icon: ReactNode;
@@ -113,7 +131,7 @@ function PlayerMessage(props: {
   readonly children?: ReactNode;
 }) {
   return (
-    <div className="flex aspect-video max-h-[50vh] min-h-0 items-center overflow-y-auto rounded-md bg-muted/40">
+    <div className="flex min-h-0 flex-1 items-center overflow-y-auto rounded-md bg-muted/40">
       <Empty>
         <EmptyHeader>
           <EmptyMedia variant="icon">{props.icon}</EmptyMedia>
@@ -179,7 +197,7 @@ function PlayingSource(props: {
       <div
         role="status"
         aria-label="Loading video"
-        className="flex aspect-video max-h-[50vh] min-h-0 items-center justify-center rounded-md bg-muted/40"
+        className="flex min-h-0 flex-1 items-center justify-center rounded-md bg-muted/40"
       >
         <Spinner />
       </div>
@@ -389,7 +407,7 @@ function PlayerArea(props: {
         <div
           role="status"
           aria-label="Loading the edit"
-          className="flex aspect-video max-h-[50vh] min-h-0 items-center justify-center rounded-md bg-muted/40"
+          className="flex min-h-0 flex-1 items-center justify-center rounded-md bg-muted/40"
         >
           <Spinner />
         </div>
@@ -404,7 +422,7 @@ function PlayerArea(props: {
       );
     case "empty":
       return (
-        <div className="flex min-h-0 flex-col rounded-md">
+        <div className="flex min-h-0 flex-1 flex-col rounded-md">
           <PlayerMessage
             icon={<FilmIcon />}
             title="No clips yet"
@@ -540,12 +558,22 @@ const isExportStartError = Schema.is(ExportStartError);
 const isNoTranscript = (error: unknown) =>
   isExportStartError(error) && error.reason === "no-transcript";
 
-function ExportButton(props: { readonly projectRef: ScopedProjectRef }) {
+interface StartedExport {
+  readonly jobId: EngineJobId;
+  readonly path: string;
+}
+
+function ExportButton(props: {
+  readonly projectRef: ScopedProjectRef;
+  readonly projectExport: ProjectExport;
+  readonly started: StartedExport | null;
+  readonly onStarted: (started: StartedExport) => void;
+}) {
   const { environmentId, projectId } = props.projectRef;
   const start = useAtomCommand(editEnvironment.exportStart, { reportFailure: false });
   const cancel = useAtomCommand(editEnvironment.cancelJob, { reportFailure: false });
-  const [started, setStarted] = useState<{ jobId: EngineJobId; path: string } | null>(null);
-  const { job, status } = useProjectExport(environmentId, projectId, started?.jobId ?? null);
+  const { started, onStarted: setStarted } = props;
+  const { job } = props.projectExport;
   // Started but not yet in the jobs stream counts as running.
   const running = job?.state === "running" || (started !== null && job === null);
   const progress = Math.round((job?.progress ?? 0) * 100);
@@ -591,16 +619,6 @@ function ExportButton(props: { readonly projectRef: ScopedProjectRef }) {
     }
   };
 
-  const outcome = (() => {
-    if (running || job === null) return null;
-    if (job.state === "succeeded") {
-      const files = status?.files?.join(", ") ?? status?.path ?? started?.path;
-      return <>Exported to {files ?? "the exports folder"}</>;
-    }
-    if (job.state === "cancelled") return <>Export cancelled</>;
-    return <>Export failed{status?.message ? `: ${status.message}` : ""}</>;
-  })();
-
   return (
     <>
       <ExportForEditorsDialog
@@ -624,14 +642,6 @@ function ExportButton(props: { readonly projectRef: ScopedProjectRef }) {
             </div>
             <span className="text-xs text-muted-foreground tabular-nums">{progress}%</span>
           </div>
-        ) : outcome !== null ? (
-          <span
-            role="status"
-            className="min-w-0 truncate text-xs text-muted-foreground data-[state=failed]:text-destructive-foreground"
-            data-state={job?.state}
-          >
-            {outcome}
-          </span>
         ) : null}
         {running ? (
           <Button
@@ -649,7 +659,6 @@ function ExportButton(props: { readonly projectRef: ScopedProjectRef }) {
               <UploadIcon aria-hidden />
               Export
             </Button>
-            {/* An icon, so the export's status keeps its room in the header. */}
             <Tooltip>
               <TooltipTrigger
                 render={
@@ -774,12 +783,23 @@ export default function EditorPanel(props: {
   const setSource = useEditPlayerStore((state) => state.setSource);
   const actions = useAssetsActions(projectRef);
   const [tab, setTab] = useState<EditorTab>("versions");
-  const [panelHeight, setPanelHeight] = useState<number | null>(null);
+  const [panelSize, setPanelSize] = useState<PanelSize | null>(null);
   const observePanel = (element: HTMLDivElement | null) =>
     element === null
       ? undefined
-      : observeResize(element, () => setPanelHeight(element.clientHeight));
-  const tabsRoom = panelHeight === null ? undefined : tabsRoomPx(panelHeight);
+      : observeResize(element, () =>
+          setPanelSize((current) =>
+            current?.width === element.clientWidth && current.height === element.clientHeight
+              ? current
+              : { width: element.clientWidth, height: element.clientHeight },
+          ),
+        );
+  const [startedExport, setStartedExport] = useState<StartedExport | null>(null);
+  const projectExport = useProjectExport(
+    props.environmentId,
+    props.projectId,
+    startedExport?.jobId ?? null,
+  );
   const canAddFiles = window.desktopBridge !== undefined;
   const [dragging, setDragging] = useState(false);
   const acceptsDrop = (event: DragEvent<HTMLDivElement>) =>
@@ -804,6 +824,13 @@ export default function EditorPanel(props: {
     actions.addFiles([...event.dataTransfer.files]);
   };
   const view = playerViewOf(edit, library, source);
+  const playerRoom =
+    panelSize === null
+      ? null
+      : playerRoomPx(
+          panelSize,
+          view._tag === "play" || view._tag === "play-timeline" ? view.plan.canvas : undefined,
+        );
 
   const showEdit = () => {
     rememberPlayerFrame(projectKey, 0);
@@ -857,6 +884,8 @@ export default function EditorPanel(props: {
       ref={observePanel}
       className="relative flex h-full min-h-0 flex-col gap-2 p-2"
       data-testid="editor-panel"
+      // The Editor owns its keys: S, Delete and Mod+Z never reach the chat composer (S7V-101).
+      data-editor-keys
       data-dragging={dragging}
       onDragOver={onDragOver}
       onDragLeave={onDragLeave}
@@ -873,8 +902,7 @@ export default function EditorPanel(props: {
       <div role="status" aria-live="polite" className="sr-only">
         {dragging ? DROP_OVERLAY_TEXT : ""}
       </div>
-      <SpeechModelPrompt projectRef={projectRef} />
-      <div className="flex min-h-7 items-center justify-between gap-2">
+      <div className="flex min-h-7 shrink-0 items-center justify-between gap-2">
         <div className="flex min-w-0 items-center gap-2 text-sm">
           {view._tag === "play" && view.mode === "clip" ? (
             <>
@@ -903,19 +931,41 @@ export default function EditorPanel(props: {
         previewingVersion === null &&
         (view._tag === "play-timeline" || (view._tag === "play" && view.mode === "edit")) ? (
           <div className="flex min-w-0 items-center gap-2">
-            <ExportButton projectRef={projectRef} />
+            <CaptionStylePicker projectRef={projectRef} document={edit.snapshot.document} />
+            <ExportButton
+              projectRef={projectRef}
+              projectExport={projectExport}
+              started={startedExport}
+              onStarted={setStartedExport}
+            />
           </div>
         ) : null}
       </div>
-      <RefusedChangeNotice snapshot={edit._tag === "ready" ? edit.snapshot : null} />
-      {/* The player shrinks, letterboxed, so the tabs below keep their room. */}
-      <div className="flex min-h-24 shrink flex-col" data-testid="editor-player-area">
+      <ExportResult projectRef={projectRef} projectExport={projectExport} />
+      {/* Notices give way before the player: they shrink and scroll. */}
+      <div className="flex min-h-11 shrink flex-col gap-2 overflow-y-auto empty:hidden">
+        <SpeechModelPrompt projectRef={projectRef} />
+        <RefusedChangeNotice snapshot={edit._tag === "ready" ? edit.snapshot : null} />
+        <HistoryCleanupBanner
+          projectRef={projectRef}
+          snapshot={edit._tag === "ready" ? edit.snapshot : null}
+        />
+      </div>
+      {/*
+        The player takes the room first, in its canvas shape, and keeps its share of the panel. It
+        grows far ahead of the tabs, so they get only what is left once its canvas fills the width.
+      */}
+      <div
+        className="flex min-h-0 flex-col"
+        style={{
+          flex: "100 0 0%",
+          minHeight: playerRoom?.min,
+          maxHeight: playerRoom?.max,
+        }}
+        data-testid="editor-player-area"
+      >
         <PlayerArea projectRef={projectRef} view={view} actions={actions} />
       </div>
-      <HistoryCleanupBanner
-        projectRef={projectRef}
-        snapshot={edit._tag === "ready" ? edit.snapshot : null}
-      />
       <div role="tablist" aria-label="Editor views" className="flex shrink-0 gap-1 border-b">
         {TABS.map((entry) => (
           <button
@@ -939,7 +989,6 @@ export default function EditorPanel(props: {
         aria-labelledby="editor-tab-transcript"
         hidden={tab !== "transcript"}
         className="min-h-0 flex-1"
-        style={{ minHeight: tabsRoom }}
       >
         {view._tag === "play-timeline" ? (
           <TimelineTranscriptTab
@@ -961,7 +1010,6 @@ export default function EditorPanel(props: {
         aria-labelledby="editor-tab-media"
         hidden={tab !== "media"}
         className="min-h-0 flex-1"
-        style={{ minHeight: tabsRoom }}
       >
         <AssetsTab
           projectRef={projectRef}
@@ -977,7 +1025,6 @@ export default function EditorPanel(props: {
         aria-labelledby="editor-tab-versions"
         hidden={tab !== "versions"}
         className="min-h-0 flex-1"
-        style={{ minHeight: tabsRoom }}
       >
         <VersionsTab
           projectRef={projectRef}
@@ -1001,7 +1048,7 @@ export default function EditorPanel(props: {
           mediaById={mediaById}
           editing={editing}
           minAbovePx={
-            tabsRoom === undefined ? undefined : ABOVE_CHROME_PX + PLAYER_MIN_PX + tabsRoom
+            playerRoom === null ? undefined : ABOVE_CHROME_PX + playerRoom.min + TABS_MIN_PX
           }
         />
       )}

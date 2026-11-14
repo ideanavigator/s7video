@@ -44,7 +44,12 @@ const renderPlayer = (overrides: Partial<EditPlayerProps> = {}) => {
     onError: vi.fn(),
     ...overrides,
   };
-  return render(<EditPlayer {...props} />, { router: false });
+  return render(
+    <div className="flex flex-col" style={{ width: 640, height: 400 }}>
+      <EditPlayer {...props} />
+    </div>,
+    { router: false },
+  );
 };
 
 describe("EditPlayer", () => {
@@ -101,12 +106,12 @@ describe("EditPlayer", () => {
     expect(onPositionChange).toHaveBeenLastCalledWith(101);
   });
 
-  // S7V-061: the player shows the edit's shape, as export renders it, inside its frame. The app's
-  // stylesheet is loaded, so these are real layout sizes.
+  // S7V-061: the player shows the edit's shape, as export renders it, inside the room the Editor
+  // gives it (S7V-101). The app's stylesheet is loaded, so these are real layout sizes.
   it.each([
     { canvas: { width: 1080, height: 1920 }, panel: 640 },
+    { canvas: { width: 1080, height: 1080 }, panel: 640 },
     { canvas: { width: 1920, height: 1080 }, panel: 640 },
-    // A wide panel: max-h caps the frame, so it is wider than 16:9.
     { canvas: { width: 1920, height: 1080 }, panel: 2400 },
     { canvas: { width: 2560, height: 1080 }, panel: 640 },
     { canvas: { width: 2560, height: 1080 }, panel: 2400 },
@@ -130,7 +135,7 @@ describe("EditPlayer", () => {
         metadata: {},
       })!;
       await using screen = await render(
-        <div style={{ width: panel }}>
+        <div className="flex flex-col" style={{ width: panel, height: 400 }}>
           <EditPlayer
             projectKey="env-1:project-1"
             src=""
@@ -151,6 +156,7 @@ describe("EditPlayer", () => {
       const frame = box.parentElement!.parentElement!.getBoundingClientRect();
       const inner = box.getBoundingClientRect();
       expect(frame.width).toBeGreaterThan(0);
+      expect(frame.height).toBeGreaterThan(0);
       // The whole canvas is visible: inside the frame on both axes, touching it on one, centred.
       expect(inner.width).toBeLessThanOrEqual(frame.width + 0.5);
       expect(inner.height).toBeLessThanOrEqual(frame.height + 0.5);

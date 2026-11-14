@@ -158,6 +158,12 @@ from; the per-ticket entries and how this file is compiled are in
 - While you look at an older version, the timeline only lets you look: a drag, trim, split or
   delete no longer changes your main edit, and a click on the timeline takes you back to it.
   Version messages say "main", like the Versions tab. (S7V-087)
+- The video in the Editor is sized to your video's shape and keeps at least 45% of the Editor's
+  height, even in a small window: the tabs and the timeline give way first. Pressing S, Delete or
+  Cmd+Z after clicking the timeline now edits the timeline instead of typing into the chat, and
+  Cmd+S in the file view saves the file. Naming a version shows Save inside its box. A finished
+  export says "Your video is ready" with its length and size, and buttons to play it or show it
+  in Finder, and the latest export is still there after a reload. (S7V-101)
 - For developers: a dev desktop app started from a linked git worktree keeps its own Electron
   profile in that worktree's dev home, so it no longer hands off to, or focuses, another
   checkout's app. The main checkout keeps its `s7video-dev` profile. (S7V-073)

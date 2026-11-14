@@ -63,6 +63,7 @@ const commands = vi.hoisted(() => ({
   redo: vi.fn(),
   plan: vi.fn(),
   interchange: vi.fn(),
+  openInEditor: vi.fn(async () => ({ _tag: "Success", value: undefined })),
 }));
 const toasts = vi.hoisted(() => ({ add: vi.fn() }));
 
@@ -109,7 +110,9 @@ vi.mock(import("../../state/use-atom-command"), () => ({
                     ? commands.redo
                     : command?.label.endsWith("media:import-plan")
                       ? commands.plan
-                      : vi.fn()) as never,
+                      : command?.label.endsWith("shell:open-in-editor")
+                        ? commands.openInEditor
+                        : vi.fn()) as never,
 }));
 vi.mock(import("../../assets/assetUrls"), () => ({
   useAssetUrlState: ((
@@ -124,14 +127,27 @@ vi.mock(import("../../assets/assetUrls"), () => ({
     }
     return { _tag: "Success", url: "" };
   }) as never,
-  // The timeline's waveforms and filmstrips (S7V-035) mint part URLs; none are served here.
-  useAssetUrlMinter: () => async () => null,
+  // The timeline's waveforms and filmstrips (S7V-035) mint part URLs; none are served here. An
+  // export's file gets one, for Play and Open (S7V-101).
+  useAssetUrlMinter: (() => async (resource: { readonly _tag: string; readonly path?: string }) =>
+    resource._tag === "draft-workspace-file" ? `about:blank#${resource.path}` : null) as never,
+}));
+const WORKSPACE_ROOT = vi.hoisted(() => "/Users/me/Movies/Charger reel");
+vi.mock(import("../../state/entities"), async (importOriginal) => ({
+  ...(await importOriginal()),
+  readProject: (() => ({ workspaceRoot: WORKSPACE_ROOT })) as never,
 }));
 
 import "../../index.css";
 
+import { shouldTypeToFocusComposer } from "../chat/composerFocusRedirect";
 import { BROWSER_ADD_MEDIA_HINT } from "./addMediaHint";
-import EditorPanel, { CHANGED_ELSEWHERE_NOTICE, DROP_OVERLAY_TEXT } from "./EditorPanel";
+import EditorPanel, {
+  CHANGED_ELSEWHERE_NOTICE,
+  DROP_OVERLAY_TEXT,
+  PLAYER_SHARE,
+} from "./EditorPanel";
+import { latestExportStorageKey } from "./ExportResult";
 
 const FPS = { num: 30, den: 1 };
 const projectId = ProjectId.make("project-1");
@@ -182,9 +198,9 @@ const setState = (items: ReadonlyArray<MediaAsset>, cut: boolean) => {
   };
 };
 
-const sized = () => {
+const sized = (height = 760) => {
   const container = document.createElement("div");
-  container.style.height = "760px";
+  container.style.height = `${height}px`;
   container.style.width = "420px";
   return container;
 };
@@ -193,7 +209,10 @@ const panel = () => (
   <EditorPanel environmentId={EnvironmentId.make("env-1")} projectId={projectId} />
 );
 
-const renderPanel = () => render(panel(), { container: sized(), router: false });
+const renderPanel = (height?: number) =>
+  render(panel(), { container: sized(height), router: false });
+/** The player keeps 45% of the panel (S7V-101), so a list that must scroll gets a tall one. */
+const TALL_PX = 1200;
 
 const videoOf = async (screen: Awaited<ReturnType<typeof renderPanel>>) =>
   (await screen.getByLabelText("clip-0.mov", { exact: true }).findElement()) as HTMLVideoElement;
@@ -498,7 +517,7 @@ describe("EditorPanel", () => {
       Array.from({ length: 40 }, (_, index) => asset(`clip-${index}`)),
       true,
     );
-    await using screen = await renderPanel();
+    await using screen = await renderPanel(TALL_PX);
     await screen.getByRole("tab", { name: "Media" }).click();
     await expect
       .element(screen.getByRole("tab", { name: "Media" }))
@@ -558,6 +577,99 @@ describe("EditorPanel", () => {
     await using screen = await renderPanel();
     await expect.element(screen.getByText("Export failed: The disk is full.")).toBeVisible();
     state.export = { job: null, status: null };
+  });
+
+  describe("export result (S7V-101)", () => {
+    const environmentId = EnvironmentId.make("env-1");
+    const EXPORT_PATH = "exports/charger-reel-20261114-2227.mp4";
+    const finished: ProjectExport = {
+      job: exportJob({ state: "succeeded", progress: 1 }),
+      status: {
+        jobId: EngineJobId.make("job-1"),
+        projectId,
+        path: EXPORT_PATH,
+        state: "succeeded",
+        result: {
+          path: EXPORT_PATH,
+          durationFrames: 3660,
+          fps: FPS,
+          width: 1080,
+          height: 1920,
+          captions: 12,
+          lufs: -14,
+          truePeak: -1,
+        },
+      },
+    };
+    const reset = () => {
+      state.export = { job: null, status: null };
+      localStorage.removeItem(latestExportStorageKey({ environmentId, projectId }));
+      delete window.desktopBridge;
+    };
+    /** The panel's row that holds `element`. */
+    const rowOf = (element: Element) =>
+      [...document.querySelector("[data-testid=editor-panel]")!.children].find((row) =>
+        row.contains(element),
+      );
+
+    it("says the video is ready on its own row, with Play and Show in Finder", async () => {
+      setState([asset("clip-0")], true);
+      state.export = finished;
+      window.desktopBridge = {} as NonNullable<typeof window.desktopBridge>;
+      commands.openInEditor.mockClear();
+      try {
+        await using screen = await renderPanel();
+        const result = screen.getByTestId("export-result");
+        await expect.element(result).toHaveTextContent("Your video is ready · 2:02 · 1080×1920");
+        // Not in the row with the caption looks and Export, and not over it.
+        const exportButton = screen.getByRole("button", { name: "Export" }).element();
+        expect(rowOf(result.element())).not.toBe(rowOf(exportButton));
+        expect(result.element().getBoundingClientRect().top).toBeGreaterThanOrEqual(
+          rowOf(exportButton)!.getBoundingClientRect().bottom,
+        );
+        await result.getByRole("button", { name: "Show in Finder" }).click();
+        expect(commands.openInEditor).toHaveBeenCalledWith({
+          environmentId,
+          input: { cwd: `${WORKSPACE_ROOT}/${EXPORT_PATH}`, editor: "file-manager", reveal: true },
+        });
+        await result.getByRole("button", { name: "Play the export" }).click();
+        const dialog = page.getByRole("dialog", { name: "charger-reel-20261114-2227.mp4" });
+        await expect.element(dialog).toBeVisible();
+        await expect
+          .element(dialog.getByLabelText("The export, charger-reel-20261114-2227.mp4"))
+          .toHaveAttribute("src", `about:blank#${EXPORT_PATH}`);
+      } finally {
+        reset();
+      }
+    });
+
+    it("keeps the latest export after a reload, and offers Open in the browser build", async () => {
+      setState([asset("clip-0")], true);
+      state.export = finished;
+      const open = vi.spyOn(window, "open").mockReturnValue(null);
+      try {
+        {
+          await using screen = await renderPanel();
+          await expect
+            .element(screen.getByTestId("export-result"))
+            .toHaveTextContent("Your video is ready · 2:02 · 1080×1920");
+        }
+        // A reload: the jobs stream no longer has the job, and nothing was started here.
+        state.export = { job: null, status: null };
+        await using screen = await renderPanel();
+        const result = screen.getByTestId("export-result");
+        await expect.element(result).toHaveTextContent("Latest export · 2:02 · 1080×1920");
+        await expect.element(result.getByRole("button", { name: "Play the export" })).toBeVisible();
+        expect(result.getByRole("button", { name: "Show in Finder" }).query()).toBeNull();
+        await result.getByRole("button", { name: "Open the export" }).click();
+        await vi.waitFor(() =>
+          expect(open).toHaveBeenCalledWith(`about:blank#${EXPORT_PATH}`, "_blank", "noopener"),
+        );
+      } finally {
+        open.mockRestore();
+        reset();
+      }
+    });
   });
 
   it("offers to export without captions when the clip has no transcript", async () => {
@@ -780,7 +892,7 @@ describe("EditorPanel", () => {
       true,
     );
     state.urlRevisions = [];
-    await using screen = await renderPanel();
+    await using screen = await renderPanel(TALL_PX);
     await act(async () => (await videoOf(screen)).dispatchEvent(new Event("error")));
     // Media rows that render after the retry (a busy machine, a scroll) must not hide it.
     await screen.getByRole("tab", { name: "Media" }).click();
@@ -898,6 +1010,68 @@ describe("EditorPanel", () => {
       }),
     );
     await expect.element(toolbar.getByRole("button", { name: "Redo" })).toBeDisabled();
+  });
+
+  // S7V-101: the Editor owns its keys; the composer's type-to-focus takes them only outside it.
+  it("splits on S and undoes on Mod+Z after a click on the timeline; S in the composer types", async () => {
+    setState([asset("clip-0")], true);
+    state.edit =
+      state.edit._tag === "ready"
+        ? { _tag: "ready", snapshot: { ...state.edit.snapshot, canUndo: true } }
+        : state.edit;
+    commands.apply.mockReset();
+    commands.undo.mockReset();
+    commands.apply.mockResolvedValue({ _tag: "Success", value: { revision: 2 } });
+    commands.undo.mockResolvedValue({
+      _tag: "Success",
+      value: { revision: 3, document: {}, canUndo: false, canRedo: true },
+    });
+    const composer = document.createElement("textarea");
+    composer.setAttribute("aria-label", "Composer");
+    document.body.append(composer);
+    // The chat's type-to-focus as useChatShortcuts runs it: a window capture listener.
+    const redirect = (event: KeyboardEvent) => {
+      if (!shouldTypeToFocusComposer(event)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      composer.value += event.key;
+    };
+    window.addEventListener("keydown", redirect, true);
+    try {
+      await using screen = await renderPanel();
+      await expect.element(screen.getByRole("region", { name: "Timeline" })).toBeVisible();
+      const ruler = document.querySelector<HTMLElement>("[data-timeline-ruler]")!;
+      const scroller = document.querySelector<HTMLElement>("[data-testid=timeline-scroller]")!;
+      const ppf = Number(scroller.dataset.pxPerFrame);
+      await userEvent.click(ruler, { position: { x: 12.5 * ppf, y: 10 } });
+      expect(scroller.contains(document.activeElement)).toBe(true);
+      await userEvent.keyboard("s");
+      await vi.waitFor(() =>
+        expect(commands.apply).toHaveBeenCalledWith({
+          environmentId: EnvironmentId.make("env-1"),
+          input: {
+            projectId,
+            baseRevision: 1,
+            origin: "timeline",
+            ops: [{ _tag: "splitItem", itemId: "a", atFrame: 12 }],
+          },
+        }),
+      );
+      await userEvent.keyboard("{Meta>}z{/Meta}");
+      await vi.waitFor(() => expect(commands.undo).toHaveBeenCalledTimes(1));
+      expect(composer.value).toBe("");
+
+      await userEvent.click(composer);
+      await userEvent.keyboard("s");
+      expect(composer.value).toBe("s");
+      composer.blur();
+      await userEvent.keyboard("a");
+      expect(composer.value).toBe("sa");
+      expect(commands.apply).toHaveBeenCalledTimes(1);
+    } finally {
+      window.removeEventListener("keydown", redirect, true);
+      composer.remove();
+    }
   });
 
   // S7V-038: text edits take the same edit.apply path, with origin transcript.
@@ -1176,70 +1350,90 @@ describe("EditorPanel", () => {
           })),
         ],
       };
-      /** The app's right panel: its tab bar (52 px) over the Editor, at 60% beside the chat. */
+      /**
+       * The app at its window size: the project sidebar (255 px), then the chat, then the right
+       * panel's tab bar (52 px) over the Editor, at 60% beside the chat.
+       */
       const layout = () =>
         render(
           <div className="flex h-screen w-screen bg-background text-foreground">
-            <div className="flex min-w-0 flex-1 items-center justify-center border-r text-sm text-muted-foreground">
-              Chat column (stand-in)
+            <div className="w-[255px] shrink-0 border-r text-sm text-muted-foreground">
+              Sidebar (stand-in)
             </div>
-            <div className="flex h-full flex-col" style={{ width: "60%" }}>
-              <div className="flex h-[52px] shrink-0 items-center border-b px-3 text-sm text-muted-foreground">
-                Panel tabs (stand-in)
+            <div className="flex min-w-0 flex-1">
+              <div className="flex min-w-0 flex-1 items-center justify-center border-r text-sm text-muted-foreground">
+                Chat column (stand-in)
               </div>
-              <div className="min-h-0 flex-1">{panel()}</div>
+              <div className="flex h-full flex-col" style={{ width: "60%" }}>
+                <div className="flex h-[52px] shrink-0 items-center border-b px-3 text-sm text-muted-foreground">
+                  Panel tabs (stand-in)
+                </div>
+                <div className="min-h-0 flex-1">{panel()}</div>
+              </div>
             </div>
           </div>,
           { router: false },
         );
       const inside = (inner: DOMRect, outer: DOMRect) =>
         inner.top >= outer.top - 0.5 && inner.bottom <= outer.bottom + 0.5;
-      /** Version rows shown whole, without scrolling the list. */
-      const visibleRows = () => {
-        const list = document
-          .getElementById("editor-tabpanel-versions")!
-          .querySelector<HTMLElement>("[role=list]")!;
-        const shown = list.getBoundingClientRect();
-        return [...list.querySelectorAll("[role=listitem]")].filter((row) =>
-          inside(row.getBoundingClientRect(), shown),
-        ).length;
-      };
-      const timelineTracksShown = () => {
-        const timeline = document.querySelector("[data-testid=editor-timeline]")!;
-        const box = timeline.getBoundingClientRect();
-        const panelBox = document
-          .querySelector("[data-testid=editor-panel]")!
-          .getBoundingClientRect();
-        return (
-          inside(box, panelBox) &&
-          ["Overlays", "Video", "Captions", "Sound effects", "Music"].every((label) => {
-            const element = [...timeline.querySelectorAll("*")].find(
-              (node) => node.childElementCount === 0 && node.textContent === label,
-            );
-            return element !== undefined && inside(element.getBoundingClientRect(), box);
-          })
-        );
+      const box = (selector: string) => document.querySelector(selector)!.getBoundingClientRect();
+      const withCanvas = (canvas: { width: number; height: number }) => {
+        const ready = state.edit as Extract<ProjectEditState, { _tag: "ready" }>;
+        state.edit = {
+          _tag: "ready",
+          snapshot: { ...ready.snapshot, document: { ...ready.snapshot.document, canvas } },
+        };
       };
 
+      // S7V-101: the player's box follows the canvas and keeps 45% of the Editor; the tabs and
+      // the timeline give way. A 16:9 picture fills the width, its area keeps the share.
       it.each([
-        [1440, 900, 4],
-        [1180, 760, 2],
-      ] as const)("shows the version rows at %ix%i (at least %i)", async (w, h, rows) => {
-        await page.viewport(w, h);
-        setState([asset("clip-0")], true);
-        state.versions = versions;
-        try {
-          await using screen = await layout();
-          await expect.element(screen.getByText("Main", { exact: true })).toBeVisible();
-          await expect.poll(visibleRows).toBeGreaterThanOrEqual(rows);
-          expect(timelineTracksShown()).toBe(true);
-          // The player letterboxes rather than vanishing.
-          const player = (await videoOf(screen)).closest("[role=group]")!;
-          expect(player.getBoundingClientRect().height).toBeGreaterThanOrEqual(96);
-        } finally {
-          state.versions = { _tag: "loading" };
-        }
-      });
+        [1440, 900, "9:16", { width: 1080, height: 1920 }],
+        [1180, 760, "9:16", { width: 1080, height: 1920 }],
+        [1440, 900, "1:1", { width: 1080, height: 1080 }],
+        [1180, 760, "1:1", { width: 1080, height: 1080 }],
+        [1440, 900, "16:9", { width: 1920, height: 1080 }],
+        [1180, 760, "16:9", { width: 1920, height: 1080 }],
+      ] as const)(
+        "gives the player its share at %ix%i with a %s canvas",
+        async (w, h, _, canvas) => {
+          await page.viewport(w, h);
+          setState([asset("clip-0")], true);
+          withCanvas(canvas);
+          state.versions = versions;
+          try {
+            await using screen = await layout();
+            await expect.element(screen.getByText("Main", { exact: true })).toBeVisible();
+            const picture = (await videoOf(screen)).closest<HTMLElement>("[data-canvas]")!;
+            expect(picture.dataset.canvas).toBe(`${canvas.width}x${canvas.height}`);
+            const editor = box("[data-testid=editor-panel]");
+            const share = PLAYER_SHARE * editor.height;
+            const shown = () => picture.getBoundingClientRect();
+            await expect
+              .poll(() => shown().width / shown().height)
+              .toBeCloseTo(canvas.width / canvas.height, 1);
+            if (canvas.height >= canvas.width) {
+              await expect.poll(() => shown().height).toBeGreaterThanOrEqual(share - 0.5);
+            } else {
+              await expect.poll(() => shown().width).toBeCloseTo(editor.width - 16, 0);
+              expect(box("[data-testid=editor-player-area]").height).toBeGreaterThanOrEqual(share);
+            }
+            // Nothing overlaps, and the timeline stays in the panel with its video row shown.
+            const area = box("[data-testid=editor-player-area]");
+            const tabs = box("[role=tablist]");
+            const timeline = box("[data-testid=editor-timeline]");
+            expect(area.bottom).toBeLessThanOrEqual(tabs.top);
+            expect(tabs.bottom).toBeLessThanOrEqual(timeline.top);
+            expect(inside(timeline, editor)).toBe(true);
+            const videoRow = [...document.querySelectorAll("[data-testid=editor-timeline] *")].find(
+              (node) => node.childElementCount === 0 && node.textContent === "Video",
+            )!;
+            expect(inside(videoRow.getBoundingClientRect(), timeline)).toBe(true);
+          } finally {
+            state.versions = { _tag: "loading" };
+          }
+        },
+      );
 
       it.each([
         ["dark", 1440, 900],

@@ -170,10 +170,10 @@ export function MultiClipPlayer(props: MultiClipPlayerProps) {
       role="group"
       aria-label={`Player: ${props.label}`}
       tabIndex={0}
-      className="flex min-h-0 flex-col gap-1.5 outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+      className="flex min-h-0 flex-1 flex-col gap-1.5 outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
       onKeyDown={onKeyDown}
     >
-      <div className="relative flex aspect-video max-h-[50vh] min-h-0 w-full items-center justify-center overflow-hidden rounded-md bg-black">
+      <div className="relative min-h-0 w-full flex-1" data-testid="player-stage">
         <CanvasFrame canvas={plan.canvas}>
           <div ref={attachStage} className="relative size-full" data-testid="multi-clip-stage">
             {Array.from({ length: PLAYER_POOL_SIZE }, (_, index) => (
@@ -195,30 +195,30 @@ export function MultiClipPlayer(props: MultiClipPlayerProps) {
             ))}
           </div>
           {props.overlay}
-        </CanvasFrame>
-        {problem !== null && shown._tag === "missing" ? (
-          <div
-            role="status"
-            className="absolute inset-0 flex flex-col items-center justify-center gap-2 p-4 text-center text-sm text-white"
-          >
-            <span>
-              {problem.status === "failed"
-                ? `${problem.label} can't be played. The file may be damaged or in a format this Mac can't play.`
-                : problem.status === "loading"
-                  ? `Opening ${problem.label}…`
-                  : `Clip not found: ${problem.label}`}
+          {problem !== null && shown._tag === "missing" ? (
+            <div
+              role="status"
+              className="absolute inset-0 flex flex-col items-center justify-center gap-2 p-4 text-center text-sm text-white"
+            >
+              <span>
+                {problem.status === "failed"
+                  ? `${problem.label} can't be played. The file may be damaged or in a format this Mac can't play.`
+                  : problem.status === "loading"
+                    ? `Opening ${problem.label}…`
+                    : `Clip not found: ${problem.label}`}
+              </span>
+              {problem.status === "loading" ? null : props.renderSourceProblem?.(shown.mediaId)}
+            </div>
+          ) : null}
+          {shown._tag === "preparing" ? (
+            <span
+              role="status"
+              className="absolute bottom-2 left-2 rounded bg-black/60 px-2 py-0.5 text-xs text-white"
+            >
+              Preparing next clip…
             </span>
-            {problem.status === "loading" ? null : props.renderSourceProblem?.(shown.mediaId)}
-          </div>
-        ) : null}
-        {shown._tag === "preparing" ? (
-          <span
-            role="status"
-            className="absolute bottom-2 left-2 rounded bg-black/60 px-2 py-0.5 text-xs text-white"
-          >
-            Preparing next clip…
-          </span>
-        ) : null}
+          ) : null}
+        </CanvasFrame>
       </div>
       <div className="flex items-center gap-1 px-1">
         <Button

@@ -31,9 +31,21 @@ const FIVE_ROWS_PX =
   );
 /** The edit toolbar above the rows (S7V-034, `TimelineToolbar.tsx`). */
 const TOOLBAR_PX = 32;
-/** Never shorter than the toolbar, five rows and a scrollbar, so no row is cut off. */
+/** A drag never makes it shorter than the toolbar, five rows and a scrollbar, so no row is cut off. */
 const MIN_TIMELINE_HEIGHT_PX = TOOLBAR_PX + FIVE_ROWS_PX + SCROLLBAR_PX + BORDER_PX;
 const DEFAULT_TIMELINE_HEIGHT_PX = MIN_TIMELINE_HEIGHT_PX + 16;
+/**
+ * In a short panel the player keeps its room (S7V-101), so the timeline gives way down to the
+ * toolbar, ruler and video row, and its rows scroll.
+ */
+const TIMELINE_FLOOR_PX =
+  TOOLBAR_PX +
+  TIMELINE_RULER_HEIGHT_PX +
+  TIMELINE_TRACK_HEIGHTS_PX.overlay +
+  TIMELINE_TRACK_HEIGHTS_PX.video +
+  2 * TIMELINE_TRACK_GAP_PX +
+  SCROLLBAR_PX +
+  BORDER_PX;
 /** The player and tabs keep at least this much of the panel. */
 const MIN_ABOVE_PX = 240;
 const KEY_STEP_PX = 16;
@@ -55,7 +67,10 @@ function storeHeight(height: number): void {
 }
 
 const maxHeightIn = (panelHeight: number, minAbove: number): number =>
-  Math.max(MIN_TIMELINE_HEIGHT_PX, panelHeight - Math.max(MIN_ABOVE_PX, minAbove));
+  Math.max(TIMELINE_FLOOR_PX, panelHeight - Math.max(MIN_ABOVE_PX, minAbove));
+
+const clampHeight = (height: number, maxHeight: number): number =>
+  Math.round(Math.min(maxHeight, Math.max(MIN_TIMELINE_HEIGHT_PX, height)));
 
 export function TimelinePane(props: {
   readonly projectKey: string;
@@ -75,8 +90,8 @@ export function TimelinePane(props: {
     readonly startY: number;
     readonly startHeight: number;
   } | null>(null);
-  // The panel's height, so a stored height re-clamps when the window shrinks and the 16:9
-  // player keeps its room; unknown (no upper clamp) until measured.
+  // The panel's height, so a stored height re-clamps when the window shrinks and the player
+  // keeps its room; unknown (no upper clamp) until measured.
   const [panelHeight, setPanelHeight] = useState<number | null>(null);
   const observePanel = (element: HTMLElement | null) => {
     const panel = element?.parentElement;
@@ -87,10 +102,10 @@ export function TimelinePane(props: {
     panelHeight === null
       ? Number.POSITIVE_INFINITY
       : maxHeightIn(panelHeight, props.minAbovePx ?? MIN_ABOVE_PX);
-  const shown = Math.round(Math.max(MIN_TIMELINE_HEIGHT_PX, Math.min(maxHeight, height)));
+  const shown = clampHeight(height, maxHeight);
 
   const resize = (next: number) => {
-    const clamped = Math.round(Math.max(MIN_TIMELINE_HEIGHT_PX, Math.min(maxHeight, next)));
+    const clamped = clampHeight(next, maxHeight);
     setHeight(clamped);
     return clamped;
   };
@@ -122,7 +137,7 @@ export function TimelinePane(props: {
         aria-label="Resize timeline"
         aria-orientation="horizontal"
         aria-valuenow={shown}
-        aria-valuemin={MIN_TIMELINE_HEIGHT_PX}
+        aria-valuemin={Math.min(MIN_TIMELINE_HEIGHT_PX, shown)}
         tabIndex={0}
         data-dragging={drag !== null}
         className="group relative -my-1 h-2 shrink-0 cursor-row-resize touch-none outline-none select-none"
@@ -141,8 +156,9 @@ export function TimelinePane(props: {
         ref={observePanel}
         aria-label="Timeline"
         data-testid="editor-timeline"
-        className="min-h-0 shrink-0 overflow-hidden rounded-md border"
-        style={{ height: shown }}
+        className="overflow-hidden rounded-md border"
+        // A banner can still squeeze it, down to the floor; the rows scroll.
+        style={{ flex: `0 1 ${shown}px`, minHeight: Math.min(shown, TIMELINE_FLOOR_PX) }}
       >
         {props.document === null ? (
           <TimelineSkeleton />
