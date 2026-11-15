@@ -62,7 +62,10 @@ OTIO is an export format only (ADR-005); nothing reads these files back into s7v
   refusal-free half of `plan_segments`, then `export_chunks`. Caption items win, and the clips'
   transcripts are the fallback. SRT has one cue per chunk, with times rounded up to the
   millisecond so an editor reading at the edit's rate lands on the chunk's frame. ASS is
-  `captions_ass.build_ass` in the edit's look, which names Inter Bold but doesn't include it.
+  `captions_ass.build_ass` in the edit's look with the caption track's own colours, size and
+  place (`custom`, S7V-099), which names Inter Bold but doesn't include it. The ASS file is the
+  only one of the editors' files that keeps those. A clip whose picture already shows captions
+  is left out of the transcript fallback, as in the MP4 (S7V-109).
 
 ## The adapter fix and its limits
 

@@ -493,7 +493,9 @@ The Editor is the main view of a video project (S7V-076). These upstream files h
 - `chat/ChatRightPanel.tsx` and `hooks/usePreviewPanelInlineSize.ts` add `defaultWidthFraction`.
 - `ChatMarkdown.browser.test.tsx` adds one case (S7V-099): the agent's caption looks reply, a
   markdown image per look of its preview's path in the project, draws each through the host image
-  route. `ChatMarkdown.tsx` itself is unchanged.
+  route. Its paths use the preview layout the agent really writes,
+  `captions/previews/<32 hex>/preview-<16 hex>.png` (S7V-109). `ChatMarkdown.tsx` itself is
+  unchanged.
 
 ## Edit, export and transcription wiring (S7V-024 to S7V-028, S7V-046)
 

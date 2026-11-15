@@ -209,8 +209,8 @@ it("draws caption look previews from project paths with spaces", async () => {
   const folder = "/Users/me/My Talk/.s7cache/captions";
   const text = [
     "Here are the looks:",
-    `- Plain: ![Plain](<${folder}/0a/preview-1111.png>)`,
-    `- Boxed: ![Boxed](<${folder}/0b/preview-2222.png>)`,
+    `- Plain: ![Plain](<${folder}/previews/0a1b2c3d4e5f60718293a4b5c6d7e8f9/preview-0a1b2c3d4e5f6071.png>)`,
+    `- Boxed: ![Boxed](<${folder}/previews/9f8e7d6c5b4a39281706f5e4d3c2b1a0/preview-9f8e7d6c5b4a3928.png>)`,
   ].join("\n");
   await using screen = await render(
     <HostImageUrlContext value={hostImageUrl}>
@@ -219,10 +219,16 @@ it("draws caption look previews from project paths with spaces", async () => {
   );
   await expect
     .element(screen.getByAltText("Boxed"))
-    .toHaveAttribute("src", `${pixel}#${folder}/0b/preview-2222.png`);
+    .toHaveAttribute(
+      "src",
+      `${pixel}#${folder}/previews/9f8e7d6c5b4a39281706f5e4d3c2b1a0/preview-9f8e7d6c5b4a3928.png`,
+    );
   await expect.element(screen.getByAltText("Plain")).toBeVisible();
   expect(new Set(hostImageUrl.mock.calls.map(([path]) => path))).toEqual(
-    new Set([`${folder}/0a/preview-1111.png`, `${folder}/0b/preview-2222.png`]),
+    new Set([
+      `${folder}/previews/0a1b2c3d4e5f60718293a4b5c6d7e8f9/preview-0a1b2c3d4e5f6071.png`,
+      `${folder}/previews/9f8e7d6c5b4a39281706f5e4d3c2b1a0/preview-9f8e7d6c5b4a3928.png`,
+    ]),
   );
 });
 

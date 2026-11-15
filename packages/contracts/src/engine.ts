@@ -596,7 +596,7 @@ export const CAPTION_LOOK_PARTS: Readonly<
   "s7-minimal": [],
 };
 
-/** `captions.preview`: one look's sample caption at a canvas, as a small PNG in `cacheDir/<folder>/`. */
+/** `captions.preview`: one look's sample caption at a canvas, as a small PNG in `cacheDir/previews/<folder>/`. */
 export const CaptionsPreviewResult = Schema.Struct({
   folder: TrimmedNonEmptyString,
   png: TrimmedNonEmptyString,
