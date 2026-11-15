@@ -132,8 +132,8 @@ export const layer = Layer.effect(
       onStateDirOwned: () =>
         electronDialog
           .showErrorBox(
-            "This T3 home is unavailable",
-            `Another ${BRAND.app.productName} server, such as the background service, is using this data directory, or an older background service is set up for it. Stop that server or try \`${BRAND.app.cliName} update\`. If the older launcher cannot update, run \`${BRAND.app.cliName} service uninstall\` and optionally reinstall with \`${BRAND.app.cliName} service install\` from a current CLI. Update \`${BRAND.app.cliName}\` if it is missing or outdated, and pass \`--base-dir\` with the service's T3 home to each command. Then reopen ${BRAND.app.productName}. You can also set a separate S7VIDEO_HOME and pair with the running server.`,
+            "This data folder is unavailable",
+            `Another ${BRAND.app.productName} server, such as the background service, is using this data directory, or an older background service is set up for it. Stop that server or try \`${BRAND.app.cliName} update\`. If the older launcher cannot update, run \`${BRAND.app.cliName} service uninstall\` and optionally reinstall with \`${BRAND.app.cliName} service install\` from a current CLI. Update \`${BRAND.app.cliName}\` if it is missing or outdated, and pass \`--base-dir\` with the service's ${BRAND.app.productName} home to each command. Then reopen ${BRAND.app.productName}. You can also set a separate S7VIDEO_HOME and pair with the running server.`,
           )
           .pipe(Effect.andThen(electronApp.quit)),
     });

@@ -1,3 +1,4 @@
+import { BRAND } from "@t3tools/shared/brand";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -61,17 +62,11 @@ const resolveResourcePath = Effect.fn("desktop.assets.resolveResourcePath")(func
   return Option.none<string>();
 });
 
+// Every channel folder under `icons.directory` uses the same names (assets/README.md).
 const sourceTreeIconFileNames = {
-  dev: {
-    ico: "blueprint-windows.ico",
-    macPng: "blueprint-macos-1024.png",
-    universalPng: "blueprint-universal-1024.png",
-  },
-  prod: {
-    ico: "t3-black-windows.ico",
-    macPng: "black-macos-1024.png",
-    universalPng: "black-universal-1024.png",
-  },
+  ico: "icon-windows.ico",
+  macPng: "icon-macos-1024.png",
+  universalPng: "icon-universal-1024.png",
 } as const;
 
 function resolveSourceTreeIconPath(
@@ -80,14 +75,13 @@ function resolveSourceTreeIconPath(
 ): string | undefined {
   if (environment.isPackaged || ext === "icns") return undefined;
   const brand = environment.isDevelopment ? "dev" : "prod";
-  const fileNames = sourceTreeIconFileNames[brand];
   const fileName =
     ext === "ico"
-      ? fileNames.ico
+      ? sourceTreeIconFileNames.ico
       : environment.platform === "darwin"
-        ? fileNames.macPng
-        : fileNames.universalPng;
-  return environment.path.join(environment.rootDir, "assets", brand, fileName);
+        ? sourceTreeIconFileNames.macPng
+        : sourceTreeIconFileNames.universalPng;
+  return environment.path.join(environment.rootDir, BRAND.icons.directory, brand, fileName);
 }
 
 const resolveIconPath = Effect.fn("desktop.assets.resolveIconPath")(function* (

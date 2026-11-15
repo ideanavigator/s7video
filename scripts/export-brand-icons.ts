@@ -17,6 +17,9 @@ import { BRAND_ASSET_PATHS, DEVELOPMENT_PUBLIC_ICON_OVERRIDES } from "./lib/bran
 import { encodePngIco, readPngDimensions, WINDOWS_ICON_SIZES } from "./lib/icon-export.ts";
 
 const DESIGN_GENERATION = 26;
+// The classic (pre-Tahoe) macOS safe area: an 824 px body inset 100 px on a 1024 px canvas.
+const MACOS_CANVAS_SIZE = 1024;
+const MACOS_BODY_SIZE = 824;
 const ICON_COMPOSER_EXECUTABLE_PARTS = [
   "Contents",
   "Applications",
@@ -539,6 +542,76 @@ const renderIcon = Effect.fn("iconExport.renderIcon")(function* (
   return buffer;
 });
 
+/**
+ * Icon Composer's command line has no `macOS pre-Tahoe` preset, so the macOS PNG is the iOS
+ * rendition at body size, centred on a transparent 1024 px canvas with `sips`. It has no native shadow.
+ */
+const renderMacCanvas = Effect.fn("iconExport.renderMacCanvas")(function* (
+  sourcePath: string,
+  body: Buffer,
+  outputPath: string,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const bodyPath = `${outputPath}.body.png`;
+  yield* fs
+    .writeFile(bodyPath, body)
+    .pipe(
+      Effect.mapError(
+        (cause) =>
+          new IconExportFileSystemError({ operation: "write-file", path: bodyPath, cause }),
+      ),
+    );
+  const args = [
+    "-p",
+    String(MACOS_CANVAS_SIZE),
+    String(MACOS_CANVAS_SIZE),
+    bodyPath,
+    "--out",
+    outputPath,
+  ];
+  const result = yield* runCommand("sips", args);
+  if (result.exitCode !== 0) {
+    return yield* new IconExportCommandFailedError({
+      command: "sips",
+      argumentCount: args.length,
+      exitCode: result.exitCode,
+      sourcePath,
+      size: MACOS_CANVAS_SIZE,
+      ...(result.stderr.trim() ? { stderr: result.stderr.trim() } : {}),
+    });
+  }
+  const contents = Buffer.from(
+    yield* fs
+      .readFile(outputPath)
+      .pipe(
+        Effect.mapError(
+          (cause) =>
+            new IconExportFileSystemError({ operation: "read-file", path: outputPath, cause }),
+        ),
+      ),
+  );
+  const dimensions = yield* Effect.try({
+    try: () => readPngDimensions(contents),
+    catch: (cause) =>
+      new IconExportRenditionError({
+        sourcePath,
+        outputPath,
+        expectedSize: MACOS_CANVAS_SIZE,
+        cause,
+      }),
+  });
+  if (dimensions.width !== MACOS_CANVAS_SIZE || dimensions.height !== MACOS_CANVAS_SIZE) {
+    return yield* new IconExportRenditionError({
+      sourcePath,
+      outputPath,
+      expectedSize: MACOS_CANVAS_SIZE,
+      actualWidth: dimensions.width,
+      actualHeight: dimensions.height,
+    });
+  }
+  return contents;
+});
+
 const renderVariant = Effect.fn("iconExport.renderVariant")(function* (
   toolPath: string,
   repositoryRoot: string,
@@ -578,6 +651,11 @@ const renderVariant = Effect.fn("iconExport.renderVariant")(function* (
   });
 
   const ios = yield* render("iOS", 1024);
+  const macos = yield* renderMacCanvas(
+    sourcePath,
+    yield* render("iOS", MACOS_BODY_SIZE),
+    path.join(temporaryDirectory, `${variant.label}-macOS-${MACOS_CANVAS_SIZE}.png`),
+  );
   const icoRenditions = yield* Effect.forEach(
     WINDOWS_ICON_SIZES,
     (size) => render("iOS", size).pipe(Effect.map((contents) => ({ size, contents }))),
@@ -590,6 +668,7 @@ const renderVariant = Effect.fn("iconExport.renderVariant")(function* (
 
   return new Map<string, Buffer>([
     [variant.outputs.ios, ios],
+    [variant.outputs.macos, macos],
     [variant.outputs.universal, ios],
     [variant.outputs.appleTouch, yield* render("iOS", 180)],
     [variant.outputs.favicon16, yield* render("iOS", 16)],

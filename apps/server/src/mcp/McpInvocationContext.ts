@@ -240,7 +240,7 @@ export const requireThreadMcpCapability = <const C extends "preview" | "device" 
 const threadCallerRequired = (operation: string) =>
   new OrchestratorMcpFailure({
     code: "thread_credential_required",
-    message: `${operation} acts as the calling T3 thread, so it needs an agent running inside ${BRAND.app.productName}. This MCP client signed in from outside a thread.`,
+    message: `${operation} acts as the calling thread, so it needs an agent running inside ${BRAND.app.productName}. This MCP client signed in from outside a thread.`,
   });
 
 export type McpThreadInvocationScope = McpInvocationScope & { readonly thread: McpThreadCaller };

@@ -126,6 +126,9 @@ from; the per-ticket entries and how this file is compiled are in
 - Captions in the player update faster on long videos: after a cut, the player fetches only the
   caption pictures the cut makes new and reuses the rest, instead of getting all of them again.
   (S7V-079)
+- The app icon, sidebar name and welcome screen show s7video instead of T3 Code, with a placeholder
+  s7video icon in the Dock, Finder and browser tab; dev and nightly builds have their own icons.
+  T3 Code is still credited in About. (S7V-100)
 
 ### Removed
 

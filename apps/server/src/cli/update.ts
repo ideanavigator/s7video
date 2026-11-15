@@ -448,7 +448,7 @@ export const runUpdate = Effect.fn("cli.update.run")(function* (input: {
   let restartService = false;
   if (serviceInstalled && !serviceCurrent) {
     yield* Console.log(
-      "  A background service is installed for this T3 home. Restarting it interrupts anything running in it: agent turns, terminals, remote clients.",
+      `  A background service is installed for this ${BRAND.app.productName} home. Restarting it interrupts anything running in it: agent turns, terminals, remote clients.`,
     );
     if (input.assumeYes) {
       restartService = true;
@@ -584,7 +584,7 @@ export const runUpdate = Effect.fn("cli.update.run")(function* (input: {
     );
   } else if (status.installed && !servesThisHome) {
     yield* Console.log(
-      `  The background service serves ${status.installedBaseDir ?? "another T3 home"} and was left unchanged.`,
+      `  The background service serves ${status.installedBaseDir ?? `another ${BRAND.app.productName} home`} and was left unchanged.`,
     );
   }
   if (foreground !== undefined) {
