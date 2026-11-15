@@ -11,7 +11,7 @@ import {
   type TranscribeModelsStatus,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
-import { useSyncExternalStore } from "react";
+import { type ReactNode, useSyncExternalStore } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
@@ -902,6 +902,14 @@ describe("EditorPanel", () => {
       },
     };
 
+    /** A toast description's lines, as the toast would show them. */
+    const toastText = async (description: unknown) => {
+      await using shown = await render(<div>{description as ReactNode}</div>);
+      return [...shown.container.querySelectorAll(":scope > div > span")].map(
+        (line) => line.textContent,
+      );
+    };
+
     it("files for editors: Show in Finder in the desktop app, and kept after a reload", async () => {
       setState([asset("clip-0")], true);
       kept();
@@ -977,15 +985,78 @@ describe("EditorPanel", () => {
         expect(result.getByRole("button", { name: "Show in Finder" }).query()).toBeNull();
         await result.getByRole("button", { name: "Copy where the files are" }).click();
         await vi.waitFor(() => expect(write).toHaveBeenCalledWith(`${WORKSPACE_ROOT}/exports`));
-        await vi.waitFor(() =>
-          expect(toasts.add).toHaveBeenCalledWith({
-            type: "success",
-            title: "Copied where your files for editors are",
-            description: `${WORKSPACE_ROOT}/exports`,
-          }),
-        );
+        // The toast says what to do with it, then the folder on a line of its own.
+        await vi.waitFor(() => expect(toasts.add).toHaveBeenCalledTimes(1));
+        const copied = toasts.add.mock.calls[0]![0];
+        expect({ type: copied.type, title: copied.title }).toEqual({
+          type: "success",
+          title: "Copied where your files for editors are",
+        });
+        expect(await toastText(copied.description)).toEqual([
+          "In Finder, choose Go > Go to Folder (⇧⌘G) and paste it.",
+          `${WORKSPACE_ROOT}/exports`,
+        ]);
       } finally {
         write.mockRestore();
+        reset();
+      }
+    });
+
+    it("files for editors: when copying fails, the toast still says where the folder is", async () => {
+      setState([asset("clip-0")], true);
+      localStorage.setItem(EDITORS_KEY, JSON.stringify({ files: editorsFiles }));
+      toasts.add.mockReset();
+      const write = vi
+        .spyOn(navigator.clipboard, "writeText")
+        .mockRejectedValue(new Error("Write permission denied."));
+      const exec = vi.spyOn(document, "execCommand").mockReturnValue(false);
+      try {
+        await using screen = await renderPanel();
+        const result = screen.getByTestId("export-result");
+        await result.getByRole("button", { name: "Copy where the files are" }).click();
+        await vi.waitFor(() => expect(toasts.add).toHaveBeenCalledTimes(1));
+        const failed = toasts.add.mock.calls[0]![0];
+        expect({ type: failed.type, title: failed.title }).toEqual({
+          type: "error",
+          title: "Couldn't copy the folder's location",
+        });
+        expect(await toastText(failed.description)).toEqual([
+          "Your files for editors are in this folder:",
+          `${WORKSPACE_ROOT}/exports`,
+        ]);
+      } finally {
+        write.mockRestore();
+        exec.mockRestore();
+        reset();
+      }
+    });
+
+    it("files for editors: each file name wraps as one unit", async () => {
+      setState([asset("clip-0")], true);
+      localStorage.setItem(
+        EDITORS_KEY,
+        JSON.stringify({
+          files: [
+            "exports/charger-reel-20261115-1505.fcpxml",
+            "exports/charger-reel-20261115-1505.srt",
+          ],
+        }),
+      );
+      try {
+        await using screen = await renderPanel();
+        const result = screen.getByTestId("export-result");
+        await expect
+          .element(result)
+          .toHaveTextContent(
+            "Latest files for editors · in exports: charger-reel-20261115-1505.fcpxml and .srt",
+          );
+        // The panel is 420 px wide, so the row wraps: the long name moves down whole.
+        const name = result.getByText("charger-reel-20261115-1505.fcpxml", { exact: true });
+        const rects = name.element().getClientRects();
+        expect(rects.length).toBe(1);
+        const status = result.getByRole("status").element();
+        expect(status.scrollWidth).toBeLessThanOrEqual(status.clientWidth);
+      } finally {
         reset();
       }
     });

@@ -17,7 +17,7 @@ import {
   PlayIcon,
   XIcon,
 } from "lucide-react";
-import { useEffect, useState, type ReactNode } from "react";
+import { Fragment, useEffect, useState, type ReactNode } from "react";
 
 import { useAssetUrlMinter } from "../../assets/assetUrls";
 import { formatPlaybackClock } from "../../editor/editPlayback";
@@ -100,8 +100,22 @@ const filesText = (files: ReadonlyArray<string>) => {
     first!,
     ...rest.map((name) => (name.startsWith(`${stem}.`) ? name.slice(stem.length) : name)),
   ];
-  return names.length < 2 ? names[0]! : `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`;
+  // Each name wraps as one unit, breaking inside only when it is wider than the row.
+  return names.map((name, index) => (
+    <Fragment key={name}>
+      {index === 0 ? "" : index === names.length - 1 ? " and " : ", "}
+      <span className="inline-block max-w-full break-words">{name}</span>
+    </Fragment>
+  ));
 };
+
+/** A toast's description: one sentence, then the folder on a line of its own. */
+const folderNote = (sentence: string, folder: string) => (
+  <>
+    <span className="block">{sentence}</span>
+    <span className="block">{folder}</span>
+  </>
+);
 
 /** The project's own exports folder, where every export's files are. */
 const EXPORTS_FOLDER = "exports";
@@ -225,10 +239,15 @@ export function useExportResult(props: {
       toastManager.add({
         type: "success",
         title: "Copied where your files for editors are",
-        description: folder,
+        description: folderNote("In Finder, choose Go > Go to Folder (⇧⌘G) and paste it.", folder),
       }),
-    onError: () =>
-      toastManager.add({ type: "error", title: "Couldn't copy the folder's location" }),
+    // The folder is still said, so the user learns where the files are.
+    onError: (_error, folder: string) =>
+      toastManager.add({
+        type: "error",
+        title: "Couldn't copy the folder's location",
+        description: folderNote("Your files for editors are in this folder:", folder),
+      }),
   });
   const latestHidden =
     latest !== null &&
@@ -280,7 +299,8 @@ export function useExportResult(props: {
           <>
             {freshFiles === null ? "Latest files for editors" : "Your files for editors are ready"}
             <span className="text-muted-foreground">
-              {` · ${canReveal ? "" : "in exports: "}${filesText(editorsFiles)}`}
+              {` · ${canReveal ? "" : "in exports: "}`}
+              {filesText(editorsFiles)}
             </span>
           </>
         ),
