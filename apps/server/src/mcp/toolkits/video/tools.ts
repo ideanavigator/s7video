@@ -313,7 +313,8 @@ const VideoAssembleTool = Tool.make("video_assemble", {
 
 // S7V-075: user-triggered only. Writes the caption track from the clips' transcripts (one
 // checkpoint); later cuts rebuild it. A clip with no transcript is refused: transcribe it first.
-// S7V-099: a clip whose picture already shows captions is refused until `confirm` (the user said yes).
+// S7V-099: a clip whose picture already shows captions needs `confirm`: true adds ours to it too,
+// false captions only the other clips (S7V-109), and leaving it out refuses so the agent asks.
 const Confirm = Schema.optional(Schema.Boolean);
 const VideoAddCaptionsTool = Tool.make("video_add_captions", {
   description: "Add captions to the video edit only if user asks.",

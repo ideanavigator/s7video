@@ -133,14 +133,17 @@ shapes captions by talking to the agent, through `video_caption_style` and `vide
 - **Asking first, only when adding.** The question comes only when captions would be added to a
   clip with `found: true`: one with speech in its placed part that the transcript track doesn't
   caption yet. `video_add_captions`, and `video_caption_style` or the looks on an edit with no
-  captions, refuse (`CaptionsError` `burned-in`) unless the call carries `confirm: true`. The
-  question names the clip by its file name and offers choices that fit where ours would go:
-  "talk.mp4 already has captions near the bottom. Add ours at the top, add them anyway, or leave
-  it as it is?", or "…; ours would be at the top. Add them, or leave it as it is?" when they
-  already would be. When other clips have speech, it also offers "add them only to the other
-  clips": that answer is the same call with `confirm: false`, which builds the track from the
-  other clips' transcripts and names the clip left as it is, in the same "keeps its own
-  captions" sentence; with no other clip to caption it changes nothing and says so (S7V-109).
+  captions, read `confirm` three ways: `true` adds ours to that clip too, `false` captions only
+  the other clips and leaves it as it is (S7V-109), and without it they refuse (`CaptionsError`
+  `burned-in`) so the agent asks first. The question names the clip by its file name and offers
+  choices that fit where ours would go: "talk.mp4 already has captions near the bottom. Add ours
+  at the top, add them anyway, or leave it as it is?", or "…; ours would be at the top. Add them,
+  or leave it as it is?" when they already would be. On a first add, with no transcript track
+  yet, and when other clips have speech, it also offers "add them only to the other clips": that
+  answer is the same call with `confirm: false`, which builds the track from the other clips'
+  transcripts and names the clip left as it is, in the same "keeps its own captions" sentence;
+  with no other clip to caption it changes nothing and says so (S7V-109). Once the track exists
+  the other clips already have ours, so the question leaves that choice out.
   A rebuild after a cut or placement leaves such a clip out, and `video_assemble`'s reply names
   a clip it placed that way into captioned edits (S7V-109). Restyles and the
   looks on existing captions never ask: they change the captions that exist, and the reply names
