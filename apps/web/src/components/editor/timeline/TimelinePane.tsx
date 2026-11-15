@@ -49,7 +49,7 @@ export const TIMELINE_FLOOR_PX =
 /** The player and tabs keep at least this much of the panel. */
 const MIN_ABOVE_PX = 240;
 /** In the shortest panel the timeline still shows its toolbar and ruler; its rows scroll. */
-const SHORTEST_PX = TOOLBAR_PX + TIMELINE_RULER_HEIGHT_PX + BORDER_PX;
+export const TIMELINE_SHORTEST_PX = TOOLBAR_PX + TIMELINE_RULER_HEIGHT_PX + BORDER_PX;
 const KEY_STEP_PX = 16;
 
 function storedHeight(): number {
@@ -70,7 +70,7 @@ function storeHeight(height: number): void {
 
 /** The timeline never runs past the panel (S7V-101): below its floor, its rows scroll. */
 const maxHeightIn = (panelHeight: number, minAbove: number): number =>
-  Math.max(SHORTEST_PX, panelHeight - Math.max(MIN_ABOVE_PX, minAbove));
+  Math.max(TIMELINE_SHORTEST_PX, panelHeight - Math.max(MIN_ABOVE_PX, minAbove));
 
 const clampHeight = (height: number, maxHeight: number): number =>
   Math.round(Math.min(maxHeight, Math.max(MIN_TIMELINE_HEIGHT_PX, height)));

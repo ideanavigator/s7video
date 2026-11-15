@@ -220,6 +220,8 @@ export class ElementInteractionController {
     if (session.kind === "idle" || event.pointerId !== session.down.pointerId) return;
     this.finishSession();
     if (session.kind === "pending") {
+      // A press the browser or OS cancelled is not a click: no reselect, no seek (S7V-101).
+      if (event.type === "pointercancel") return;
       // A click: shift toggles a clip that was already selected; a plain click keeps only it.
       if (session.down.wasSelected) {
         this.config.select(session.down.itemId, session.down.shift ? "toggle" : "only");

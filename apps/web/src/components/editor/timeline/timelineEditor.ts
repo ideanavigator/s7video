@@ -43,6 +43,9 @@ export type TimelineNotice =
 /** S with no clip under the playhead. */
 export const NO_CLIP_TO_SPLIT =
   "Move the playhead onto a clip to split it, or say \u201csplit at 0:30\u201d.";
+/** S with a clip selected while the playhead is on another clip. */
+export const NOT_ON_SELECTED_CLIP =
+  "The playhead isn't on the selected clip. Click the clip you want to split.";
 
 export interface TimelineEditActions {
   readonly apply: (ops: ReadonlyArray<EditOp>, baseRevision: number) => Promise<EditApplyOutcome>;
@@ -399,7 +402,13 @@ export function createTimelineEditor(host: TimelineEditorHost): TimelineEditor {
   const split = () => {
     const ops = splitOps(rows, state.selected, host.playheadFrame());
     if (ops.length === 0) {
-      actions?.notify({ kind: "refused", message: NO_CLIP_TO_SPLIT });
+      // A selection narrows the split; say so when the playhead is on another clip.
+      const elsewhere =
+        state.selected.size > 0 && splitOps(rows, EMPTY, host.playheadFrame()).length > 0;
+      actions?.notify({
+        kind: "refused",
+        message: elsewhere ? NOT_ON_SELECTED_CLIP : NO_CLIP_TO_SPLIT,
+      });
       return;
     }
     sendNow(ops, [], ops.length === 1 ? "Split the clip" : "Split the clips");
