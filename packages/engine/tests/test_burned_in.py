@@ -13,7 +13,7 @@ import pytest
 from engine_support import FFMPEG, make_clip
 
 from s7engine import burned_in, captions_ass
-from s7engine.jobs import JobContext
+from s7engine.jobs import Cancelled, JobContext
 
 RATE = Fraction(30)
 TEXTS = (
@@ -80,6 +80,67 @@ def test_one_letter_words_never_match() -> None:
     frames = [[burned_in.Line(f"I {index}", 0.8, 0.85)] for index in range(len(seconds))]
     spoken = [burned_in.spoken_near(words, RATE, at) for at in seconds]
     assert burned_in.assess(frames, spoken)["found"] is False
+
+
+def _subtitled(count: int, per_line: int) -> tuple[list[list[burned_in.Line]], list[set[str]]]:
+    """``count`` words, three a second, shown ``per_line`` at a time: what each sample reads."""
+    words = _words()[:count]
+    seconds = burned_in.sample_seconds(words, RATE)
+    frames = []
+    for at in seconds:
+        index = min(int(at * 3), len(words) - 1) // per_line * per_line
+        frames.append([burned_in.Line(" ".join(w["text"] for w in words[index : index + per_line]), 0.8, 0.85)])
+    return frames, [burned_in.spoken_near(words, RATE, at) for at in seconds]
+
+
+@pytest.mark.parametrize(
+    ("count", "per_line"),
+    [(6, 3), (8, 4), (30, 15), (30, 3)],
+    ids=["6 words in 3s", "8 words in 4s", "two sentence subtitles", "30 words in 3s"],
+)
+def test_short_clips_and_sentence_subtitles_are_captions(count: int, per_line: int) -> None:
+    """S7V-099 review: a caption line over half the samples is still captions; they change."""
+    assert burned_in.assess(*_subtitled(count, per_line))["found"] is True
+
+
+def test_a_sign_with_two_lines_is_not_captions() -> None:
+    words = _words()
+    seconds = burned_in.sample_seconds(words, RATE)
+    spoken = [burned_in.spoken_near(words, RATE, at) for at in seconds]
+    sign = [[burned_in.Line("Golden Rivers", 0.1, 0.15), burned_in.Line("Quiet Valleys", 0.2, 0.25)] for _ in seconds]
+    assert burned_in.assess(sign, spoken)["found"] is False
+    # A name card shown for part of the clip and said there: one line, so not captions.
+    card = [[burned_in.Line("Golden Rivers", 0.7, 0.75)] if index < 5 else [] for index in range(len(seconds))]
+    assert burned_in.assess(card, spoken)["found"] is False
+
+
+def test_words_without_spaces_are_matched_by_character() -> None:
+    assert burned_in.tokens("我们今天 cut 静音") == ["我", "们", "今", "天", "cut", "静", "音"]
+    words = [{"text": char, "startFrame": index * 10, "endFrame": index * 10 + 9} for index, char in enumerate("我们今天剪掉静音然后加上字幕吧")]
+    seconds = burned_in.sample_seconds(words, RATE)
+    frames = []
+    for at in seconds:
+        index = min(int(at * 3), len(words) - 1) // 5 * 5
+        frames.append([burned_in.Line("".join(w["text"] for w in words[index : index + 5]), 0.8, 0.85)])
+    spoken = [burned_in.spoken_near(words, RATE, at) for at in seconds]
+    assert burned_in.assess(frames, spoken)["found"] is True
+
+
+@pytest.mark.usefixtures("tools")
+def test_a_failing_reader_leaves_the_clip_unchecked(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """S7V-099 review: a Vision or pyobjc error never fails the transcription."""
+    monkeypatch.setattr(burned_in, "vision_available", lambda: True)
+
+    def broken(_png: Path) -> list[burned_in.Line]:
+        raise AttributeError("a pyobjc upgrade renamed this")
+
+    monkeypatch.setattr(burned_in, "read_lines", broken)
+    clip = make_clip(tmp_path / "plain.mkv", SOURCE, ["-c:v", "ffv1"])
+    assert burned_in.detect(str(clip), _words(), RATE, Fraction(0), JobContext.detached()) is None
+    job = JobContext.detached()
+    job.cancel()
+    with pytest.raises(Cancelled):
+        burned_in.detect(str(clip), _words(), RATE, Fraction(0), job)
 
 
 # --- Apple Vision on real frames ----------------------------------------------------------------

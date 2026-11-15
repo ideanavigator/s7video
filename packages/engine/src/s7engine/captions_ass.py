@@ -180,7 +180,7 @@ def styled(style_id: str = DEFAULT_STYLE, custom: dict[str, Any] | None = None) 
     """The look ``style_id`` with a caption track's ``custom`` on top (S7V-099), as a copy.
 
     ``textColor`` is the text's colour, ``highlightColor`` the lit word's (looks with a highlight),
-    ``boxColor`` the box's (looks with a box, keeping its opacity); ``size`` scales the font, the
+    ``boxColor`` the box's (looks with a box, drawn solid); ``size`` scales the font, the
     shadow and the outline or padding; ``position`` is read by ``build_cues``. The edit's schema
     has checked the values.
     """
@@ -193,7 +193,10 @@ def styled(style_id: str = DEFAULT_STYLE, custom: dict[str, Any] | None = None) 
     if "highlightColor" in custom and "highlight" in style:
         style["highlight"]["colour"] = custom["highlightColor"]
     if "boxColor" in custom and "box" in style:
+        # Solid: each line of a caption has its own box, and where two see-through boxes overlap
+        # a seam shows, plain to see in a bright colour (S7V-099 UX review).
         style["box"]["colour"] = custom["boxColor"]
+        style["box"]["opacity"] = 1.0
     size = float(custom.get("size", 1))
     for spec in style["layouts"].values():
         for key in ("fontSize", "shadow", "pad", "outline"):

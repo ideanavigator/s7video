@@ -375,7 +375,7 @@ def test_preview_matches_the_exported_frame(tmp_path: Path, style: str) -> None:
     lit_frame = 10 * captions.PREVIEW_LIT + 5
     exported = _frames(_render(edit, tmp_path / "out.mp4", tmp_path, burn=True), [lit_frame], tmp_path / "frames")[lit_frame]
     preview = captions._preview({"preset": style, "width": W, "height": H, "cacheDir": str(tmp_path / "cache")}, JobContext.detached())
-    drawn = tmp_path / "cache" / preview["folder"] / preview["png"]
+    drawn = tmp_path / "cache" / captions.PREVIEWS_DIR / preview["folder"] / preview["png"]
     left, top, right, bottom = captions.preview_band(W, H, style)
     shrunk = tmp_path / "shrunk.png"
     _ffmpeg("-i", str(exported), "-vf", f"crop={right - left}:{bottom - top}:{left}:{top},scale={captions.PREVIEW_WIDTH}:-2:flags=area,format=rgb24", str(shrunk))

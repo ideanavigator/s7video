@@ -160,12 +160,13 @@ def test_custom_colours_size_and_place_on_any_look() -> None:
     assert captions_ass.styled("s7-neutral") is captions_ass.load_style("s7-neutral")
 
 
-def test_custom_box_colour_keeps_the_looks_opacity() -> None:
+def test_custom_box_colour_is_solid() -> None:
     chunk = [captions_ass.Chunk("hello there", 0, 30)]
     ass = captions_ass.build_ass(chunk, Fraction(30), 1920, 1080, "s7-box", {"boxColor": "#1E3A8A", "size": 1.4})
     box = ass.styles["Default"]
     assert (box.outlinecolor.r, box.outlinecolor.g, box.outlinecolor.b) == (0x1E, 0x3A, 0x8A)
-    assert box.outlinecolor.a == round(255 * (1 - 0.72))
+    # Solid, so the boxes of a two-line caption don't show a seam where they overlap.
+    assert box.outlinecolor.a == 0
     # Padding grows with the text.
     plain = captions_ass.layout_for(1920, 1080, captions_ass.load_style("s7-box"))
     assert box.outline == pytest.approx(round(plain.edge * 1.4, 1), abs=0.11)

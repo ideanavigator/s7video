@@ -286,10 +286,13 @@ def test_prune_keeps_the_newest_looks_and_never_counts_temp_folders(tmp_path: Pa
     fresh.mkdir()
     stale.mkdir()
     os.utime(stale, (1, 1))
+    # S7V-099: the looks' previews, shown in chat messages for good, are never pruned.
+    (cache / captions.PREVIEWS_DIR).mkdir()
+    os.utime(cache / captions.PREVIEWS_DIR, (1, 1))
     captions._prune(cache, "look0")
     left = sorted(entry.name for entry in cache.iterdir())
     newest = [f"look{index}" for index in range(captions.KEEP_LOOKS + 3)][-(captions.KEEP_LOOKS - 1) :]
-    assert left == sorted([".tmp-fresh", "look0", *newest])
+    assert left == sorted([".tmp-fresh", "look0", captions.PREVIEWS_DIR, *newest])
 
 
 @pytest.mark.usefixtures("tools")
@@ -359,8 +362,8 @@ def test_preview_is_a_small_band_of_the_sample_caption(tmp_path: Path, preset: s
     cache = tmp_path / "cache"
     params = {"preset": preset, "width": width, "height": height, "cacheDir": str(cache)}
     result = captions._preview(params, JobContext.detached())
-    still = cache / result["folder"] / result["png"]
-    # Cached in the look's own folder, beside the stills the player shows in that look.
+    still = cache / captions.PREVIEWS_DIR / result["folder"] / result["png"]
+    # Cached by look in the previews' own folder, out of the stills' pruning (S7V-099).
     assert result["folder"] == captions.look_key(width, height, preset)
     preview_width, preview_height, colour = _png_size_and_mode(still)
     assert (preview_width, colour) == (captions.PREVIEW_WIDTH, 2)  # RGB
@@ -371,6 +374,24 @@ def test_preview_is_a_small_band_of_the_sample_caption(tmp_path: Path, preset: s
     assert captions._preview(params, JobContext.detached()) == result
     assert still.stat().st_mtime_ns == mtime
     assert [entry.name for entry in cache.iterdir() if entry.name.startswith(".tmp-")] == []
+
+
+@pytest.mark.usefixtures("tools")
+def test_previews_survive_custom_restyles(tmp_path: Path) -> None:
+    """S7V-099: four previews fill the look count; custom styles' stills must not prune them."""
+    cache = tmp_path / "cache"
+    previews = [
+        cache / captions.PREVIEWS_DIR / r["folder"] / r["png"]
+        for r in (
+            captions._preview({"preset": preset, "width": W, "height": H, "cacheDir": str(cache)}, JobContext.detached())
+            for preset in captions_ass.presets()
+        )
+    ]
+    edit = _edit(tmp_path, [(0, 90)], [{"id": "c1", "start": 0, "duration": 20, "text": "hello there"}])
+    for size in (0.8, 1.0, 1.2, 1.4, 1.6, 0.7):
+        edit["tracks"][1]["custom"] = {"textColor": "#FF8800", "position": "top", "size": size}
+        _render(edit, cache)
+    assert all(preview.is_file() for preview in previews)
 
 
 def test_preview_band_frames_the_sample_line() -> None:

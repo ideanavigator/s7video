@@ -3,10 +3,11 @@
 """Captions already in the picture (S7V-099), found while a clip is transcribed.
 
 Ten frames are taken at the middle of evenly spaced spoken words, and Apple's Vision framework
-reads their text on this Mac (no download; nothing leaves the device). A frame shows captions when
-a line of its text is mostly words said within ``WINDOW_SECONDS`` of it. A line seen in at least
-half the frames is part of the picture (a logo, a sign, a name card), never a caption, even if the
-speaker says it. The clip has burned-in captions when enough frames show them.
+reads their text on this Mac (no download; nothing leaves the device), detecting the language
+itself. A frame shows captions when a line of its text is mostly words said within
+``WINDOW_SECONDS`` of it. Captions change with the speech, so the clip has them when enough frames
+show such a line and at least two different lines match; a sign or a name card the speaker says
+is one line. A line in nearly every frame is part of the picture and never counts.
 
 The result keeps only ``found``, ``confidence`` (the share of frames that showed captions) and the
 caption band (``region``, from the top of the frame, 0–1); the text read is never stored.
@@ -24,13 +25,14 @@ from pathlib import Path
 from typing import Any
 
 from .ffmpeg import run_tool
-from .jobs import JobContext
-from .rpc import RpcError
+from .jobs import Cancelled, JobContext
 
 SAMPLES = 10
 WINDOW_SECONDS = 2.0
 #: A line seen in this share of the frames, or more, is part of the picture.
-STATIC_SHARE = 0.5
+STATIC_SHARE = 0.8
+#: Different lines that must match the speech: captions change, a sign doesn't.
+MIN_DISTINCT_LINES = 2
 #: The share of frames, and the least number, that must show captions.
 FOUND_SHARE = 0.4
 MIN_FOUND = 3
@@ -40,6 +42,8 @@ SAMPLE_HEIGHT = 960
 EXTRACT_TIMEOUT = 60.0
 
 _TOKEN = re.compile(r"[\w']+", re.UNICODE)
+#: Chinese, Japanese and Korean script, written without spaces: each character is a token.
+_CJK = re.compile(r"[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7af]")
 
 
 @dataclass(frozen=True)
@@ -52,8 +56,15 @@ class Line:
 
 
 def tokens(text: str) -> list[str]:
-    """Words of two characters or more, lower case, without punctuation: "I" and "a" match anything."""
-    return [token for token in _TOKEN.findall(text.lower()) if len(token) >= 2]
+    """Words of two characters or more, lower case, without punctuation: "I" and "a" match anything.
+    Text in a script written without spaces gives one token per character."""
+    out: list[str] = []
+    for token in _TOKEN.findall(text.lower()):
+        if _CJK.search(token):
+            out.extend(char for char in token if _CJK.match(char))
+        elif len(token) >= 2:
+            out.append(token)
+    return out
 
 
 def sample_seconds(words: list[dict[str, Any]], rate: Fraction, count: int = SAMPLES) -> list[float]:
@@ -81,21 +92,28 @@ def assess(frames: list[list[Line]], spoken: list[set[str]]) -> dict[str, Any]:
     seen = Counter(key for lines in frames for key in {" ".join(tokens(line.text)) for line in lines} if key)
     static = {key for key, count in seen.items() if count >= 2 and count >= STATIC_SHARE * len(frames)}
     matched = 0
+    distinct: set[str] = set()
     top, bottom = 1.0, 0.0
     for lines, said in zip(frames, spoken, strict=True):
         hits = []
         for line in lines:
             words = tokens(line.text)
-            if not words or " ".join(words) in static:
+            key = " ".join(words)
+            if not words or key in static:
                 continue
             found = sum(1 for word in words if word in said)
             if found >= min(2, len(words)) and found * 2 >= len(words):
                 hits.append(line)
+                distinct.add(key)
         if hits:
             matched += 1
             top = min(top, *(line.top for line in hits))
             bottom = max(bottom, *(line.bottom for line in hits))
-    found = bool(frames) and matched >= max(MIN_FOUND, math.ceil(FOUND_SHARE * len(frames)))
+    found = (
+        bool(frames)
+        and matched >= max(MIN_FOUND, math.ceil(FOUND_SHARE * len(frames)))
+        and len(distinct) >= MIN_DISTINCT_LINES
+    )
     result: dict[str, Any] = {"found": found, "confidence": round(matched / len(frames), 2) if frames else 0.0}
     if found:
         result["region"] = {"y0": round(max(0.0, top), 3), "y1": round(min(1.0, bottom), 3)}
@@ -103,10 +121,14 @@ def assess(frames: list[list[Line]], spoken: list[set[str]]) -> dict[str, Any]:
 
 
 def extract_frames(path: str, seconds: list[float], folder: Path, job: JobContext) -> list[Path]:
-    """One PNG per time, ``SAMPLE_HEIGHT`` tall, in one FFmpeg run (an input per time, each seeking)."""
+    """One PNG per time, ``SAMPLE_HEIGHT`` tall, in one FFmpeg run (an input per time, each seeking).
+
+    One decoder thread per input: ten decoders with their default threads peaked at 8.75 GB on a
+    4K HEVC clip, against 2.6 GB this way and faster (S7V-099 review), on an 8 GB Mac mid-transcription.
+    """
     args = ["-nostdin", "-v", "error", "-y"]
     for at in seconds:
-        args += ["-ss", f"{at:.3f}", "-i", path]
+        args += ["-threads", "1", "-ss", f"{at:.3f}", "-i", path]
     outputs = [folder / f"frame-{index:02d}.png" for index in range(len(seconds))]
     for index, output in enumerate(outputs):
         args += ["-map", f"{index}:v:0", "-frames:v", "1", "-vf", f"scale=-2:{SAMPLE_HEIGHT}", str(output)]
@@ -134,6 +156,9 @@ def read_lines(png: Path) -> list[Line]:
         request = Vision.VNRecognizeTextRequest.alloc().init()
         request.setRecognitionLevel_(Vision.VNRequestTextRecognitionLevelAccurate)
         request.setUsesLanguageCorrection_(False)
+        # The transcript doesn't keep its language, so Vision finds it (it reads English otherwise).
+        if hasattr(request, "setAutomaticallyDetectsLanguage_"):
+            request.setAutomaticallyDetectsLanguage_(True)
         ok, _error = handler.performRequests_error_([request], None)
         if not ok:
             return []
@@ -163,6 +188,10 @@ def detect(path: str, words: list[dict[str, Any]], rate: Fraction, offset: Fract
         try:
             pngs = extract_frames(path, [float(offset) + at for at in seconds], Path(folder), job)
             frames = [read_lines(png) if png.is_file() else [] for png in pngs]
-        except (OSError, RpcError):
+            return assess(frames, [spoken_near(words, rate, at) for at in seconds])
+        except Cancelled:
+            raise
+        except Exception:
+            # Never fail the transcription over this check (an FFmpeg error, or a Vision or pyobjc
+            # error after an upgrade): the clip stays unchecked and behaves as before.
             return None
-    return assess(frames, [spoken_near(words, rate, at) for at in seconds])

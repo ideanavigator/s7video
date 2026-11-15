@@ -15,8 +15,8 @@ bundled fonts and `RENDER_VERSION`;
 the cues it makes new. All missing cues are drawn in one FFmpeg run, retimed to one per second.
 
 `captions.preview` draws a look's sample caption on a flat synthetic frame with the same builder,
-cut to the caption band, for the looks the agent shows in the chat (S7V-099); it is cached in that
-look's folder.
+cut to the caption band, for the looks the agent shows in the chat (S7V-099). It is cached in
+``cacheDir/previews/<look>/``, out of the stills' pruning: a chat message shows it for good.
 """
 
 from __future__ import annotations
@@ -59,6 +59,8 @@ PREVIEW_LIT = 1
 #: A flat slate frame: the white text, its shadow and the dark box all read on it.
 PREVIEW_BACKGROUND = "0x5B6270"
 PREVIEW_WIDTH = 240
+#: The previews' own folder in the cache, never pruned with the stills' looks (S7V-099).
+PREVIEWS_DIR = "previews"
 
 
 def timeline_end(edit: dict[str, Any]) -> int:
@@ -246,7 +248,7 @@ def _preview(params: dict[str, Any], job: JobContext) -> dict[str, Any]:
     if not cache_dir.is_absolute():
         raise RpcError(INVALID_PARAMS, "invalid params at cacheDir: must be absolute")
     look = look_key(width, height, style_id)
-    folder = cache_dir / look
+    folder = cache_dir / PREVIEWS_DIR / look
     sample = json.dumps([PREVIEW_WORDS, PREVIEW_BACKGROUND, PREVIEW_WIDTH]).encode()
     name = f"preview-{_digest(sample)[:16]}.png"
     if not (folder / name).is_file():
@@ -305,7 +307,7 @@ def _prune(cache_dir: Path, current: str) -> None:
             if entry.name.startswith(".tmp-") and now - entry.stat().st_mtime > STALE_TEMP_SECONDS:
                 shutil.rmtree(entry, ignore_errors=True)
         looks = sorted(
-            (entry for entry in entries if entry.is_dir() and not entry.name.startswith(".")),
+            (entry for entry in entries if entry.is_dir() and not entry.name.startswith(".") and entry.name != PREVIEWS_DIR),
             key=lambda entry: (entry.name == current, entry.stat().st_mtime),
             reverse=True,
         )
