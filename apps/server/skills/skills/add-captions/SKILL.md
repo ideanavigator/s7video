@@ -33,8 +33,9 @@ show the looks first unless they already said which one, or described one.
    captions that clip in the look the captions already have.
 5. When the user picks a look, call `video_caption_style` with its `preset` (see caption-style).
    If they said yes to adding over a clip's own captions just before, pass `confirm: true` with
-   that pick too; if they said only the other clips, pass `confirm: false`. If they say any look will do, call `video_add_captions`: it captions every clip
-   with sound in the Plain look, and asking again rebuilds the same captions.
+   that pick too; if they said only the other clips, pass `confirm: false`. If they say any look
+   will do, call `video_add_captions` with the same `confirm`: it captions every clip with sound
+   (or only the other clips) in the Plain look, and asking again rebuilds the same captions.
 6. Do not export. Call `video_export` only when this message asks for a video file ("export",
    "render", "make the video"). The export burns in the same captions the player shows.
 7. After captions are added, reply in one plain sentence saying so, in the tool's words (never a
