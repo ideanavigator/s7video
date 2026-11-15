@@ -729,7 +729,8 @@ describe("video_undo and video_redo", () => {
         const before = readFile(root, "edit.json");
 
         const added = yield* call("video_add_captions", { confirm: true });
-        expect(textOf(added).join("")).toContain("Added captions to burnt.mp4.");
+        // Says what happened: captions added to that clip, in the look; the size didn't change.
+        expect(textOf(added).join("")).toContain("Added captions to burnt.mp4 in the Boxed look.");
         const track = JSON.parse(readFile(root, "edit.json")).tracks.find(
           (entry: { kind: string }) => entry.kind === "caption",
         );
@@ -747,7 +748,7 @@ describe("video_undo and video_redo", () => {
         });
         // One step: this run's version names it, and one undo takes back only these captions.
         const [newest] = yield* edits.versions(thread.projectId);
-        expect(newest!.changes).toContain("Added captions to burnt.mp4");
+        expect(newest!.changes).toContain("Added captions to burnt.mp4 in the Boxed look");
         expect((yield* call("video_undo")).isError).toBe(false);
         expect(readFile(root, "edit.json")).toBe(before);
       }),

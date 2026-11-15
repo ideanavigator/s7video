@@ -20,6 +20,7 @@ import {
   type MediaProbeResult,
   ProjectId,
   ProviderInstanceId,
+  CAPTION_PRESET_NAMES,
   CaptionsError,
   SoundError,
   ZoomError,
@@ -393,6 +394,7 @@ const layerFor = (fixture: Fixture, cancelSignal: Deferred.Deferred<string>) => 
               captions: 12,
               changed: true,
               captioned: options.confirm === true ? ["burnt.mp4"] : [],
+              look: "the Plain look (orange, at the top)",
             });
       },
       // Project A has captions; project B has none, so its first look adds them.
@@ -413,6 +415,7 @@ const layerFor = (fixture: Fixture, cancelSignal: Deferred.Deferred<string>) => 
           described: input.custom === undefined ? "" : "orange, at the top, bigger",
           uncaptioned: projectId === projectA && input.custom?.size === 1.4 ? ["burnt.mp4"] : [],
           captioned: [],
+          look: `the ${CAPTION_PRESET_NAMES[preset]} look${input.custom === undefined ? "" : " (orange, at the top, bigger)"}`,
         });
       },
       // Project B's clip already shows captions in its picture until the user confirms.
@@ -1409,7 +1412,8 @@ describe("video toolkit", () => {
         const added = yield* call(threadA, "video_add_captions", { confirm: true });
         expect(added.structuredContent).toEqual({
           revision: 9,
-          message: "Added captions to burnt.mp4. They follow later cuts; say undo to remove them.",
+          message:
+            "Added captions to burnt.mp4 in the Plain look (orange, at the top). They follow later cuts; say undo to remove them.",
         });
         expect(fixture.looks).toEqual([
           ["looks", projectA, { confirm: false }],

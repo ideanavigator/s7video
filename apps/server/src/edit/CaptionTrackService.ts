@@ -54,6 +54,8 @@ export interface AddCaptionsResult {
   readonly captions: number;
   /** Clips that waited (their picture shows captions) and got ours in this change, by name. */
   readonly captioned: ReadonlyArray<string>;
+  /** "the Plain look (orange, at the top)": the look the captions have now, as replies say it. */
+  readonly look: string;
   readonly changed: boolean;
 }
 
@@ -97,6 +99,23 @@ const presetOf = (document: EditDocument): CaptionPresetId => {
 };
 
 const LOOKS_RETRY = "ask for the looks";
+
+/**
+ * "the Plain look (orange, at the top)". With `sizeBefore` null, the size is left out: captioning
+ * a clip doesn't make the captions bigger.
+ */
+const lookPhrase = (
+  preset: CaptionPresetId,
+  custom: EditCaptionCustom,
+  sizeBefore: number | null,
+) => {
+  const { size: _size, ...rest } = custom;
+  const words =
+    sizeBefore === null
+      ? describeCaptionCustom(rest, preset)
+      : describeCaptionCustom(custom, preset, sizeBefore);
+  return `the ${CAPTION_PRESET_NAMES[preset]} look${words === "" ? "" : ` (${words})`}`;
+};
 
 /** A clip as the user knows it: its label, or its file's name. */
 const clipName = (document: EditDocument, id: string) => {
@@ -266,11 +285,17 @@ const make = Effect.gen(function* () {
     );
     // "Caption that clip too": the track exists, so this captions the waiting clips in its look.
     const addedTo = transcriptCaptionTrackOf(snapshot.document) === undefined ? [] : captioned;
+    const look = lookPhrase(
+      presetOf(snapshot.document),
+      captionCustomOf(snapshot.document) ?? {},
+      null,
+    );
     const after = yield* edits.apply(projectId, ops, {
       origin: "agent",
       baseRevision: snapshot.revision,
       reply: options.reply,
-      summary: addedTo.length > 0 ? `Added captions to ${listed(addedTo)}` : ADDED_CAPTIONS,
+      summary:
+        addedTo.length > 0 ? `Added captions to ${listed(addedTo)} in ${look}` : ADDED_CAPTIONS,
     });
     const track = transcriptCaptionTrackOf(after.document);
     return {
@@ -278,6 +303,7 @@ const make = Effect.gen(function* () {
       captions: track?.items.length ?? 0,
       changed: after.revision !== snapshot.revision,
       captioned: addedTo,
+      look,
     };
   });
 
@@ -301,6 +327,9 @@ const make = Effect.gen(function* () {
       input.custom?.size === undefined ? undefined : sizeBefore,
     );
     const ownNote = own === "" ? "" : ` (${own})`;
+    // Captioning a waiting clip changes no size: it names one only if this call changed it.
+    const sizeChanged = input.custom?.size !== undefined && sizeBefore !== (custom.size ?? 1);
+    const addedLook = lookPhrase(preset, custom, sizeChanged ? sizeBefore : null);
     const lacking = input.custom === undefined ? null : missingLookPart(input.custom, preset);
     if (lacking !== null) return yield* new CaptionsError({ reason: "look-part", detail: lacking });
     const tracks = shownCaptionTracks(document);
@@ -344,6 +373,7 @@ const make = Effect.gen(function* () {
           described: own,
           uncaptioned,
           captioned: [],
+          look: `the ${name} look${ownNote}`,
         };
       }
     } else {
@@ -377,7 +407,7 @@ const make = Effect.gen(function* () {
       summary: added
         ? `Added captions in the ${name} look${ownNote}`
         : captioned.length > 0
-          ? `Added captions to ${listed(captioned)} in the ${name} look${ownNote}`
+          ? `Added captions to ${listed(captioned)} in ${addedLook}`
           : `Changed the caption look to ${name}${ownNote}`,
     });
     return {
@@ -390,6 +420,7 @@ const make = Effect.gen(function* () {
       described: own,
       uncaptioned,
       captioned,
+      look: captioned.length > 0 ? addedLook : `the ${name} look${ownNote}`,
     };
   });
 

@@ -3,7 +3,6 @@
 // Thin handlers: resolve the caller's project and media (VideoProjectScope), call one engine or
 // edit service method, map its errors. The Editor panel reaches the same services directly.
 import {
-  CAPTION_PRESET_NAMES,
   type CaptionsError,
   type EditConflict,
   type EditDocument,
@@ -753,7 +752,7 @@ const handlers = {
         revision: result.revision,
         message:
           result.captioned.length > 0
-            ? `Added captions to ${CaptionTrackService.listed(result.captioned)}. They follow later cuts; say undo to remove them.`
+            ? `Added captions to ${CaptionTrackService.listed(result.captioned)} in ${result.look}. They follow later cuts; say undo to remove them.`
             : result.changed
               ? "Added captions to the edit. They follow later cuts; say undo to remove them."
               : "The edit already has these captions.",
@@ -917,8 +916,7 @@ const handlers = {
           { reply: project.reply, origin: "agent", confirm: confirm === true },
         )
         .pipe(Effect.mapError(editRefusal));
-      const own = result.described;
-      const look = `the ${CAPTION_PRESET_NAMES[result.preset]} look${own === "" ? "" : ` (${own})`}`;
+      const { look } = result;
       // No count: it is caption items, one per run of a clip, not the lines the player shows.
       const message = result.added
         ? `Added captions in ${look}. Say undo to take them out.`

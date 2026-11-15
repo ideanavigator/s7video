@@ -190,6 +190,7 @@ describe("CaptionTrackService (S7V-075)", () => {
           captions: 3,
           changed: true,
           captioned: [],
+          look: "the Plain look",
         });
         const after = yield* project.edits.read(project.projectId);
         const [track] = captionTracks(after.document);
@@ -231,6 +232,7 @@ describe("CaptionTrackService (S7V-075)", () => {
           captions: 3,
           changed: false,
           captioned: [],
+          look: "the Plain look",
         });
         const after = yield* project.edits.read(project.projectId);
         assert.strictEqual(captionTracks(after.document).length, 1);
@@ -546,6 +548,7 @@ describe("CaptionTrackService.setStyle (S7V-037)", () => {
           described: "",
           uncaptioned: [],
           captioned: [],
+          look: "the Boxed look",
         });
         const after = yield* project.edits.read(project.projectId);
         const [track] = captionTracks(after.document);
@@ -601,6 +604,7 @@ describe("CaptionTrackService.setStyle (S7V-037)", () => {
           described: "",
           uncaptioned: [],
           captioned: [],
+          look: "the Plain look",
         });
         const karaoke = yield* project.captions.setStyle(
           project.projectId,
@@ -620,6 +624,7 @@ describe("CaptionTrackService.setStyle (S7V-037)", () => {
           described: "",
           uncaptioned: [],
           captioned: [],
+          look: "the Highlighted word look",
         });
         const after = yield* project.edits.read(project.projectId);
         assert.strictEqual(captionTracks(after.document)[0]!.style, "s7-karaoke");
@@ -956,6 +961,34 @@ describe("CaptionTrackService with a burned-in clip placed later (S7V-099)", () 
             { origin: "timeline", baseRevision: restyled.revision },
           );
           assert.deepStrictEqual(captionedClips(cut.document), new Set(["cam"]));
+        }),
+      ),
+  );
+
+  it.effect(
+    "captioning it with a restyle says what happened, with no size word unless it changed",
+    () =>
+      withProject((project) =>
+        Effect.gen(function* () {
+          yield* twoClips(project);
+          yield* project.captions.setStyle(
+            project.projectId,
+            { custom: { textColor: "#FF8800", position: "top", size: 1.2 } },
+            { origin: "agent" },
+          );
+          const both = yield* project.captions.setStyle(
+            project.projectId,
+            { custom: { textColor: "#FF8800" } },
+            { origin: "agent", confirm: true, reply },
+          );
+          assert.deepInclude(both, {
+            captioned: ["burnt.mp4"],
+            look: "the Plain look (orange, at the top)",
+          });
+          const [newest] = yield* project.edits.versions(project.projectId);
+          assert.deepStrictEqual(newest!.changes, [
+            "Added captions to burnt.mp4 in the Plain look (orange, at the top)",
+          ]);
         }),
       ),
   );
