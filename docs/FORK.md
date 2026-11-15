@@ -415,8 +415,9 @@ upstream files have small edits:
   `VIDEO_PROJECT_TOOL_NAMES`, and the context report prints a second line for a video project's
   thread, so the eval measures what that thread is really offered.
 - `evals/mcp-tool-use/README.md`: the "Video cases (s7video)" section describes the video eval
-  cases: the `video-export-*` cases (S7V-061), `VID-01` to `VID-03` (S7V-072), and `VID-04` to
-  `VID-06` for restoring and comparing versions from chat (S7V-070).
+  cases: the `video-export-*` cases (S7V-061), `VID-01` to `VID-03` (S7V-072), `VID-04` to
+  `VID-06` for restoring and comparing versions from chat (S7V-070), and `VID-07` to `VID-09` for
+  captions shaped in the chat (S7V-099).
 
 The ACP first-prompt text (`t3AcpPromptWithInstructions`) still carries the orchestration text; ACP
 gets the filtered list from the server.
@@ -620,6 +621,9 @@ upstream files have small edits:
   saves the file at once through `flushFileSaveSession` (`components/files/fileSaveSessions.ts`).
 - Tests: `components/ChatView.logic.browser.test.ts`,
   `components/chat/useChatShortcuts.browser.test.tsx` and `components/files/fileSaveSessions.test.ts`.
+- `docs/internals/web-ui.md`: the Editor's layout paragraph now says how the player gets space
+  first (`PLAYER_SHARE`), how the notices fit and open, and when the tabs and the timeline give
+  way.
 
 ## Dev profile per worktree (S7V-073)
 

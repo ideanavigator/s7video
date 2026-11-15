@@ -132,6 +132,8 @@ from; the per-ticket entries and how this file is compiled are in
 - The app icon, sidebar name and welcome screen show s7video instead of T3 Code, with a placeholder
   s7video icon in the Dock, Finder and browser tab; dev and nightly builds have their own icons.
   T3 Code is still credited in About. (S7V-100)
+- For developers: `docs/FORK.md` now names every upstream T3 Code file the Sprint 05 cards
+  changed, including four it had missed: the video eval cases' README and three tests. (S7V-088)
 
 ### Removed
 
