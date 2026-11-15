@@ -159,13 +159,14 @@ from; the per-ticket entries and how this file is compiled are in
   delete no longer changes your main edit, and a click on the timeline takes you back to it.
   Version messages say "main", like the Versions tab. (S7V-087)
 - The video in the Editor is sized to your video's shape and keeps at least 45% of the Editor's
-  height, even in a small window: the tabs and the timeline give way first, and notices are never
-  cut off. The speech model prompt is one line. Clicking a clip and pressing S splits it there,
-  and S, Delete or Cmd+Z after clicking the timeline no longer type into the chat; Cmd+S in the
-  file view saves the file. Naming a version shows Save inside its box, and Rename replaces the
-  old name. A finished export, the first one too, says "Your video is ready" with its length,
-  size and file size, with buttons to play it, show it in Finder or hide the row, and the latest
-  export is still there after a reload unless it was moved or deleted. (S7V-101)
+  height, even in a small window: the tabs and the timeline give way first, and a notice you
+  must read is never cut off. The speech model prompt is one line. Clicking a clip and pressing S
+  splits it there, and S, Delete or Cmd+Z after clicking the timeline no longer type into the
+  chat; Cmd+S in the file view saves the file. Naming a version shows Save inside its box, and
+  Rename replaces the old name. A finished export, the first one too, says "Your video is ready"
+  with its length, frame size and file size, with buttons to play it, show it in Finder or hide
+  the row; a hidden export still plays from beside Export, and the latest export is still there
+  after a reload unless it was moved or deleted. (S7V-101)
 - For developers: a dev desktop app started from a linked git worktree keeps its own Electron
   profile in that worktree's dev home, so it no longer hands off to, or focuses, another
   checkout's app. The main checkout keeps its `s7video-dev` profile. (S7V-073)
