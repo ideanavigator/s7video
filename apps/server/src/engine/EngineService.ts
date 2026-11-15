@@ -82,7 +82,8 @@ export interface EngineJobInput<A> {
    * Gets the result before the job's end is published on `subscribeJobs`, so a client that reads
    * the caller's own record of it when the job ends finds the outcome there (S7V-101).
    */
-  readonly onSucceeded?: (result: A) => Effect.Effect<void>;
+  // Method syntax keeps `EngineJobInput<A>` assignable where callers take `EngineJobInput<unknown>`.
+  onSucceeded?(result: A): Effect.Effect<void>;
 }
 
 /** The waveform and filmstrip of one media as one job; either step may be left out. */

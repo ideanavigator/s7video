@@ -289,10 +289,9 @@ describe("VersionsTab", () => {
 
   // S7V-101: Rename selects the old name, so typing replaces it; the named row stays in view.
   it("replaces the old name on Rename, and keeps the named version in view", async () => {
-    const many = [
-      ...LIST,
-      ...[0, -1, -2, -3, -4, -5].map((offset) => version(10 + offset, { tag: undefined })),
-    ].map((entry, index) => ({ ...entry, n: 20 - index }));
+    const many = [...LIST, ...[0, -1, -2, -3, -4, -5].map((offset) => version(10 + offset))].map(
+      (entry, index) => ({ ...entry, n: 20 - index }),
+    );
     const target = { ...many.at(-1)!, tag: "rough" };
     const versions = [...many.slice(0, -1), target];
     setReady(versions);
