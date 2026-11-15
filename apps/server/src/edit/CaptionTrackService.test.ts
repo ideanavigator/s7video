@@ -1221,7 +1221,7 @@ describe("CaptionTrackService with confirm: false (S7V-109)", () => {
           .pipe(Effect.flip);
         assert.strictEqual(
           refused.message,
-          "Nothing changed: cam.mp4 keeps its own captions, and no other clip has speech to caption. If the user wants ours over them, add captions again with confirm: true.",
+          'Nothing changed: cam.mp4 keeps its own captions, and no other clip has speech to caption. Say "add them anyway" to put ours over them. If they do, add captions again with confirm: true.',
         );
         assert.strictEqual(readEdit(project.root), text);
       }),

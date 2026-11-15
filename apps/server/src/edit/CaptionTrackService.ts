@@ -255,7 +255,7 @@ const make = Effect.gen(function* () {
         const one = waiting.length === 1;
         return yield* new CaptionsError({
           reason: "no-clips",
-          detail: `Nothing changed: ${listed(waiting)} ${one ? "keeps its" : "keep their"} own captions, and no other clip has speech to caption. If the user wants ours over them, ${retry} again with confirm: true.`,
+          detail: `Nothing changed: ${listed(waiting)} ${one ? "keeps its" : "keep their"} own captions, and no other clip has speech to caption. Say "add them anyway" to put ours over them. If they do, ${retry} again with confirm: true.`,
         });
       }
       return { ops: captionTrackOps(document, others), captioned: [], uncaptioned: waiting };
