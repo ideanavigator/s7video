@@ -6,7 +6,7 @@
  * in a small store; the playing frame goes to listeners (the transcript) without React state.
  * Transcripts (S7V-030) are cached per media and refetched when a transcription finishes.
  */
-import { useAtomValue } from "@effect/atom-react";
+import { useAtomRefresh, useAtomValue } from "@effect/atom-react";
 import { parseScopedProjectKey, scopedProjectKey } from "@t3tools/client-runtime/environment";
 import {
   createEnvironmentRpcCommand,
@@ -29,14 +29,21 @@ import {
 } from "@t3tools/contracts";
 import { Cause, Stream } from "effect";
 import { AsyncResult, Atom } from "effect/reactivity";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { create } from "zustand";
 
 import { connectionAtomRuntime } from "../connection/runtime";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentServerConfigsAtom } from "../state/server";
 import { captionStillsSignature } from "./captionStills";
-import { acceptNewerSnapshot, applyJobsEvent, followExportJob } from "./editStreams";
+import {
+  acceptNewerSnapshot,
+  applyJobsEvent,
+  exportStatusAsksAgain,
+  followExportJob,
+} from "./editStreams";
+
+const EXPORT_STATUS_ASK_AGAIN_MS = 500;
 
 export const editEnvironment = {
   edit: createEnvironmentRpcSubscriptionAtomFamily(connectionAtomRuntime, {
@@ -86,10 +93,7 @@ export const editEnvironment = {
   exportStatus: createEnvironmentRpcQueryAtomFamily(connectionAtomRuntime, {
     label: "environment-data:export:status",
     tag: WS_METHODS.exportStatus,
-    // Read once the job has ended; a status still running is asked again, never kept (S7V-101).
-    // Null is an export this server did not start, which never changes.
-    refreshIntervalMs: 500,
-    isFinal: (status) => status === null || status.state !== "running",
+    isFinal: (status) => status !== null && status.state !== "running",
   }),
   transcribeRun: createEnvironmentRpcCommand(connectionAtomRuntime, {
     label: "environment-data:transcribe:run",
@@ -466,9 +470,17 @@ export function useProjectExport(
   const { job, adoptedJobId: adopt } = followExportJob(jobs, projectId, startedJobId, adoptedJobId);
   if (adopt !== adoptedJobId) setAdoption(adopt === null ? null : { startedJobId, jobId: adopt });
   const ended = job !== null && job.state !== "running";
-  const result = useAtomValue(
-    ended ? editEnvironment.exportStatus({ environmentId, input: { jobId: job.id } }) : NO_STATUS,
-  );
+  const statusAtom = ended
+    ? editEnvironment.exportStatus({ environmentId, input: { jobId: job.id } })
+    : NO_STATUS;
+  const result = useAtomValue(statusAtom);
+  const askAgain = useAtomRefresh(statusAtom);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- asks the server again while an ended job's status still says running (S7V-101); a final answer, null or a failure stops it
+  useEffect(() => {
+    if (!ended || !exportStatusAsksAgain(result)) return;
+    const timer = window.setTimeout(askAgain, EXPORT_STATUS_ASK_AGAIN_MS);
+    return () => window.clearTimeout(timer);
+  }, [ended, result, askAgain]);
   return { job, status: ended && AsyncResult.isSuccess(result) ? result.value : null };
 }
 
