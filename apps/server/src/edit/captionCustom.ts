@@ -93,17 +93,35 @@ const COLOR_NAMES: Readonly<Record<string, string>> = {
   "#FFFFFF": "white",
 };
 
-const sizeWords = (size: number) =>
-  size > 1 ? (size >= 1.3 ? "bigger" : "a bit bigger") : size <= 0.8 ? "smaller" : "a bit smaller";
+/** A size against another: 0.3 or more apart is "bigger" or "smaller", less is "a bit". */
+const sizeWords = (size: number, against: number) =>
+  size > against
+    ? size - against >= 0.3
+      ? "bigger"
+      : "a bit bigger"
+    : against - size >= 0.3
+      ? "smaller"
+      : "a bit smaller";
 
 /**
  * The look's own colours, size and place in editing words, never codes (UX guide rule 5):
- * "orange, blue box, at the top, bigger", or "" for none. Parts the look doesn't draw are left out.
+ * "orange, blue box, at the top, bigger", or "" for none. Parts the look doesn't draw are left
+ * out. With `sizeBefore`, a size changed now is said against it, so 1.4 to 1.2 is "a bit smaller".
  */
 export const describeCaptionCustom = (
   custom: EditCaptionCustom | undefined,
   preset: CaptionPresetId,
+  sizeBefore?: number,
 ) => {
+  const size = custom?.size ?? 1;
+  const sizePart =
+    sizeBefore !== undefined && sizeBefore !== size
+      ? size === 1
+        ? "back to its own size"
+        : sizeWords(size, sizeBefore)
+      : custom?.size === undefined
+        ? null
+        : sizeWords(custom.size, 1);
   const parts = CAPTION_LOOK_PARTS[preset];
   const named = (hex: string | undefined, part: string, unnamed: string) =>
     hex === undefined
@@ -122,7 +140,7 @@ export const describeCaptionCustom = (
       : custom.position === "middle"
         ? "in the middle"
         : `at the ${custom.position}`,
-    custom?.size === undefined ? null : sizeWords(custom.size),
+    sizePart,
   ]
     .filter((part) => part !== null)
     .join(", ");

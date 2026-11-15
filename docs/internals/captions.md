@@ -121,19 +121,26 @@ shapes captions by talking to the agent, through `video_caption_style` and `vide
   (`describeCaptionCustom`). They don't count captions: a caption item is a run of a clip, not a
   line the player shows.
 - **Captions already in the picture.** The transcribe job reads ten frames with Apple Vision
-  (`burned_in.py`, on the device, in the language Vision detects; text without spaces matches
-  by character) and stores `burnedInCaptions` (`found`, `confidence`, `region`) with the
-  transcript, never the text. It decides by variety: enough frames show a line that is mostly
-  the words being said, and at least two different lines match. A sign or name card is one line,
-  and a line in nearly every frame is part of the picture. Each input decodes on one thread (ten
-  default decoders peaked at 8.75 GB on 4K HEVC), and any failure leaves the clip unchecked.
-- **Asking first.** A clip with `found: true` counts as a yes only once the transcript track
-  captions it. Until then `video_add_captions`, `video_caption_style` and the looks refuse
-  (`CaptionsError` `burned-in`) unless the call carries `confirm: true`, and a rebuild after a cut
-  or a placement leaves that clip out: a clip placed after the captions asks too. The question
-  offers the way forward from the region: "This clip already has captions near the bottom. Add
-  new ones at the top, add them anyway, or leave it as it is?" A clip transcribed before the
-  check behaves as before.
+  (`burned_in.py`, on the device, in the language Vision detects) and stores `burnedInCaptions`
+  (`found`, `confidence`, `region`) with the transcript, never the text. It decides by variety:
+  enough frames show a line that is mostly the words being said, and at least two different
+  lines match. A sign or name card is one line, and a line in nearly every frame is part of the
+  picture. Chinese, Japanese and Korean match by character pairs, with the speech joined across
+  words: single characters let unrelated text match on particles (12% false "found" with four
+  lines of a shop notice a frame; none with pairs, `test_burned_in.py`). Each input decodes on one
+  thread (ten default decoders peaked at 8.75 GB on 4K HEVC), and any failure leaves the clip
+  unchecked.
+- **Asking first, only when adding.** The question comes only when captions would be added to a
+  clip with `found: true`: one with speech in its placed part that the transcript track doesn't
+  caption yet. `video_add_captions`, and `video_caption_style` or the looks on an edit with no
+  captions, refuse (`CaptionsError` `burned-in`) unless the call carries `confirm: true`. The
+  question names the clip by its file name and offers choices that fit where ours would go:
+  "talk.mp4 already has captions near the bottom. Add ours at the top, add them anyway, or leave
+  it as it is?", or "…; ours would be at the top. Add them, or leave it as it is?" when they
+  already would be. A rebuild after a cut or placement leaves such a clip out. Restyles and the
+  looks on existing captions never ask: they change the captions that exist, and the reply names
+  the clip that kept its own ("talk.mp4 keeps its own captions; say "caption that clip too" to
+  add ours"). A clip transcribed before the check behaves as before.
 
 ## The player overlay
 

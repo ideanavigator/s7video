@@ -8,6 +8,7 @@
  */
 import {
   CAPTION_PRESET_NAMES,
+  type CaptionPosition,
   CaptionPresetId,
   CaptionsError,
   type EditCaptionCustom,
@@ -19,6 +20,7 @@ import {
 } from "@t3tools/contracts";
 import {
   captionCustomOf,
+  captionItemsFor,
   captionLookOf,
   captionTrackOps,
   shownCaptionTracks,
@@ -54,6 +56,10 @@ export interface AddCaptionsResult {
 }
 
 export interface SetStyleResult extends AddCaptionsResult {
+  /** The look's own colours, size and place in editing words, as the version note says them. */
+  readonly described: string;
+  /** Clips that show their own captions and were left uncaptioned, by the names the user knows. */
+  readonly uncaptioned: ReadonlyArray<string>;
   /** The captions were added from the transcripts in the same change. */
   readonly added: boolean;
   /** The look and the user's own colours, size and place the captions now have. */
@@ -76,6 +82,8 @@ export interface Confirmed {
 export interface LooksResult {
   readonly revision: number;
   readonly looks: ReadonlyArray<CaptionStillsService.CaptionLookPreview>;
+  /** As in `SetStyleResult`. */
+  readonly uncaptioned: ReadonlyArray<string>;
 }
 
 const captionCount = (document: EditDocument) =>
@@ -86,33 +94,66 @@ const presetOf = (document: EditDocument): CaptionPresetId => {
   return CaptionPresetId.literals.find((id) => id === look) ?? DEFAULT_PRESET;
 };
 
+/** A clip as the user knows it: its label, or its file's name. */
+const clipName = (document: EditDocument, id: string) => {
+  const media = document.media.find((entry) => entry.id === id);
+  return media?.label ?? (media?.path ?? media?.reference ?? id).split(/[\\/]/u).at(-1) ?? id;
+};
+
+const listed = (names: ReadonlyArray<string>) =>
+  names.length < 2 ? (names[0] ?? "") : `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`;
+
+const placeWords = (position: CaptionPosition) =>
+  position === "middle" ? "in the middle" : `at the ${position}`;
+
 /**
- * Captions already in a clip's picture (S7V-099): the question for the user, and what the agent
- * does with each answer (UX guide rule 9: a refusal gives the way forward).
+ * Captions about to be added over a clip whose picture shows its own (S7V-099): the question for
+ * the user, naming the clip, with choices that fit where the new captions would go, and what the
+ * agent does with each answer (UX guide rule 9).
  */
-const burnedInRefusal = (pending: CaptionTranscripts["burnedIn"], retry: string) => {
+const burnedInRefusal = (
+  document: EditDocument,
+  pending: CaptionTranscripts["burnedIn"],
+  retry: string,
+  position: CaptionPosition,
+) => {
+  const names = [...pending.keys()].map((id) => clipName(document, id));
   const region = [...pending.values()].find((entry) => entry !== undefined);
   const where = region === undefined ? null : region.y0 + region.y1 < 1 ? "top" : "bottom";
   const other = where === "top" ? "bottom" : "top";
-  const subject = pending.size === 1 ? "This clip already has" : "Some of your clips already have";
+  const subject = `${listed(names)} already ${names.length === 1 ? "has" : "have"} captions`;
   const question =
     where === null
-      ? `${subject} captions in the picture. Add new ones anyway, or leave it as it is?`
-      : `${subject} captions near the ${where}. Add new ones at the ${other}, add them anyway, or leave it as it is?`;
+      ? `${subject} in the picture. Add ours anyway, or leave it as it is?`
+      : where !== position
+        ? `${subject} near the ${where}; ours would be ${placeWords(position)}. Add them, or leave it as it is?`
+        : `${subject} near the ${where}. Add ours at the ${other}, add them anyway, or leave it as it is?`;
   const atOther =
-    where === null
-      ? ""
-      : ` If they choose the ${other}, call video_caption_style with confirm: true and custom {"position": "${other}"}.`;
+    where === position
+      ? ` If they choose the ${other}, call video_caption_style with confirm: true and custom {"position": "${other}"}.`
+      : "";
   return new CaptionsError({
     reason: "burned-in",
-    detail: `${[...pending.keys()].join(", ")} already shows captions in its picture. Nothing changed. Ask the user: "${question}"${atOther} If they say add them anyway, ${retry} again with confirm: true. If they say leave it, change nothing.`,
+    detail: `${listed(names)} already ${names.length === 1 ? "shows" : "show"} captions in the picture. Nothing changed. Ask the user: "${question}"${atOther} If they say add them, ${retry} again with confirm: true. If they say leave it, change nothing.`,
   });
 };
 
-/** Burned-in clips the transcript track doesn't caption yet: adding captions to them needs a yes. */
+/**
+ * Burned-in clips that adding captions would caption (speech in their placed part) and the
+ * transcript track doesn't yet: those need the user's yes.
+ */
 const unconfirmed = (loaded: CaptionTranscripts, document: EditDocument) => {
   const captioned = captionedMedia(document);
-  return new Map([...loaded.burnedIn].filter(([media]) => !captioned.has(media)));
+  return new Map(
+    [...loaded.burnedIn].filter(([media]) => {
+      const transcript = loaded.transcripts.get(media);
+      return (
+        !captioned.has(media) &&
+        transcript !== undefined &&
+        captionItemsFor(document, new Map([[media, transcript]])).length > 0
+      );
+    }),
+  );
 };
 
 export class CaptionTrackService extends Context.Service<
@@ -174,6 +215,7 @@ const make = Effect.gen(function* () {
     document: EditDocument,
     retry: string,
     confirmed: boolean,
+    position: CaptionPosition,
   ) {
     const loaded = yield* transcriptsOf(projectId, document);
     const { transcripts, missing } = loaded;
@@ -185,7 +227,9 @@ const make = Effect.gen(function* () {
       });
     }
     const pending = unconfirmed(loaded, document);
-    if (pending.size > 0 && !confirmed) return yield* burnedInRefusal(pending, retry);
+    if (pending.size > 0 && !confirmed) {
+      return yield* burnedInRefusal(document, pending, retry, position);
+    }
     if (transcripts.size === 0) {
       const noVideo = document.tracks.every(
         (track) => track.kind !== "video" || track.items.length === 0,
@@ -209,6 +253,7 @@ const make = Effect.gen(function* () {
       snapshot.document,
       "add captions",
       options.confirm === true,
+      captionCustomOf(snapshot.document)?.position ?? "bottom",
     );
     const after = yield* edits.apply(projectId, ops, {
       origin: "agent",
@@ -236,26 +281,31 @@ const make = Effect.gen(function* () {
         : mergeCaptionCustom(captionCustomOf(document), input.custom);
     const ownCustom = input.custom === undefined ? {} : { custom };
     const name = CAPTION_PRESET_NAMES[preset];
-    const own = describeCaptionCustom(custom, preset);
+    // A size asked for now is said against the size before ("a bit smaller" from 1.4 to 1.2).
+    const sizeBefore = captionCustomOf(document)?.size ?? 1;
+    const own = describeCaptionCustom(
+      custom,
+      preset,
+      input.custom?.size === undefined ? undefined : sizeBefore,
+    );
     const ownNote = own === "" ? "" : ` (${own})`;
     const lacking = input.custom === undefined ? null : missingLookPart(input.custom, preset);
     if (lacking !== null) return yield* new CaptionsError({ reason: "look-part", detail: lacking });
     const tracks = shownCaptionTracks(document);
     let ops: EditOp[];
+    let uncaptioned: ReadonlyArray<string> = [];
     if (tracks.length > 0) {
-      // A clip placed after the captions that shows its own still waits for the user's yes; with
-      // it, this change captions that clip too.
-      const pending =
+      // A restyle adds no captions, so it never asks. A clip placed later that shows its own
+      // stays uncaptioned and is named in the reply; with the user's yes, this change captions it.
+      const pending: CaptionTranscripts["burnedIn"] =
         transcriptCaptionTrackOf(document) === undefined
           ? new Map()
           : unconfirmed(yield* transcriptsOf(projectId, document), document);
-      if (pending.size > 0 && options.confirm !== true) {
-        return yield* burnedInRefusal(pending, "pick the look");
-      }
-      const recaptioned =
-        pending.size > 0
-          ? yield* transcriptTrackOps(projectId, document, "pick the look", true)
-          : [];
+      const confirmed = pending.size > 0 && options.confirm === true;
+      uncaptioned = confirmed ? [] : [...pending.keys()].map((id) => clipName(document, id));
+      const recaptioned = confirmed
+        ? yield* transcriptTrackOps(projectId, document, "pick the look", true, "bottom")
+        : [];
       const restyled = tracks
         .filter(
           (track) =>
@@ -277,6 +327,8 @@ const make = Effect.gen(function* () {
           added: false,
           preset,
           custom,
+          described: own,
+          uncaptioned,
         };
       }
     } else {
@@ -285,6 +337,7 @@ const make = Effect.gen(function* () {
         document,
         "pick the look",
         options.confirm === true,
+        custom.position ?? "bottom",
       );
       const addTrack = trackOps.find(
         (op): op is Extract<EditOp, { _tag: "addTrack" }> => op._tag === "addTrack",
@@ -317,6 +370,8 @@ const make = Effect.gen(function* () {
       added,
       preset,
       custom,
+      described: own,
+      uncaptioned,
     };
   });
 
@@ -324,18 +379,25 @@ const make = Effect.gen(function* () {
     function* (projectId, options) {
       const snapshot = yield* edits.read(projectId);
       const { document } = snapshot;
+      let uncaptioned: ReadonlyArray<string> = [];
       if (shownCaptionTracks(document).length === 0) {
         yield* transcriptTrackOps(
           projectId,
           document,
           "ask for the looks",
           options.confirm === true,
+          captionCustomOf(document)?.position ?? "bottom",
         );
-      } else if (transcriptCaptionTrackOf(document) !== undefined && options.confirm !== true) {
+      } else if (transcriptCaptionTrackOf(document) !== undefined) {
+        // The looks restyle captions that exist; a clip placed later with its own is only named.
         const pending = unconfirmed(yield* transcriptsOf(projectId, document), document);
-        if (pending.size > 0) return yield* burnedInRefusal(pending, "ask for the looks");
+        uncaptioned = [...pending.keys()].map((id) => clipName(document, id));
       }
-      return { revision: snapshot.revision, looks: yield* stills.previews(projectId) };
+      return {
+        revision: snapshot.revision,
+        looks: yield* stills.previews(projectId),
+        uncaptioned,
+      };
     },
   );
 

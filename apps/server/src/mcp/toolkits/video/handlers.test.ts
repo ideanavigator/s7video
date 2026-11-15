@@ -405,6 +405,8 @@ const layerFor = (fixture: Fixture, cancelSignal: Deferred.Deferred<string>) => 
           added: projectId === projectB,
           preset,
           custom: input.custom ?? {},
+          described: input.custom === undefined ? "" : "orange, at the top, bigger",
+          uncaptioned: projectId === projectA && input.custom?.size === 1.4 ? ["burnt.mp4"] : [],
         });
       },
       // Project B's clip already shows captions in its picture until the user confirms.
@@ -424,6 +426,7 @@ const layerFor = (fixture: Fixture, cancelSignal: Deferred.Deferred<string>) => 
                 { id: "s7-box", name: "Boxed", path: null },
                 { id: "s7-karaoke", name: "Highlighted word", path: "/odd<name>/p3.png" },
               ],
+              uncaptioned: [],
             });
       },
     }),
@@ -1331,7 +1334,7 @@ describe("video toolkit", () => {
         expect(styled.structuredContent).toEqual({
           revision: 12,
           message:
-            "The captions now use the Boxed look (orange, at the top, bigger), over the player and in the export. Say undo to go back.",
+            'The captions now use the Boxed look (orange, at the top, bigger), over the player and in the export. Say undo to go back. burnt.mp4 keeps its own captions; say "caption that clip too" to add ours.',
         });
         for (const [custom, reason] of [
           [{ size: 2 }, "size is a number from 0.6 to 1.6; 1 is the look's own size."],

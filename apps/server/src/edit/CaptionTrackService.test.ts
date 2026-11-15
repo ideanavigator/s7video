@@ -537,6 +537,8 @@ describe("CaptionTrackService.setStyle (S7V-037)", () => {
           added: true,
           preset: "s7-box",
           custom: {},
+          described: "",
+          uncaptioned: [],
         });
         const after = yield* project.edits.read(project.projectId);
         const [track] = captionTracks(after.document);
@@ -589,6 +591,8 @@ describe("CaptionTrackService.setStyle (S7V-037)", () => {
           added: false,
           preset: "s7-neutral",
           custom: {},
+          described: "",
+          uncaptioned: [],
         });
         const karaoke = yield* project.captions.setStyle(
           project.projectId,
@@ -605,6 +609,8 @@ describe("CaptionTrackService.setStyle (S7V-037)", () => {
           added: false,
           preset: "s7-karaoke",
           custom: {},
+          described: "",
+          uncaptioned: [],
         });
         const after = yield* project.edits.read(project.projectId);
         assert.strictEqual(captionTracks(after.document)[0]!.style, "s7-karaoke");
@@ -695,16 +701,29 @@ describe("CaptionTrackService in the chat (S7V-099)", () => {
           // The way forward for each answer (UX guide rule 9): the other place, anyway, or not.
           assert.include(
             refused.message,
-            "This clip already has captions near the bottom. Add new ones at the top, add them anyway, or leave it as it is?",
+            "cam.mp4 already has captions near the bottom. Add ours at the top, add them anyway, or leave it as it is?",
           );
           assert.include(refused.message, 'custom {"position": "top"}');
           assert.include(refused.message, "confirm: true");
         }
+        // Asked for at the top already: the question doesn't offer the top again.
+        const atTop = yield* project.captions
+          .setStyle(project.projectId, { custom: { position: "top" } }, { origin: "agent" })
+          .pipe(Effect.flip);
+        assert.include(
+          atTop.message,
+          "cam.mp4 already has captions near the bottom; ours would be at the top. Add them, or leave it as it is?",
+        );
+        assert.notInclude(atTop.message, "Add ours at the top");
         assert.strictEqual(readEdit(project.root), text);
         assert.strictEqual(historyLog(project.root)!.entries.length, steps);
 
         const looks = yield* project.captions.looks(project.projectId, { confirm: true });
-        assert.deepStrictEqual(looks, { revision: before.revision, looks: PREVIEWS });
+        assert.deepStrictEqual(looks, {
+          revision: before.revision,
+          looks: PREVIEWS,
+          uncaptioned: [],
+        });
         const added = yield* project.captions.setStyle(
           project.projectId,
           { preset: "s7-box" },
@@ -743,7 +762,11 @@ describe("CaptionTrackService in the chat (S7V-099)", () => {
         assert.include(refused.message, "ask for the looks again");
         writeClip(project.root, "cam");
         const looks = yield* project.captions.looks(project.projectId, {});
-        assert.deepStrictEqual(looks, { revision: before.revision, looks: PREVIEWS });
+        assert.deepStrictEqual(looks, {
+          revision: before.revision,
+          looks: PREVIEWS,
+          uncaptioned: [],
+        });
         assert.strictEqual(
           (yield* project.edits.read(project.projectId)).revision,
           before.revision,
@@ -798,6 +821,28 @@ describe("CaptionTrackService in the chat (S7V-099)", () => {
             { origin: "agent" },
           );
           assert.isFalse(same.changed);
+          // A size asked for now is said against the size before: 1.2 to 1.6, 1.4, then its own.
+          const larger = yield* project.captions.setStyle(
+            project.projectId,
+            { custom: { size: 1.6 } },
+            { origin: "agent" },
+          );
+          assert.strictEqual(larger.described, "orange, at the top, bigger");
+          const smaller = yield* project.captions.setStyle(
+            project.projectId,
+            { custom: { size: 1.4 } },
+            { origin: "agent" },
+          );
+          assert.strictEqual(smaller.described, "orange, at the top, a bit smaller");
+          const own = yield* project.captions.setStyle(
+            project.projectId,
+            { custom: { size: 1 } },
+            { origin: "agent" },
+          );
+          assert.strictEqual(own.described, "orange, at the top, back to its own size");
+          yield* project.edits.undo(project.projectId);
+          yield* project.edits.undo(project.projectId);
+          yield* project.edits.undo(project.projectId);
           // Undo takes back only the size.
           yield* project.edits.undo(project.projectId);
           const undone = yield* project.edits.read(project.projectId);
@@ -858,30 +903,81 @@ describe("CaptionTrackService with a burned-in clip placed later (S7V-099)", () 
   const captionedClips = (document: EditDocument) =>
     new Set(captionTracks(document)[0]!.items.map((item) => captionMediaOfItem(item)));
 
-  it.effect("the rebuild leaves it out, and every caption tool asks until confirmed", () =>
+  it.effect(
+    "the rebuild leaves it out; adding asks, naming the clip; restyles and looks go through",
+    () =>
+      withProject((project) =>
+        Effect.gen(function* () {
+          const placed = yield* twoClips(project);
+          assert.deepStrictEqual(captionedClips(placed.document), new Set(["cam"]));
+          const text = readEdit(project.root);
+          // Adding captions would caption it: that asks, by its file name, with choices that fit.
+          const refused = yield* project.captions
+            .addCaptions(project.projectId, {})
+            .pipe(Effect.flip);
+          assert.strictEqual(refused._tag, "CaptionsError");
+          assert.include(
+            refused.message,
+            "burnt.mp4 already has captions near the bottom. Add ours at the top, add them anyway, or leave it as it is?",
+          );
+          assert.strictEqual(readEdit(project.root), text);
+          // The user said "leave it as it is", then "make them bigger": the restyle goes through,
+          // the clip stays uncaptioned, and the reply names it.
+          const bigger = yield* project.captions.setStyle(
+            project.projectId,
+            { custom: { size: 1.4 } },
+            { origin: "agent" },
+          );
+          assert.deepInclude(bigger, { changed: true, added: false, uncaptioned: ["burnt.mp4"] });
+          const restyled = yield* project.edits.read(project.projectId);
+          assert.deepStrictEqual(captionedClips(restyled.document), new Set(["cam"]));
+          assert.deepStrictEqual(captionTracks(restyled.document)[0]!.custom, { size: 1.4 });
+          const looks = yield* project.captions.looks(project.projectId, {});
+          assert.deepStrictEqual(looks.uncaptioned, ["burnt.mp4"]);
+          // A cut elsewhere rebuilds the captions and still leaves it out.
+          const cut = yield* project.edits.apply(
+            project.projectId,
+            [{ _tag: "trimItem", itemId: "v1", edge: "end", frame: 200 }],
+            { origin: "timeline", baseRevision: restyled.revision },
+          );
+          assert.deepStrictEqual(captionedClips(cut.document), new Set(["cam"]));
+        }),
+      ),
+  );
+
+  it.effect("a burned-in clip with no speech in its placed part never asks", () =>
     withProject((project) =>
       Effect.gen(function* () {
-        const placed = yield* twoClips(project);
-        assert.deepStrictEqual(captionedClips(placed.document), new Set(["cam"]));
-        const text = readEdit(project.root);
-        for (const refused of [
-          yield* project.captions.addCaptions(project.projectId, {}).pipe(Effect.flip),
-          yield* project.captions
-            .setStyle(project.projectId, { preset: "s7-box" }, { origin: "agent" })
-            .pipe(Effect.flip),
-          yield* project.captions.looks(project.projectId, {}).pipe(Effect.flip),
-        ]) {
-          assert.strictEqual(refused._tag, "CaptionsError");
-          assert.include(refused.message, "burnt already shows captions in its picture");
-        }
-        assert.strictEqual(readEdit(project.root), text);
-        // A cut elsewhere rebuilds the captions and still leaves it out.
-        const cut = yield* project.edits.apply(
+        writeClip(project.root, "cam");
+        writeClip(project.root, "burnt", true, true);
+        const initial = yield* project.edits.read(project.projectId);
+        yield* project.edits.apply(
           project.projectId,
-          [{ _tag: "trimItem", itemId: "v1", edge: "end", frame: 200 }],
-          { origin: "timeline", baseRevision: placed.revision },
+          [
+            { _tag: "putMedia", media: mediaEntry("cam") },
+            { _tag: "putMedia", media: mediaEntry("burnt") },
+            {
+              _tag: "addTrack",
+              track: {
+                kind: "video",
+                id: "V1",
+                // The transcript's words end before frame 300: this part of the clip is silent.
+                items: [
+                  { id: "v1", media: "cam", start: 0, duration: 240, in: 0 },
+                  { id: "v2", media: "burnt", start: 240, duration: 240, in: 600 },
+                ],
+              },
+            },
+          ],
+          { origin: "agent", baseRevision: initial.revision },
         );
-        assert.deepStrictEqual(captionedClips(cut.document), new Set(["cam"]));
+        assert.isTrue((yield* project.captions.addCaptions(project.projectId, {})).changed);
+        const styled = yield* project.captions.setStyle(
+          project.projectId,
+          { preset: "s7-box" },
+          { origin: "agent" },
+        );
+        assert.deepStrictEqual(styled.uncaptioned, []);
       }),
     ),
   );

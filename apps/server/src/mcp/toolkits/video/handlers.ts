@@ -29,7 +29,7 @@ import * as Stream from "effect/Stream";
 import { RE_DUCK_REMINDER } from "../../../edit/audioPlacement.ts";
 import * as AudioTrackService from "../../../edit/AudioTrackService.ts";
 import { CANVAS_FOR_RATIO } from "../../../edit/canvasForClip.ts";
-import { describeCaptionCustom, parseCaptionCustom } from "../../../edit/captionCustom.ts";
+import { parseCaptionCustom } from "../../../edit/captionCustom.ts";
 import * as CaptionTrackService from "../../../edit/CaptionTrackService.ts";
 import * as ClipPlacementService from "../../../edit/ClipPlacementService.ts";
 import * as EditDocumentService from "../../../edit/EditDocumentService.ts";
@@ -119,6 +119,17 @@ const looksMessage = (looks: ReadonlyArray<CaptionStillsService.CaptionLookPrevi
     ),
     "---",
   ].join("\n\n");
+
+/**
+ * S7V-099: clips placed after the captions whose picture shows its own keep it; the reply names
+ * them, and "caption that clip too" is the same call with `confirm: true`.
+ */
+const keepsOwnCaptions = (clips: ReadonlyArray<string>) =>
+  clips.length === 0
+    ? ""
+    : clips.length === 1
+      ? ` ${clips[0]} keeps its own captions; say "caption that clip too" to add ours.`
+      : ` ${clips.slice(0, -1).join(", ")} and ${clips.at(-1)} keep their own captions; say "caption those clips too" to add ours.`;
 
 const noSuchJob = () =>
   new OrchestratorMcpFailure({
@@ -880,7 +891,10 @@ const handlers = {
         const listed = yield* captions
           .looks(project.projectId, { confirm: confirm === true })
           .pipe(Effect.mapError(editRefusal));
-        return { revision: listed.revision, message: looksMessage(listed.looks) };
+        return {
+          revision: listed.revision,
+          message: `${looksMessage(listed.looks)}${keepsOwnCaptions(listed.uncaptioned)}`,
+        };
       }
       yield* refusePlanMode("change the caption look");
       const parsed = custom === undefined ? undefined : parseCaptionCustom(custom);
@@ -897,7 +911,7 @@ const handlers = {
           { reply: project.reply, origin: "agent", confirm: confirm === true },
         )
         .pipe(Effect.mapError(editRefusal));
-      const own = describeCaptionCustom(result.custom, result.preset);
+      const own = result.described;
       const look = `the ${CAPTION_PRESET_NAMES[result.preset]} look${own === "" ? "" : ` (${own})`}`;
       // No count: it is caption items, one per run of a clip, not the lines the player shows.
       const message = result.added
@@ -907,7 +921,7 @@ const handlers = {
           : `The captions already use ${look}.`;
       return {
         revision: result.revision,
-        message,
+        message: `${message}${keepsOwnCaptions(result.uncaptioned)}`,
         ...(yield* cleanupAfterChange(project, result.changed)),
       };
     }),

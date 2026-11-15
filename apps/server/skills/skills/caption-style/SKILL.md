@@ -33,7 +33,9 @@ On top of any look, `custom` changes only these, and keeps the ones not given:
    job with `video_job_status` (`waitSeconds: 30`), then call `video_caption_style` again. If it
    says a clip already shows captions in its picture, ask the user the question it gives and stop;
    then do what it said for their answer (`confirm: true`, with the other `position` if they
-   chose it), and keep `confirm: true` on every caption call.
+   chose it). A change to captions the edit already has never asks: if the reply says a clip
+   keeps its own captions, pass that sentence on, and on "caption that clip too" call again with
+   `confirm: true`.
 5. Do not export. Call `video_export` only when this message asks for a video file.
 6. Reply in one plain sentence saying the look in the tool's words (colour names, never codes or
    size numbers): it shows over the player and in the export. End with: "Say undo to go back."
