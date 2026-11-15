@@ -147,24 +147,25 @@ function tabsMinPx(panelHeight: number, topPx: number, playerMinPx: number): num
 }
 
 const NOTICE_GAP_PX = 8;
-/** The line under the notices that fit: "Show N more notices", or "Close one to see N more.". */
+/** The "Show N more notices" line under the notices that fit, while they are closed. */
 const NOTICE_CUE_PX = 28;
 
 /**
  * How many notices show whole (S7V-101): from the top, as many as fit in `roomPx` with the cue
- * line when some are left out, and never fewer than `atLeast` (a refused change; once opened,
+ * line (`cuePx`) when some are left out, and never fewer than `atLeast` (a refused change; once opened,
  * the next notice too).
  */
 function fitNotices(
   heights: ReadonlyArray<number>,
   roomPx: number,
   atLeast: number,
+  cuePx: number,
 ): { readonly shown: number; readonly heightPx: number } {
   let shown = 0;
   let heightPx = 0;
   for (const height of heights) {
     const next = heightPx + (shown > 0 ? NOTICE_GAP_PX : 0) + height;
-    const cue = shown + 1 < heights.length ? NOTICE_CUE_PX + NOTICE_GAP_PX : 0;
+    const cue = shown + 1 < heights.length ? cuePx : 0;
     if (next + cue > roomPx && shown >= atLeast) break;
     heightPx = next;
     shown += 1;
@@ -890,7 +891,8 @@ export default function EditorPanel(props: {
               : { keys, heights },
           );
         });
-  const [noticesOpen, setNoticesOpen] = useState(false);
+  // Opened for one set of notices: a notice arriving later never opens straight away.
+  const [openedFor, setOpenedFor] = useState<string | null>(null);
   // The room the tabs got; a panel shows whole rows of it, or the hint under one row.
   const [tabRoomPx, setTabRoomPx] = useState<number | null>(null);
   const observeTabRoom = (element: HTMLDivElement | null) =>
@@ -952,13 +954,20 @@ export default function EditorPanel(props: {
         top.aboveNoticesPx -
         keepPx;
   const urgentFirst = notices.keys[0] === "refused";
-  const closedFit = fitNotices(notices.heights, noticeRoom(TIMELINE_FLOOR_PX), urgentFirst ? 1 : 0);
+  const closedFit = fitNotices(
+    notices.heights,
+    noticeRoom(TIMELINE_FLOOR_PX),
+    urgentFirst ? 1 : 0,
+    NOTICE_CUE_PX + NOTICE_GAP_PX,
+  );
   const noticesFit = closedFit.shown === notices.heights.length;
+  const noticesOpen = openedFor === notices.keys.join();
   // Opening always shows at least the next whole notice; the timeline may drop to its toolbar
   // and ruler for it. When even that leaves no room beside the ones already shown, opening pages:
   // the notices from the next one on take their place.
   const openRoom = noticeRoom(TIMELINE_SHORTEST_PX);
-  const fromTop = fitNotices(notices.heights, openRoom, 0);
+  // Opened, what is still left out shows as a count on "Show fewer notices", beside the notices.
+  const fromTop = fitNotices(notices.heights, openRoom, 0, 0);
   const page =
     noticesFit || !noticesOpen
       ? { from: 0, ...closedFit }
@@ -966,7 +975,7 @@ export default function EditorPanel(props: {
         ? { from: 0, ...fromTop }
         : {
             from: closedFit.shown,
-            ...fitNotices(notices.heights.slice(closedFit.shown), openRoom, 1),
+            ...fitNotices(notices.heights.slice(closedFit.shown), openRoom, 1, 0),
           };
   const pageOffsetPx = notices.heights
     .slice(0, page.from)
@@ -985,7 +994,7 @@ export default function EditorPanel(props: {
     const target = next
       ? `[data-notice="${notices.keys[closedFit.shown] ?? ""}"]`
       : "[data-testid=editor-notices-cue] button";
-    setNoticesOpen(next);
+    setOpenedFor(next ? notices.keys.join() : null);
     window.requestAnimationFrame(() =>
       document.querySelector<HTMLElement>(target)?.focus({ preventScroll: true }),
     );
@@ -1117,7 +1126,8 @@ export default function EditorPanel(props: {
         {exportResult.row}
         {/*
           The one to read now comes first. Only whole notices show; the rest wait behind
-          "Show N more notices", and once opened, behind "Close one to see N more".
+          "Show N more notices"; once opened, a count on "Show fewer notices" says how many are
+          still left out.
         */}
         <div
           className="flex flex-col [&:not(:has([data-notice]:not(:empty)))]:hidden"
@@ -1166,24 +1176,34 @@ export default function EditorPanel(props: {
             </div>
             {/* Once opened, the way back stays beside the notices, even when they all fit. */}
             {opened ? (
-              <IconAction label="Show fewer notices" onClick={toggleNotices}>
-                <ChevronUpIcon aria-hidden />
-              </IconAction>
+              <div className="relative shrink-0">
+                <IconAction label="Show fewer notices" onClick={toggleNotices}>
+                  <ChevronUpIcon aria-hidden />
+                </IconAction>
+                {noticesLeft > 0 ? (
+                  <span
+                    className="pointer-events-none absolute -end-1 -bottom-1 rounded-full bg-muted px-1 text-3xs leading-4 text-muted-foreground tabular-nums"
+                    data-testid="editor-notices-left"
+                  >
+                    +{noticesLeft}
+                    <span className="sr-only">
+                      {noticesLeft === 1 ? " notice" : " notices"} left out; close one to see{" "}
+                      {noticesLeft === 1 ? "it" : "them"}
+                    </span>
+                  </span>
+                ) : null}
+              </div>
             ) : null}
           </div>
-          {!noticesFit && noticesLeft > 0 ? (
+          {!noticesFit && !opened ? (
             <div
-              className={cn("flex h-7 items-center gap-2 text-xs", page.shown > 0 && "mt-2")}
+              className={cn("flex h-7 items-center", page.shown > 0 && "mt-2")}
               data-testid="editor-notices-cue"
             >
-              {opened ? (
-                <span className="text-muted-foreground">Close one to see {noticesLeft} more.</span>
-              ) : (
-                <Button size="sm" variant="ghost" aria-expanded={false} onClick={toggleNotices}>
-                  <ChevronDownIcon aria-hidden />
-                  {`Show ${noticesLeft} more ${noticesLeft === 1 ? "notice" : "notices"}`}
-                </Button>
-              )}
+              <Button size="sm" variant="ghost" aria-expanded={false} onClick={toggleNotices}>
+                <ChevronDownIcon aria-hidden />
+                {`Show ${noticesLeft} more ${noticesLeft === 1 ? "notice" : "notices"}`}
+              </Button>
             </div>
           ) : null}
         </div>

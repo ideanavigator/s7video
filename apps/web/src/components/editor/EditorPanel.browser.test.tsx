@@ -1802,6 +1802,16 @@ describe("EditorPanel", () => {
                 },
               );
             };
+            /** The notices up but out of view: each must be inert, so Tab never reaches it. */
+            const outOfView = () =>
+              [...document.querySelectorAll<HTMLElement>("[data-notice]")].filter(
+                (notice) => notice.offsetHeight > 0 && !inView().includes(notice),
+              );
+            expect(outOfView().every((notice) => notice.inert)).toBe(true);
+            if (w === 1180 && which === "without one") {
+              // The common state at 1180x760: both long-lived notices wait behind the cue.
+              expect(outOfView()).toHaveLength(2);
+            }
             const cue = document.querySelector<HTMLElement>(
               "[data-testid=editor-notices-cue] button",
             );
@@ -1820,8 +1830,16 @@ describe("EditorPanel", () => {
               await expect.element(fewer).toBeVisible();
               const fewerBox = fewer.element().getBoundingClientRect();
               expect(Math.min(fewerBox.width, fewerBox.height)).toBeGreaterThanOrEqual(28);
-              // Opened: still whole notices, and the timeline keeps its toolbar and ruler.
+              // Opened: still whole notices, the rest inert and counted on "Show fewer notices",
+              // and the timeline keeps its toolbar and ruler.
               await checkColumn(56);
+              expect(outOfView().every((notice) => notice.inert)).toBe(true);
+              const left = document.querySelector("[data-testid=editor-notices-left]");
+              if (outOfView().length > 0) {
+                expect(left?.textContent?.startsWith(`+${outOfView().length}`)).toBe(true);
+              } else {
+                expect(left).toBeNull();
+              }
               await fewer.click();
               await expect.poll(() => inView()).toEqual(before);
               await expect
@@ -1846,6 +1864,65 @@ describe("EditorPanel", () => {
           }
         },
       );
+
+      // S7V-101: opened is tied to the notices it opened; one arriving later doesn't open at once.
+      it("closes the notices again when a new one arrives", async () => {
+        await page.viewport(1180, 760);
+        setState([asset("clip-0")], true);
+        withCanvas({ width: 1080, height: 1920 });
+        const ready = state.edit as Extract<ProjectEditState, { _tag: "ready" }>;
+        state.edit = {
+          _tag: "ready",
+          snapshot: { ...ready.snapshot, cleanup: { versions: 64, bytes: 260_000_000 } },
+        };
+        state.speech = {
+          profiles: {
+            default: { sizeBytes: 3_744_329_895, downloadedBytes: 0, ready: false },
+            light: { sizeBytes: 2_287_244_626, downloadedBytes: 0, ready: false },
+          },
+          recommended: "default",
+          consent: "unasked",
+          loadedProfile: null,
+        } as TranscribeModelsStatus;
+        const layoutUi = () => (
+          <div className="flex h-screen w-screen bg-background text-foreground">
+            <div className="w-[255px] shrink-0 border-r">Sidebar (stand-in)</div>
+            <div className="flex min-w-0 flex-1">
+              <div className="flex min-w-0 flex-1 border-r">Chat column (stand-in)</div>
+              <div className="flex h-full flex-col" style={{ width: "60%" }}>
+                <div className="flex h-[52px] shrink-0 items-center border-b px-3">
+                  Panel tabs (stand-in)
+                </div>
+                <div className="min-h-0 flex-1">{panel()}</div>
+              </div>
+            </div>
+          </div>
+        );
+        try {
+          await using screen = await render(layoutUi(), { router: false });
+          await screen.getByRole("button", { name: /^Show \d more notices?$/u }).click();
+          await expect
+            .element(screen.getByRole("button", { name: "Show fewer notices" }))
+            .toBeVisible();
+          // A refused change arrives: the set changed, so the notices are closed again.
+          const opened = state.edit as Extract<ProjectEditState, { _tag: "ready" }>;
+          state.edit = {
+            _tag: "ready",
+            snapshot: {
+              ...opened.snapshot,
+              revision: opened.snapshot.revision + 1,
+              notice: "That change was not kept; the edit is back to its last saved version.",
+            },
+          };
+          await screen.rerender(layoutUi());
+          await expect
+            .element(screen.getByRole("button", { name: /^Show \d more notices?$/u }))
+            .toBeVisible();
+          expect(screen.getByRole("button", { name: "Show fewer notices" }).query()).toBeNull();
+        } finally {
+          state.speech = null;
+        }
+      });
 
       it.each([
         ["dark", 1440, 900],
