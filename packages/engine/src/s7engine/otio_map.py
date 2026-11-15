@@ -2,10 +2,11 @@
 # SPDX-License-Identifier: MIT
 """``edit.json`` v1 ↔ OpenTimelineIO, for "Export for editors" (S7V-040; ADR-005: export only).
 
-``.otio`` keeps everything: each track and item becomes an OTIO track and clip with exact frame
-ranges, and what OTIO has no place for rides in ``metadata["s7video"]``, so edit.json → OTIO →
-edit.json is an empty diff. The clips' own sound gets a derived audio track, as editors expect,
-which the way back skips.
+``.otio`` keeps everything in the file: each track and item becomes an OTIO track and clip with
+exact frame ranges, and what OTIO has no place for rides in ``metadata["s7video"]``, so edit.json →
+OTIO → edit.json is an empty diff. Editors don't read that metadata, so ``dropped`` lists what it
+holds (S7V-097). The clips' own sound gets a derived audio track, as editors expect, which the
+way back skips.
 
 The timelines for FCPXML, FCP7 XML and EDL (``for_editor``) carry only what those adapters can
 write: no caption or overlay tracks (both crash the XML writers), no muted tracks, and for EDL
@@ -35,6 +36,13 @@ FORMATS = ("otio", "fcpxml", "fcp7xml", "edl")
 EXTENSIONS = {"otio": "otio", "fcpxml": "fcpxml", "fcp7xml": "xml", "edl": "edl"}
 #: The frame size editors open a project at when the file names none.
 _EDITOR_DEFAULT = (1920, 1080)
+_NO_CAPTION_STYLES = {
+    "otio": "Premiere and Resolve don't read caption styles",
+    "fcpxml": "Final Cut Pro doesn't read caption styles",
+    "fcp7xml": "editors don't read caption styles",
+    "edl": "editors don't read caption styles",
+}
+_NO_ASS_IMPORT = {"otio": "Premiere", "fcpxml": "Final Cut Pro"}
 _ITEM_TIMES = ("id", "start", "duration", "in")
 _COLOURS = {
     "red": otio.schema.MarkerColor.RED,
@@ -371,34 +379,46 @@ def missing_media(edit: dict[str, Any], project_dir: str) -> list[str]:
 
 
 def dropped(edit: dict[str, Any], fmt: str, captions: str, caption_chunks: int, project_dir: str) -> list[str]:
-    """What the export will not carry, in plain words, in a stable order."""
+    """What the export will not carry, in plain words, in a stable order.
+
+    For ``.otio`` that is what Premiere and Resolve won't apply: the effects ride only in
+    ``metadata["s7video"]``, which neither reads (S7V-097 check 1).
+    """
     _check_not_empty(edit)
     out: list[str] = []
-    if fmt != "otio":
-        sound = _all_items(edit, "video", "sfx", "music")
-        if any(item.get("gainDb") or item.get("fadeInFrames") or item.get("fadeOutFrames") for item in sound):
-            out.append("volume changes and fades")
-        if any(track["kind"] == "music" and track.get("duck") and _shown(track) for track in edit["tracks"]):
-            out.append("music dipping under speech (ducking)")
-        if any(item.get("zoom") for item in _all_items(edit, "video")):
-            out.append("zooms")
-        if _all_items(edit, "overlay"):
-            out.append("overlays (text and pictures over the video)")
-        videos = [track for track in edit["tracks"] if track["kind"] == "video"]
-        probes = {entry["id"]: entry.get("probe") or {} for entry in edit["media"]}
-        if fmt == "edl":
-            if any(_shown(track) for track in videos[1:]):
-                out.append("video tracks after the first (an EDL has one)")
-            if _all_items(edit, "sfx", "music") or any(probes[item["media"]].get("hasAudio") for item in first_video_items(edit)):
-                out.append("all sound: the clips' own audio, sound effects and music (this EDL is picture only)")
-        width, height = int(edit["canvas"]["width"]), int(edit["canvas"]["height"])
-        if (width, height) != _EDITOR_DEFAULT:
-            out.append(f"the frame shape ({width}×{height}): the editor opens its own default size")
-        if any(
-            (probes[item["media"]].get("width"), probes[item["media"]].get("height")) != (width, height)
-            for item in _all_items(edit, "video")
-        ):
-            out.append("fitting each clip to the frame (fill and crop)")
+    sound = _all_items(edit, "video", "sfx", "music")
+    if any(item.get("gainDb") or item.get("fadeInFrames") or item.get("fadeOutFrames") for item in sound):
+        out.append("volume changes and fades")
+    if any(track["kind"] == "music" and track.get("duck") and _shown(track) for track in edit["tracks"]):
+        out.append("music dipping under speech (ducking)")
+    if any(item.get("zoom") for item in _all_items(edit, "video")):
+        out.append("zooms")
+    if _all_items(edit, "overlay"):
+        out.append(
+            "how overlays sit over the video, and the words of text overlays"
+            if fmt == "otio"
+            else "overlays (text and pictures over the video)"
+        )
+    videos = [track for track in edit["tracks"] if track["kind"] == "video"]
+    probes = {entry["id"]: entry.get("probe") or {} for entry in edit["media"]}
+    if fmt == "edl":
+        if any(_shown(track) for track in videos[1:]):
+            out.append("video tracks after the first (an EDL has one)")
+        if _all_items(edit, "sfx", "music") or any(probes[item["media"]].get("hasAudio") for item in first_video_items(edit)):
+            out.append("all sound: the clips' own audio, sound effects and music (this EDL is picture only)")
+    width, height = int(edit["canvas"]["width"]), int(edit["canvas"]["height"])
+    if (width, height) != _EDITOR_DEFAULT:
+        out.append(f"the frame shape ({width}×{height}): the editor opens its own default size")
+    if any(
+        (probes[item["media"]].get("width"), probes[item["media"]].get("height")) != (width, height)
+        for item in _all_items(edit, "video")
+    ):
+        out.append("fitting each clip to the frame (fill and crop)")
+    if fmt == "otio":
+        # Written turned off (``enabled``), which neither editor is documented to read.
+        if any(track.get("muted") and track["items"] for track in edit["tracks"] if track["kind"] != "caption"):
+            out.append("muted tracks (they're in the file turned off; mute them again in the editor if they play)")
+    else:
         if edit["markers"]:
             out.append("marker colours")
             if fmt != "fcp7xml" and (gaps := _markers_on_gaps(edit)):
@@ -407,12 +427,23 @@ def dropped(edit: dict[str, Any], fmt: str, captions: str, caption_chunks: int, 
             track.get("muted") and track["items"] for track in edit["tracks"] if track["kind"] != "caption" and track is not videos[0]
         ):
             out.append("muted tracks (left out, as in the video export)")
-        if caption_chunks:
-            out.append("captions on the timeline (they are in the captions file beside it)" if captions != "none" else "captions (no captions file chosen)")
-    if caption_chunks and captions == "srt" and fmt != "otio":
-        out.append("the caption look (an SRT file has no style; choose ASS to keep it)")
+    if fmt == "otio" and _all_items(edit, "caption"):
+        # The caption items are generator clips there, which the editors show without their words.
+        out.append(
+            "the words on the timeline's caption clips "
+            + ("(the captions file beside it has them)" if captions != "none" else "(no captions file chosen)")
+        )
+    elif caption_chunks and fmt != "otio" and not (fmt == "fcpxml" and captions == "ass"):
+        out.append("captions on the timeline (they are in the captions file beside it)" if captions != "none" else "captions (no captions file chosen)")
+    if caption_chunks and captions == "ass" and fmt in _NO_ASS_IMPORT:
+        # Final Cut imports CEA-608, iTT and SRT captions only; Premiere doesn't import ASS.
+        out.append(f"captions ({_NO_ASS_IMPORT[fmt]} can't open an ASS file; choose SRT to bring them in)")
+    if caption_chunks or (fmt == "otio" and _all_items(edit, "caption")):
+        # No editor applies a captions file's style, ASS included; only video players do.
+        out.append(f"the caption look ({_NO_CAPTION_STYLES[fmt]}; export the video to keep it)")
     if caption_chunks and captions == "ass":
-        out.append("the caption font, Inter Bold, is named in the ASS file but not included")
+        # The ASS file names Inter Bold without embedding it, and macOS doesn't ship Inter.
+        out.append("the caption font (players without Inter show another font)")
     if captions != "none" and not caption_chunks:
         out.append("no captions file: the edit shows no captions")
     out.extend(f"missing media: {name} (the file is not on disk)" for name in missing_media(edit, project_dir))

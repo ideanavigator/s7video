@@ -126,7 +126,8 @@ export interface VersionMeta {
 
 const MAX_VERSION_CHANGES = 10;
 const MAX_CHANGE_CHARS = 200;
-const MORE_CHANGES = "…and more changes";
+/** Ends a version's change list that ran out of room; the remove-silences skill quotes it. */
+export const MORE_CHANGES = "…and more changes";
 
 const clipChange = (text: string) => {
   const line = text.trim().replace(/\s+/gu, " ") || "Changed the edit";

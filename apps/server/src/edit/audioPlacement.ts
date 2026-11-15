@@ -148,3 +148,13 @@ export function duckOps(document: EditDocument, duck: EditDuck): EditOp[] {
     )
     .map((track) => ({ _tag: "setTrackProps", trackId: track.id, props: { duck } }));
 }
+
+/** A music track with a duck: its ranges stay on their frames when speech moves (S7V-090). */
+export const hasDuckedMusic = (document: EditDocument) =>
+  document.tracks.some(
+    (track) => track.kind === "music" && track.duck !== undefined && track.items.length > 0,
+  );
+
+/** What a cut or insert tells the agent when `hasDuckedMusic` (S7V-097). */
+export const RE_DUCK_REMINDER =
+  "The music dips are still on their old frames: run video_duck_music again.";

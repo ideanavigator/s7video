@@ -29,11 +29,18 @@ OTIO is an export format only (ADR-005); nothing reads these files back into s7v
 
 ## What each format carries
 
-- **`.otio` keeps everything.** Each track and item becomes an OTIO track and clip with exact
-  frame ranges. Whatever OTIO has no place for rides in `metadata["s7video"]`: roles, caption
-  words and looks, gain, fades, `duck`, `zoom`, overlays, `linkId`, the media table and item
-  order. So edit.json → OTIO → edit.json is an empty diff. Captions are clips with a
+- **`.otio` keeps everything in the file.** Each track and item becomes an OTIO track and clip
+  with exact frame ranges. Whatever OTIO has no place for rides in `metadata["s7video"]`: roles,
+  caption words and looks, gain, fades, `duck`, `zoom`, overlays, `linkId`, the media table and
+  item order. So edit.json → OTIO → edit.json is an empty diff. Captions are clips with a
   `GeneratorReference`. The clips' own sound gets a derived audio track that the way back skips.
+- **Lost in Premiere and Resolve, and listed (S7V-097).** Neither editor reads another app's OTIO
+  metadata, and OTIO's own schema has no field for gain, fades, ducking, zoom, the canvas or a
+  caption look. So OTIO lists the same effects as XML, plus overlay placement and caption clips
+  that show no words. The caption look is listed even with an ASS file: Premiere doesn't import
+  ASS and Resolve doesn't apply its styles. Muted tracks are written turned off (`enabled`), which
+  neither editor is documented to read, so they're listed too. Markers and their colours use
+  OTIO's own fields, which Premiere reads, and aren't listed.
 - **FCPXML, FCP7 XML and EDL** get `otio_map.for_editor`'s timeline: what plays, and nothing the
   adapters can't write.
   - **Left out:** caption and overlay tracks (both crash the XML writers), muted tracks, and
@@ -43,10 +50,14 @@ OTIO is an export format only (ADR-005); nothing reads these files back into s7v
   - **Media:** clips reference the original files by `file://` URL, from a project `assets/` path
     or the recorded `reference`, never `.s7cache/` proxies. Names with `'` are changed for the
     FCPXML adapter, which puts them in XPath queries.
-- **Lost in XML and EDL, and listed:** gain and fades, ducking, zooms, overlays, the caption look
-  (it stays in an ASS file), the frame shape when it isn't 1920×1080, and the fill-and-crop to the
-  canvas (PO, 2026-11-12: no canvas in FCPXML). Missing media is listed by label, never by path,
-  and the files are still written.
+- **Lost in XML and EDL, and listed:** gain and fades, ducking, zooms, overlays, the frame shape
+  when it isn't 1920×1080, and the fill-and-crop to the canvas (PO, 2026-11-12: no canvas in
+  FCPXML). Missing media is listed by label, never by path, and the files are still written.
+- **The caption look is listed for every format** whenever there are captions (S7V-097). An ASS
+  file keeps the look only for video players: Final Cut imports CEA-608, iTT and SRT captions,
+  Premiere doesn't import ASS, and Resolve doesn't apply its styles. With ASS, FCPXML and OTIO
+  also list the captions themselves (Final Cut and Premiere can't open the file), and every
+  format lists the font: the file names Inter Bold without embedding it.
 - **Captions** come from the same chunks the MP4 burns in: `export.timeline_plan`, the
   refusal-free half of `plan_segments`, then `export_chunks`. Caption items win, and the clips'
   transcripts are the fallback. SRT has one cue per chunk, with times rounded up to the

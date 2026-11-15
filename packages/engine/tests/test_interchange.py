@@ -209,8 +209,47 @@ def test_roundtrip_edit_otio_edit_is_empty_diff(tmp_path: Path, rate: Fraction) 
     edit = full_edit(tmp_path, rate)
     result = run_export(tmp_path, edit, "otio")
     back = otio_map.from_otio(read_back(result["files"][0], rate))
-    assert canonical(back) == canonical(edit)
-    assert result["dropped"] == [], "OTIO keeps everything"
+    assert canonical(back) == canonical(edit), "the file keeps everything for s7video"
+
+
+def test_otio_not_carried_lists_zoom_volume_duck_and_caption_look(tmp_path: Path) -> None:
+    """S7V-097: Premiere and Resolve don't read ``metadata["s7video"]``, so what lives only there is listed."""
+    edit = full_edit(tmp_path, Fraction(25))
+    assert run_export(tmp_path, edit, "otio")["dropped"] == [
+        "volume changes and fades",
+        "music dipping under speech (ducking)",
+        "zooms",
+        "how overlays sit over the video, and the words of text overlays",
+        "the frame shape (1080×1920): the editor opens its own default size",
+        "fitting each clip to the frame (fill and crop)",
+        "the words on the timeline's caption clips (the captions file beside it has them)",
+        "the caption look (Premiere and Resolve don't read caption styles; export the video to keep it)",
+    ]
+    look = "the caption look (Premiere and Resolve don't read caption styles; export the video to keep it)"
+    checked = {
+        captions: interchange._check({"edit": edit, "projectDir": str(tmp_path), "format": "otio", "captions": captions}, JobContext.detached())["dropped"]
+        for captions in ("none", "ass")
+    }
+    assert all(look in dropped for dropped in checked.values()), "Premiere and Resolve don't apply an ASS file's look either"
+    assert "the words on the timeline's caption clips (no captions file chosen)" in checked["none"]
+
+
+def test_otio_lists_muted_tracks(tmp_path: Path) -> None:
+    """A muted track is written turned off, which neither editor is documented to read."""
+    edit = simple_edit(tmp_path, Fraction(25), [(0, 40, 10)])
+    edit["media"].append(media("bed", "audio", path="assets/bed.wav", durationFrames=900))
+    edit["tracks"].append({"kind": "music", "id": "M1", "muted": True, "items": [{"id": "m0", "media": "bed", "start": 0, "duration": 40, "in": 0}]})
+    placeholders(tmp_path, edit)
+    result = run_export(tmp_path, edit, "otio", captions="none")
+    assert result["dropped"] == ["muted tracks (they're in the file turned off; mute them again in the editor if they play)"]
+    back = read_back(result["files"][0], Fraction(25))
+    assert [track.enabled for track in back.tracks if track.name == "M1"] == [False]
+
+
+def test_otio_not_carried_is_empty_for_a_plain_cut(tmp_path: Path) -> None:
+    edit = simple_edit(tmp_path, Fraction(25), [(0, 40, 10), (40, 30, 90)])
+    edit["markers"] = [{"id": "k1", "start": 3, "duration": 0, "label": "look here", "color": "red"}]
+    assert run_export(tmp_path, edit, "otio", captions="none")["dropped"] == []
 
 
 @pytest.mark.parametrize("rate", [Fraction(25), Fraction(30), Fraction(30000, 1001)], ids=str)
@@ -472,6 +511,9 @@ def test_transcript_captions_without_caption_items(tmp_path: Path) -> None:
     assert burned, "the transcript gives captions"
     check = interchange._check({"edit": edit, "projectDir": str(tmp_path), "format": "fcpxml", "transcripts": transcripts}, JobContext.detached())
     assert check["captions"] == len(burned)
+    # No caption clips on the OTIO timeline: the captions are only in the file beside it.
+    otio_check = interchange._check({"edit": edit, "projectDir": str(tmp_path), "format": "otio", "transcripts": transcripts}, JobContext.detached())
+    assert otio_check["dropped"] == ["the caption look (Premiere and Resolve don't read caption styles; export the video to keep it)"]
     result = run_export(tmp_path, edit, "fcpxml", transcripts=transcripts)
     cues = pysubs2.load(result["files"][1], format_="srt").events
     assert [(math.floor(Fraction(cue.start, 1000) * rate), math.floor(Fraction(cue.end, 1000) * rate)) for cue in cues] == [
@@ -494,7 +536,33 @@ def test_ass_sidecar_keeps_the_look_within_a_frame(tmp_path: Path) -> None:
     )
     assert [(event.start, event.end) for event in subs.events] == [(event.start, event.end) for event in expected.events]
     assert all(abs(event.start - float(Fraction(round(event.start * rate / 1000)) / rate * 1000)) < 1000 / rate for event in subs.events)
-    assert "the caption font, Inter Bold, is named in the ASS file but not included" in result["dropped"]
+    assert "the caption look (editors don't read caption styles; export the video to keep it)" in result["dropped"]
+    assert "the caption font (players without Inter show another font)" in result["dropped"]
+
+
+def test_caption_look_is_listed_for_every_format(tmp_path: Path) -> None:
+    """S7V-097: no editor applies a captions file's style; an ASS file keeps it only for video players."""
+    edit = full_edit(tmp_path, Fraction(25))
+    looks = {
+        "otio": "the caption look (Premiere and Resolve don't read caption styles; export the video to keep it)",
+        "fcpxml": "the caption look (Final Cut Pro doesn't read caption styles; export the video to keep it)",
+        "fcp7xml": "the caption look (editors don't read caption styles; export the video to keep it)",
+        "edl": "the caption look (editors don't read caption styles; export the video to keep it)",
+    }
+    for fmt in otio_map.FORMATS:
+        for captions in ("srt", "ass"):
+            dropped = interchange._check({"edit": edit, "projectDir": str(tmp_path), "format": fmt, "captions": captions}, JobContext.detached())["dropped"]
+            assert looks[fmt] in dropped, (fmt, captions)
+            assert not any("choose ASS" in entry for entry in dropped), (fmt, captions)
+            font = "the caption font (players without Inter show another font)"
+            assert (font in dropped) == (captions == "ass"), (fmt, captions)
+    fcpxml_ass = interchange._check({"edit": edit, "projectDir": str(tmp_path), "format": "fcpxml", "captions": "ass"}, JobContext.detached())["dropped"]
+    assert "captions (Final Cut Pro can't open an ASS file; choose SRT to bring them in)" in fcpxml_ass
+    assert not any(entry.startswith("captions on the timeline") for entry in fcpxml_ass)
+    otio_ass = interchange._check({"edit": edit, "projectDir": str(tmp_path), "format": "otio", "captions": "ass"}, JobContext.detached())["dropped"]
+    assert "captions (Premiere can't open an ASS file; choose SRT to bring them in)" in otio_ass
+    otio_srt = interchange._check({"edit": edit, "projectDir": str(tmp_path), "format": "otio", "captions": "srt"}, JobContext.detached())["dropped"]
+    assert not any("can't open an ASS file" in entry for entry in otio_srt)
 
 
 def test_muted_caption_track_writes_no_captions_file(tmp_path: Path) -> None:

@@ -3,7 +3,14 @@
     "clips": 26,
     "captionChunks": 101,
     "dropped": {
-      "otio": [],
+      "otio": [
+        "volume changes and fades",
+        "music dipping under speech (ducking)",
+        "zooms",
+        "the frame shape (1080×1920): the editor opens its own default size",
+        "fitting each clip to the frame (fill and crop)",
+        "the caption look (Premiere and Resolve don't read caption styles; export the video to keep it)"
+      ],
       "fcpxml": [
         "volume changes and fades",
         "music dipping under speech (ducking)",
@@ -11,7 +18,7 @@
         "the frame shape (1080×1920): the editor opens its own default size",
         "fitting each clip to the frame (fill and crop)",
         "captions on the timeline (they are in the captions file beside it)",
-        "the caption look (an SRT file has no style; choose ASS to keep it)"
+        "the caption look (Final Cut Pro doesn't read caption styles; export the video to keep it)"
       ],
       "fcp7xml": [
         "volume changes and fades",
@@ -20,7 +27,7 @@
         "the frame shape (1080×1920): the editor opens its own default size",
         "fitting each clip to the frame (fill and crop)",
         "captions on the timeline (they are in the captions file beside it)",
-        "the caption look (an SRT file has no style; choose ASS to keep it)"
+        "the caption look (editors don't read caption styles; export the video to keep it)"
       ],
       "edl": [
         "volume changes and fades",
@@ -30,7 +37,7 @@
         "the frame shape (1080×1920): the editor opens its own default size",
         "fitting each clip to the frame (fill and crop)",
         "captions on the timeline (they are in the captions file beside it)",
-        "the caption look (an SRT file has no style; choose ASS to keep it)"
+        "the caption look (editors don't read caption styles; export the video to keep it)"
       ]
     }
   },
@@ -38,7 +45,14 @@
     "clips": 26,
     "captionChunks": 102,
     "dropped": {
-      "otio": [],
+      "otio": [
+        "volume changes and fades",
+        "music dipping under speech (ducking)",
+        "zooms",
+        "the frame shape (1080×1920): the editor opens its own default size",
+        "fitting each clip to the frame (fill and crop)",
+        "the caption look (Premiere and Resolve don't read caption styles; export the video to keep it)"
+      ],
       "fcpxml": [
         "volume changes and fades",
         "music dipping under speech (ducking)",
@@ -46,7 +60,7 @@
         "the frame shape (1080×1920): the editor opens its own default size",
         "fitting each clip to the frame (fill and crop)",
         "captions on the timeline (they are in the captions file beside it)",
-        "the caption look (an SRT file has no style; choose ASS to keep it)"
+        "the caption look (Final Cut Pro doesn't read caption styles; export the video to keep it)"
       ],
       "fcp7xml": [
         "volume changes and fades",
@@ -55,7 +69,7 @@
         "the frame shape (1080×1920): the editor opens its own default size",
         "fitting each clip to the frame (fill and crop)",
         "captions on the timeline (they are in the captions file beside it)",
-        "the caption look (an SRT file has no style; choose ASS to keep it)"
+        "the caption look (editors don't read caption styles; export the video to keep it)"
       ],
       "edl": [
         "volume changes and fades",
@@ -65,7 +79,7 @@
         "the frame shape (1080×1920): the editor opens its own default size",
         "fitting each clip to the frame (fill and crop)",
         "captions on the timeline (they are in the captions file beside it)",
-        "the caption look (an SRT file has no style; choose ASS to keep it)"
+        "the caption look (editors don't read caption styles; export the video to keep it)"
       ]
     }
   }

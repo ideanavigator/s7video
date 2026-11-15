@@ -19,6 +19,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 
+import { hasDuckedMusic } from "./audioPlacement.ts";
 import * as EditDocumentService from "./EditDocumentService.ts";
 import { firstClipCanvasOps, videoTrackFor } from "./videoTrack.ts";
 
@@ -38,6 +39,8 @@ export interface AddClipsInput {
 export interface AddClipsResult {
   readonly snapshot: EditSnapshot;
   readonly itemIds: ReadonlyArray<string>;
+  /** Inserted before the end of an edit with ducked music, whose dips now land early (S7V-097). */
+  readonly reDuck: boolean;
 }
 
 /** Parts that can't be placed, with the plain next step. */
@@ -161,7 +164,11 @@ export function addClipsOps(document: EditDocument, revision: number, input: Add
   });
   // As the first silence cut does, the first clip on an empty timeline gives the edit its shape.
   const reshape = firstClipCanvasOps(document, placed[0]!);
-  return { ops: [...track.addTrack, ...reshape, ...shifts, ...inserts], itemIds };
+  return {
+    ops: [...track.addTrack, ...reshape, ...shifts, ...inserts],
+    itemIds,
+    reDuck: from !== end && hasDuckedMusic(document),
+  };
 }
 
 const make = Effect.gen(function* () {
@@ -180,7 +187,7 @@ const make = Effect.gen(function* () {
       reply: options.reply,
       summary: `Added ${count} clip part${count === 1 ? "" : "s"} to the timeline`,
     });
-    return { snapshot, itemIds: planned.itemIds };
+    return { snapshot, itemIds: planned.itemIds, reDuck: planned.reDuck };
   });
 
   return ClipPlacementService.of({ addClips });
