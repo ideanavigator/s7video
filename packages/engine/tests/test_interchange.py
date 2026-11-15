@@ -537,7 +537,7 @@ def test_ass_sidecar_keeps_the_look_within_a_frame(tmp_path: Path) -> None:
     assert [(event.start, event.end) for event in subs.events] == [(event.start, event.end) for event in expected.events]
     assert all(abs(event.start - float(Fraction(round(event.start * rate / 1000)) / rate * 1000)) < 1000 / rate for event in subs.events)
     assert "the caption look (editors don't read caption styles; export the video to keep it)" in result["dropped"]
-    assert not any("caption font" in entry for entry in result["dropped"]), "the look row covers the font"
+    assert "the caption font (players without Inter show another font)" in result["dropped"]
 
 
 def test_caption_look_is_listed_for_every_format(tmp_path: Path) -> None:
@@ -553,10 +553,16 @@ def test_caption_look_is_listed_for_every_format(tmp_path: Path) -> None:
         for captions in ("srt", "ass"):
             dropped = interchange._check({"edit": edit, "projectDir": str(tmp_path), "format": fmt, "captions": captions}, JobContext.detached())["dropped"]
             assert looks[fmt] in dropped, (fmt, captions)
-            assert not any("choose ASS" in entry or "caption font" in entry for entry in dropped), (fmt, captions)
+            assert not any("choose ASS" in entry for entry in dropped), (fmt, captions)
+            font = "the caption font (players without Inter show another font)"
+            assert (font in dropped) == (captions == "ass"), (fmt, captions)
     fcpxml_ass = interchange._check({"edit": edit, "projectDir": str(tmp_path), "format": "fcpxml", "captions": "ass"}, JobContext.detached())["dropped"]
     assert "captions (Final Cut Pro can't open an ASS file; choose SRT to bring them in)" in fcpxml_ass
     assert not any(entry.startswith("captions on the timeline") for entry in fcpxml_ass)
+    otio_ass = interchange._check({"edit": edit, "projectDir": str(tmp_path), "format": "otio", "captions": "ass"}, JobContext.detached())["dropped"]
+    assert "captions (Premiere can't open an ASS file; choose SRT to bring them in)" in otio_ass
+    otio_srt = interchange._check({"edit": edit, "projectDir": str(tmp_path), "format": "otio", "captions": "srt"}, JobContext.detached())["dropped"]
+    assert not any("can't open an ASS file" in entry for entry in otio_srt)
 
 
 def test_muted_caption_track_writes_no_captions_file(tmp_path: Path) -> None:

@@ -42,6 +42,7 @@ _NO_CAPTION_STYLES = {
     "fcp7xml": "editors don't read caption styles",
     "edl": "editors don't read caption styles",
 }
+_NO_ASS_IMPORT = {"otio": "Premiere", "fcpxml": "Final Cut Pro"}
 _ITEM_TIMES = ("id", "start", "duration", "in")
 _COLOURS = {
     "red": otio.schema.MarkerColor.RED,
@@ -432,14 +433,17 @@ def dropped(edit: dict[str, Any], fmt: str, captions: str, caption_chunks: int, 
             "the words on the timeline's caption clips "
             + ("(the captions file beside it has them)" if captions != "none" else "(no captions file chosen)")
         )
-    elif caption_chunks and fmt == "fcpxml" and captions == "ass":
-        # Final Cut imports CEA-608, iTT and SRT captions only.
-        out.append("captions (Final Cut Pro can't open an ASS file; choose SRT to bring them in)")
-    elif caption_chunks and fmt != "otio":
+    elif caption_chunks and fmt != "otio" and not (fmt == "fcpxml" and captions == "ass"):
         out.append("captions on the timeline (they are in the captions file beside it)" if captions != "none" else "captions (no captions file chosen)")
+    if caption_chunks and captions == "ass" and fmt in _NO_ASS_IMPORT:
+        # Final Cut imports CEA-608, iTT and SRT captions only; Premiere doesn't import ASS.
+        out.append(f"captions ({_NO_ASS_IMPORT[fmt]} can't open an ASS file; choose SRT to bring them in)")
     if caption_chunks or (fmt == "otio" and _all_items(edit, "caption")):
         # No editor applies a captions file's style, ASS included; only video players do.
         out.append(f"the caption look ({_NO_CAPTION_STYLES[fmt]}; export the video to keep it)")
+    if caption_chunks and captions == "ass":
+        # The ASS file names Inter Bold without embedding it, and macOS doesn't ship Inter.
+        out.append("the caption font (players without Inter show another font)")
     if captions != "none" and not caption_chunks:
         out.append("no captions file: the edit shows no captions")
     out.extend(f"missing media: {name} (the file is not on disk)" for name in missing_media(edit, project_dir))

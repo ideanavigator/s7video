@@ -52,12 +52,12 @@ OTIO is an export format only (ADR-005); nothing reads these files back into s7v
     FCPXML adapter, which puts them in XPath queries.
 - **Lost in XML and EDL, and listed:** gain and fades, ducking, zooms, overlays, the frame shape
   when it isn't 1920×1080, and the fill-and-crop to the canvas (PO, 2026-11-12: no canvas in
-  FCPXML).
+  FCPXML). Missing media is listed by label, never by path, and the files are still written.
 - **The caption look is listed for every format** whenever there are captions (S7V-097). An ASS
   file keeps the look only for video players: Final Cut imports CEA-608, iTT and SRT captions,
-  Premiere doesn't import ASS, and Resolve doesn't apply its styles. FCPXML with ASS also lists
-  the captions themselves, since Final Cut can't open the file. Missing media is listed by label, never by path,
-  and the files are still written.
+  Premiere doesn't import ASS, and Resolve doesn't apply its styles. With ASS, FCPXML and OTIO
+  also list the captions themselves (Final Cut and Premiere can't open the file), and every
+  format lists the font: the file names Inter Bold without embedding it.
 - **Captions** come from the same chunks the MP4 burns in: `export.timeline_plan`, the
   refusal-free half of `plan_segments`, then `export_chunks`. Caption items win, and the clips'
   transcripts are the fallback. SRT has one cue per chunk, with times rounded up to the
