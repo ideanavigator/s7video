@@ -32,7 +32,10 @@ The user asked you to cut the pauses from their clip. Do it with the video tools
    version (`version: "vN"`) to read its `Changes:` list. An "Undid the last change" cancels the
    change just before it and a "Redid a change" brings it back, so an undone change is not one to
    put back. If a list ends in "…and more changes", or a later version is "Restored from vN",
-   you can't see every change since the cut: tell the user that and ask what to keep.
+   you can't see every change since the cut. Name the ones you can see, say there were more, and
+   offer a safe choice, for example: "I can see the zoom and the music since the cut, and there
+   were more changes I can't list. Should I cut more loosely and redo just those two, or leave
+   the cut as it is?"
    - If the cut is the last change, or only the `video_duck_music` you ran for it follows it,
      call `video_undo` once for each of those (once, or twice with the re-duck), then
      `video_remove_silences` with the new setting. Do not ask.

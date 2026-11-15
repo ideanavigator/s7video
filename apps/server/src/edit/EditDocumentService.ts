@@ -175,6 +175,11 @@ export class EditDocumentService extends Context.Service<
 >()("t3/edit/EditDocumentService") {}
 
 /** What clients see of a version: its record without the object ids. */
+/** The version lines undo, redo and restore write; the remove-silences skill quotes them. */
+export const UNDO_CHANGE = "Undid the last change";
+export const REDO_CHANGE = "Redid a change";
+export const restoredChange = (n: number) => `Restored from v${n}`;
+
 const versionOf = (record: EditVersionRecord, current: boolean): EditVersion => {
   const { files: _files, ...rest } = record;
   return { ...rest, current };
@@ -663,7 +668,7 @@ const make = Effect.gen(function* () {
                 ? {
                     author: reply === undefined ? "you" : "assistant",
                     reply,
-                    change: direction === "undo" ? "Undid the last change" : "Redid a change",
+                    change: direction === "undo" ? UNDO_CHANGE : REDO_CHANGE,
                   }
                 : undefined,
           )
@@ -820,7 +825,7 @@ const make = Effect.gen(function* () {
         const snapshot = yield* commit(projectId, root, current, editText, document, {
           author: options.reply === undefined ? "you" : "assistant",
           reply: options.reply,
-          change: `Restored from v${n}`,
+          change: restoredChange(n),
           restoredFrom: n,
         });
         return { ...found, snapshot, changed: true };

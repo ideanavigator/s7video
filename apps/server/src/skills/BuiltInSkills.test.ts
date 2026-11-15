@@ -6,6 +6,8 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 
+import { REDO_CHANGE, restoredChange, UNDO_CHANGE } from "../edit/EditDocumentService.ts";
+import { MORE_CHANGES } from "../edit/EditHistoryService.ts";
 import { EDIT_FILE, PROJECT_FILE, projectFileContents } from "../edit/EditProjectLayout.ts";
 import { planClaudeSkillDispatch } from "../provider/Drivers/ClaudeSkillDispatch.ts";
 import { discoverClaudeSkills } from "../provider/Drivers/ClaudeSkills.ts";
@@ -180,13 +182,19 @@ it.layer(NodeServices.layer)("built-in skills", (it) => {
         "If the cut is the last change, or only the `video_duck_music` you ran for it follows it, call `video_undo` once for each of those (once, or twice with the re-duck)",
       );
       assert.include(flat, "Do not ask.");
+      // The skill quotes the server's own version lines, so a wording change there fails here.
+      const restored = `${restoredChange(1).slice(0, -1)}N`;
+      for (const line of [UNDO_CHANGE, REDO_CHANGE, MORE_CHANGES, restored]) {
+        assert.include(flat, `"${line}"`);
+      }
       assert.include(
         flat,
-        'An "Undid the last change" cancels the change just before it and a "Redid a change" brings it back, so an undone change is not one to put back.',
+        `An "${UNDO_CHANGE}" cancels the change just before it and a "${REDO_CHANGE}" brings it back, so an undone change is not one to put back.`,
       );
+      assert.include(flat, "you can't see every change since the cut.");
       assert.include(
         flat,
-        'If a list ends in "…and more changes", or a later version is "Restored from vN", you can\'t see every change since the cut: tell the user that and ask what to keep.',
+        "Should I cut more loosely and redo just those two, or leave the cut as it is?",
       );
       assert.include(
         flat,
