@@ -190,6 +190,7 @@ describe("CaptionTrackService (S7V-075)", () => {
           captions: 3,
           changed: true,
           captioned: [],
+          uncaptioned: [],
           look: "the Plain look",
         });
         const after = yield* project.edits.read(project.projectId);
@@ -232,6 +233,7 @@ describe("CaptionTrackService (S7V-075)", () => {
           captions: 3,
           changed: false,
           captioned: [],
+          uncaptioned: [],
           look: "the Plain look",
         });
         const after = yield* project.edits.read(project.projectId);
@@ -1090,6 +1092,149 @@ describe("CaptionTrackService with a burned-in clip placed later (S7V-099)", () 
         assert.isTrue(plain.changed);
         const [newest] = yield* project.edits.versions(project.projectId);
         assert.deepStrictEqual(newest!.changes, ["Changed the caption look to Plain"]);
+      }),
+    ),
+  );
+});
+
+// S7V-109: in a mixed edit, "only the other clips" captions the plain clips and leaves the one
+// with its own captions as it is.
+describe("CaptionTrackService with confirm: false (S7V-109)", () => {
+  /** A plain clip, then one whose picture shows captions, both placed with speech. */
+  const mixed = (project: Project) =>
+    Effect.gen(function* () {
+      writeClip(project.root, "cam");
+      writeClip(project.root, "burnt", true, true);
+      const initial = yield* project.edits.read(project.projectId);
+      return yield* project.edits.apply(
+        project.projectId,
+        [
+          { _tag: "putMedia", media: mediaEntry("cam") },
+          { _tag: "putMedia", media: mediaEntry("burnt") },
+          {
+            _tag: "addTrack",
+            track: {
+              kind: "video",
+              id: "V1",
+              items: [
+                { id: "v1", media: "cam", start: 0, duration: 240, in: 0 },
+                { id: "v2", media: "burnt", start: 240, duration: 240, in: 0 },
+              ],
+            },
+          },
+        ],
+        { origin: "agent", baseRevision: initial.revision },
+      );
+    });
+  const captionedClips = (document: EditDocument) =>
+    new Set(captionTracks(document)[0]!.items.map((item) => captionMediaOfItem(item)));
+
+  it.effect("the question offers the other clips alone, and says to pass confirm: false", () =>
+    withProject((project) =>
+      Effect.gen(function* () {
+        yield* mixed(project);
+        const added = yield* project.captions.addCaptions(project.projectId, {}).pipe(Effect.flip);
+        assert.include(
+          added.message,
+          "burnt.mp4 already has captions near the bottom. Add ours at the top, add them anyway, add them only to the other clips, or leave it as it is?",
+        );
+        assert.include(
+          added.message,
+          "If they say only the other clips, add captions again with confirm: false.",
+        );
+        const looks = yield* project.captions.looks(project.projectId, {}).pipe(Effect.flip);
+        assert.include(
+          looks.message,
+          "If they say only the other clips, ask for the looks again with confirm: false, and pass confirm: false with the look they pick.",
+        );
+      }),
+    ),
+  );
+
+  it.effect("confirm false captions only the plain clips, in one change; cuts keep it so", () =>
+    withProject((project) =>
+      Effect.gen(function* () {
+        const placed = yield* mixed(project);
+        const steps = historyLog(project.root)!.entries.length;
+        const result = yield* project.captions.addCaptions(project.projectId, {
+          confirm: false,
+        });
+        assert.deepInclude(result, {
+          revision: placed.revision + 1,
+          changed: true,
+          captioned: [],
+          uncaptioned: ["burnt.mp4"],
+        });
+        assert.strictEqual(historyLog(project.root)!.entries.length, steps + 1);
+        const after = yield* project.edits.read(project.projectId);
+        assert.deepStrictEqual(captionedClips(after.document), new Set(["cam"]));
+        // Asking again without an answer still asks: the clip is not captioned yet.
+        const again = yield* project.captions.addCaptions(project.projectId, {}).pipe(Effect.flip);
+        assert.strictEqual(again._tag, "CaptionsError");
+        // A cut rebuilds the captions and still leaves it out; "caption that clip too" adds it.
+        const cut = yield* project.edits.apply(
+          project.projectId,
+          [{ _tag: "trimItem", itemId: "v1", edge: "end", frame: 200 }],
+          { origin: "timeline", baseRevision: after.revision },
+        );
+        assert.deepStrictEqual(captionedClips(cut.document), new Set(["cam"]));
+        yield* project.captions.addCaptions(project.projectId, { confirm: true });
+        const both = yield* project.edits.read(project.projectId);
+        assert.deepStrictEqual(captionedClips(both.document), new Set(["cam", "burnt"]));
+      }),
+    ),
+  );
+
+  it.effect(
+    "a first look with confirm false captions only the plain clips and names the other",
+    () =>
+      withProject((project) =>
+        Effect.gen(function* () {
+          yield* mixed(project);
+          const looks = yield* project.captions.looks(project.projectId, { confirm: false });
+          assert.deepStrictEqual(looks.looks, PREVIEWS);
+          const styled = yield* project.captions.setStyle(
+            project.projectId,
+            { preset: "s7-box" },
+            { origin: "agent", confirm: false },
+          );
+          assert.deepInclude(styled, { added: true, changed: true, uncaptioned: ["burnt.mp4"] });
+          const after = yield* project.edits.read(project.projectId);
+          assert.deepStrictEqual(captionedClips(after.document), new Set(["cam"]));
+          assert.strictEqual(captionTracks(after.document)[0]!.style, "s7-box");
+        }),
+      ),
+  );
+
+  it.effect("with no other clip to caption, confirm false changes nothing and says so", () =>
+    withProject((project) =>
+      Effect.gen(function* () {
+        writeClip(project.root, "cam", true, true);
+        yield* setUp(project);
+        const text = readEdit(project.root);
+        // Only one clip: the question doesn't offer the other clips.
+        const asked = yield* project.captions.addCaptions(project.projectId, {}).pipe(Effect.flip);
+        assert.notInclude(asked.message, "only to the other clips");
+        assert.notInclude(asked.message, "confirm: false");
+        const refused = yield* project.captions
+          .addCaptions(project.projectId, { confirm: false })
+          .pipe(Effect.flip);
+        assert.strictEqual(
+          refused.message,
+          "Nothing changed: cam.mp4 keeps its own captions, and no other clip has speech to caption.",
+        );
+        assert.strictEqual(readEdit(project.root), text);
+      }),
+    ),
+  );
+
+  it.effect("on a plain edit, confirm false adds captions as before", () =>
+    withProject((project) =>
+      Effect.gen(function* () {
+        writeClip(project.root, "cam");
+        yield* setUp(project);
+        const result = yield* project.captions.addCaptions(project.projectId, { confirm: false });
+        assert.deepInclude(result, { changed: true, uncaptioned: [] });
       }),
     ),
   );

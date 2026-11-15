@@ -394,6 +394,7 @@ const layerFor = (fixture: Fixture, cancelSignal: Deferred.Deferred<string>) => 
               captions: 12,
               changed: true,
               captioned: options.confirm === true ? ["burnt.mp4"] : [],
+              uncaptioned: options.confirm === false ? ["burnt.mp4"] : [],
               look: "the Plain look (orange, at the top)",
             });
       },
@@ -1324,8 +1325,8 @@ describe("video toolkit", () => {
         );
         expect(String(unknown)).toMatch(/preset/u);
         expect(fixture.looks).toEqual([
-          ["style", projectA, { preset: "s7-box", origin: "agent", confirm: false }],
-          ["style", projectA, { preset: "s7-neutral", origin: "agent", confirm: false }],
+          ["style", projectA, { preset: "s7-box", origin: "agent", confirm: undefined }],
+          ["style", projectA, { preset: "s7-neutral", origin: "agent", confirm: undefined }],
           ["style", projectB, { preset: "s7-karaoke", origin: "agent", confirm: true }],
         ]);
       }),
@@ -1369,7 +1370,7 @@ describe("video toolkit", () => {
               preset: "s7-box",
               custom: { textColor: "#FF8800", position: "top", size: 1.4 },
               origin: "agent",
-              confirm: false,
+              confirm: undefined,
             },
           ],
         ]);
@@ -1415,11 +1416,19 @@ describe("video toolkit", () => {
           message:
             "Added captions to burnt.mp4 in the Plain look (orange, at the top). They follow later cuts; say undo to remove them.",
         });
+        // S7V-109: "only the other clips" is an explicit confirm: false, passed on as it is.
+        const others = yield* call(threadA, "video_add_captions", { confirm: false });
+        expect(others.structuredContent).toEqual({
+          revision: 9,
+          message:
+            'Added captions to the edit. They follow later cuts; say undo to remove them. burnt.mp4 keeps its own captions; say "caption that clip too" to add ours.',
+        });
         expect(fixture.looks).toEqual([
-          ["looks", projectA, { confirm: false }],
-          ["looks", projectB, { confirm: false }],
+          ["looks", projectA, { confirm: undefined }],
+          ["looks", projectB, { confirm: undefined }],
           ["looks", projectB, { confirm: true }],
           ["add", projectA, { confirm: true }],
+          ["add", projectA, { confirm: false }],
         ]);
       }),
     ),

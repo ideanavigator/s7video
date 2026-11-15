@@ -122,6 +122,7 @@ const looksMessage = (looks: ReadonlyArray<CaptionStillsService.CaptionLookPrevi
 /**
  * S7V-099: clips placed after the captions whose picture shows its own keep it; the reply names
  * them, and "caption that clip too" is `video_add_captions` with `confirm: true`, in the same look.
+ * S7V-109: so does `video_assemble` placing one, and a `confirm: false` that left one out.
  */
 const keepsOwnCaptions = (clips: ReadonlyArray<string>) =>
   clips.length === 0
@@ -717,12 +718,17 @@ const handlers = {
           { origin: "agent", reply: project.reply },
         )
         .pipe(
-          Effect.map(({ snapshot, itemIds, reDuck }) => ({
-            revision: snapshot.revision,
-            itemIds,
-            ...(reDuck ? { message: RE_DUCK_REMINDER } : {}),
-            ...cleanupOf(snapshot),
-          })),
+          Effect.map(({ snapshot, itemIds, reDuck, uncaptioned }) => {
+            const message = [reDuck ? RE_DUCK_REMINDER : "", keepsOwnCaptions(uncaptioned)]
+              .filter(Boolean)
+              .join(" ");
+            return {
+              revision: snapshot.revision,
+              itemIds,
+              ...(message === "" ? {} : { message }),
+              ...cleanupOf(snapshot),
+            };
+          }),
           Effect.mapError(
             (error) =>
               new OrchestratorMcpFailure({
@@ -745,17 +751,19 @@ const handlers = {
       const project = yield* callerProject();
       const captions = yield* CaptionTrackService.CaptionTrackService;
       const result = yield* captions
-        .addCaptions(project.projectId, { reply: project.reply, confirm: confirm === true })
+        .addCaptions(project.projectId, { reply: project.reply, confirm })
         .pipe(Effect.mapError(editRefusal));
       const hint = yield* cleanupAfterChange(project, result.changed);
+      const message =
+        result.captioned.length > 0
+          ? `Added captions to ${CaptionTrackService.listed(result.captioned)} in ${result.look}. They follow later cuts; say undo to remove them.`
+          : result.changed
+            ? "Added captions to the edit. They follow later cuts; say undo to remove them."
+            : "The edit already has these captions.";
       return {
         revision: result.revision,
-        message:
-          result.captioned.length > 0
-            ? `Added captions to ${CaptionTrackService.listed(result.captioned)} in ${result.look}. They follow later cuts; say undo to remove them.`
-            : result.changed
-              ? "Added captions to the edit. They follow later cuts; say undo to remove them."
-              : "The edit already has these captions.",
+        // S7V-109: with the user's no, the other clips are captioned and that one keeps its own.
+        message: [message, keepsOwnCaptions(result.uncaptioned)].filter(Boolean).join(" "),
         ...hint,
       };
     }),
@@ -891,7 +899,7 @@ const handlers = {
       const captions = yield* CaptionTrackService.CaptionTrackService;
       if (preset === undefined && custom === undefined) {
         const listed = yield* captions
-          .looks(project.projectId, { confirm: confirm === true })
+          .looks(project.projectId, { confirm })
           .pipe(Effect.mapError(editRefusal));
         return {
           revision: listed.revision,
@@ -913,7 +921,7 @@ const handlers = {
         .setStyle(
           project.projectId,
           { preset, ...(parsed === undefined ? {} : { custom: parsed.custom }) },
-          { reply: project.reply, origin: "agent", confirm: confirm === true },
+          { reply: project.reply, origin: "agent", confirm },
         )
         .pipe(Effect.mapError(editRefusal));
       const { look } = result;

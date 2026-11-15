@@ -755,6 +755,137 @@ describe("video_undo and video_redo", () => {
     ),
   );
 
+  // S7V-109: placing a clip that shows its own captions into a captioned edit says it kept them,
+  // and "only the other clips" is confirm: false.
+  const transcribedClip = (root: string, id: string, burnedIn: boolean) => {
+    NodeFS.mkdirSync(NodePath.join(root, "assets"), { recursive: true });
+    const cache = NodePath.join(root, ".s7cache", "transcripts");
+    NodeFS.mkdirSync(cache, { recursive: true });
+    const clip = Buffer.from(`a talking-head clip: ${id}`);
+    NodeFS.writeFileSync(NodePath.join(root, "assets", `${id}.mp4`), clip);
+    const sha256 = NodeCrypto.createHash("sha256").update(clip).digest("hex");
+    NodeFS.writeFileSync(
+      NodePath.join(cache, `${sha256}.json`),
+      JSON.stringify({
+        transcriptVersion: 1,
+        mediaFingerprint: { sha256, size: clip.length },
+        model: "test",
+        revision: "test",
+        fps: { num: 30, den: 1 },
+        durationFrames: 900,
+        words: [
+          { text: "Hello", startFrame: 10, endFrame: 20, confidence: 1, speaker: "S1" },
+          { text: "there.", startFrame: 22, endFrame: 30, confidence: 1, speaker: "S1" },
+        ],
+        createdAt: "2026-11-09T00:00:00.000Z",
+        ...(burnedIn
+          ? { burnedInCaptions: { found: true, confidence: 1, region: { y0: 0.8, y1: 0.9 } } }
+          : {}),
+      }),
+    );
+    return { ...media, id, path: `assets/${id}.mp4`, fingerprint: { sha256, size: clip.length } };
+  };
+  const captionMediaIn = (root: string) =>
+    new Set(
+      JSON.parse(readFile(root, "edit.json"))
+        .tracks.filter((entry: { kind: string }) => entry.kind === "caption")
+        .flatMap((entry: { items: ReadonlyArray<{ metadata: { s7: { media: string } } }> }) =>
+          entry.items.map((item) => item.metadata.s7.media),
+        ),
+    );
+
+  it.effect("assemble reply names a burned-in clip left out of the captions", () =>
+    withProject(({ root, thread, edits, call }) =>
+      Effect.gen(function* () {
+        const initial = yield* edits.read(thread.projectId);
+        yield* edits.apply(
+          thread.projectId,
+          [
+            { _tag: "putMedia", media: transcribedClip(root, "cam", false) },
+            { _tag: "putMedia", media: transcribedClip(root, "burnt", true) },
+            { _tag: "putMedia", media: transcribedClip(root, "phone", false) },
+            {
+              _tag: "addTrack",
+              track: {
+                kind: "video",
+                id: "V1",
+                items: [{ id: "v1", media: "cam", start: 0, duration: 60, in: 0 }],
+              },
+            },
+          ],
+          { origin: "agent", baseRevision: initial.revision },
+        );
+        const assemble = (mediaId: string) =>
+          call("video_assemble", { items: [{ mediaId, in: 0, duration: 60 }] }).pipe(
+            Effect.map((result) => {
+              expect(result.isError, textOf(result).join("")).toBe(false);
+              return result.structuredContent as { message?: string };
+            }),
+          );
+        // No captions yet: nothing to say.
+        expect((yield* assemble("burnt")).message).toBeUndefined();
+        yield* call("video_undo");
+        expect((yield* call("video_add_captions")).isError).toBe(false);
+        expect((yield* assemble("burnt")).message).toBe(
+          'burnt.mp4 keeps its own captions; say "caption that clip too" to add ours.',
+        );
+        expect(captionMediaIn(root)).toEqual(new Set(["cam"]));
+        // A plain clip is captioned in the same change, and the reply says nothing of it.
+        expect((yield* assemble("phone")).message).toBeUndefined();
+        expect(captionMediaIn(root)).toEqual(new Set(["cam", "phone"]));
+      }),
+    ),
+  );
+
+  it.effect("only the other clips: confirm false captions the plain clip and names the other", () =>
+    withProject(({ root, thread, edits, call }) =>
+      Effect.gen(function* () {
+        const initial = yield* edits.read(thread.projectId);
+        yield* edits.apply(
+          thread.projectId,
+          [
+            { _tag: "putMedia", media: transcribedClip(root, "cam", false) },
+            { _tag: "putMedia", media: transcribedClip(root, "burnt", true) },
+            {
+              _tag: "addTrack",
+              track: {
+                kind: "video",
+                id: "V1",
+                items: [
+                  { id: "v1", media: "cam", start: 0, duration: 60, in: 0 },
+                  { id: "v2", media: "burnt", start: 60, duration: 60, in: 0 },
+                ],
+              },
+            },
+          ],
+          { origin: "agent", baseRevision: initial.revision },
+        );
+        const before = readFile(root, "edit.json");
+        const asked = yield* call("video_add_captions");
+        expect(asked.isError).toBe(true);
+        expect(textOf(asked).join("")).toContain("add them only to the other clips");
+        expect(readFile(root, "edit.json")).toBe(before);
+
+        const added = yield* call("video_add_captions", { confirm: false });
+        expect(added.isError).toBe(false);
+        expect((added.structuredContent as { message: string }).message).toBe(
+          'Added captions to the edit. They follow later cuts; say undo to remove them. burnt.mp4 keeps its own captions; say "caption that clip too" to add ours.',
+        );
+        expect(captionMediaIn(root)).toEqual(new Set(["cam"]));
+        expect((yield* call("video_undo")).isError).toBe(false);
+        expect(readFile(root, "edit.json")).toBe(before);
+
+        // The first look, the same way.
+        const styled = yield* call("video_caption_style", { preset: "s7-box", confirm: false });
+        expect(styled.isError).toBe(false);
+        expect((styled.structuredContent as { message: string }).message).toBe(
+          'Added captions in the Boxed look. Say undo to take them out. burnt.mp4 keeps its own captions; say "caption that clip too" to add ours.',
+        );
+        expect(captionMediaIn(root)).toEqual(new Set(["cam"]));
+      }),
+    ),
+  );
+
   // S7V-037: a zoom and a caption look are each one assistant version and one undo step.
   it.effect("video_zoom and video_caption_style are each one undoable step", () =>
     withProject(({ root, thread, edits, call }) =>

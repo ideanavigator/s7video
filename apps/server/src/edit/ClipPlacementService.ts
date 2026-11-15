@@ -14,12 +14,18 @@ import {
   type EditSnapshot,
   type ProjectId,
 } from "@t3tools/contracts";
+import { transcriptCaptionTrackOf } from "@t3tools/shared/captionWords";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
+import * as ProjectService from "../project/ProjectService.ts";
 import { hasDuckedMusic } from "./audioPlacement.ts";
+import { clipName, loadCaptionTranscripts, unconfirmed } from "./captionTrack.ts";
 import * as EditDocumentService from "./EditDocumentService.ts";
 import { firstClipCanvasOps, videoTrackFor } from "./videoTrack.ts";
 
@@ -41,6 +47,11 @@ export interface AddClipsResult {
   readonly itemIds: ReadonlyArray<string>;
   /** Inserted before the end of an edit with ducked music, whose dips now land early (S7V-097). */
   readonly reDuck: boolean;
+  /**
+   * Placed clips that show their own captions and were left out of the edit's captions, by the
+   * names the user knows (S7V-109); empty when the edit has no transcript captions.
+   */
+  readonly uncaptioned: ReadonlyArray<string>;
 }
 
 /** Parts that can't be placed, with the plain next step. */
@@ -173,6 +184,27 @@ export function addClipsOps(document: EditDocument, revision: number, input: Add
 
 const make = Effect.gen(function* () {
   const edits = yield* EditDocumentService.EditDocumentService;
+  const projects = yield* ProjectService.ProjectService;
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+
+  /** The placed clips the rebuilt captions left out because their picture shows captions. */
+  const uncaptionedOf = Effect.fn("ClipPlacementService.uncaptionedOf")(
+    function* (projectId: ProjectId, document: EditDocument, placed: ReadonlySet<string>) {
+      if (transcriptCaptionTrackOf(document) === undefined) return [];
+      const project = yield* projects.getById(projectId).pipe(Effect.orElseSucceed(Option.none));
+      if (Option.isNone(project)) return [];
+      const loaded = yield* loadCaptionTranscripts(
+        path.resolve(project.value.workspaceRoot),
+        document,
+      );
+      return [...unconfirmed(loaded, document).keys()]
+        .filter((media) => placed.has(media))
+        .map((media) => clipName(document, media));
+    },
+    Effect.provideService(FileSystem.FileSystem, fileSystem),
+    Effect.provideService(Path.Path, path),
+  );
 
   const addClips: ClipPlacementService["Service"]["addClips"] = Effect.fn(
     "ClipPlacementService.addClips",
@@ -187,7 +219,16 @@ const make = Effect.gen(function* () {
       reply: options.reply,
       summary: `Added ${count} clip part${count === 1 ? "" : "s"} to the timeline`,
     });
-    return { snapshot, itemIds: planned.itemIds, reDuck: planned.reDuck };
+    const added = new Set(planned.itemIds);
+    const placed = new Set(
+      snapshot.document.tracks.flatMap((track) =>
+        track.kind === "video"
+          ? track.items.filter((item) => added.has(item.id)).map((item) => item.media)
+          : [],
+      ),
+    );
+    const uncaptioned = yield* uncaptionedOf(projectId, snapshot.document, placed);
+    return { snapshot, itemIds: planned.itemIds, reDuck: planned.reDuck, uncaptioned };
   });
 
   return ClipPlacementService.of({ addClips });

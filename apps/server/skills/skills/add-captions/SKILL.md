@@ -26,12 +26,14 @@ show the looks first unless they already said which one, or described one.
    bottom. Add ours at the top, add them anyway, or leave it as it is?") and stop. Then do what
    the tool said for their answer: ours at the other place is `video_caption_style` with
    `confirm: true` and that `position` in `custom`; anyway is the same call with `confirm: true`;
-   leaving it changes nothing. If a reply says a clip keeps its own captions, pass that sentence
-   on; when the user says "caption that clip too", call `video_add_captions` with
-   `confirm: true`: it captions that clip in the look the captions already have.
+   only the other clips (offered when other clips have speech) is the same call with
+   `confirm: false`, which captions the other clips and leaves that one as it is; leaving it
+   changes nothing. If a reply says a clip keeps its own captions, pass that sentence on; when
+   the user says "caption that clip too", call `video_add_captions` with `confirm: true`: it
+   captions that clip in the look the captions already have.
 5. When the user picks a look, call `video_caption_style` with its `preset` (see caption-style).
    If they said yes to adding over a clip's own captions just before, pass `confirm: true` with
-   that pick too. If they say any look will do, call `video_add_captions`: it captions every clip
+   that pick too; if they said only the other clips, pass `confirm: false`. If they say any look will do, call `video_add_captions`: it captions every clip
    with sound in the Plain look, and asking again rebuilds the same captions.
 6. Do not export. Call `video_export` only when this message asks for a video file ("export",
    "render", "make the video"). The export burns in the same captions the player shows.
