@@ -122,14 +122,14 @@ const looksMessage = (looks: ReadonlyArray<CaptionStillsService.CaptionLookPrevi
 
 /**
  * S7V-099: clips placed after the captions whose picture shows its own keep it; the reply names
- * them, and "caption that clip too" is the same call with `confirm: true`.
+ * them, and "caption that clip too" is `video_add_captions` with `confirm: true`, in the same look.
  */
 const keepsOwnCaptions = (clips: ReadonlyArray<string>) =>
   clips.length === 0
     ? ""
     : clips.length === 1
-      ? ` ${clips[0]} keeps its own captions; say "caption that clip too" to add ours.`
-      : ` ${clips.slice(0, -1).join(", ")} and ${clips.at(-1)} keep their own captions; say "caption those clips too" to add ours.`;
+      ? `${clips[0]} keeps its own captions; say "caption that clip too" to add ours.`
+      : `${CaptionTrackService.listed(clips)} keep their own captions; say "caption those clips too" to add ours.`;
 
 const noSuchJob = () =>
   new OrchestratorMcpFailure({
@@ -751,9 +751,12 @@ const handlers = {
       const hint = yield* cleanupAfterChange(project, result.changed);
       return {
         revision: result.revision,
-        message: result.changed
-          ? "Added captions to the edit. They follow later cuts; say undo to remove them."
-          : "The edit already has these captions.",
+        message:
+          result.captioned.length > 0
+            ? `Added captions to ${CaptionTrackService.listed(result.captioned)}. They follow later cuts; say undo to remove them.`
+            : result.changed
+              ? "Added captions to the edit. They follow later cuts; say undo to remove them."
+              : "The edit already has these captions.",
         ...hint,
       };
     }),
@@ -893,7 +896,10 @@ const handlers = {
           .pipe(Effect.mapError(editRefusal));
         return {
           revision: listed.revision,
-          message: `${looksMessage(listed.looks)}${keepsOwnCaptions(listed.uncaptioned)}`,
+          // The note is its own paragraph after the closing rule, which stays a rule.
+          message: [looksMessage(listed.looks), keepsOwnCaptions(listed.uncaptioned)]
+            .filter(Boolean)
+            .join("\n\n"),
         };
       }
       yield* refusePlanMode("change the caption look");
@@ -916,12 +922,14 @@ const handlers = {
       // No count: it is caption items, one per run of a clip, not the lines the player shows.
       const message = result.added
         ? `Added captions in ${look}. Say undo to take them out.`
-        : result.changed
-          ? `The captions now use ${look}, over the player and in the export. Say undo to go back.`
-          : `The captions already use ${look}.`;
+        : result.captioned.length > 0
+          ? `Added captions to ${CaptionTrackService.listed(result.captioned)} in ${look}. Say undo to take them out.`
+          : result.changed
+            ? `The captions now use ${look}, over the player and in the export. Say undo to go back.`
+            : `The captions already use ${look}.`;
       return {
         revision: result.revision,
-        message: `${message}${keepsOwnCaptions(result.uncaptioned)}`,
+        message: [message, keepsOwnCaptions(result.uncaptioned)].filter(Boolean).join(" "),
         ...(yield* cleanupAfterChange(project, result.changed)),
       };
     }),

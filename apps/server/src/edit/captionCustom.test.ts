@@ -15,6 +15,10 @@ describe("describeCaptionCustom", () => {
     [{ size: 1.6 }, 1.2, "bigger"],
     [{ size: 0.8 }, 1.4, "smaller"],
     [{}, 1.4, "back to its own size"],
+    // Three tenths apart is "smaller" whatever the floating-point error (1.4 - 1.1 = 0.2999…).
+    [{ size: 1.1 }, 1.4, "smaller"],
+    [{ size: 1.2 }, 1.5, "smaller"],
+    [{ size: 0.9 }, 1.2, "smaller"],
   ] as const)("size %o from %s is %s", (custom, before, words) => {
     expect(describeCaptionCustom(custom, "s7-neutral", before)).toBe(words);
   });

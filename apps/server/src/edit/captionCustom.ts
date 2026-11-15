@@ -93,15 +93,20 @@ const COLOR_NAMES: Readonly<Record<string, string>> = {
   "#FFFFFF": "white",
 };
 
-/** A size against another: 0.3 or more apart is "bigger" or "smaller", less is "a bit". */
-const sizeWords = (size: number, against: number) =>
-  size > against
-    ? size - against >= 0.3
+/**
+ * A size against another, in tenths so steps the skill makes (0.2 or 0.3) land the same way every
+ * time: three tenths or more apart is "bigger" or "smaller", less is "a bit".
+ */
+const sizeWords = (size: number, against: number) => {
+  const tenths = Math.round(size * 10) - Math.round(against * 10);
+  return tenths > 0
+    ? tenths >= 3
       ? "bigger"
       : "a bit bigger"
-    : against - size >= 0.3
+    : tenths <= -3
       ? "smaller"
       : "a bit smaller";
+};
 
 /**
  * The look's own colours, size and place in editing words, never codes (UX guide rule 5):

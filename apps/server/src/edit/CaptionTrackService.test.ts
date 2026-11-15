@@ -189,6 +189,7 @@ describe("CaptionTrackService (S7V-075)", () => {
           revision: before.revision + 1,
           captions: 3,
           changed: true,
+          captioned: [],
         });
         const after = yield* project.edits.read(project.projectId);
         const [track] = captionTracks(after.document);
@@ -225,7 +226,12 @@ describe("CaptionTrackService (S7V-075)", () => {
         yield* setUp(project);
         const first = yield* project.captions.addCaptions(project.projectId, {});
         const again = yield* project.captions.addCaptions(project.projectId, {});
-        assert.deepStrictEqual(again, { revision: first.revision, captions: 3, changed: false });
+        assert.deepStrictEqual(again, {
+          revision: first.revision,
+          captions: 3,
+          changed: false,
+          captioned: [],
+        });
         const after = yield* project.edits.read(project.projectId);
         assert.strictEqual(captionTracks(after.document).length, 1);
       }),
@@ -539,6 +545,7 @@ describe("CaptionTrackService.setStyle (S7V-037)", () => {
           custom: {},
           described: "",
           uncaptioned: [],
+          captioned: [],
         });
         const after = yield* project.edits.read(project.projectId);
         const [track] = captionTracks(after.document);
@@ -593,6 +600,7 @@ describe("CaptionTrackService.setStyle (S7V-037)", () => {
           custom: {},
           described: "",
           uncaptioned: [],
+          captioned: [],
         });
         const karaoke = yield* project.captions.setStyle(
           project.projectId,
@@ -611,6 +619,7 @@ describe("CaptionTrackService.setStyle (S7V-037)", () => {
           custom: {},
           described: "",
           uncaptioned: [],
+          captioned: [],
         });
         const after = yield* project.edits.read(project.projectId);
         assert.strictEqual(captionTracks(after.document)[0]!.style, "s7-karaoke");
@@ -718,6 +727,12 @@ describe("CaptionTrackService in the chat (S7V-099)", () => {
         assert.strictEqual(readEdit(project.root), text);
         assert.strictEqual(historyLog(project.root)!.entries.length, steps);
 
+        // A yes given at the looks travels with the look the user then picks, once.
+        const atLooks = yield* project.captions.looks(project.projectId, {}).pipe(Effect.flip);
+        assert.include(
+          atLooks.message,
+          "ask for the looks again with confirm: true, and pass confirm: true with the look they pick",
+        );
         const looks = yield* project.captions.looks(project.projectId, { confirm: true });
         assert.deepStrictEqual(looks, {
           revision: before.revision,

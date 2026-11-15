@@ -659,6 +659,101 @@ describe("video_undo and video_redo", () => {
     ),
   );
 
+  // S7V-099: a clip placed after the captions that shows its own keeps it until the user says
+  // "caption that clip too": video_add_captions with confirm, one version, in the current look.
+  it.effect("caption that clip too captions the waiting clip in the current look, one step", () =>
+    withProject(({ root, thread, edits, call }) =>
+      Effect.gen(function* () {
+        NodeFS.mkdirSync(NodePath.join(root, "assets"), { recursive: true });
+        const cache = NodePath.join(root, ".s7cache", "transcripts");
+        NodeFS.mkdirSync(cache, { recursive: true });
+        const clipWith = (id: string, burnedIn: boolean) => {
+          const clip = Buffer.from(`a talking-head clip: ${id}`);
+          NodeFS.writeFileSync(NodePath.join(root, "assets", `${id}.mp4`), clip);
+          const sha256 = NodeCrypto.createHash("sha256").update(clip).digest("hex");
+          NodeFS.writeFileSync(
+            NodePath.join(cache, `${sha256}.json`),
+            JSON.stringify({
+              transcriptVersion: 1,
+              mediaFingerprint: { sha256, size: clip.length },
+              model: "test",
+              revision: "test",
+              fps: { num: 30, den: 1 },
+              durationFrames: 900,
+              words: [
+                { text: "Hello", startFrame: 10, endFrame: 20, confidence: 1, speaker: "S1" },
+                { text: "there.", startFrame: 22, endFrame: 30, confidence: 1, speaker: "S1" },
+              ],
+              createdAt: "2026-11-09T00:00:00.000Z",
+              ...(burnedIn
+                ? { burnedInCaptions: { found: true, confidence: 1, region: { y0: 0.8, y1: 0.9 } } }
+                : {}),
+            }),
+          );
+          return { ...media, id, path: `assets/${id}.mp4` };
+        };
+        const initial = yield* edits.read(thread.projectId);
+        yield* edits.apply(
+          thread.projectId,
+          [
+            { _tag: "putMedia", media: clipWith("cam", false) },
+            { _tag: "putMedia", media: clipWith("burnt", true) },
+            {
+              _tag: "addTrack",
+              track: {
+                kind: "video",
+                id: "V1",
+                items: [{ id: "v1", media: "cam", start: 0, duration: 60, in: 0 }],
+              },
+            },
+          ],
+          { origin: "agent", baseRevision: initial.revision },
+        );
+        expect((yield* call("video_caption_style", { preset: "s7-box" })).isError).toBe(false);
+        const captioned = yield* edits.read(thread.projectId);
+        yield* edits.apply(
+          thread.projectId,
+          [
+            {
+              _tag: "insertItem",
+              trackId: "V1",
+              item: { id: "v2", media: "burnt", start: 60, duration: 60, in: 0 },
+            },
+          ],
+          { origin: "timeline", baseRevision: captioned.revision },
+        );
+        const bigger = yield* call("video_caption_style", { custom: { size: 1.4 } });
+        expect((bigger.structuredContent as { message: string }).message).toContain(
+          'burnt.mp4 keeps its own captions; say "caption that clip too" to add ours.',
+        );
+        const before = readFile(root, "edit.json");
+
+        const added = yield* call("video_add_captions", { confirm: true });
+        expect(textOf(added).join("")).toContain("Added captions to burnt.mp4.");
+        const track = JSON.parse(readFile(root, "edit.json")).tracks.find(
+          (entry: { kind: string }) => entry.kind === "caption",
+        );
+        expect(
+          new Set(
+            track.items.map(
+              (item: { metadata: { s7: { media: string } } }) => item.metadata.s7.media,
+            ),
+          ),
+        ).toEqual(new Set(["cam", "burnt"]));
+        // In the current look, with the user's own size: only items were added.
+        expect({ style: track.style, custom: track.custom }).toEqual({
+          style: "s7-box",
+          custom: { size: 1.4 },
+        });
+        // One step: this run's version names it, and one undo takes back only these captions.
+        const [newest] = yield* edits.versions(thread.projectId);
+        expect(newest!.changes).toContain("Added captions to burnt.mp4");
+        expect((yield* call("video_undo")).isError).toBe(false);
+        expect(readFile(root, "edit.json")).toBe(before);
+      }),
+    ),
+  );
+
   // S7V-037: a zoom and a caption look are each one assistant version and one undo step.
   it.effect("video_zoom and video_caption_style are each one undoable step", () =>
     withProject(({ root, thread, edits, call }) =>

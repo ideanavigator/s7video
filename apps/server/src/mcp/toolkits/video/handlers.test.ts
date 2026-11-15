@@ -388,7 +388,12 @@ const layerFor = (fixture: Fixture, cancelSignal: Deferred.Deferred<string>) => 
                 detail: "Transcribe the clip first: cam has no transcript.",
               }),
             )
-          : Effect.succeed({ revision: 9, captions: 12, changed: true });
+          : Effect.succeed({
+              revision: 9,
+              captions: 12,
+              changed: true,
+              captioned: options.confirm === true ? ["burnt.mp4"] : [],
+            });
       },
       // Project A has captions; project B has none, so its first look adds them.
       setStyle: (projectId, input, options) => {
@@ -407,6 +412,7 @@ const layerFor = (fixture: Fixture, cancelSignal: Deferred.Deferred<string>) => 
           custom: input.custom ?? {},
           described: input.custom === undefined ? "" : "orange, at the top, bigger",
           uncaptioned: projectId === projectA && input.custom?.size === 1.4 ? ["burnt.mp4"] : [],
+          captioned: [],
         });
       },
       // Project B's clip already shows captions in its picture until the user confirms.
@@ -426,7 +432,7 @@ const layerFor = (fixture: Fixture, cancelSignal: Deferred.Deferred<string>) => 
                 { id: "s7-box", name: "Boxed", path: null },
                 { id: "s7-karaoke", name: "Highlighted word", path: "/odd<name>/p3.png" },
               ],
-              uncaptioned: [],
+              uncaptioned: projectId === projectB ? ["burnt.mp4"] : [],
             });
       },
     }),
@@ -1390,8 +1396,21 @@ describe("video toolkit", () => {
         expect(textOf(asked)).toEqual(["cam already shows captions in its picture."]);
         const confirmed = yield* call(threadB, "video_caption_style", { confirm: true });
         expect(confirmed.isError).toBe(false);
+        // A clip that keeps its own captions is named in a paragraph after the closing rule, so the
+        // rule stays a rule and the lines the agent copies stay between the two.
+        const paragraphs = String(
+          (confirmed.structuredContent as { message: string }).message,
+        ).split("\n\n");
+        expect(paragraphs.slice(-2)).toEqual([
+          "---",
+          'burnt.mp4 keeps its own captions; say "caption that clip too" to add ours.',
+        ]);
+        // "Caption that clip too" is video_add_captions with confirm, and says what it did.
         const added = yield* call(threadA, "video_add_captions", { confirm: true });
-        expect(added.isError).toBe(false);
+        expect(added.structuredContent).toEqual({
+          revision: 9,
+          message: "Added captions to burnt.mp4. They follow later cuts; say undo to remove them.",
+        });
         expect(fixture.looks).toEqual([
           ["looks", projectA, { confirm: false }],
           ["looks", projectB, { confirm: false }],

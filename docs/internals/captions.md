@@ -140,7 +140,11 @@ shapes captions by talking to the agent, through `video_caption_style` and `vide
   already would be. A rebuild after a cut or placement leaves such a clip out. Restyles and the
   looks on existing captions never ask: they change the captions that exist, and the reply names
   the clip that kept its own ("talk.mp4 keeps its own captions; say "caption that clip too" to
-  add ours"). A clip transcribed before the check behaves as before.
+  add ours"). That phrase is `video_add_captions` with `confirm: true`: it rebuilds the track's
+  items in the look and `custom` the track already has, and the note says "Added captions to
+  talk.mp4". A yes given at the looks travels with the look the user then picks, once; it is
+  never kept for the rest of the conversation. A clip transcribed before the check behaves as
+  before.
 
 ## The player overlay
 

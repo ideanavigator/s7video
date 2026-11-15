@@ -52,6 +52,8 @@ const DEFAULT_PRESET: CaptionPresetId = "s7-neutral";
 export interface AddCaptionsResult {
   readonly revision: number;
   readonly captions: number;
+  /** Clips that waited (their picture shows captions) and got ours in this change, by name. */
+  readonly captioned: ReadonlyArray<string>;
   readonly changed: boolean;
 }
 
@@ -94,13 +96,16 @@ const presetOf = (document: EditDocument): CaptionPresetId => {
   return CaptionPresetId.literals.find((id) => id === look) ?? DEFAULT_PRESET;
 };
 
+const LOOKS_RETRY = "ask for the looks";
+
 /** A clip as the user knows it: its label, or its file's name. */
 const clipName = (document: EditDocument, id: string) => {
   const media = document.media.find((entry) => entry.id === id);
   return media?.label ?? (media?.path ?? media?.reference ?? id).split(/[\\/]/u).at(-1) ?? id;
 };
 
-const listed = (names: ReadonlyArray<string>) =>
+/** "a.mp4", "a.mp4 and b.mp4", "a.mp4, b.mp4 and c.mp4". */
+export const listed = (names: ReadonlyArray<string>) =>
   names.length < 2 ? (names[0] ?? "") : `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`;
 
 const placeWords = (position: CaptionPosition) =>
@@ -134,7 +139,7 @@ const burnedInRefusal = (
       : "";
   return new CaptionsError({
     reason: "burned-in",
-    detail: `${listed(names)} already ${names.length === 1 ? "shows" : "show"} captions in the picture. Nothing changed. Ask the user: "${question}"${atOther} If they say add them, ${retry} again with confirm: true. If they say leave it, change nothing.`,
+    detail: `${listed(names)} already ${names.length === 1 ? "shows" : "show"} captions in the picture. Nothing changed. Ask the user: "${question}"${atOther} If they say add them, ${retry} again with confirm: true${retry === LOOKS_RETRY ? ", and pass confirm: true with the look they pick" : ""}. If they say leave it, change nothing.`,
   });
 };
 
@@ -241,31 +246,38 @@ const make = Effect.gen(function* () {
           : "There is nothing to caption: no clip with sound is on the timeline.",
       });
     }
-    return captionTrackOps(document, transcripts);
+    return {
+      ops: captionTrackOps(document, transcripts),
+      /** The waiting clips this captions, with the user's yes. */
+      captioned: [...pending.keys()].map((id) => clipName(document, id)),
+    };
   });
 
   const addCaptions: CaptionTrackService["Service"]["addCaptions"] = Effect.fn(
     "CaptionTrackService.addCaptions",
   )(function* (projectId, options) {
     const snapshot = yield* edits.read(projectId);
-    const ops = yield* transcriptTrackOps(
+    const { ops, captioned } = yield* transcriptTrackOps(
       projectId,
       snapshot.document,
       "add captions",
       options.confirm === true,
       captionCustomOf(snapshot.document)?.position ?? "bottom",
     );
+    // "Caption that clip too": the track exists, so this captions the waiting clips in its look.
+    const addedTo = transcriptCaptionTrackOf(snapshot.document) === undefined ? [] : captioned;
     const after = yield* edits.apply(projectId, ops, {
       origin: "agent",
       baseRevision: snapshot.revision,
       reply: options.reply,
-      summary: ADDED_CAPTIONS,
+      summary: addedTo.length > 0 ? `Added captions to ${listed(addedTo)}` : ADDED_CAPTIONS,
     });
     const track = transcriptCaptionTrackOf(after.document);
     return {
       revision: after.revision,
       captions: track?.items.length ?? 0,
       changed: after.revision !== snapshot.revision,
+      captioned: addedTo,
     };
   });
 
@@ -294,6 +306,7 @@ const make = Effect.gen(function* () {
     const tracks = shownCaptionTracks(document);
     let ops: EditOp[];
     let uncaptioned: ReadonlyArray<string> = [];
+    let captioned: ReadonlyArray<string> = [];
     if (tracks.length > 0) {
       // A restyle adds no captions, so it never asks. A clip placed later that shows its own
       // stays uncaptioned and is named in the reply; with the user's yes, this change captions it.
@@ -305,7 +318,8 @@ const make = Effect.gen(function* () {
       uncaptioned = confirmed ? [] : [...pending.keys()].map((id) => clipName(document, id));
       const recaptioned = confirmed
         ? yield* transcriptTrackOps(projectId, document, "pick the look", true, "bottom")
-        : [];
+        : { ops: [], captioned: [] };
+      captioned = recaptioned.captioned;
       const restyled = tracks
         .filter(
           (track) =>
@@ -318,7 +332,7 @@ const make = Effect.gen(function* () {
           style: preset,
           ...ownCustom,
         }));
-      ops = [...recaptioned, ...restyled];
+      ops = [...recaptioned.ops, ...restyled];
       if (ops.length === 0) {
         return {
           revision: snapshot.revision,
@@ -329,10 +343,11 @@ const make = Effect.gen(function* () {
           custom,
           described: own,
           uncaptioned,
+          captioned: [],
         };
       }
     } else {
-      const trackOps = yield* transcriptTrackOps(
+      const { ops: trackOps } = yield* transcriptTrackOps(
         projectId,
         document,
         "pick the look",
@@ -361,7 +376,9 @@ const make = Effect.gen(function* () {
       reply: options.reply,
       summary: added
         ? `Added captions in the ${name} look${ownNote}`
-        : `Changed the caption look to ${name}${ownNote}`,
+        : captioned.length > 0
+          ? `Added captions to ${listed(captioned)} in the ${name} look${ownNote}`
+          : `Changed the caption look to ${name}${ownNote}`,
     });
     return {
       revision: after.revision,
@@ -372,6 +389,7 @@ const make = Effect.gen(function* () {
       custom,
       described: own,
       uncaptioned,
+      captioned,
     };
   });
 
@@ -384,7 +402,7 @@ const make = Effect.gen(function* () {
         yield* transcriptTrackOps(
           projectId,
           document,
-          "ask for the looks",
+          LOOKS_RETRY,
           options.confirm === true,
           captionCustomOf(document)?.position ?? "bottom",
         );
