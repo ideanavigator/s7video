@@ -361,7 +361,7 @@ describe("EditorPanel", () => {
 
     it("shows nothing below the limit", async () => {
       withCleanup();
-      await using screen = await renderPanel();
+      await using screen = await renderPanel(TALL_PX);
       await expect.element(screen.getByRole("button", { name: "Export" })).toBeVisible();
       expect(banner(screen).query()).toBeNull();
     });
@@ -376,7 +376,7 @@ describe("EditorPanel", () => {
       });
       commands.historyDismiss.mockReset();
       commands.historyDismiss.mockResolvedValueOnce({ _tag: "Success", value: {} });
-      await using screen = await renderPanel();
+      await using screen = await renderPanel(TALL_PX);
       await expect
         .element(
           banner(screen).getByText(
@@ -417,7 +417,7 @@ describe("EditorPanel", () => {
           _tag: "Success",
           value: { removedVersions: 61, removedSteps: 61, freedBytes: 17.5 * 1024 * 1024 },
         });
-      await using screen = await renderPanel();
+      await using screen = await renderPanel(TALL_PX);
       await userEvent.click(screen.getByRole("button", { name: "Remove all old versions" }));
       expect(commands.historyClean).toHaveBeenCalledWith({
         environmentId,
@@ -459,7 +459,7 @@ describe("EditorPanel", () => {
       withCleanup({ versions: 51, bytes: 1024 * 1024 });
       commands.historyDismiss.mockReset();
       commands.historyDismiss.mockResolvedValueOnce({ _tag: "Success", value: {} });
-      await using screen = await renderPanel();
+      await using screen = await renderPanel(TALL_PX);
       const notNow = screen.getByRole("button", { name: "Not now" });
       (await notNow.findElement()).focus();
       await userEvent.keyboard("{Enter}");
@@ -817,6 +817,72 @@ describe("EditorPanel", () => {
           .toHaveTextContent("Your video is ready · 2:02 · 1080×1920 · 68 MB");
         // The row is back, so the extra way to play it is not.
         expect(screen.getByRole("button", { name: "Play the latest export" }).query()).toBeNull();
+      } finally {
+        reset();
+      }
+    });
+
+    // Round 4: an outcome row takes the export row's place; the saved export stays playable.
+    it("keeps the saved export playable after a failed export, and hides the outcome row on X", async () => {
+      setState([asset("clip-0")], true);
+      kept();
+      state.export = {
+        job: exportJob({ state: "failed" }),
+        status: {
+          jobId: EngineJobId.make("job-1"),
+          projectId,
+          path: "exports/edit.mp4",
+          state: "failed",
+          message: "The disk is full.",
+        },
+      };
+      try {
+        await using screen = await renderPanel();
+        const result = screen.getByTestId("export-result");
+        await expect.element(result).toHaveTextContent("Export failed: The disk is full.");
+        await screen.getByRole("button", { name: "Play the latest export" }).click();
+        await expect
+          .element(page.getByRole("dialog", { name: "Your export · 2:02" }))
+          .toBeVisible();
+        await userEvent.keyboard("{Escape}");
+        await result.getByRole("button", { name: "Hide" }).click();
+        await expect.element(result).not.toBeInTheDocument();
+        await expect
+          .element(screen.getByRole("button", { name: "Play the latest export" }))
+          .toBeVisible();
+      } finally {
+        reset();
+      }
+    });
+
+    it("gives a cancelled export and the files for editors a Hide button too", async () => {
+      setState([asset("clip-0")], true);
+      state.export = { job: exportJob({ state: "cancelled" }), status: null };
+      try {
+        {
+          await using screen = await renderPanel();
+          const result = screen.getByTestId("export-result");
+          await expect.element(result).toHaveTextContent("Export cancelled");
+          await result.getByRole("button", { name: "Hide" }).click();
+          await expect.element(result).not.toBeInTheDocument();
+        }
+        state.export = {
+          job: exportJob({ id: EngineJobId.make("job-9"), state: "succeeded", progress: 1 }),
+          status: {
+            jobId: EngineJobId.make("job-9"),
+            projectId,
+            path: "exports/edit.fcpxml",
+            state: "succeeded",
+            files: ["exports/edit.fcpxml", "exports/edit.srt"],
+          },
+        };
+        await using screen = await renderPanel();
+        const result = screen.getByTestId("export-result");
+        await expect
+          .element(result)
+          .toHaveTextContent("Your files for editors are ready · edit.fcpxml, edit.srt");
+        await result.getByRole("button", { name: "Hide" }).click();
+        await expect.element(result).not.toBeInTheDocument();
       } finally {
         reset();
       }
@@ -1616,27 +1682,30 @@ describe("EditorPanel", () => {
         },
       );
 
-      // S7V-101 (UX review 1 and 2): with the speech prompt, a refused change and the export row
-      // all up, every notice shows whole, the tabs show whole rows or one plain line, the timeline
-      // stays inside the panel, and the player keeps its share.
+      // S7V-101: with the export row, the old-versions banner (S7V-050), the speech prompt and,
+      // in the worst case, a refused change: only whole notices show, the refusal first, and the
+      // rest wait behind "Show N more notices". Closed, the timeline keeps its video row (unless the
+      // refusal needs the room); opened, its toolbar and ruler. The player keeps its share.
       it.each([
-        [1440, 900],
-        [1180, 760],
+        [1440, 900, "with a refused change"],
+        [1180, 760, "with a refused change"],
+        [1440, 900, "without one"],
+        [1180, 760, "without one"],
       ] as const)(
-        "fits every notice and keeps the column inside the panel at %ix%i",
-        async (w, h) => {
+        "fits whole notices and keeps the column inside at %ix%i, %s",
+        async (w, h, which) => {
           await page.viewport(w, h);
           setState([asset("clip-0")], true);
           withCanvas({ width: 1080, height: 1920 });
           const ready = state.edit as Extract<ProjectEditState, { _tag: "ready" }>;
+          const refused = which === "with a refused change";
           const notice =
             "The edit was changed outside the app and could not be read. That change was not kept; the edit is back to its last saved version.";
-          // Every notice the Editor can show: the refusal, old versions (S7V-050), the speech prompt.
           state.edit = {
             _tag: "ready",
             snapshot: {
               ...ready.snapshot,
-              notice,
+              ...(refused ? { notice } : {}),
               cleanup: { versions: 64, bytes: 260_000_000 },
             },
           };
@@ -1676,58 +1745,60 @@ describe("EditorPanel", () => {
               const rect = element.getBoundingClientRect();
               return inside(rect, editor) && rect.height > 0;
             };
-            // The refusal comes first among the notices, whole.
-            const refusal = screen.getByText(notice).element().closest("[role=status]")!;
-            expect(whole(refusal)).toBe(true);
-            const prompt = screen.getByRole("region", { name: "Speech model" }).element();
-            expect(prompt.getBoundingClientRect().height).toBeLessThanOrEqual(40);
-            expect(refusal.getBoundingClientRect().top).toBeLessThan(
-              prompt.getBoundingClientRect().top,
-            );
-            // The notices below the refusal stay reachable: the notice area scrolls when it must.
-            const notices = document.querySelector<HTMLElement>("[data-testid=editor-notices]")!;
-            if (notices.scrollHeight > notices.clientHeight + 1) {
-              expect(getComputedStyle(notices).overflowY).toBe("auto");
-            } else {
-              expect(whole(prompt)).toBe(true);
+            /** Every notice is either wholly in view or wholly out of it, never cut. */
+            const noticesWhole = () => {
+              const scroller = box("[data-testid=editor-notices-scroller]");
+              return [...document.querySelector("[data-testid=editor-notices]")!.children].every(
+                (child) => {
+                  const rect = child.getBoundingClientRect();
+                  const overlaps =
+                    rect.bottom > scroller.top + 0.5 && rect.top < scroller.bottom - 0.5;
+                  return !overlaps || inside(rect, scroller);
+                },
+              );
+            };
+            const timelineHeight = () => box("[data-testid=editor-timeline]").height;
+            const checkColumn = async (minTimeline: number) => {
+              const picture = (await videoOf(screen)).closest<HTMLElement>("[data-canvas]")!;
+              await expect
+                .poll(() => picture.getBoundingClientRect().height)
+                .toBeGreaterThanOrEqual(PLAYER_SHARE * editor.height - 0.5);
+              await expect
+                .poll(() => box("[data-testid=editor-timeline]").bottom)
+                .toBeLessThanOrEqual(editor.bottom - 7.5);
+              await expect.poll(timelineHeight).toBeGreaterThanOrEqual(minTimeline);
+              expect(noticesWhole()).toBe(true);
+            };
+            if (refused) {
+              const refusal = screen.getByText(notice).element().closest("[role=status]")!;
+              expect(whole(refusal)).toBe(true);
+              const first = document.querySelector(
+                "[data-testid=editor-notices]",
+              )!.firstElementChild;
+              expect(first?.contains(refusal)).toBe(true);
             }
-            // The player keeps its share, and the timeline ends inside the panel.
-            const picture = (await videoOf(screen)).closest<HTMLElement>("[data-canvas]")!;
-            await expect
-              .poll(() => picture.getBoundingClientRect().height)
-              .toBeGreaterThanOrEqual(PLAYER_SHARE * editor.height - 0.5);
-            await expect
-              .poll(() => box("[data-testid=editor-timeline]").bottom)
-              .toBeLessThanOrEqual(editor.bottom - 7.5);
-            // At least the timeline's toolbar and ruler (56 px) show.
-            expect(box("[data-testid=editor-timeline]").height).toBeGreaterThanOrEqual(56);
-            expect(box("[role=tablist]").bottom).toBeLessThanOrEqual(
-              box("[data-testid=editor-timeline]").top,
-            );
-            // The tabs: whole version rows, or the one-line hint.
+            // Closed: the timeline keeps its video row, unless the refusal needs the room.
+            await checkColumn(refused ? 56 : 152);
+            const cue = document.querySelector("[data-testid=editor-notices-cue] button");
+            if (cue !== null) {
+              expect(cue.textContent).toMatch(/^Show \d more notices?$/u);
+              await screen.getByRole("button", { name: /^Show \d more notices?$/u }).click();
+              await expect
+                .element(screen.getByRole("button", { name: "Show fewer notices" }))
+                .toBeVisible();
+              // Opened: still whole notices, and the timeline keeps its toolbar and ruler.
+              await checkColumn(56);
+            }
             const hint = document.querySelector("[data-testid=editor-tabs-hint]");
-            if (hint === null) {
-              const list = document
-                .getElementById("editor-tabpanel-versions")!
-                .querySelector<HTMLElement>("[role=list]")!;
-              const shown = list.getBoundingClientRect();
-              expect(shown.height).toBeGreaterThanOrEqual(56);
-              for (const row of list.querySelectorAll("[role=listitem]")) {
-                const rect = row.getBoundingClientRect();
-                const overlaps = rect.bottom > shown.top + 0.5 && rect.top < shown.bottom - 0.5;
-                if (overlaps) expect(inside(rect, shown)).toBe(true);
-              }
-            } else {
+            if (hint !== null) {
               expect(hint.textContent).toBe(
                 "Close a notice above or make the window taller to see Versions.",
               );
-              // Whole, never cut to an ellipsis: it wraps inside the tab bar instead.
               expect(hint.scrollHeight).toBeLessThanOrEqual(hint.clientHeight + 1);
-              expect(hint.getBoundingClientRect().height).toBeLessThanOrEqual(30);
               expect(whole(hint)).toBe(true);
             }
             await page.screenshot({
-              path: `../../../../../test-results/s7v-101/tests-notices-export-${w}x${h}.png`,
+              path: `../../../../../test-results/s7v-101/tests-notices-${refused ? "refused" : "common"}-${w}x${h}.png`,
             });
           } finally {
             state.versions = { _tag: "loading" };

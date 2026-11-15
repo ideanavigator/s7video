@@ -90,9 +90,12 @@ The player gets space first (UX guide rule 3, S7V-101). Its box follows the canv
 picture never gets shorter than `PLAYER_SHARE` (45%) of the Editor's height (`playerRoomPx` in
 `EditorPanel.tsx`), at 1180x760 too. A 16:9 picture in a narrow Editor fills the width instead,
 and its area still keeps the share. Above it come the header, the export row and the notices,
-with a refused change first; the speech-model prompt is one line. The top block is capped so the
-player's share and the timeline's toolbar and ruler (`TIMELINE_SHORTEST_PX`) always fit; past
-that, the notices under the refusal scroll. Below the player, the tabs show whole version rows
+with a refused change first; the speech-model prompt is one line. Only whole notices show
+(`fitNotices` in `EditorPanel.tsx`, from their measured heights): as many as fit while the
+timeline keeps its video row (`TIMELINE_FLOOR_PX`), the refusal always. The rest wait behind
+"Show N more notices"; opened, they may take the timeline down to its toolbar and ruler
+(`TIMELINE_SHORTEST_PX`), and any still left out wait behind "Close one to see N more." A notice
+out of view is clipped at a notice boundary and `inert`, so Tab never reaches it. Below the player, the tabs show whole version rows
 (`TAB_ROW_PX`), or, when not even one row fits, the tab bar ends with one plain line: "Close a
 notice above or make the window taller to see Versions." while something above can be closed,
 else "Make the window taller to see Versions.". The tabs get a row only when the timeline can

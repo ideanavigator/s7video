@@ -171,18 +171,32 @@ export function useExportResult(props: {
       </IconAction>
     );
 
+  // An outcome row (cancelled, failed, files for editors) hides for this session only.
+  const [hiddenOutcome, setHiddenOutcome] = useState<string | null>(null);
+  const hideOutcome = (
+    <IconAction label="Hide" onClick={() => setHiddenOutcome(job?.id ?? null)}>
+      <XIcon aria-hidden />
+    </IconAction>
+  );
+  const outcomeHidden = job !== null && hiddenOutcome === job.id;
+
   const row = (() => {
     if (job?.state === "running") return null;
-    if (job?.state === "cancelled") return { text: <>Export cancelled</>, tone: "muted" } as const;
+    if (outcomeHidden && job?.state !== "succeeded") return null;
+    if (job?.state === "cancelled") {
+      return { text: <>Export cancelled</>, tone: "muted", actions: hideOutcome } as const;
+    }
     if (job?.state === "failed") {
       return {
         text: <>Export failed{status?.message ? `: ${status.message}` : ""}</>,
         tone: "error",
+        actions: hideOutcome,
       } as const;
     }
     // "Export for editors" (S7V-040): its files, with Show in Finder where the server can.
     const files = job?.state === "succeeded" ? status?.files : undefined;
     if (files !== undefined && files.length > 0) {
+      if (outcomeHidden) return null;
       const first = files[0]!;
       return {
         text: (
@@ -192,7 +206,12 @@ export function useExportResult(props: {
           </>
         ),
         tone: "done",
-        actions: canReveal && isExportPath(first) ? reveal(first) : null,
+        actions: (
+          <>
+            {canReveal && isExportPath(first) ? reveal(first) : null}
+            {hideOutcome}
+          </>
+        ),
       } as const;
     }
     if (latest === null || storedGone || latestHidden) return null;
@@ -207,6 +226,7 @@ export function useExportResult(props: {
         </>
       ),
       tone: "done",
+      showsLatest: true,
       actions: (
         <>
           <IconAction label="Play the export" onClick={() => void play(latest)}>
@@ -270,8 +290,11 @@ export function useExportResult(props: {
       )}
     </Dialog>
   );
+  const showsLatest = row !== null && "showsLatest" in row;
+  // The latest video export stays reachable whenever the row isn't showing it: hidden, or an
+  // outcome row (a failed or cancelled export, files for editors) took its place.
   const playHidden =
-    latest !== null && latestHidden && !storedGone && job?.state !== "running"
+    latest !== null && !showsLatest && !storedGone && job?.state !== "running"
       ? () => void play(latest)
       : null;
   return { row: rowNode, dialog, playHidden };

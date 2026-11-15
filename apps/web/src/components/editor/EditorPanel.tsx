@@ -18,6 +18,8 @@ import {
   type ScopedProjectRef,
 } from "@t3tools/contracts";
 import {
+  ChevronDownIcon,
+  ChevronUpIcon,
   ClapperboardIcon,
   FilmIcon,
   PlayIcon,
@@ -79,6 +81,7 @@ import { editFrameToPlayerFrame } from "./timeline/editFrames";
 import type { TimelineEditing } from "./timeline/Timeline";
 import type { EditApplyOutcome, TimelineNotice } from "./timeline/timelineEditor";
 import { TIMELINE_FLOOR_PX, TIMELINE_SHORTEST_PX, TimelinePane } from "./timeline/TimelinePane";
+import { cn } from "../../lib/utils";
 import { type TranscriptEditing, TranscriptTab } from "./TranscriptTab";
 import { VersionsTab } from "./VersionsTab";
 
@@ -141,6 +144,33 @@ function tabsMinPx(panelHeight: number, topPx: number, playerMinPx: number): num
     GAP_PX -
     TIMELINE_FLOOR_PX;
   return spare >= TAB_ROW_PX ? TAB_ROW_PX : 0;
+}
+
+const NOTICE_GAP_PX = 8;
+/** The "Show N more notices" line under the notices that fit. */
+const NOTICE_CUE_PX = 24;
+
+/**
+ * How many notices show whole (S7V-101): from the top, as many as fit in `roomPx` with the cue
+ * line when some are left out (or always, once opened). The first one shows anyway when it is
+ * urgent (a refused change).
+ */
+function fitNotices(
+  heights: ReadonlyArray<number>,
+  roomPx: number,
+  urgentFirst: boolean,
+  cueAlways: boolean,
+): { readonly shown: number; readonly heightPx: number } {
+  let shown = 0;
+  let heightPx = 0;
+  for (const height of heights) {
+    const next = heightPx + (shown > 0 ? NOTICE_GAP_PX : 0) + height;
+    const cue = cueAlways || shown + 1 < heights.length ? NOTICE_CUE_PX + NOTICE_GAP_PX : 0;
+    if (next + cue > roomPx && !(shown === 0 && urgentFirst)) break;
+    heightPx = next;
+    shown += 1;
+  }
+  return { shown, heightPx };
 }
 
 function PlayerMessage(props: {
@@ -822,7 +852,7 @@ export default function EditorPanel(props: {
           ),
         );
   // The header, the export row and the notices (S7V-101), and whether anything closable is up.
-  const [top, setTop] = useState({ px: 0, closable: false });
+  const [top, setTop] = useState({ px: 0, closable: false, aboveNoticesPx: 0 });
   const observeTop = (element: HTMLDivElement | null) =>
     element === null
       ? undefined
@@ -830,13 +860,38 @@ export default function EditorPanel(props: {
           const closable = [...element.children]
             .slice(1)
             .some((child) => child.getBoundingClientRect().height > 0);
+          const group = element.querySelector<HTMLElement>("[data-testid=editor-notices-group]");
+          const aboveNoticesPx = group === null ? 0 : group.offsetTop - element.offsetTop;
           setTop((current) =>
-            current.px === element.offsetHeight && current.closable === closable
+            current.px === element.offsetHeight &&
+            current.closable === closable &&
+            current.aboveNoticesPx === aboveNoticesPx
               ? current
-              : { px: element.offsetHeight, closable },
+              : { px: element.offsetHeight, closable, aboveNoticesPx },
           );
         });
   const topPx = top.px;
+  // The notices up, in order, each with its own height, measured unclipped.
+  const [notices, setNotices] = useState<{
+    readonly keys: ReadonlyArray<string>;
+    readonly heights: ReadonlyArray<number>;
+  }>({ keys: [], heights: [] });
+  const observeNotices = (element: HTMLDivElement | null) =>
+    element === null
+      ? undefined
+      : observeResize(element, () => {
+          const up = [...element.children].filter(
+            (child): child is HTMLElement => child instanceof HTMLElement && child.offsetHeight > 0,
+          );
+          const keys = up.map((child) => child.dataset.notice ?? "");
+          const heights = up.map((child) => child.offsetHeight);
+          setNotices((current) =>
+            current.keys.join() === keys.join() && current.heights.join() === heights.join()
+              ? current
+              : { keys, heights },
+          );
+        });
+  const [noticesOpen, setNoticesOpen] = useState(false);
   // The room the tabs got; a panel shows whole rows of it, or the hint under one row.
   const [tabRoomPx, setTabRoomPx] = useState<number | null>(null);
   const observeTabRoom = (element: HTMLDivElement | null) =>
@@ -885,18 +940,31 @@ export default function EditorPanel(props: {
       : tabsMinPx(panelSize.height, topPx, playerRoom.min);
   const tabsCollapsed = tabsMin < TAB_ROW_PX;
   // The top block never takes the timeline's toolbar and ruler: past this, its notices scroll.
-  const topMaxPx =
+  // The notices take what the player's share and the timeline leave: closed, the timeline keeps
+  // its video row; opened, only its toolbar and ruler. Whole notices only, the urgent one first.
+  const noticeRoom = (keepPx: number) =>
     panelSize === null || playerRoom === null
-      ? undefined
-      : Math.max(
-          0,
-          panelSize.height -
-            PANEL_PADDING_PX -
-            playerRoom.min -
-            TAB_BAR_PX -
-            COLUMN_GAPS_PX -
-            TIMELINE_SHORTEST_PX,
-        );
+      ? Number.POSITIVE_INFINITY
+      : panelSize.height -
+        PANEL_PADDING_PX -
+        playerRoom.min -
+        TAB_BAR_PX -
+        COLUMN_GAPS_PX -
+        top.aboveNoticesPx -
+        keepPx;
+  const urgentFirst = notices.keys[0] === "refused";
+  const closedFit = fitNotices(notices.heights, noticeRoom(TIMELINE_FLOOR_PX), urgentFirst, false);
+  const noticesFit = closedFit.shown === notices.heights.length;
+  const fit =
+    noticesFit || !noticesOpen
+      ? closedFit
+      : fitNotices(notices.heights, noticeRoom(TIMELINE_SHORTEST_PX), urgentFirst, true);
+  const noticesLeft = notices.heights.length - fit.shown;
+  /** A notice out of view is clipped at a notice boundary and kept out of the Tab order. */
+  const noticeOutOfView = (key: string) => {
+    const at = notices.keys.indexOf(key);
+    return !noticesFit && at >= fit.shown;
+  };
   const tabPanelStyle = {
     height:
       tabRoomPx === null || tabRoomPx < TAB_ROW_PX
@@ -975,12 +1043,7 @@ export default function EditorPanel(props: {
       <div role="status" aria-live="polite" className="sr-only">
         {dragging ? DROP_OVERLAY_TEXT : ""}
       </div>
-      <div
-        ref={observeTop}
-        className="flex min-h-0 shrink-0 flex-col gap-2"
-        style={{ maxHeight: topMaxPx }}
-        data-testid="editor-top"
-      >
+      <div ref={observeTop} className="flex shrink-0 flex-col gap-2" data-testid="editor-top">
         <div className="flex min-h-7 shrink-0 items-center justify-between gap-2">
           <div className="flex min-w-0 items-center gap-2 text-sm">
             {view._tag === "play" && view.mode === "clip" ? (
@@ -1028,19 +1091,66 @@ export default function EditorPanel(props: {
         </div>
         {exportResult.row}
         {/*
-          The one to read now comes first. When the notices don't all fit above the player's share
-          and the timeline's toolbar and ruler, the ones below it scroll.
+          The one to read now comes first. Only whole notices show; the rest wait behind
+          "Show N more notices", and once opened, behind "Close one to see N more".
         */}
         <div
-          className="flex min-h-0 flex-col gap-2 overflow-y-auto empty:hidden"
-          data-testid="editor-notices"
+          className="flex flex-col [&:not(:has([data-notice]:not(:empty)))]:hidden"
+          data-testid="editor-notices-group"
         >
-          <RefusedChangeNotice snapshot={edit._tag === "ready" ? edit.snapshot : null} />
-          <HistoryCleanupBanner
-            projectRef={projectRef}
-            snapshot={edit._tag === "ready" ? edit.snapshot : null}
-          />
-          <SpeechModelPrompt projectRef={projectRef} />
+          <div
+            className="overflow-hidden"
+            style={{ maxHeight: noticesFit ? undefined : fit.heightPx }}
+            data-testid="editor-notices-scroller"
+          >
+            <div ref={observeNotices} className="flex flex-col gap-2" data-testid="editor-notices">
+              <div
+                data-notice="refused"
+                className="empty:hidden"
+                inert={noticeOutOfView("refused")}
+              >
+                <RefusedChangeNotice snapshot={edit._tag === "ready" ? edit.snapshot : null} />
+              </div>
+              <div
+                data-notice="old-versions"
+                className="empty:hidden"
+                inert={noticeOutOfView("old-versions")}
+              >
+                <HistoryCleanupBanner
+                  projectRef={projectRef}
+                  snapshot={edit._tag === "ready" ? edit.snapshot : null}
+                />
+              </div>
+              <div
+                data-notice="speech-model"
+                className="empty:hidden"
+                inert={noticeOutOfView("speech-model")}
+              >
+                <SpeechModelPrompt projectRef={projectRef} />
+              </div>
+            </div>
+          </div>
+          {noticesFit ? null : (
+            <div
+              className={cn("flex h-6 items-center gap-2 text-xs", fit.shown > 0 && "mt-2")}
+              data-testid="editor-notices-cue"
+            >
+              <Button
+                size="xs"
+                variant="ghost"
+                aria-expanded={noticesOpen}
+                onClick={() => setNoticesOpen((open) => !open)}
+              >
+                {noticesOpen ? <ChevronUpIcon aria-hidden /> : <ChevronDownIcon aria-hidden />}
+                {noticesOpen
+                  ? "Show fewer notices"
+                  : `Show ${noticesLeft} more ${noticesLeft === 1 ? "notice" : "notices"}`}
+              </Button>
+              {noticesOpen && noticesLeft > 0 ? (
+                <span className="text-muted-foreground">Close one to see {noticesLeft} more.</span>
+              ) : null}
+            </div>
+          )}
         </div>
       </div>
       {exportResult.dialog}
