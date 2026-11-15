@@ -95,27 +95,45 @@ The Editor has no caption controls (the PO called S7V-037's look strip "really b
 shapes captions by talking to the agent, through `video_caption_style` and `video_add_captions`.
 
 - **The looks in the chat.** `video_caption_style` with neither `preset` nor `custom` changes
-  nothing and answers with the four looks, each as a markdown image of its preview's real path
-  (`CaptionStillsService.previews`, opened no-follow like the stills). The agent copies those
-  lines into its reply; the chat's markdown draws a local path through its own signed `media-file`
-  URL each time, in Claude and Codex threads alike. Not S7V-079's still URL: its token expires,
-  and a chat message is kept for good.
+  nothing and answers with the four looks: each name, then its preview on a line of its own (a
+  markdown hard break), so the pictures line up at any width. A preview is a markdown image of
+  its real path (`CaptionStillsService.previews`, opened no-follow like the stills); the chat's
+  markdown draws a local path through its own signed `media-file` URL each time, in Claude and
+  Codex threads alike. Not S7V-079's still URL: its token expires, and a chat message is kept for
+  good. For the same reason previews live in `.s7cache/captions/previews/<look>/`, which the
+  stills' pruning never touches: custom styles add look folders, and four previews would
+  otherwise be pruned after a restyle or two. They draw on a flat slate, not the user's video
+  (a later card).
 - **Styles in words.** `custom` holds `textColor`, `highlightColor`, `boxColor` (`#RRGGBB`),
   `size` (0.6–1.6) and `position` (`top`, `middle`, `bottom`) on the caption track, beside its
   look. `captions_ass.styled` applies it to the look's file before the ASS is built, so the
   export, the player's stills (whose look folder hashes it) and the editors' `.ass` draw it the
-  same way; golden `caption-overlay-parity` covers two custom styles. A track without `custom`
-  hashes and draws exactly as before. The tool's schema advertises `custom` as a bare object (its
-  fields would cost about 250 B on every turn); the handler checks each field and refuses anything
-  else by naming what can change, and the `caption-style` skill names the fields. A new `custom`
-  merges into the track's own; the look's own size and the bottom are stored as nothing.
+  same way; golden `caption-overlay-parity` covers two custom styles. A custom box colour is
+  solid: each line of a caption has its own box, and two see-through boxes show a seam where they
+  overlap. A track without `custom` hashes and draws exactly as before. The tool's schema
+  advertises `custom` as a bare object (its fields would cost about 250 B on every turn); the
+  handler checks each field and refuses anything else by naming what can change, a box or
+  lit-word colour on a look that has none included (`CAPTION_LOOK_PARTS`, kept in step with the
+  style files by a test). The `caption-style` skill names the fields. A new `custom` merges into
+  the track's own; the look's own size and the bottom are stored as nothing.
+- **Editing words, not codes.** Replies and version notes name the skill's colours ("orange",
+  "blue box"; any other is "a custom colour") and say a size as "bigger" or "a bit smaller"
+  (`describeCaptionCustom`). They don't count captions: a caption item is a run of a clip, not a
+  line the player shows.
 - **Captions already in the picture.** The transcribe job reads ten frames with Apple Vision
-  (`burned_in.py`, on the device) and stores `burnedInCaptions` (`found`, `confidence`, `region`)
-  with the transcript, never the text. Adding captions over a clip with `found: true` is refused
-  (`CaptionsError` `burned-in`) until the call carries `confirm: true`, the user's yes to "add more
-  on top?". Restyling or rebuilding captions the edit already has asks nothing, and a clip
-  transcribed before the check behaves as before. A line seen in half the frames is part of the
-  picture (a logo, a sign), never captions.
+  (`burned_in.py`, on the device, in the language Vision detects; text without spaces matches
+  by character) and stores `burnedInCaptions` (`found`, `confidence`, `region`) with the
+  transcript, never the text. It decides by variety: enough frames show a line that is mostly
+  the words being said, and at least two different lines match. A sign or name card is one line,
+  and a line in nearly every frame is part of the picture. Each input decodes on one thread (ten
+  default decoders peaked at 8.75 GB on 4K HEVC), and any failure leaves the clip unchecked.
+- **Asking first.** A clip with `found: true` counts as a yes only once the transcript track
+  captions it. Until then `video_add_captions`, `video_caption_style` and the looks refuse
+  (`CaptionsError` `burned-in`) unless the call carries `confirm: true`, and a rebuild after a cut
+  or a placement leaves that clip out: a clip placed after the captions asks too. The question
+  offers the way forward from the region: "This clip already has captions near the bottom. Add
+  new ones at the top, add them anyway, or leave it as it is?" A clip transcribed before the
+  check behaves as before.
 
 ## The player overlay
 
