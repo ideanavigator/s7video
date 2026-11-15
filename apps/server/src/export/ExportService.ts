@@ -8,6 +8,7 @@
 // `startInterchange` is "Export for editors" (S7V-040): an OTIO, FCPXML, FCP7 XML or EDL file
 // with an SRT or ASS captions file beside it, written by the engine's `interchange.export` job.
 import {
+  type BurnedInCaptions,
   type EditDocument,
   EditUnavailableError,
   type EngineError,
@@ -94,6 +95,7 @@ export const exportSlug = (title: string) =>
  * The media whose transcripts caption the export: those on the first video track (the one the
  * engine renders) that have sound, when captions are on and no caption track has items. A clip
  * without audio cannot be transcribed, so it gets no captions rather than blocking the export.
+ * Their transcripts then go through `fallbackTranscripts`.
  */
 export const transcriptMediaFor = (document: EditDocument, captions: boolean) => {
   if (!captions) return [];
@@ -102,6 +104,17 @@ export const transcriptMediaFor = (document: EditDocument, captions: boolean) =>
   }
   return captionMediaOf(document);
 };
+
+/**
+ * The fallback's transcripts, by media, that caption the edit: a clip whose transcript says its
+ * picture already shows captions keeps only its own (S7V-109). The exports and the player's
+ * stills both caption through this, so they never disagree.
+ */
+export const fallbackTranscripts = <
+  T extends { readonly burnedInCaptions?: BurnedInCaptions | undefined },
+>(
+  transcripts: ReadonlyArray<readonly [media: string, transcript: T]>,
+) => transcripts.filter(([, transcript]) => transcript.burnedInCaptions?.found !== true);
 
 /** Local date and time to the minute, `yyyymmdd-hhmm`. */
 export const exportStamp = (millis: number) => {
@@ -202,16 +215,20 @@ const make = Effect.gen(function* () {
         Effect.flatMap((transcript) =>
           transcript === null
             ? Effect.fail(new ExportStartError({ projectId, reason: "no-transcript" }))
-            : Effect.succeed({
-                media,
-                fps: transcript.fps,
-                words: transcript.words.map(({ text, startFrame, endFrame }) => ({
-                  text,
-                  startFrame,
-                  endFrame,
-                })),
-              }),
+            : Effect.succeed([media, transcript] as const),
         ),
+      ),
+    ).pipe(
+      Effect.map((found) =>
+        fallbackTranscripts(found).map(([media, transcript]) => ({
+          media,
+          fps: transcript.fps,
+          words: transcript.words.map(({ text, startFrame, endFrame }) => ({
+            text,
+            startFrame,
+            endFrame,
+          })),
+        })),
       ),
     );
 

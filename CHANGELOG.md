@@ -132,6 +132,8 @@ from; the per-ticket entries and how this file is compiled are in
 - The app icon, sidebar name and welcome screen show s7video instead of T3 Code, with a placeholder
   s7video icon in the Dock, Finder and browser tab; dev and nightly builds have their own icons.
   T3 Code is still credited in About. (S7V-100)
+- For developers: `docs/FORK.md` now names every upstream T3 Code file the Sprint 05 cards
+  changed, including four it had missed: the video eval cases' README and three tests. (S7V-088)
 
 ### Removed
 
@@ -206,6 +208,12 @@ from; the per-ticket entries and how this file is compiled are in
   zooms, volume changes, music dips and the caption look, instead of saying everything carries
   over. After a cut or an insert in an edit with music, the assistant re-fits the music dips, and
   asking it to cut less no longer undoes a later change such as a zoom. (S7V-097)
+- A clip that already has captions in the picture no longer gets ours drawn over them, in the
+  player, the exported video or the files for editors, unless you ask for ours. In a project that
+  mixes such clips with plain ones, you can caption just the plain ones, and when you add a clip
+  with its own captions to a captioned edit, the assistant says it left that clip alone. The
+  "files for editors are ready" row is still there after a reload, with Show in Finder in the
+  desktop app, and elsewhere names the folder the files are in and copies its location. (S7V-109)
 
 ### Security
 

@@ -37,7 +37,7 @@ import * as EditDocumentService from "../edit/EditDocumentService.ts";
 import * as EngineService from "../engine/EngineService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import { captionCacheDir, captionPreviewPath, isCaptionLookName } from "./captionStillFile.ts";
-import { transcriptMediaFor } from "./ExportService.ts";
+import { fallbackTranscripts, transcriptMediaFor } from "./ExportService.ts";
 
 const encodeKeyInput = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
@@ -112,9 +112,9 @@ const make = Effect.gen(function* () {
     );
     // The export's rule: transcripts caption the edit only while no caption track has items.
     const fallbackMedia = new Set(transcriptMediaFor(document, true));
-    const transcripts = [...loaded.transcripts]
-      .filter(([media]) => fallbackMedia.has(media))
-      .map(([media, transcript]) => ({ media, fps: transcript.fps, words: [...transcript.words] }));
+    const transcripts = fallbackTranscripts(
+      [...loaded.transcripts].filter(([media]) => fallbackMedia.has(media)),
+    ).map(([media, transcript]) => ({ media, fps: transcript.fps, words: [...transcript.words] }));
     const labelOf = (id: string) => {
       const media = document.media.find((entry) => entry.id === id);
       return media?.label ?? path.basename(media?.path ?? media?.reference ?? id);

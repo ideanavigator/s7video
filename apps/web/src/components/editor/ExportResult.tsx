@@ -1,16 +1,23 @@
 // SPDX-FileCopyrightText: 2026 s7video contributors
 // SPDX-License-Identifier: MIT
 /**
- * What a finished export made (S7V-101), on its own row under the Editor's header: "Your video is
- * ready" with its length, frame size and file size, and the way to it: Play the export, and Show
- * in Finder (Open where the server can't show files). The latest video export is kept per project
- * in local storage, so it is still there after a reload, until the user hides it or the file goes.
+ * What a finished export made (S7V-101, S7V-109), on its own row under the Editor's header, with
+ * the way to it: Play and Show in Finder (Open, or for files for editors their folder, where the
+ * server can't show files). The latest export is kept per project in local storage, so it is
+ * still there after a reload, until the user hides it or the file goes.
  */
 import { scopedProjectKey } from "@t3tools/client-runtime/environment";
 import type { ExportStatus, ScopedProjectRef } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
-import { CircleCheckIcon, ExternalLinkIcon, FolderOpenIcon, PlayIcon, XIcon } from "lucide-react";
-import { useEffect, useState, type ReactNode } from "react";
+import {
+  CircleCheckIcon,
+  CopyIcon,
+  ExternalLinkIcon,
+  FolderOpenIcon,
+  PlayIcon,
+  XIcon,
+} from "lucide-react";
+import { Fragment, useEffect, useState, type ReactNode } from "react";
 
 import { useAssetUrlMinter } from "../../assets/assetUrls";
 import { formatPlaybackClock } from "../../editor/editPlayback";
@@ -23,6 +30,7 @@ import {
   useExportFileSize,
   useWorkspaceRoot,
 } from "../../editor/exportFiles";
+import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { shellEnvironment } from "../../state/shell";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -54,6 +62,25 @@ const StoredExport = Schema.NullOr(LatestExport);
 export const latestExportStorageKey = (projectRef: ScopedProjectRef) =>
   `editor-latest-export:v1:${scopedProjectKey(projectRef)}`;
 
+/**
+ * The latest files for editors (S7V-109), beside the video export's entry: newer than the kept
+ * video export while it is set, since a video export clears it.
+ */
+const LatestEditorsFiles = Schema.Struct({
+  /** Each relative to the project folder (`exports/…`); a list naming anything else is dropped. */
+  files: Schema.Array(Schema.String),
+  hidden: Schema.optionalKey(Schema.Boolean),
+});
+type LatestEditorsFiles = typeof LatestEditorsFiles.Type;
+
+const StoredEditorsFiles = Schema.NullOr(LatestEditorsFiles);
+
+export const latestEditorsFilesStorageKey = (projectRef: ScopedProjectRef) =>
+  `editor-latest-editors-files:v1:${scopedProjectKey(projectRef)}`;
+
+const exportFiles = (files: ReadonlyArray<string> | undefined) =>
+  files !== undefined && files.length > 0 && files.every(isExportPath) ? files : null;
+
 export const EXPORT_GONE = "That export was moved or deleted.";
 
 const latestOf = (status: ExportStatus | null): LatestExport | null => {
@@ -64,6 +91,34 @@ const latestOf = (status: ExportStatus | null): LatestExport | null => {
 };
 
 const fileName = (path: string) => path.split("/").at(-1) ?? path;
+
+/** "edit.fcpxml and .srt": one export's files share a name, so the rest are named by type. */
+const filesText = (files: ReadonlyArray<string>) => {
+  const [first, ...rest] = files.map(fileName);
+  const stem = first!.replace(/\.[^.]+$/u, "");
+  const names = [
+    first!,
+    ...rest.map((name) => (name.startsWith(`${stem}.`) ? name.slice(stem.length) : name)),
+  ];
+  // Each name wraps as one unit, breaking inside only when it is wider than the row.
+  return names.map((name, index) => (
+    <Fragment key={name}>
+      {index === 0 ? "" : index === names.length - 1 ? " and " : ", "}
+      <span className="inline-block max-w-full break-words">{name}</span>
+    </Fragment>
+  ));
+};
+
+/** A toast's description: one sentence, then the folder on a line of its own. */
+const folderNote = (sentence: string, folder: string) => (
+  <>
+    <span className="block">{sentence}</span>
+    <span className="block">{folder}</span>
+  </>
+);
+
+/** The project's own exports folder, where every export's files are. */
+const EXPORTS_FOLDER = "exports";
 
 export interface ExportResultParts {
   /** The row under the header, or null. */
@@ -102,6 +157,31 @@ export function useExportResult(props: {
     if (fresh !== null && fresh.path !== rawStored?.path) setStored(fresh);
     else if (rawStored !== null && (stored === null || storedGone)) setStored(null);
   }, [fresh, rawStored, stored, storedGone, setStored]);
+
+  // The files for editors (S7V-109), kept the same way; the first is the timeline file.
+  const [rawEditors, setEditors] = useLocalStorage(
+    latestEditorsFilesStorageKey(projectRef),
+    null,
+    StoredEditorsFiles,
+  );
+  const storedFiles = exportFiles(rawEditors?.files);
+  const freshFiles = job?.state === "succeeded" ? exportFiles(status?.files) : null;
+  const editorsFiles = freshFiles ?? (fresh === null ? storedFiles : null);
+  const editorsSize = useExportFileSize(
+    environmentId,
+    editorsFiles === null || job?.state === "running" ? null : absolute(editorsFiles[0]!),
+  );
+  const editorsGone = freshFiles === null && storedFiles !== null && editorsSize === "missing";
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps the finished files for editors in local storage, outside React, so they are still offered after a reload
+  useEffect(() => {
+    const sameFiles = (files: ReadonlyArray<string>) =>
+      rawEditors !== null && files.join("\n") === rawEditors.files.join("\n");
+    if (freshFiles !== null && !sameFiles(freshFiles)) setEditors({ files: [...freshFiles] });
+    // A newer video export, a kept list naming anything outside exports/, or a gone file.
+    else if (rawEditors !== null && (fresh !== null || storedFiles === null || editorsGone)) {
+      setEditors(null);
+    }
+  }, [freshFiles, fresh, rawEditors, storedFiles, editorsGone, setEditors]);
 
   const openInEditor = useAtomCommand(shellEnvironment.openInEditor, { reportFailure: false });
   const mintUrl = useAssetUrlMinter(environmentId);
@@ -154,6 +234,21 @@ export function useExportResult(props: {
     }
   };
   const hide = (shown: LatestExport) => setStored({ ...shown, hidden: true });
+  const { copyToClipboard } = useCopyToClipboard({
+    onCopy: (folder: string) =>
+      toastManager.add({
+        type: "success",
+        title: "Copied where your files for editors are",
+        description: folderNote("In Finder, choose Go > Go to Folder (⇧⌘G) and paste it.", folder),
+      }),
+    // The folder is still said, so the user learns where the files are.
+    onError: (_error, folder: string) =>
+      toastManager.add({
+        type: "error",
+        title: "Couldn't copy the folder's location",
+        description: folderNote("Your files for editors are in this folder:", folder),
+      }),
+  });
   const latestHidden =
     latest !== null &&
     (fresh === null
@@ -171,7 +266,7 @@ export function useExportResult(props: {
       </IconAction>
     );
 
-  // An outcome row (cancelled, failed, files for editors) hides for this session only.
+  // A cancelled or failed outcome row hides for this session only; files for editors stay hidden.
   const [hiddenOutcome, setHiddenOutcome] = useState<string | null>(null);
   const hideOutcome = (
     <IconAction label="Hide" onClick={() => setHiddenOutcome(job?.id ?? null)}>
@@ -193,23 +288,46 @@ export function useExportResult(props: {
         actions: hideOutcome,
       } as const;
     }
-    // "Export for editors" (S7V-040): its files, with Show in Finder where the server can.
-    const files = job?.state === "succeeded" ? status?.files : undefined;
-    if (files !== undefined && files.length > 0) {
-      if (outcomeHidden) return null;
-      const first = files[0]!;
+    // "Export for editors" (S7V-040): its files, with Show in Finder where the server can, and
+    // elsewhere the folder they are in, whose location the user can copy (S7V-109).
+    if (editorsFiles !== null) {
+      if (outcomeHidden || editorsGone || rawEditors?.hidden === true) return null;
+      const first = editorsFiles[0]!;
+      const folder = absolute(EXPORTS_FOLDER);
       return {
         text: (
           <>
-            Your files for editors are ready
-            <span className="text-muted-foreground"> · {files.map(fileName).join(", ")}</span>
+            {freshFiles === null ? "Latest files for editors" : "Your files for editors are ready"}
+            <span className="text-muted-foreground">
+              {` · ${canReveal ? "" : "in exports: "}`}
+              {filesText(editorsFiles)}
+            </span>
           </>
         ),
         tone: "done",
+        // The names are where to find the files, so they wrap rather than being cut off.
+        wraps: true,
         actions: (
           <>
-            {canReveal && isExportPath(first) ? reveal(first) : null}
-            {hideOutcome}
+            {canReveal ? (
+              reveal(first)
+            ) : folder === null ? null : (
+              <IconAction
+                label="Copy where the files are"
+                onClick={() => copyToClipboard(folder, folder)}
+              >
+                <CopyIcon aria-hidden />
+              </IconAction>
+            )}
+            <IconAction
+              label="Hide"
+              onClick={() => {
+                setHiddenOutcome(job?.id ?? null);
+                setEditors({ files: [...editorsFiles], hidden: true });
+              }}
+            >
+              <XIcon aria-hidden />
+            </IconAction>
           </>
         ),
       } as const;
@@ -253,7 +371,7 @@ export function useExportResult(props: {
         ) : null}
         <span
           role="status"
-          className="min-w-0 flex-1 truncate data-[tone=error]:text-destructive-foreground data-[tone=muted]:text-muted-foreground"
+          className={`min-w-0 flex-1 ${"wraps" in row ? "break-words py-1" : "truncate"} data-[tone=error]:text-destructive-foreground data-[tone=muted]:text-muted-foreground`}
           data-tone={row.tone}
         >
           {row.text}

@@ -33,7 +33,8 @@ On top of any look, `custom` changes only these, and keeps the ones not given:
    job with `video_job_status` (`waitSeconds: 30`), then call `video_caption_style` again. If it
    says a clip already shows captions in its picture, ask the user the question it gives and stop;
    then do what it said for their answer (`confirm: true`, with the other `position` if they
-   chose it); if they said yes when shown the looks, pass `confirm: true` with the look they pick.
+   chose it; `confirm: false` for only the other clips, which leaves that clip as it is); if they
+   answered when shown the looks, pass the same `confirm` with the look they pick.
    A change to captions the edit already has never asks: if the reply says a clip keeps its own
    captions, pass that sentence on, and on "caption that clip too" call `video_add_captions` with
    `confirm: true`, which captions it in the current look.

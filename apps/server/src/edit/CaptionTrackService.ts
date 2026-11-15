@@ -41,7 +41,12 @@ import {
   missingLookPart,
   sameCaptionCustom,
 } from "./captionCustom.ts";
-import { captionedMedia, type CaptionTranscripts, loadCaptionTranscripts } from "./captionTrack.ts";
+import {
+  type CaptionTranscripts,
+  clipName,
+  loadCaptionTranscripts,
+  unconfirmed,
+} from "./captionTrack.ts";
 import * as EditDocumentService from "./EditDocumentService.ts";
 import { ASSEMBLE_FIRST } from "./videoTrack.ts";
 
@@ -54,6 +59,8 @@ export interface AddCaptionsResult {
   readonly captions: number;
   /** Clips that waited (their picture shows captions) and got ours in this change, by name. */
   readonly captioned: ReadonlyArray<string>;
+  /** Clips that show their own captions and were left uncaptioned, by the names the user knows. */
+  readonly uncaptioned: ReadonlyArray<string>;
   /** "the Plain look (orange, at the top)": the look the captions have now, as replies say it. */
   readonly look: string;
   readonly changed: boolean;
@@ -62,8 +69,6 @@ export interface AddCaptionsResult {
 export interface SetStyleResult extends AddCaptionsResult {
   /** The look's own colours, size and place in editing words, as the version note says them. */
   readonly described: string;
-  /** Clips that show their own captions and were left uncaptioned, by the names the user knows. */
-  readonly uncaptioned: ReadonlyArray<string>;
   /** The captions were added from the transcripts in the same change. */
   readonly added: boolean;
   /** The look and the user's own colours, size and place the captions now have. */
@@ -78,7 +83,10 @@ export interface StyleInput {
   readonly custom?: EditCaptionCustom | undefined;
 }
 
-/** The user said to add captions over the ones already in a clip's picture (S7V-099). */
+/**
+ * The user's answer about captions already in a clip's picture: true adds ours over them too
+ * (S7V-099), false captions only the other clips (S7V-109), and none asks first.
+ */
 export interface Confirmed {
   readonly confirm?: boolean | undefined;
 }
@@ -117,12 +125,6 @@ const lookPhrase = (
   return `the ${CAPTION_PRESET_NAMES[preset]} look${words === "" ? "" : ` (${words})`}`;
 };
 
-/** A clip as the user knows it: its label, or its file's name. */
-const clipName = (document: EditDocument, id: string) => {
-  const media = document.media.find((entry) => entry.id === id);
-  return media?.label ?? (media?.path ?? media?.reference ?? id).split(/[\\/]/u).at(-1) ?? id;
-};
-
 /** "a.mp4", "a.mp4 and b.mp4", "a.mp4, b.mp4 and c.mp4". */
 export const listed = (names: ReadonlyArray<string>) =>
   names.length < 2 ? (names[0] ?? "") : `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`;
@@ -140,44 +142,32 @@ const burnedInRefusal = (
   pending: CaptionTranscripts["burnedIn"],
   retry: string,
   position: CaptionPosition,
+  othersSpeak: boolean,
 ) => {
   const names = [...pending.keys()].map((id) => clipName(document, id));
   const region = [...pending.values()].find((entry) => entry !== undefined);
   const where = region === undefined ? null : region.y0 + region.y1 < 1 ? "top" : "bottom";
   const other = where === "top" ? "bottom" : "top";
   const subject = `${listed(names)} already ${names.length === 1 ? "has" : "have"} captions`;
+  // S7V-109: in an edit with other clips that speak, ours can go on those alone.
+  const onlyOthers = othersSpeak ? " add them only to the other clips," : "";
   const question =
     where === null
-      ? `${subject} in the picture. Add ours anyway, or leave it as it is?`
+      ? `${subject} in the picture. Add ours anyway,${onlyOthers} or leave it as it is?`
       : where !== position
-        ? `${subject} near the ${where}; ours would be ${placeWords(position)}. Add them, or leave it as it is?`
-        : `${subject} near the ${where}. Add ours at the ${other}, add them anyway, or leave it as it is?`;
+        ? `${subject} near the ${where}; ours would be ${placeWords(position)}. Add them,${onlyOthers} or leave it as it is?`
+        : `${subject} near the ${where}. Add ours at the ${other}, add them anyway,${onlyOthers} or leave it as it is?`;
   const atOther =
     where === position
       ? ` If they choose the ${other}, call video_caption_style with confirm: true and custom {"position": "${other}"}.`
       : "";
+  const answer = (value: boolean) =>
+    `${retry} again with confirm: ${value}${retry === LOOKS_RETRY ? `, and pass confirm: ${value} with the look they pick` : ""}`;
+  const others = othersSpeak ? ` If they say only the other clips, ${answer(false)}.` : "";
   return new CaptionsError({
     reason: "burned-in",
-    detail: `${listed(names)} already ${names.length === 1 ? "shows" : "show"} captions in the picture. Nothing changed. Ask the user: "${question}"${atOther} If they say add them, ${retry} again with confirm: true${retry === LOOKS_RETRY ? ", and pass confirm: true with the look they pick" : ""}. If they say leave it, change nothing.`,
+    detail: `${listed(names)} already ${names.length === 1 ? "shows" : "show"} captions in the picture. Nothing changed. Ask the user: "${question}"${atOther} If they say add them, ${answer(true)}.${others} If they say leave it, change nothing.`,
   });
-};
-
-/**
- * Burned-in clips that adding captions would caption (speech in their placed part) and the
- * transcript track doesn't yet: those need the user's yes.
- */
-const unconfirmed = (loaded: CaptionTranscripts, document: EditDocument) => {
-  const captioned = captionedMedia(document);
-  return new Map(
-    [...loaded.burnedIn].filter(([media]) => {
-      const transcript = loaded.transcripts.get(media);
-      return (
-        !captioned.has(media) &&
-        transcript !== undefined &&
-        captionItemsFor(document, new Map([[media, transcript]])).length > 0
-      );
-    }),
-  );
 };
 
 export class CaptionTrackService extends Context.Service<
@@ -232,13 +222,14 @@ const make = Effect.gen(function* () {
 
   /**
    * The ops that write the transcript caption track, or the plain reason they can't. A clip that
-   * already shows captions counts as a yes only once the track captions it (S7V-099).
+   * already shows captions counts as a yes only once the track captions it (S7V-099); with
+   * `confirm` false it is left out and the other clips are captioned (S7V-109).
    */
   const transcriptTrackOps = Effect.fn("CaptionTrackService.transcriptTrackOps")(function* (
     projectId: ProjectId,
     document: EditDocument,
     retry: string,
-    confirmed: boolean,
+    confirm: boolean | undefined,
     position: CaptionPosition,
   ) {
     const loaded = yield* transcriptsOf(projectId, document);
@@ -251,8 +242,23 @@ const make = Effect.gen(function* () {
       });
     }
     const pending = unconfirmed(loaded, document);
-    if (pending.size > 0 && !confirmed) {
-      return yield* burnedInRefusal(document, pending, retry, position);
+    const others = new Map([...transcripts].filter(([media]) => !pending.has(media)));
+    const othersSpeak = pending.size > 0 && captionItemsFor(document, others).length > 0;
+    if (pending.size > 0 && confirm === undefined) {
+      // Offered only on a first add: once the track exists, the other clips already have ours.
+      const offerOthers = othersSpeak && transcriptCaptionTrackOf(document) === undefined;
+      return yield* burnedInRefusal(document, pending, retry, position, offerOthers);
+    }
+    const waiting = [...pending.keys()].map((id) => clipName(document, id));
+    if (pending.size > 0 && confirm === false) {
+      if (!othersSpeak) {
+        const one = waiting.length === 1;
+        return yield* new CaptionsError({
+          reason: "no-clips",
+          detail: `Nothing changed: ${listed(waiting)} ${one ? "keeps its" : "keep their"} own captions, and no other clip has speech to caption. Say "add them anyway" to put ours over them. If they do, ${retry} again with confirm: true.`,
+        });
+      }
+      return { ops: captionTrackOps(document, others), captioned: [], uncaptioned: waiting };
     }
     if (transcripts.size === 0) {
       const noVideo = document.tracks.every(
@@ -268,7 +274,9 @@ const make = Effect.gen(function* () {
     return {
       ops: captionTrackOps(document, transcripts),
       /** The waiting clips this captions, with the user's yes. */
-      captioned: [...pending.keys()].map((id) => clipName(document, id)),
+      captioned: waiting,
+      /** The waiting clips left with their own captions, with the user's no. */
+      uncaptioned: [] as ReadonlyArray<string>,
     };
   });
 
@@ -276,11 +284,11 @@ const make = Effect.gen(function* () {
     "CaptionTrackService.addCaptions",
   )(function* (projectId, options) {
     const snapshot = yield* edits.read(projectId);
-    const { ops, captioned } = yield* transcriptTrackOps(
+    const { ops, captioned, uncaptioned } = yield* transcriptTrackOps(
       projectId,
       snapshot.document,
       "add captions",
-      options.confirm === true,
+      options.confirm,
       captionCustomOf(snapshot.document)?.position ?? "bottom",
     );
     // "Caption that clip too": the track exists, so this captions the waiting clips in its look.
@@ -303,6 +311,7 @@ const make = Effect.gen(function* () {
       captions: track?.items.length ?? 0,
       changed: after.revision !== snapshot.revision,
       captioned: addedTo,
+      uncaptioned,
       look,
     };
   });
@@ -377,13 +386,14 @@ const make = Effect.gen(function* () {
         };
       }
     } else {
-      const { ops: trackOps } = yield* transcriptTrackOps(
+      const { ops: trackOps, uncaptioned: leftOut } = yield* transcriptTrackOps(
         projectId,
         document,
         "pick the look",
-        options.confirm === true,
+        options.confirm,
         custom.position ?? "bottom",
       );
+      uncaptioned = leftOut;
       const addTrack = trackOps.find(
         (op): op is Extract<EditOp, { _tag: "addTrack" }> => op._tag === "addTrack",
       );
@@ -434,7 +444,7 @@ const make = Effect.gen(function* () {
           projectId,
           document,
           LOOKS_RETRY,
-          options.confirm === true,
+          options.confirm,
           captionCustomOf(document)?.position ?? "bottom",
         );
       } else if (transcriptCaptionTrackOf(document) !== undefined) {

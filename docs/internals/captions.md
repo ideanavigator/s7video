@@ -137,7 +137,12 @@ shapes captions by talking to the agent, through `video_caption_style` and `vide
   question names the clip by its file name and offers choices that fit where ours would go:
   "talk.mp4 already has captions near the bottom. Add ours at the top, add them anyway, or leave
   it as it is?", or "…; ours would be at the top. Add them, or leave it as it is?" when they
-  already would be. A rebuild after a cut or placement leaves such a clip out. Restyles and the
+  already would be. When other clips have speech, it also offers "add them only to the other
+  clips": that answer is the same call with `confirm: false`, which builds the track from the
+  other clips' transcripts and names the clip left as it is, in the same "keeps its own
+  captions" sentence; with no other clip to caption it changes nothing and says so (S7V-109).
+  A rebuild after a cut or placement leaves such a clip out, and `video_assemble`'s reply names
+  a clip it placed that way into captioned edits (S7V-109). Restyles and the
   looks on existing captions never ask: they change the captions that exist, and the reply names
   the clip that kept its own ("talk.mp4 keeps its own captions; say "caption that clip too" to
   add ours"). That phrase is `video_add_captions` with `confirm: true`: it rebuilds the track's
@@ -155,6 +160,10 @@ band; the same ASS through the same libass is pixel-equal before scaling.
 - With no caption items, the export burns in captions from the clips' transcripts (S7V-046), so
   the player shows those too: the server passes the same transcripts the export would
   (`transcriptMediaFor`), and the engine picks the chunks with the export's own `export_chunks`.
+  A clip whose transcript says its picture shows captions (`burnedInCaptions.found`) is left out
+  of this fallback in the export, Export for editors and the player alike, so it keeps only its
+  own; once the transcript track captions it with the user's yes, the track's items show
+  (S7V-109).
   A track and the fallback on the same edit give the same stills (`test_captions.py`).
 - The engine's `captions.render` builds the export's chunks and its ASS events in the edit's look
   (`cues`, `build_cues`), retimes one event per second, and has FFmpeg's `subtitles` filter draw

@@ -21,6 +21,7 @@ import type {
   EditDocument,
   EditMedia,
   EditOp,
+  Transcript,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Path from "effect/Path";
@@ -29,7 +30,7 @@ import { mediaFingerprint } from "../transcript/mediaFingerprint.ts";
 import { readCachedTranscript, transcriptCacheDir } from "../transcript/transcriptCache.ts";
 
 export interface CaptionTranscripts {
-  readonly transcripts: ReadonlyMap<string, CaptionTranscript>;
+  readonly transcripts: ReadonlyMap<string, Transcript>;
   /** Media on the video track with sound but no cached transcript (or an unreadable one). */
   readonly missing: ReadonlyArray<string>;
   /** Media whose picture already shows captions (S7V-099), with where; unchecked clips aren't listed. */
@@ -37,7 +38,7 @@ export interface CaptionTranscripts {
 }
 
 /** Media captioned in the transcript track: the user has said yes to captions over these. */
-export const captionedMedia = (document: EditDocument): ReadonlySet<string> =>
+const captionedMedia = (document: EditDocument): ReadonlySet<string> =>
   new Set(
     (transcriptCaptionTrackOf(document)?.items ?? []).flatMap((item) => {
       const media = captionMediaOfItem(item);
@@ -54,7 +55,7 @@ export const loadCaptionTranscripts = Effect.fn("captionTrack.loadCaptionTranscr
   const cacheDir = transcriptCacheDir(path, root);
   const locate = (media: EditMedia) =>
     media.path !== undefined ? path.resolve(root, media.path) : path.resolve(media.reference ?? "");
-  const transcripts = new Map<string, CaptionTranscript>();
+  const transcripts = new Map<string, Transcript>();
   const missing: string[] = [];
   const burnedIn = new Map<string, BurnedInCaptions["region"]>();
   for (const id of captionMediaOf(document)) {
@@ -71,6 +72,30 @@ export const loadCaptionTranscripts = Effect.fn("captionTrack.loadCaptionTranscr
   }
   return { transcripts, missing, burnedIn } satisfies CaptionTranscripts;
 });
+
+/** A clip as the user knows it: its label, or its file's name. */
+export const clipName = (document: EditDocument, id: string) => {
+  const media = document.media.find((entry) => entry.id === id);
+  return media?.label ?? (media?.path ?? media?.reference ?? id).split(/[\\/]/u).at(-1) ?? id;
+};
+
+/**
+ * Burned-in clips that adding captions would caption (speech in their placed part) and the
+ * transcript track doesn't yet: those need the user's yes (S7V-099).
+ */
+export const unconfirmed = (loaded: CaptionTranscripts, document: EditDocument) => {
+  const captioned = captionedMedia(document);
+  return new Map(
+    [...loaded.burnedIn].filter(([media]) => {
+      const transcript = loaded.transcripts.get(media);
+      return (
+        !captioned.has(media) &&
+        transcript !== undefined &&
+        captionItemsFor(document, new Map([[media, transcript]])).length > 0
+      );
+    }),
+  );
+};
 
 const videoItemsOf = (document: EditDocument) =>
   JSON.stringify(document.tracks.find((track) => track.kind === "video")?.items ?? []);
