@@ -10,7 +10,7 @@ import { scopedProjectKey } from "@t3tools/client-runtime/environment";
 import type { ExportStatus, ScopedProjectRef } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { CircleCheckIcon, ExternalLinkIcon, FolderOpenIcon, PlayIcon, XIcon } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 
 import { useAssetUrlMinter } from "../../assets/assetUrls";
 import { formatPlaybackClock } from "../../editor/editPlayback";
@@ -65,10 +65,19 @@ const latestOf = (status: ExportStatus | null): LatestExport | null => {
 
 const fileName = (path: string) => path.split("/").at(-1) ?? path;
 
-export function ExportResult(props: {
+export interface ExportResultParts {
+  /** The row under the header, or null. */
+  readonly row: ReactNode;
+  /** The Play dialog; render it anywhere. */
+  readonly dialog: ReactNode;
+  /** Plays the latest export after its row was hidden, so it stays reachable; else null. */
+  readonly playHidden: (() => void) | null;
+}
+
+export function useExportResult(props: {
   readonly projectRef: ScopedProjectRef;
   readonly projectExport: ProjectExport;
-}) {
+}): ExportResultParts {
   const { projectRef } = props;
   const { environmentId } = projectRef;
   const { job, status } = props.projectExport;
@@ -145,6 +154,11 @@ export function ExportResult(props: {
     }
   };
   const hide = (shown: LatestExport) => setStored({ ...shown, hidden: true });
+  const latestHidden =
+    latest !== null &&
+    (fresh === null
+      ? latest.hidden === true
+      : rawStored?.path === latest.path && rawStored.hidden === true);
 
   const reveal = (path: string) =>
     canReveal ? (
@@ -181,11 +195,7 @@ export function ExportResult(props: {
         actions: canReveal && isExportPath(first) ? reveal(first) : null,
       } as const;
     }
-    if (latest === null || storedGone) return null;
-    if (
-      fresh === null ? latest.hidden === true : rawStored?.path === latest.path && rawStored.hidden
-    )
-      return null;
+    if (latest === null || storedGone || latestHidden) return null;
     const sizeText = typeof size === "number" ? ` · ${formatFileSize(size)}` : "";
     return {
       text: (
@@ -211,55 +221,58 @@ export function ExportResult(props: {
     } as const;
   })();
 
-  return (
-    <>
-      {row === null ? null : (
-        <div
-          className="flex min-h-9 shrink-0 items-center gap-2 rounded-md border bg-muted/40 py-0.5 ps-2 pe-1 text-sm"
-          data-testid="export-result"
+  const rowNode =
+    row === null ? null : (
+      <div
+        className="flex min-h-9 shrink-0 items-center gap-2 rounded-md border bg-muted/40 py-0.5 ps-2 pe-1 text-sm"
+        data-testid="export-result"
+        data-tone={row.tone}
+      >
+        {row.tone === "done" ? (
+          <CircleCheckIcon aria-hidden className="size-4 shrink-0 text-success-foreground" />
+        ) : null}
+        <span
+          role="status"
+          className="min-w-0 flex-1 truncate data-[tone=error]:text-destructive-foreground data-[tone=muted]:text-muted-foreground"
           data-tone={row.tone}
         >
-          {row.tone === "done" ? (
-            <CircleCheckIcon aria-hidden className="size-4 shrink-0 text-success-foreground" />
-          ) : null}
-          <span
-            role="status"
-            className="min-w-0 flex-1 truncate data-[tone=error]:text-destructive-foreground data-[tone=muted]:text-muted-foreground"
-            data-tone={row.tone}
-          >
-            {row.text}
-          </span>
-          {"actions" in row && row.actions !== null ? (
-            <div className="flex shrink-0 items-center">{row.actions}</div>
-          ) : null}
-        </div>
+          {row.text}
+        </span>
+        {"actions" in row && row.actions !== null ? (
+          <div className="flex shrink-0 items-center">{row.actions}</div>
+        ) : null}
+      </div>
+    );
+  const dialog = (
+    <Dialog open={playing !== null} onOpenChange={(open) => !open && setPlaying(null)}>
+      {playing !== null && (
+        <DialogPopup className="sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>
+              Your export · {formatPlaybackClock(playing.latest.durationFrames, playing.latest.fps)}
+            </DialogTitle>
+            <DialogDescription>
+              {playing.latest.width}×{playing.latest.height}, saved as{" "}
+              {fileName(playing.latest.path)}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogPanel>
+            <video
+              src={playing.url}
+              aria-label="Your export"
+              controls
+              autoPlay
+              playsInline
+              className="max-h-[65vh] w-full rounded-md"
+            />
+          </DialogPanel>
+        </DialogPopup>
       )}
-      <Dialog open={playing !== null} onOpenChange={(open) => !open && setPlaying(null)}>
-        {playing !== null && (
-          <DialogPopup className="sm:max-w-2xl">
-            <DialogHeader>
-              <DialogTitle>
-                Your export ·{" "}
-                {formatPlaybackClock(playing.latest.durationFrames, playing.latest.fps)}
-              </DialogTitle>
-              <DialogDescription>
-                {playing.latest.width}×{playing.latest.height}, saved as{" "}
-                {fileName(playing.latest.path)}
-              </DialogDescription>
-            </DialogHeader>
-            <DialogPanel>
-              <video
-                src={playing.url}
-                aria-label="Your export"
-                controls
-                autoPlay
-                playsInline
-                className="max-h-[65vh] w-full rounded-md"
-              />
-            </DialogPanel>
-          </DialogPopup>
-        )}
-      </Dialog>
-    </>
+    </Dialog>
   );
+  const playHidden =
+    latest !== null && latestHidden && !storedGone && job?.state !== "running"
+      ? () => void play(latest)
+      : null;
+  return { row: rowNode, dialog, playHidden };
 }

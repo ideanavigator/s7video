@@ -20,6 +20,7 @@ import {
 import {
   ClapperboardIcon,
   FilmIcon,
+  PlayIcon,
   PlusIcon,
   SendToBackIcon,
   TriangleAlertIcon,
@@ -67,7 +68,8 @@ import { AssetsTab, useAssetsActions } from "./AssetsTab";
 import { CaptionOverlay } from "./CaptionOverlay";
 import { EditPlayer } from "./EditPlayer";
 import { ExportForEditorsDialog } from "./ExportForEditorsDialog";
-import { ExportResult } from "./ExportResult";
+import { useExportResult } from "./ExportResult";
+import { IconAction } from "./IconAction";
 import { HistoryCleanupBanner } from "./HistoryCleanupBanner";
 import { ImportDialog } from "./ImportDialog";
 import { MultiClipPlayer, type MultiClipSource } from "./MultiClipPlayer";
@@ -76,7 +78,7 @@ import { applyOutcomeOfError, stepOutcomeOfError } from "../../editor/timelineEd
 import { editFrameToPlayerFrame } from "./timeline/editFrames";
 import type { TimelineEditing } from "./timeline/Timeline";
 import type { EditApplyOutcome, TimelineNotice } from "./timeline/timelineEditor";
-import { TIMELINE_FLOOR_PX, TimelinePane } from "./timeline/TimelinePane";
+import { TIMELINE_FLOOR_PX, TIMELINE_SHORTEST_PX, TimelinePane } from "./timeline/TimelinePane";
 import { type TranscriptEditing, TranscriptTab } from "./TranscriptTab";
 import { VersionsTab } from "./VersionsTab";
 
@@ -819,10 +821,22 @@ export default function EditorPanel(props: {
               : { width: element.clientWidth, height: element.clientHeight },
           ),
         );
-  // The header, the export row and the notices: they keep their full height (S7V-101).
-  const [topPx, setTopPx] = useState(0);
+  // The header, the export row and the notices (S7V-101), and whether anything closable is up.
+  const [top, setTop] = useState({ px: 0, closable: false });
   const observeTop = (element: HTMLDivElement | null) =>
-    element === null ? undefined : observeResize(element, () => setTopPx(element.offsetHeight));
+    element === null
+      ? undefined
+      : observeResize(element, () => {
+          const closable = [...element.children]
+            .slice(1)
+            .some((child) => child.getBoundingClientRect().height > 0);
+          setTop((current) =>
+            current.px === element.offsetHeight && current.closable === closable
+              ? current
+              : { px: element.offsetHeight, closable },
+          );
+        });
+  const topPx = top.px;
   // The room the tabs got; a panel shows whole rows of it, or the hint under one row.
   const [tabRoomPx, setTabRoomPx] = useState<number | null>(null);
   const observeTabRoom = (element: HTMLDivElement | null) =>
@@ -833,6 +847,7 @@ export default function EditorPanel(props: {
     props.projectId,
     startedExport?.jobId ?? null,
   );
+  const exportResult = useExportResult({ projectRef, projectExport });
   const canAddFiles = window.desktopBridge !== undefined;
   const [dragging, setDragging] = useState(false);
   const acceptsDrop = (event: DragEvent<HTMLDivElement>) =>
@@ -869,6 +884,19 @@ export default function EditorPanel(props: {
       ? TAB_ROW_PX
       : tabsMinPx(panelSize.height, topPx, playerRoom.min);
   const tabsCollapsed = tabsMin < TAB_ROW_PX;
+  // The top block never takes the timeline's toolbar and ruler: past this, its notices scroll.
+  const topMaxPx =
+    panelSize === null || playerRoom === null
+      ? undefined
+      : Math.max(
+          0,
+          panelSize.height -
+            PANEL_PADDING_PX -
+            playerRoom.min -
+            TAB_BAR_PX -
+            COLUMN_GAPS_PX -
+            TIMELINE_SHORTEST_PX,
+        );
   const tabPanelStyle = {
     height:
       tabRoomPx === null || tabRoomPx < TAB_ROW_PX
@@ -947,7 +975,12 @@ export default function EditorPanel(props: {
       <div role="status" aria-live="polite" className="sr-only">
         {dragging ? DROP_OVERLAY_TEXT : ""}
       </div>
-      <div ref={observeTop} className="flex shrink-0 flex-col gap-2" data-testid="editor-top">
+      <div
+        ref={observeTop}
+        className="flex min-h-0 shrink-0 flex-col gap-2"
+        style={{ maxHeight: topMaxPx }}
+        data-testid="editor-top"
+      >
         <div className="flex min-h-7 shrink-0 items-center justify-between gap-2">
           <div className="flex min-w-0 items-center gap-2 text-sm">
             {view._tag === "play" && view.mode === "clip" ? (
@@ -984,18 +1017,33 @@ export default function EditorPanel(props: {
                 started={startedExport}
                 onStarted={setStartedExport}
               />
+              {exportResult.playHidden === null ? null : (
+                // The hidden export row's way back, so the latest export stays reachable.
+                <IconAction label="Play the latest export" onClick={exportResult.playHidden}>
+                  <PlayIcon aria-hidden />
+                </IconAction>
+              )}
             </div>
           ) : null}
         </div>
-        <ExportResult projectRef={projectRef} projectExport={projectExport} />
-        {/* Notices keep their full height; the one to read now comes first. */}
-        <RefusedChangeNotice snapshot={edit._tag === "ready" ? edit.snapshot : null} />
-        <HistoryCleanupBanner
-          projectRef={projectRef}
-          snapshot={edit._tag === "ready" ? edit.snapshot : null}
-        />
-        <SpeechModelPrompt projectRef={projectRef} />
+        {exportResult.row}
+        {/*
+          The one to read now comes first. When the notices don't all fit above the player's share
+          and the timeline's toolbar and ruler, the ones below it scroll.
+        */}
+        <div
+          className="flex min-h-0 flex-col gap-2 overflow-y-auto empty:hidden"
+          data-testid="editor-notices"
+        >
+          <RefusedChangeNotice snapshot={edit._tag === "ready" ? edit.snapshot : null} />
+          <HistoryCleanupBanner
+            projectRef={projectRef}
+            snapshot={edit._tag === "ready" ? edit.snapshot : null}
+          />
+          <SpeechModelPrompt projectRef={projectRef} />
+        </div>
       </div>
+      {exportResult.dialog}
       {/*
         The player takes the room first, in its canvas shape, and keeps its share of the panel. It
         grows far ahead of the tabs, so they get only what is left once its canvas fills the width.
@@ -1028,10 +1076,12 @@ export default function EditorPanel(props: {
         ))}
         {tabsCollapsed ? (
           <p
-            className="ml-auto min-w-0 self-center truncate ps-2 text-xs text-muted-foreground"
+            className="ml-auto line-clamp-2 min-w-0 self-center ps-2 text-end text-xs leading-3.5 text-muted-foreground"
             data-testid="editor-tabs-hint"
           >
-            Make the window taller to see {tabLabel}.
+            {top.closable
+              ? `Close a notice above or make the window taller to see ${tabLabel}.`
+              : `Make the window taller to see ${tabLabel}.`}
           </p>
         ) : null}
       </div>

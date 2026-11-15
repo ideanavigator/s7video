@@ -792,10 +792,15 @@ describe("EditorPanel", () => {
           await expect.element(result).not.toBeInTheDocument();
         }
         {
-          // Still hidden after a reload.
+          // Still hidden after a reload, and still reachable from beside Export.
           await using screen = await renderPanel();
           await expect.element(screen.getByRole("button", { name: "Export" })).toBeVisible();
           expect(screen.getByTestId("export-result").query()).toBeNull();
+          await screen.getByRole("button", { name: "Play the latest export" }).click();
+          await expect
+            .element(page.getByRole("dialog", { name: "Your export · 2:02" }))
+            .toBeVisible();
+          await userEvent.keyboard("{Escape}");
         }
         const next = "exports/charger-reel-20261114-2300.mp4";
         state.export = {
@@ -810,6 +815,8 @@ describe("EditorPanel", () => {
         await expect
           .element(screen.getByTestId("export-result"))
           .toHaveTextContent("Your video is ready · 2:02 · 1080×1920 · 68 MB");
+        // The row is back, so the extra way to play it is not.
+        expect(screen.getByRole("button", { name: "Play the latest export" }).query()).toBeNull();
       } finally {
         reset();
       }
@@ -1624,7 +1631,15 @@ describe("EditorPanel", () => {
           const ready = state.edit as Extract<ProjectEditState, { _tag: "ready" }>;
           const notice =
             "The edit was changed outside the app and could not be read. That change was not kept; the edit is back to its last saved version.";
-          state.edit = { _tag: "ready", snapshot: { ...ready.snapshot, notice } };
+          // Every notice the Editor can show: the refusal, old versions (S7V-050), the speech prompt.
+          state.edit = {
+            _tag: "ready",
+            snapshot: {
+              ...ready.snapshot,
+              notice,
+              cleanup: { versions: 64, bytes: 260_000_000 },
+            },
+          };
           state.versions = versions;
           state.speech = {
             profiles: {
@@ -1651,8 +1666,11 @@ describe("EditorPanel", () => {
           );
           try {
             await using screen = await layout();
-            await expect.element(screen.getByText(SPEECH_MODEL_PROMPT)).toBeVisible();
+            await expect.element(screen.getByText(SPEECH_MODEL_PROMPT)).toBeInTheDocument();
             await expect.element(screen.getByTestId("export-result")).toBeVisible();
+            await expect
+              .element(screen.getByRole("region", { name: "Old versions" }))
+              .toBeInTheDocument();
             const editor = box("[data-testid=editor-panel]");
             const whole = (element: Element) => {
               const rect = element.getBoundingClientRect();
@@ -1662,11 +1680,17 @@ describe("EditorPanel", () => {
             const refusal = screen.getByText(notice).element().closest("[role=status]")!;
             expect(whole(refusal)).toBe(true);
             const prompt = screen.getByRole("region", { name: "Speech model" }).element();
-            expect(whole(prompt)).toBe(true);
             expect(prompt.getBoundingClientRect().height).toBeLessThanOrEqual(40);
             expect(refusal.getBoundingClientRect().top).toBeLessThan(
               prompt.getBoundingClientRect().top,
             );
+            // The notices below the refusal stay reachable: the notice area scrolls when it must.
+            const notices = document.querySelector<HTMLElement>("[data-testid=editor-notices]")!;
+            if (notices.scrollHeight > notices.clientHeight + 1) {
+              expect(getComputedStyle(notices).overflowY).toBe("auto");
+            } else {
+              expect(whole(prompt)).toBe(true);
+            }
             // The player keeps its share, and the timeline ends inside the panel.
             const picture = (await videoOf(screen)).closest<HTMLElement>("[data-canvas]")!;
             await expect
@@ -1675,6 +1699,11 @@ describe("EditorPanel", () => {
             await expect
               .poll(() => box("[data-testid=editor-timeline]").bottom)
               .toBeLessThanOrEqual(editor.bottom - 7.5);
+            // At least the timeline's toolbar and ruler (56 px) show.
+            expect(box("[data-testid=editor-timeline]").height).toBeGreaterThanOrEqual(56);
+            expect(box("[role=tablist]").bottom).toBeLessThanOrEqual(
+              box("[data-testid=editor-timeline]").top,
+            );
             // The tabs: whole version rows, or the one-line hint.
             const hint = document.querySelector("[data-testid=editor-tabs-hint]");
             if (hint === null) {
@@ -1689,7 +1718,12 @@ describe("EditorPanel", () => {
                 if (overlaps) expect(inside(rect, shown)).toBe(true);
               }
             } else {
-              expect(hint.textContent).toBe("Make the window taller to see Versions.");
+              expect(hint.textContent).toBe(
+                "Close a notice above or make the window taller to see Versions.",
+              );
+              // Whole, never cut to an ellipsis: it wraps inside the tab bar instead.
+              expect(hint.scrollHeight).toBeLessThanOrEqual(hint.clientHeight + 1);
+              expect(hint.getBoundingClientRect().height).toBeLessThanOrEqual(30);
               expect(whole(hint)).toBe(true);
             }
             await page.screenshot({
