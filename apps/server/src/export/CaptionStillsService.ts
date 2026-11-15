@@ -110,10 +110,11 @@ const make = Effect.gen(function* () {
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(Path.Path, path),
     );
-    // The export's rule: transcripts caption the edit only while no caption track has items.
+    // The export's rule: transcripts caption the edit only while no caption track has items, and
+    // never a clip whose picture already shows captions (S7V-109).
     const fallbackMedia = new Set(transcriptMediaFor(document, true));
     const transcripts = [...loaded.transcripts]
-      .filter(([media]) => fallbackMedia.has(media))
+      .filter(([media]) => fallbackMedia.has(media) && !loaded.burnedIn.has(media))
       .map(([media, transcript]) => ({ media, fps: transcript.fps, words: [...transcript.words] }));
     const labelOf = (id: string) => {
       const media = document.media.find((entry) => entry.id === id);

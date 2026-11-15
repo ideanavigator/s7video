@@ -94,6 +94,7 @@ export const exportSlug = (title: string) =>
  * The media whose transcripts caption the export: those on the first video track (the one the
  * engine renders) that have sound, when captions are on and no caption track has items. A clip
  * without audio cannot be transcribed, so it gets no captions rather than blocking the export.
+ * Of these, a clip whose transcript says its picture shows captions is left out (S7V-109).
  */
 export const transcriptMediaFor = (document: EditDocument, captions: boolean) => {
   if (!captions) return [];
@@ -192,7 +193,8 @@ const make = Effect.gen(function* () {
     return { title: project.value.title, root: path.resolve(project.value.workspaceRoot) };
   });
 
-  // Read before anything is written, so a missing transcript leaves no file behind.
+  // Read before anything is written, so a missing transcript leaves no file behind. A clip whose
+  // picture already shows captions (S7V-099) keeps only its own: the fallback leaves it out (S7V-109).
   const transcriptWords = (projectId: ProjectId, document: EditDocument, captions: boolean) =>
     Effect.forEach(transcriptMediaFor(document, captions), (media) =>
       transcripts.get({ projectId, media }).pipe(
@@ -202,18 +204,24 @@ const make = Effect.gen(function* () {
         Effect.flatMap((transcript) =>
           transcript === null
             ? Effect.fail(new ExportStartError({ projectId, reason: "no-transcript" }))
-            : Effect.succeed({
-                media,
-                fps: transcript.fps,
-                words: transcript.words.map(({ text, startFrame, endFrame }) => ({
-                  text,
-                  startFrame,
-                  endFrame,
-                })),
-              }),
+            : Effect.succeed(
+                transcript.burnedInCaptions?.found === true
+                  ? []
+                  : [
+                      {
+                        media,
+                        fps: transcript.fps,
+                        words: transcript.words.map(({ text, startFrame, endFrame }) => ({
+                          text,
+                          startFrame,
+                          endFrame,
+                        })),
+                      },
+                    ],
+              ),
         ),
       ),
-    );
+    ).pipe(Effect.map((entries) => entries.flat()));
 
   const exportsFolder = (projectId: ProjectId, root: string) => {
     const folder = path.join(root, EXPORTS_DIR);

@@ -499,6 +499,78 @@ describe("ExportService", () => {
     ),
   );
 
+  // S7V-109: a clip whose picture already shows captions keeps only its own, in both exports.
+  const withBurnt: ReadonlyArray<EditOp> = [
+    ...withVideo,
+    {
+      _tag: "putMedia",
+      media: {
+        id: "burnt",
+        kind: "video",
+        path: "assets/burnt.mp4",
+        fingerprint: { sha256: "cd".repeat(32), size: 4096 },
+        probe: { durationFrames: 900, hasVideo: true, hasAudio: true },
+      },
+    },
+    {
+      _tag: "insertItem",
+      trackId: "V1",
+      item: { id: "burnt-1", media: "burnt", start: 600, duration: 300, in: 0 },
+    },
+  ];
+  const spoken = (text: string, found?: boolean): Transcript => ({
+    ...transcriptOf([{ text, startFrame: 12, endFrame: 20, confidence: 0.9, speaker: "S1" }]),
+    ...(found === undefined
+      ? {}
+      : {
+          burnedInCaptions: found
+            ? { found: true, confidence: 0.9, region: { y0: 0.7, y1: 0.8 } }
+            : { found: false, confidence: 0 },
+        }),
+  });
+  const mediaOf = (call: RunJobCall | undefined) =>
+    (call?.params.transcripts as ReadonlyArray<{ media: string }> | undefined)?.map(
+      (entry) => entry.media,
+    );
+
+  it.effect("S7V-109: the fallback leaves out a clip whose picture shows captions", () =>
+    withExports(
+      "ok",
+      ({ projectId, exports, calls }) =>
+        Effect.gen(function* () {
+          yield* exports.start({ projectId });
+          yield* exports.startInterchange({ projectId, format: "fcpxml" });
+          // The video export, then the editors export's check and job.
+          assert.deepStrictEqual(calls.map(mediaOf), [["cam"], ["cam"], ["cam"]]);
+        }),
+      { ops: withBurnt, cached: { cam: spoken("hello"), burnt: spoken("theirs", true) } },
+    ),
+  );
+
+  it.effect("S7V-109: a clip checked with no captions in its picture is captioned as before", () =>
+    withExports(
+      "ok",
+      ({ projectId, exports, calls }) =>
+        Effect.gen(function* () {
+          yield* exports.start({ projectId });
+          assert.deepStrictEqual(mediaOf(calls[0]), ["cam", "burnt"]);
+        }),
+      { ops: withBurnt, cached: { cam: spoken("hello"), burnt: spoken("ours", false) } },
+    ),
+  );
+
+  it.effect("S7V-109: with only burned-in clips the export has no transcript captions", () =>
+    withExports(
+      "ok",
+      ({ projectId, exports, calls }) =>
+        Effect.gen(function* () {
+          yield* exports.start({ projectId });
+          assert.isUndefined(calls[0]?.params.transcripts);
+        }),
+      { ops: withVideo, cached: { cam: spoken("theirs", true) } },
+    ),
+  );
+
   it.effect("fails plainly without a transcript and writes nothing", () =>
     withExports(
       "ok",

@@ -173,6 +173,56 @@ const writeClip = (root: string, transcribed: boolean) => {
   );
 };
 
+/** S7V-109: a second clip whose transcript says (`found`) whether its picture shows captions. */
+const burnt = Buffer.from("a clip with captions in its picture");
+const burntFingerprint = { sha256: sha(burnt.toString()), size: burnt.length };
+const burntMedia = {
+  ...media,
+  id: "burnt",
+  path: "assets/burnt.mp4",
+  label: "burnt.mp4",
+  fingerprint: burntFingerprint,
+} as const;
+const writeBurnt = (root: string, found: boolean) => {
+  NodeFS.mkdirSync(NodePath.join(root, "assets"), { recursive: true });
+  NodeFS.writeFileSync(NodePath.join(root, "assets", "burnt.mp4"), burnt);
+  const transcript: Transcript = {
+    transcriptVersion: 1,
+    mediaFingerprint: burntFingerprint,
+    model: "test",
+    revision: "test",
+    fps: { num: 30, den: 1 },
+    durationFrames: 900,
+    words: [{ text: "theirs", startFrame: 0, endFrame: 10, confidence: 1, speaker: "S1" }],
+    createdAt: "2026-11-09T00:00:00.000Z",
+    burnedInCaptions: found
+      ? { found: true, confidence: 0.9, region: { y0: 0.7, y1: 0.8 } }
+      : { found: false, confidence: 0 },
+  };
+  const dir = NodePath.join(root, ".s7cache", "transcripts");
+  NodeFS.mkdirSync(dir, { recursive: true });
+  NodeFS.writeFileSync(
+    NodePath.join(dir, `${burntFingerprint.sha256}.json`),
+    JSON.stringify(transcript),
+  );
+};
+/** The plain clip, then the burnt one after it. */
+const twoClips: ReadonlyArray<EditOp> = [
+  { _tag: "putMedia", media },
+  { _tag: "putMedia", media: burntMedia },
+  {
+    _tag: "addTrack",
+    track: {
+      kind: "video",
+      id: "V1",
+      items: [
+        { id: "v1", media: "cam", start: 0, duration: 90, in: 0 },
+        { id: "v2", media: "burnt", start: 90, duration: 90, in: 0 },
+      ],
+    },
+  },
+];
+
 const video: ReadonlyArray<EditOp> = [
   { _tag: "putMedia", media },
   {
@@ -337,6 +387,83 @@ describe("CaptionStillsService (S7V-075)", () => {
         // An empty caption track still falls back, as in the export.
         yield* apply(edits, projectId, [captionTrack]);
         assert.deepStrictEqual((yield* stills.stills(projectId)).chunks, fallback.chunks);
+      }),
+    ),
+  );
+
+  it.effect("S7V-109: the fallback leaves out a clip whose picture shows captions", () =>
+    withStills(({ projectId, root, calls, edits, stills }) =>
+      Effect.gen(function* () {
+        writeClip(root, true);
+        writeBurnt(root, true);
+        yield* apply(edits, projectId, twoClips);
+        const result = yield* stills.stills(projectId);
+        assert.deepStrictEqual(
+          calls.renders[0]!.transcripts?.map((entry) => entry.media),
+          ["cam"],
+        );
+        assert.deepStrictEqual(decoded(root, result), ["png:hello", "png:there"]);
+        assert.deepStrictEqual(result.missing, []);
+      }),
+    ),
+  );
+
+  it.effect(
+    "S7V-109: a clip checked with no captions, or never checked, is captioned as before",
+    () =>
+      withStills(({ projectId, root, calls, edits, stills }) =>
+        Effect.gen(function* () {
+          writeClip(root, true);
+          writeBurnt(root, false);
+          yield* apply(edits, projectId, twoClips);
+          yield* stills.stills(projectId);
+          assert.deepStrictEqual(
+            calls.renders[0]!.transcripts?.map((entry) => entry.media),
+            ["cam", "burnt"],
+          );
+        }),
+      ),
+  );
+
+  it.effect("S7V-109: a burned-in clip the caption track covers keeps its captions", () =>
+    withStills(({ projectId, root, calls, edits, stills }) =>
+      Effect.gen(function* () {
+        writeClip(root, true);
+        writeBurnt(root, true);
+        yield* apply(edits, projectId, twoClips);
+        // The user said yes: the transcript track captions it, so the track's items show.
+        yield* apply(edits, projectId, [
+          transcriptTrack,
+          captions(["ours over theirs"], { s7: { media: "burnt" } }),
+        ]);
+        const result = yield* stills.stills(projectId);
+        assert.deepStrictEqual(decoded(root, result), ["png:ours over theirs"]);
+        assert.isUndefined(calls.renders[0]!.transcripts);
+      }),
+    ),
+  );
+
+  it.effect("S7V-109: with only a burned-in clip and no caption track, nothing is drawn", () =>
+    withStills(({ projectId, root, calls, edits, stills }) =>
+      Effect.gen(function* () {
+        writeBurnt(root, true);
+        yield* apply(edits, projectId, [
+          { _tag: "putMedia", media: burntMedia },
+          {
+            _tag: "addTrack",
+            track: {
+              kind: "video",
+              id: "V1",
+              items: [{ id: "v1", media: "burnt", start: 0, duration: 90, in: 0 }],
+            },
+          },
+        ]);
+        const result = yield* stills.stills(projectId);
+        assert.deepStrictEqual(
+          { key: result.key, chunks: result.chunks },
+          { key: "none", chunks: [] },
+        );
+        assert.strictEqual(calls.renders.length, 0);
       }),
     ),
   );
