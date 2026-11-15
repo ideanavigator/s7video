@@ -15,7 +15,7 @@ import { useSyncExternalStore } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
-import { act, render } from "../../../test/render";
+import { act, fakeTimers, render } from "../../../test/render";
 import { scopedProjectKey } from "@t3tools/client-runtime/environment";
 
 import {
@@ -1965,6 +1965,76 @@ describe("EditorPanel", () => {
             );
           };
           await expect.poll(refusalInView).toBe(true);
+        } finally {
+          state.speech = null;
+        }
+      });
+
+      // S7V-101: the notices closing on a new set moves focus only when it was in them.
+      it("leaves focus alone when it is outside the notices and their set changes", async () => {
+        await page.viewport(1180, 760);
+        setState([asset("clip-0")], true);
+        withCanvas({ width: 1080, height: 1920 });
+        const ready = state.edit as Extract<ProjectEditState, { _tag: "ready" }>;
+        state.edit = {
+          _tag: "ready",
+          snapshot: { ...ready.snapshot, cleanup: { versions: 64, bytes: 260_000_000 } },
+        };
+        state.speech = {
+          profiles: {
+            default: { sizeBytes: 3_744_329_895, downloadedBytes: 0, ready: false },
+            light: { sizeBytes: 2_287_244_626, downloadedBytes: 0, ready: false },
+          },
+          recommended: "default",
+          consent: "unasked",
+          loadedProfile: null,
+        } as TranscribeModelsStatus;
+        const layoutUi = () => (
+          <div className="flex h-screen w-screen bg-background text-foreground">
+            <div className="w-[255px] shrink-0 border-r">Sidebar (stand-in)</div>
+            <div className="flex min-w-0 flex-1">
+              <div className="flex min-w-0 flex-1 border-r">Chat column (stand-in)</div>
+              <div className="flex h-full flex-col" style={{ width: "60%" }}>
+                <div className="flex h-[52px] shrink-0 items-center border-b px-3">
+                  Panel tabs (stand-in)
+                </div>
+                <div className="min-h-0 flex-1">{panel()}</div>
+              </div>
+            </div>
+          </div>
+        );
+        try {
+          await using screen = await render(layoutUi(), { router: false });
+          // Old versions and the speech prompt; open them.
+          await screen.getByRole("button", { name: /^Show \d more notices?$/u }).click();
+          await expect
+            .element(screen.getByRole("button", { name: /^Show fewer notices/u }))
+            .toBeVisible();
+          // The user moves on to another Editor control, outside the notices.
+          const exportButton = screen
+            .getByRole("button", { name: "Export" })
+            .element() as HTMLElement;
+          await expect.poll(() => document.activeElement?.closest("[data-notice]")).not.toBeNull();
+          exportButton.focus();
+          expect(document.activeElement).toBe(exportButton);
+          // A refused change arrives: the set changes and the notices close, but focus stays put.
+          const current = state.edit as Extract<ProjectEditState, { _tag: "ready" }>;
+          state.edit = {
+            _tag: "ready",
+            snapshot: {
+              ...current.snapshot,
+              revision: current.snapshot.revision + 1,
+              notice: "That change was not kept; the edit is back to its last saved version.",
+            },
+          };
+          // The close's focus move is a frame later: fake the timers and run that frame.
+          using _timers = fakeTimers();
+          await screen.rerender(layoutUi());
+          await expect
+            .element(screen.getByRole("button", { name: /^Show \d more notices?$/u }))
+            .toBeVisible();
+          await act(() => vi.runOnlyPendingTimers());
+          expect(document.activeElement).toBe(exportButton);
         } finally {
           state.speech = null;
         }
