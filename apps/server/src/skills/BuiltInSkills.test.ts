@@ -182,6 +182,14 @@ it.layer(NodeServices.layer)("built-in skills", (it) => {
       assert.include(flat, "Do not ask.");
       assert.include(
         flat,
+        'An "Undid the last change" cancels the change just before it and a "Redid a change" brings it back, so an undone change is not one to put back.',
+      );
+      assert.include(
+        flat,
+        'If a list ends in "…and more changes", or a later version is "Restored from vN", you can\'t see every change since the cut: tell the user that and ask what to keep.',
+      );
+      assert.include(
+        flat,
         "Every change in it other than the cut and its re-duck, and every change in later versions, must come back.",
       );
       assert.include(flat, "Name them in editing words and ask");
