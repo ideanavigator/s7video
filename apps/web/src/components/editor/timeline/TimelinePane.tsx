@@ -38,7 +38,7 @@ const DEFAULT_TIMELINE_HEIGHT_PX = MIN_TIMELINE_HEIGHT_PX + 16;
  * In a short panel the player keeps its room (S7V-101), so the timeline gives way down to the
  * toolbar, ruler and video row, and its rows scroll.
  */
-const TIMELINE_FLOOR_PX =
+export const TIMELINE_FLOOR_PX =
   TOOLBAR_PX +
   TIMELINE_RULER_HEIGHT_PX +
   TIMELINE_TRACK_HEIGHTS_PX.overlay +
@@ -48,6 +48,8 @@ const TIMELINE_FLOOR_PX =
   BORDER_PX;
 /** The player and tabs keep at least this much of the panel. */
 const MIN_ABOVE_PX = 240;
+/** In the shortest panel the timeline still shows its toolbar and ruler; its rows scroll. */
+const SHORTEST_PX = TOOLBAR_PX + TIMELINE_RULER_HEIGHT_PX + BORDER_PX;
 const KEY_STEP_PX = 16;
 
 function storedHeight(): number {
@@ -66,8 +68,9 @@ function storeHeight(height: number): void {
   }
 }
 
+/** The timeline never runs past the panel (S7V-101): below its floor, its rows scroll. */
 const maxHeightIn = (panelHeight: number, minAbove: number): number =>
-  Math.max(TIMELINE_FLOOR_PX, panelHeight - Math.max(MIN_ABOVE_PX, minAbove));
+  Math.max(SHORTEST_PX, panelHeight - Math.max(MIN_ABOVE_PX, minAbove));
 
 const clampHeight = (height: number, maxHeight: number): number =>
   Math.round(Math.min(maxHeight, Math.max(MIN_TIMELINE_HEIGHT_PX, height)));
@@ -156,9 +159,8 @@ export function TimelinePane(props: {
         ref={observePanel}
         aria-label="Timeline"
         data-testid="editor-timeline"
-        className="overflow-hidden rounded-md border"
-        // A banner can still squeeze it, down to the floor; the rows scroll.
-        style={{ flex: `0 1 ${shown}px`, minHeight: Math.min(shown, TIMELINE_FLOOR_PX) }}
+        className="min-h-0 shrink-0 overflow-hidden rounded-md border"
+        style={{ height: shown }}
       >
         {props.document === null ? (
           <TimelineSkeleton />

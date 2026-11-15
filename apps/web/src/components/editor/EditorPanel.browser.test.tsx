@@ -8,6 +8,7 @@ import {
   ExportStartError,
   type MediaAsset,
   ProjectId,
+  type TranscribeModelsStatus,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import { useSyncExternalStore } from "react";
@@ -36,6 +37,13 @@ const state = vi.hoisted(() => ({
   transcriptMedia: [] as Array<string | null>,
   transcript: { _tag: "loading" } as MediaTranscriptState,
   versions: { _tag: "loading" } as ProjectVersionsState,
+  speech: null as TranscribeModelsStatus | null,
+  /** The export's file on the server (S7V-101). */
+  exportFile: {
+    size: 68_000_000 as number | "missing" | null,
+    check: "present" as "present" | "missing" | "unknown",
+    canReveal: true,
+  },
 }));
 
 /** The export as the jobs stream would deliver it: setting it re-renders its readers. */
@@ -65,11 +73,14 @@ const commands = vi.hoisted(() => ({
   interchange: vi.fn(),
   openInEditor: vi.fn(async () => ({ _tag: "Success", value: undefined })),
 }));
-const toasts = vi.hoisted(() => ({ add: vi.fn() }));
+const toasts = vi.hoisted(() => ({ add: vi.fn(), close: vi.fn() }));
 
 vi.mock(import("../ui/toast"), async (importOriginal) => {
   const actual = await importOriginal();
-  return { ...actual, toastManager: { ...actual.toastManager, add: toasts.add } };
+  return {
+    ...actual,
+    toastManager: { ...actual.toastManager, add: toasts.add, close: toasts.close },
+  };
 });
 
 vi.mock(import("../../editor/editStore"), async (importOriginal) => ({
@@ -85,6 +96,16 @@ vi.mock(import("../../editor/editStore"), async (importOriginal) => ({
   useProjectVersions: () => state.versions,
   // The caption overlay (S7V-075) has its own tests.
   useCaptionStills: () => ({ _tag: "none" }),
+  useCaptionPresets: () => null,
+  useSpeechModelStatus: () => state.speech,
+}));
+vi.mock(import("../../editor/exportFiles"), async (importOriginal) => ({
+  ...(await importOriginal()),
+  useWorkspaceRoot: () => WORKSPACE_ROOT,
+  useCanRevealFiles: () => state.exportFile.canReveal,
+  useExportFileSize: (_environmentId: unknown, path: string | null) =>
+    path === null ? null : state.exportFile.size,
+  useExportFileCheck: () => async () => state.exportFile.check,
 }));
 vi.mock(import("../../state/media"), () => ({
   useMediaLibrary: () => state.library,
@@ -133,10 +154,6 @@ vi.mock(import("../../assets/assetUrls"), () => ({
     resource._tag === "draft-workspace-file" ? `about:blank#${resource.path}` : null) as never,
 }));
 const WORKSPACE_ROOT = vi.hoisted(() => "/Users/me/Movies/Charger reel");
-vi.mock(import("../../state/entities"), async (importOriginal) => ({
-  ...(await importOriginal()),
-  readProject: (() => ({ workspaceRoot: WORKSPACE_ROOT })) as never,
-}));
 
 import "../../index.css";
 
@@ -147,7 +164,8 @@ import EditorPanel, {
   DROP_OVERLAY_TEXT,
   PLAYER_SHARE,
 } from "./EditorPanel";
-import { latestExportStorageKey } from "./ExportResult";
+import { EXPORT_GONE, latestExportStorageKey } from "./ExportResult";
+import { SPEECH_MODEL_PROMPT } from "./SpeechModelPrompt";
 
 const FPS = { num: 30, den: 1 };
 const projectId = ProjectId.make("project-1");
@@ -582,6 +600,7 @@ describe("EditorPanel", () => {
   describe("export result (S7V-101)", () => {
     const environmentId = EnvironmentId.make("env-1");
     const EXPORT_PATH = "exports/charger-reel-20261114-2227.mp4";
+    const STORAGE_KEY = latestExportStorageKey({ environmentId, projectId });
     const finished: ProjectExport = {
       job: exportJob({ state: "succeeded", progress: 1 }),
       status: {
@@ -601,14 +620,27 @@ describe("EditorPanel", () => {
         },
       },
     };
+    const kept = (path = EXPORT_PATH, extra: Record<string, unknown> = {}) =>
+      localStorage.setItem(
+        STORAGE_KEY,
+        JSON.stringify({
+          path,
+          durationFrames: 3660,
+          fps: FPS,
+          width: 1080,
+          height: 1920,
+          ...extra,
+        }),
+      );
     const reset = () => {
       state.export = { job: null, status: null };
-      localStorage.removeItem(latestExportStorageKey({ environmentId, projectId }));
+      state.exportFile = { size: 68_000_000, check: "present", canReveal: true };
+      localStorage.removeItem(STORAGE_KEY);
       delete window.desktopBridge;
     };
     /** The panel's row that holds `element`. */
     const rowOf = (element: Element) =>
-      [...document.querySelector("[data-testid=editor-panel]")!.children].find((row) =>
+      [...document.querySelector("[data-testid=editor-top]")!.children].find((row) =>
         row.contains(element),
       );
 
@@ -620,7 +652,9 @@ describe("EditorPanel", () => {
       try {
         await using screen = await renderPanel();
         const result = screen.getByTestId("export-result");
-        await expect.element(result).toHaveTextContent("Your video is ready · 2:02 · 1080×1920");
+        await expect
+          .element(result)
+          .toHaveTextContent("Your video is ready · 2:02 · 1080×1920 · 68 MB");
         // Not in the row with the caption looks and Export, and not over it.
         const exportButton = screen.getByRole("button", { name: "Export" }).element();
         expect(rowOf(result.element())).not.toBe(rowOf(exportButton));
@@ -628,15 +662,24 @@ describe("EditorPanel", () => {
           rowOf(exportButton)!.getBoundingClientRect().bottom,
         );
         await result.getByRole("button", { name: "Show in Finder" }).click();
-        expect(commands.openInEditor).toHaveBeenCalledWith({
-          environmentId,
-          input: { cwd: `${WORKSPACE_ROOT}/${EXPORT_PATH}`, editor: "file-manager", reveal: true },
-        });
+        await vi.waitFor(() =>
+          expect(commands.openInEditor).toHaveBeenCalledWith({
+            environmentId,
+            input: {
+              cwd: `${WORKSPACE_ROOT}/${EXPORT_PATH}`,
+              editor: "file-manager",
+              reveal: true,
+            },
+          }),
+        );
         await result.getByRole("button", { name: "Play the export" }).click();
-        const dialog = page.getByRole("dialog", { name: "charger-reel-20261114-2227.mp4" });
+        const dialog = page.getByRole("dialog", { name: "Your export · 2:02" });
         await expect.element(dialog).toBeVisible();
         await expect
-          .element(dialog.getByLabelText("The export, charger-reel-20261114-2227.mp4"))
+          .element(dialog.getByText("1080×1920, saved as charger-reel-20261114-2227.mp4"))
+          .toBeVisible();
+        await expect
+          .element(dialog.getByLabelText("Your export"))
           .toHaveAttribute("src", `about:blank#${EXPORT_PATH}`);
       } finally {
         reset();
@@ -652,13 +695,13 @@ describe("EditorPanel", () => {
           await using screen = await renderPanel();
           await expect
             .element(screen.getByTestId("export-result"))
-            .toHaveTextContent("Your video is ready · 2:02 · 1080×1920");
+            .toHaveTextContent("Your video is ready · 2:02 · 1080×1920 · 68 MB");
         }
         // A reload: the jobs stream no longer has the job, and nothing was started here.
         state.export = { job: null, status: null };
         await using screen = await renderPanel();
         const result = screen.getByTestId("export-result");
-        await expect.element(result).toHaveTextContent("Latest export · 2:02 · 1080×1920");
+        await expect.element(result).toHaveTextContent("Latest export · 2:02 · 1080×1920 · 68 MB");
         await expect.element(result.getByRole("button", { name: "Play the export" })).toBeVisible();
         expect(result.getByRole("button", { name: "Show in Finder" }).query()).toBeNull();
         await result.getByRole("button", { name: "Open the export" }).click();
@@ -667,6 +710,134 @@ describe("EditorPanel", () => {
         );
       } finally {
         open.mockRestore();
+        reset();
+      }
+    });
+
+    it("offers Open, not Show in Finder, when the server can't show files", async () => {
+      setState([asset("clip-0")], true);
+      kept();
+      window.desktopBridge = {} as NonNullable<typeof window.desktopBridge>;
+      state.exportFile.canReveal = false;
+      try {
+        await using screen = await renderPanel();
+        const result = screen.getByTestId("export-result");
+        await expect.element(result.getByRole("button", { name: "Open the export" })).toBeVisible();
+        expect(result.getByRole("button", { name: "Show in Finder" }).query()).toBeNull();
+      } finally {
+        reset();
+      }
+    });
+
+    it("says an export that was moved or deleted is gone, and forgets it", async () => {
+      setState([asset("clip-0")], true);
+      kept();
+      window.desktopBridge = {} as NonNullable<typeof window.desktopBridge>;
+      state.exportFile.check = "missing";
+      toasts.add.mockReset();
+      commands.openInEditor.mockClear();
+      try {
+        await using screen = await renderPanel();
+        const result = screen.getByTestId("export-result");
+        await result.getByRole("button", { name: "Show in Finder" }).click();
+        await vi.waitFor(() =>
+          expect(toasts.add).toHaveBeenCalledWith({ type: "error", title: EXPORT_GONE }),
+        );
+        expect(commands.openInEditor).not.toHaveBeenCalled();
+        await expect.element(result).not.toBeInTheDocument();
+        expect(localStorage.getItem(STORAGE_KEY) ?? "null").toBe("null");
+      } finally {
+        reset();
+      }
+    });
+
+    it("drops a kept export whose file the server no longer has", async () => {
+      setState([asset("clip-0")], true);
+      kept();
+      state.exportFile.size = "missing";
+      try {
+        await using screen = await renderPanel();
+        await expect.element(screen.getByRole("button", { name: "Export" })).toBeVisible();
+        expect(screen.getByTestId("export-result").query()).toBeNull();
+        await vi.waitFor(() => expect(localStorage.getItem(STORAGE_KEY) ?? "null").toBe("null"));
+      } finally {
+        reset();
+      }
+    });
+
+    it.each(["../../../etc/passwd", "/Users/me/secret.mp4", "exports/../edit.json"])(
+      "drops a kept path outside exports/ (%s)",
+      async (path) => {
+        setState([asset("clip-0")], true);
+        kept(path);
+        try {
+          await using screen = await renderPanel();
+          await expect.element(screen.getByRole("button", { name: "Export" })).toBeVisible();
+          expect(screen.getByTestId("export-result").query()).toBeNull();
+          await vi.waitFor(() => expect(localStorage.getItem(STORAGE_KEY) ?? "null").toBe("null"));
+        } finally {
+          reset();
+        }
+      },
+    );
+
+    it("hides the row on X until the next export", async () => {
+      setState([asset("clip-0")], true);
+      kept();
+      try {
+        {
+          await using screen = await renderPanel();
+          const result = screen.getByTestId("export-result");
+          await result.getByRole("button", { name: "Hide" }).click();
+          await expect.element(result).not.toBeInTheDocument();
+        }
+        {
+          // Still hidden after a reload.
+          await using screen = await renderPanel();
+          await expect.element(screen.getByRole("button", { name: "Export" })).toBeVisible();
+          expect(screen.getByTestId("export-result").query()).toBeNull();
+        }
+        const next = "exports/charger-reel-20261114-2300.mp4";
+        state.export = {
+          job: exportJob({ state: "succeeded", progress: 1 }),
+          status: {
+            ...finished.status!,
+            path: next,
+            result: { ...finished.status!.result!, path: next },
+          },
+        };
+        await using screen = await renderPanel();
+        await expect
+          .element(screen.getByTestId("export-result"))
+          .toHaveTextContent("Your video is ready · 2:02 · 1080×1920 · 68 MB");
+      } finally {
+        reset();
+      }
+    });
+
+    it("closes the start error when Export without captions is pressed", async () => {
+      setState([asset("clip-0")], true);
+      toasts.add.mockReset();
+      toasts.add.mockReturnValue("toast-1");
+      toasts.close.mockReset();
+      commands.start.mockReset();
+      commands.start
+        .mockResolvedValueOnce({
+          _tag: "Failure",
+          cause: Cause.fail(new ExportStartError({ projectId, reason: "no-transcript" })),
+        })
+        .mockResolvedValueOnce({
+          _tag: "Success",
+          value: { jobId: EngineJobId.make("job-2"), path: "exports/edit.mp4" },
+        });
+      try {
+        await using screen = await renderPanel();
+        await screen.getByRole("button", { name: "Export" }).click();
+        await vi.waitFor(() => expect(toasts.add).toHaveBeenCalledTimes(1));
+        await act(async () => toasts.add.mock.calls[0]![0].actionProps.onClick());
+        expect(toasts.close).toHaveBeenCalledWith("toast-1");
+      } finally {
+        toasts.add.mockReset();
         reset();
       }
     });
@@ -1415,7 +1586,10 @@ describe("EditorPanel", () => {
             if (canvas.height >= canvas.width) {
               await expect.poll(() => shown().height).toBeGreaterThanOrEqual(share - 0.5);
             } else {
-              await expect.poll(() => shown().width).toBeCloseTo(editor.width - 16, 0);
+              // The picture fills (nearly) the width; its area keeps the share.
+              await expect
+                .poll(() => shown().width)
+                .toBeGreaterThanOrEqual((editor.width - 16) * 0.95);
               expect(box("[data-testid=editor-player-area]").height).toBeGreaterThanOrEqual(share);
             }
             // Nothing overlaps, and the timeline stays in the panel with its video row shown.
@@ -1431,6 +1605,99 @@ describe("EditorPanel", () => {
             expect(inside(videoRow.getBoundingClientRect(), timeline)).toBe(true);
           } finally {
             state.versions = { _tag: "loading" };
+          }
+        },
+      );
+
+      // S7V-101 (UX review 1 and 2): with the speech prompt, a refused change and the export row
+      // all up, every notice shows whole, the tabs show whole rows or one plain line, the timeline
+      // stays inside the panel, and the player keeps its share.
+      it.each([
+        [1440, 900],
+        [1180, 760],
+      ] as const)(
+        "fits every notice and keeps the column inside the panel at %ix%i",
+        async (w, h) => {
+          await page.viewport(w, h);
+          setState([asset("clip-0")], true);
+          withCanvas({ width: 1080, height: 1920 });
+          const ready = state.edit as Extract<ProjectEditState, { _tag: "ready" }>;
+          const notice = "The edit was changed outside the app. That change was not kept.";
+          state.edit = { _tag: "ready", snapshot: { ...ready.snapshot, notice } };
+          state.versions = versions;
+          state.speech = {
+            profiles: {
+              default: { sizeBytes: 3_744_329_895, downloadedBytes: 0, ready: false },
+              light: { sizeBytes: 2_287_244_626, downloadedBytes: 0, ready: false },
+            },
+            recommended: "default",
+            consent: "unasked",
+            loadedProfile: null,
+          } as TranscribeModelsStatus;
+          const exportKey = latestExportStorageKey({
+            environmentId: EnvironmentId.make("env-1"),
+            projectId,
+          });
+          localStorage.setItem(
+            exportKey,
+            JSON.stringify({
+              path: "exports/reel.mp4",
+              durationFrames: 3660,
+              fps: FPS,
+              width: 1080,
+              height: 1920,
+            }),
+          );
+          try {
+            await using screen = await layout();
+            await expect.element(screen.getByText(SPEECH_MODEL_PROMPT)).toBeVisible();
+            await expect.element(screen.getByTestId("export-result")).toBeVisible();
+            const editor = box("[data-testid=editor-panel]");
+            const whole = (element: Element) => {
+              const rect = element.getBoundingClientRect();
+              return inside(rect, editor) && rect.height > 0;
+            };
+            // The refusal comes first among the notices, whole.
+            const refusal = screen.getByText(notice).element().closest("[role=status]")!;
+            expect(whole(refusal)).toBe(true);
+            const prompt = screen.getByRole("region", { name: "Speech model" }).element();
+            expect(whole(prompt)).toBe(true);
+            expect(prompt.getBoundingClientRect().height).toBeLessThanOrEqual(40);
+            expect(refusal.getBoundingClientRect().top).toBeLessThan(
+              prompt.getBoundingClientRect().top,
+            );
+            // The player keeps its share, and the timeline ends inside the panel.
+            const picture = (await videoOf(screen)).closest<HTMLElement>("[data-canvas]")!;
+            await expect
+              .poll(() => picture.getBoundingClientRect().height)
+              .toBeGreaterThanOrEqual(PLAYER_SHARE * editor.height - 0.5);
+            await expect
+              .poll(() => box("[data-testid=editor-timeline]").bottom)
+              .toBeLessThanOrEqual(editor.bottom - 7.5);
+            // The tabs: whole version rows, or the one-line hint.
+            const hint = document.querySelector("[data-testid=editor-tabs-hint]");
+            if (hint === null) {
+              const list = document
+                .getElementById("editor-tabpanel-versions")!
+                .querySelector<HTMLElement>("[role=list]")!;
+              const shown = list.getBoundingClientRect();
+              expect(shown.height).toBeGreaterThanOrEqual(56);
+              for (const row of list.querySelectorAll("[role=listitem]")) {
+                const rect = row.getBoundingClientRect();
+                const overlaps = rect.bottom > shown.top + 0.5 && rect.top < shown.bottom - 0.5;
+                if (overlaps) expect(inside(rect, shown)).toBe(true);
+              }
+            } else {
+              expect(hint.textContent).toBe("Make the window taller to see Versions.");
+              expect(whole(hint)).toBe(true);
+            }
+            await page.screenshot({
+              path: `../../../../../test-results/s7v-101/tests-notices-export-${w}x${h}.png`,
+            });
+          } finally {
+            state.versions = { _tag: "loading" };
+            state.speech = null;
+            localStorage.removeItem(exportKey);
           }
         },
       );

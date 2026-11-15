@@ -128,6 +128,15 @@ const make = Effect.gen(function* () {
   // in the same minute (the button and the agent) never get the same file.
   const naming = yield* Semaphore.make(1);
 
+  /**
+   * The outcome as soon as the engine has it, before the job's end reaches the jobs stream
+   * (S7V-101). `remember` settles it once the export's own bookkeeping is done.
+   */
+  const record = (status: ExportStatus) =>
+    Effect.sync(() => {
+      exports.set(status.jobId, status);
+    });
+
   const remember = (status: ExportStatus) =>
     Effect.suspend(() => {
       exports.delete(status.jobId);
@@ -250,6 +259,20 @@ const make = Effect.gen(function* () {
         projectId: input.projectId,
         path: relative,
       });
+      const succeeded = (id: EngineJobId, value: ExportRenderResult): ExportStatus => ({
+        ...entry(id),
+        state: "succeeded",
+        result: {
+          path: relative,
+          durationFrames: value.durationFrames,
+          fps: value.fps,
+          width: value.width,
+          height: value.height,
+          captions: value.captions,
+          lufs: value.lufs,
+          truePeak: value.truePeak,
+        },
+      });
       const finish = (exit: Exit.Exit<ExportRenderResult, EngineError>) =>
         Effect.suspend(() => {
           reserved.delete(file);
@@ -257,24 +280,7 @@ const make = Effect.gen(function* () {
             return Exit.isFailure(exit) ? Deferred.failCause(started, exit.cause) : Effect.void;
           }
           if (Exit.isSuccess(exit)) {
-            return markExported.pipe(
-              Effect.andThen(
-                remember({
-                  ...entry(jobId),
-                  state: "succeeded",
-                  result: {
-                    path: relative,
-                    durationFrames: exit.value.durationFrames,
-                    fps: exit.value.fps,
-                    width: exit.value.width,
-                    height: exit.value.height,
-                    captions: exit.value.captions,
-                    lufs: exit.value.lufs,
-                    truePeak: exit.value.truePeak,
-                  },
-                }),
-              ),
-            );
+            return markExported.pipe(Effect.andThen(remember(succeeded(jobId, exit.value))));
           }
           return remember({
             ...entry(jobId),
@@ -295,6 +301,10 @@ const make = Effect.gen(function* () {
             ...(input.preset ? { canvas: PRESET_CANVAS[input.preset] } : {}),
           },
           success: ExportRenderResult,
+          onSucceeded: (value) =>
+            Effect.suspend(() =>
+              jobId === undefined ? Effect.void : record(succeeded(jobId, value)),
+            ),
           onStart: (id) =>
             Effect.suspend(() => {
               jobId = id;
@@ -353,6 +363,12 @@ const make = Effect.gen(function* () {
       files: relative,
       dropped: check.dropped,
     });
+    const succeeded = (id: EngineJobId, value: InterchangeEngineResult): ExportStatus => ({
+      ...entry(id),
+      files: value.files.map((file) => `${EXPORTS_DIR}/${path.basename(file)}`),
+      dropped: value.dropped,
+      state: "succeeded",
+    });
     const finish = (exit: Exit.Exit<InterchangeEngineResult, EngineError>) =>
       Effect.suspend(() => {
         for (const file of files) reserved.delete(file);
@@ -360,16 +376,7 @@ const make = Effect.gen(function* () {
           return Exit.isFailure(exit) ? Deferred.failCause(started, exit.cause) : Effect.void;
         }
         if (Exit.isSuccess(exit)) {
-          return markExported.pipe(
-            Effect.andThen(
-              remember({
-                ...entry(jobId),
-                files: exit.value.files.map((file) => `${EXPORTS_DIR}/${path.basename(file)}`),
-                dropped: exit.value.dropped,
-                state: "succeeded",
-              }),
-            ),
-          );
+          return markExported.pipe(Effect.andThen(remember(succeeded(jobId, exit.value))));
         }
         return remember({
           ...entry(jobId),
@@ -383,6 +390,10 @@ const make = Effect.gen(function* () {
         projectId: input.projectId,
         params: { ...params, outputBase: path.join(folder, stem) },
         success: InterchangeEngineResult,
+        onSucceeded: (value) =>
+          Effect.suspend(() =>
+            jobId === undefined ? Effect.void : record(succeeded(jobId, value)),
+          ),
         onStart: (id) =>
           Effect.suspend(() => {
             jobId = id;

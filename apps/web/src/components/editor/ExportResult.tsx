@@ -2,35 +2,50 @@
 // SPDX-License-Identifier: MIT
 /**
  * What a finished export made (S7V-101), on its own row under the Editor's header: "Your video is
- * ready" with its length and size, and the way to it: Play the export, and Show in Finder (Open
- * in the browser build, which has no Finder). The latest video export is kept per project in
- * local storage, so it is still there after a reload.
+ * ready" with its length, frame size and file size, and the way to it: Play the export, and Show
+ * in Finder (Open where the server can't show files). The latest video export is kept per project
+ * in local storage, so it is still there after a reload, until the user hides it or the file goes.
  */
 import { scopedProjectKey } from "@t3tools/client-runtime/environment";
 import type { ExportStatus, ScopedProjectRef } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
-import { CircleCheckIcon, ExternalLinkIcon, FolderOpenIcon, PlayIcon } from "lucide-react";
-import { useEffect, useState, type ReactNode } from "react";
+import { CircleCheckIcon, ExternalLinkIcon, FolderOpenIcon, PlayIcon, XIcon } from "lucide-react";
+import { useEffect, useState } from "react";
 
 import { useAssetUrlMinter } from "../../assets/assetUrls";
 import { formatPlaybackClock } from "../../editor/editPlayback";
 import type { ProjectExport } from "../../editor/editStore";
+import {
+  formatFileSize,
+  isExportPath,
+  useCanRevealFiles,
+  useExportFileCheck,
+  useExportFileSize,
+  useWorkspaceRoot,
+} from "../../editor/exportFiles";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
-import { readProject } from "../../state/entities";
 import { shellEnvironment } from "../../state/shell";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { Button } from "../ui/button";
-import { Dialog, DialogHeader, DialogPanel, DialogPopup, DialogTitle } from "../ui/dialog";
+import {
+  Dialog,
+  DialogDescription,
+  DialogHeader,
+  DialogPanel,
+  DialogPopup,
+  DialogTitle,
+} from "../ui/dialog";
 import { toastManager } from "../ui/toast";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { IconAction } from "./IconAction";
 
 const LatestExport = Schema.Struct({
-  /** Relative to the project folder (`exports/…mp4`). */
+  /** Relative to the project folder (`exports/…mp4`); anything else is dropped. */
   path: Schema.String,
   durationFrames: Schema.Number,
   fps: Schema.Struct({ num: Schema.Number, den: Schema.Number }),
   width: Schema.Number,
   height: Schema.Number,
+  /** The user hid the row; the next export shows again. */
+  hidden: Schema.optionalKey(Schema.Boolean),
 });
 type LatestExport = typeof LatestExport.Type;
 
@@ -39,95 +54,108 @@ const StoredExport = Schema.NullOr(LatestExport);
 export const latestExportStorageKey = (projectRef: ScopedProjectRef) =>
   `editor-latest-export:v1:${scopedProjectKey(projectRef)}`;
 
+export const EXPORT_GONE = "That export was moved or deleted.";
+
 const latestOf = (status: ExportStatus | null): LatestExport | null => {
   const result = status?.state === "succeeded" ? status.result : undefined;
-  if (result === undefined) return null;
+  if (result === undefined || !isExportPath(result.path)) return null;
   const { path, durationFrames, fps, width, height } = result;
   return { path, durationFrames, fps, width, height };
 };
 
 const fileName = (path: string) => path.split("/").at(-1) ?? path;
 
-function IconAction(props: {
-  readonly label: string;
-  readonly onClick: () => void;
-  readonly children: ReactNode;
-}) {
-  return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <Button size="icon-sm" variant="ghost" aria-label={props.label} onClick={props.onClick}>
-            {props.children}
-          </Button>
-        }
-      />
-      <TooltipPopup side="bottom">{props.label}</TooltipPopup>
-    </Tooltip>
-  );
-}
-
 export function ExportResult(props: {
   readonly projectRef: ScopedProjectRef;
   readonly projectExport: ProjectExport;
 }) {
   const { projectRef } = props;
+  const { environmentId } = projectRef;
   const { job, status } = props.projectExport;
-  const [stored, setStored] = useLocalStorage(
+  const [rawStored, setStored] = useLocalStorage(
     latestExportStorageKey(projectRef),
     null,
     StoredExport,
   );
+  const stored = rawStored !== null && isExportPath(rawStored.path) ? rawStored : null;
   const fresh = job?.state === "succeeded" ? latestOf(status) : null;
+  const latest = fresh ?? stored;
+  const workspaceRoot = useWorkspaceRoot(projectRef);
+  const absolute = (path: string) => (workspaceRoot === null ? null : `${workspaceRoot}/${path}`);
+  const size = useExportFileSize(
+    environmentId,
+    latest === null || job?.state === "running" ? null : absolute(latest.path),
+  );
+  // A kept export whose file is gone, or a kept path that names anything outside exports/, goes.
+  const storedGone = stored !== null && fresh === null && size === "missing";
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps the finished export in local storage, outside React, so it is still offered after a reload
   useEffect(() => {
-    if (fresh !== null && fresh.path !== stored?.path) setStored(fresh);
-  }, [fresh, stored, setStored]);
+    if (fresh !== null && fresh.path !== rawStored?.path) setStored(fresh);
+    else if (rawStored !== null && (stored === null || storedGone)) setStored(null);
+  }, [fresh, rawStored, stored, storedGone, setStored]);
 
   const openInEditor = useAtomCommand(shellEnvironment.openInEditor, { reportFailure: false });
-  const mintUrl = useAssetUrlMinter(projectRef.environmentId);
-  const [playing, setPlaying] = useState<{ readonly name: string; readonly url: string } | null>(
-    null,
-  );
-  const isDesktop = window.desktopBridge !== undefined;
+  const mintUrl = useAssetUrlMinter(environmentId);
+  const checkFile = useExportFileCheck(environmentId);
+  const canReveal = useCanRevealFiles(environmentId) && window.desktopBridge !== undefined;
+  const [playing, setPlaying] = useState<{
+    readonly latest: LatestExport;
+    readonly url: string;
+  } | null>(null);
 
-  const workspaceRoot = () => readProject(projectRef)?.workspaceRoot ?? null;
+  /** The file's absolute path when it is still there; otherwise says so and forgets it. */
+  const present = async (path: string): Promise<string | null> => {
+    const file = isExportPath(path) ? absolute(path) : null;
+    if (file === null) {
+      toastManager.add({ type: "error", title: "Couldn't open the export", description: path });
+      return null;
+    }
+    if ((await checkFile(file)) === "missing") {
+      if (stored?.path === path) setStored(null);
+      toastManager.add({ type: "error", title: EXPORT_GONE });
+      return null;
+    }
+    return file;
+  };
   const urlOf = async (path: string) => {
-    const cwd = workspaceRoot();
-    const url = cwd === null ? null : await mintUrl({ _tag: "draft-workspace-file", cwd, path });
+    if (workspaceRoot === null || (await present(path)) === null) return null;
+    const url = await mintUrl({ _tag: "draft-workspace-file", cwd: workspaceRoot, path });
     if (url === null) {
       toastManager.add({ type: "error", title: "Couldn't open the export", description: path });
     }
     return url;
   };
-  const play = async (path: string) => {
-    const url = await urlOf(path);
-    if (url !== null) setPlaying({ name: fileName(path), url });
+  const play = async (shown: LatestExport) => {
+    const url = await urlOf(shown.path);
+    if (url !== null) setPlaying({ latest: shown, url });
   };
   const openInBrowser = async (path: string) => {
     const url = await urlOf(path);
     if (url !== null) window.open(url, "_blank", "noopener");
   };
   const showInFinder = async (path: string) => {
-    const cwd = workspaceRoot();
-    const result =
-      cwd === null
-        ? null
-        : await openInEditor({
-            environmentId: projectRef.environmentId,
-            input: { cwd: `${cwd}/${path}`, editor: "file-manager", reveal: true },
-          });
-    if (result === null || result._tag === "Failure") {
+    const file = await present(path);
+    if (file === null) return;
+    const result = await openInEditor({
+      environmentId,
+      input: { cwd: file, editor: "file-manager", reveal: true },
+    });
+    if (result._tag === "Failure") {
       toastManager.add({ type: "error", title: "Couldn't show the export in Finder" });
     }
   };
+  const hide = (shown: LatestExport) => setStored({ ...shown, hidden: true });
 
   const reveal = (path: string) =>
-    isDesktop ? (
+    canReveal ? (
       <IconAction label="Show in Finder" onClick={() => void showInFinder(path)}>
         <FolderOpenIcon aria-hidden />
       </IconAction>
-    ) : null;
+    ) : (
+      <IconAction label="Open the export" onClick={() => void openInBrowser(path)}>
+        <ExternalLinkIcon aria-hidden />
+      </IconAction>
+    );
 
   const row = (() => {
     if (job?.state === "running") return null;
@@ -138,9 +166,10 @@ export function ExportResult(props: {
         tone: "error",
       } as const;
     }
-    // "Export for editors" (S7V-040): its files, with the folder they are in.
+    // "Export for editors" (S7V-040): its files, with Show in Finder where the server can.
     const files = job?.state === "succeeded" ? status?.files : undefined;
     if (files !== undefined && files.length > 0) {
+      const first = files[0]!;
       return {
         text: (
           <>
@@ -149,35 +178,34 @@ export function ExportResult(props: {
           </>
         ),
         tone: "done",
-        actions: reveal(files[0]!),
+        actions: canReveal && isExportPath(first) ? reveal(first) : null,
       } as const;
     }
-    const latest = fresh ?? stored;
-    if (latest === null) return null;
+    if (latest === null || storedGone) return null;
+    if (
+      fresh === null ? latest.hidden === true : rawStored?.path === latest.path && rawStored.hidden
+    )
+      return null;
+    const sizeText = typeof size === "number" ? ` · ${formatFileSize(size)}` : "";
     return {
       text: (
         <>
           {fresh === null ? "Latest export" : "Your video is ready"}
           <span className="text-muted-foreground tabular-nums">
-            {" "}
-            · {formatPlaybackClock(latest.durationFrames, latest.fps)} · {latest.width}×
-            {latest.height}
+            {` · ${formatPlaybackClock(latest.durationFrames, latest.fps)} · ${latest.width}×${latest.height}${sizeText}`}
           </span>
         </>
       ),
       tone: "done",
       actions: (
         <>
-          <IconAction label="Play the export" onClick={() => void play(latest.path)}>
+          <IconAction label="Play the export" onClick={() => void play(latest)}>
             <PlayIcon aria-hidden />
           </IconAction>
-          {isDesktop ? (
-            reveal(latest.path)
-          ) : (
-            <IconAction label="Open the export" onClick={() => void openInBrowser(latest.path)}>
-              <ExternalLinkIcon aria-hidden />
-            </IconAction>
-          )}
+          {reveal(latest.path)}
+          <IconAction label="Hide" onClick={() => hide(latest)}>
+            <XIcon aria-hidden />
+          </IconAction>
         </>
       ),
     } as const;
@@ -201,7 +229,7 @@ export function ExportResult(props: {
           >
             {row.text}
           </span>
-          {"actions" in row ? (
+          {"actions" in row && row.actions !== null ? (
             <div className="flex shrink-0 items-center">{row.actions}</div>
           ) : null}
         </div>
@@ -210,16 +238,23 @@ export function ExportResult(props: {
         {playing !== null && (
           <DialogPopup className="sm:max-w-2xl">
             <DialogHeader>
-              <DialogTitle>{playing.name}</DialogTitle>
+              <DialogTitle>
+                Your export ·{" "}
+                {formatPlaybackClock(playing.latest.durationFrames, playing.latest.fps)}
+              </DialogTitle>
+              <DialogDescription>
+                {playing.latest.width}×{playing.latest.height}, saved as{" "}
+                {fileName(playing.latest.path)}
+              </DialogDescription>
             </DialogHeader>
             <DialogPanel>
               <video
                 src={playing.url}
-                aria-label={`The export, ${playing.name}`}
+                aria-label="Your export"
                 controls
                 autoPlay
                 playsInline
-                className="max-h-[70vh] w-full rounded-md"
+                className="max-h-[65vh] w-full rounded-md"
               />
             </DialogPanel>
           </DialogPopup>

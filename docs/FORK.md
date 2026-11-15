@@ -607,8 +607,9 @@ While focus is in the Editor panel or the file view (both marked `data-editor-ke
 `apps/web/src/lib/editorKeys.ts`), their shortcuts act there and never reach the chat. These
 upstream files have small edits:
 
-- `components/chat/composerFocusRedirect.ts`: type-to-focus leaves keys pressed in such a region
-  alone, so S splits on the timeline instead of typing into the composer.
+- `components/chat/composerFocusRedirect.ts`: type-to-focus (`shouldTypeToFocusComposer`) leaves
+  keys pressed in such a region alone, so S splits on the timeline instead of typing into the
+  composer. Paste-to-focus is unchanged: a paste there still goes to the composer.
 - `components/ChatView.logic.ts`: `shouldRefocusComposerOnWindowFocus` keeps focus in such a region
   when the window comes back.
 - `components/chat/useComposerStash.ts`: Mod+S does not stash a prompt from such a region.

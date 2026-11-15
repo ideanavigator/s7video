@@ -48,11 +48,30 @@ const rendered = (path: string): ExportRenderResult => ({
   truePeak: -1.4,
 });
 
+/**
+ * Where the real engine publishes a job's end on the jobs stream, after `onSucceeded` (S7V-101).
+ * A test that holds it reads the export's status at that moment.
+ */
+interface EndGate {
+  readonly reached: Deferred.Deferred<void>;
+  readonly release: Deferred.Deferred<void>;
+}
+
 /** An engine whose export jobs finish when the test says so. */
 const fakeEngine = (
   calls: Array<RunJobCall>,
   outcome: Deferred.Deferred<"ok" | "cancelled" | "no-libass">,
+  endGate?: EndGate,
 ) => {
+  const published = <A>(result: A, onSucceeded?: (result: A) => Effect.Effect<void>) =>
+    Effect.gen(function* () {
+      if (onSucceeded) yield* onSucceeded(result);
+      if (endGate) {
+        yield* Deferred.succeed(endGate.reached, undefined);
+        yield* Deferred.await(endGate.release);
+      }
+      return result;
+    });
   let counter = 0;
   const runJob: EngineService.EngineService["Service"]["runJob"] = (input) =>
     Effect.gen(function* () {
@@ -83,11 +102,14 @@ const fakeEngine = (
         if (input.params.captions !== "none")
           files.push(`${base}.${String(input.params.captions)}`);
         for (const file of files) NodeFS.writeFileSync(file, "interchange");
-        return { files, dropped: ["zooms"], captions: 2 } as never;
+        return yield* published(
+          { files, dropped: ["zooms"], captions: 2 } as never,
+          input.onSucceeded,
+        );
       }
       const output = String(input.params.outputPath);
       NodeFS.writeFileSync(output, "mp4");
-      return rendered(output) as never;
+      return yield* published(rendered(output) as never, input.onSucceeded);
     });
   // `interchange.check`: what the export would drop, and its caption chunks.
   const call: EngineService.EngineService["Service"]["call"] = (method, params) =>
@@ -170,10 +192,13 @@ const withExports = <A, E>(
     readonly calls: ReadonlyArray<RunJobCall>;
     readonly finish: Effect.Effect<void>;
     readonly asked: ReadonlyArray<string>;
+    readonly endGate: EndGate;
   }) => Effect.Effect<A, E>,
   setup: {
     readonly ops?: ReadonlyArray<EditOp>;
     readonly cached?: Record<string, Transcript>;
+    /** Hold each job where the engine publishes its end, until `endGate.release`. */
+    readonly holdEnd?: boolean;
   } = {},
 ) =>
   Effect.gen(function* () {
@@ -182,6 +207,11 @@ const withExports = <A, E>(
     const calls: Array<RunJobCall> = [];
     const asked: Array<string> = [];
     const done = yield* Deferred.make<"ok" | "cancelled" | "no-libass">();
+    const endGate: EndGate = {
+      reached: yield* Deferred.make<void>(),
+      release: yield* Deferred.make<void>(),
+    };
+    if (!setup.holdEnd) yield* Deferred.succeed(endGate.release, undefined);
     return yield* Effect.gen(function* () {
       const folders = yield* ManagedProjectFolders.ManagedProjectFolders;
       const edits = yield* EditDocumentService.EditDocumentService;
@@ -201,11 +231,12 @@ const withExports = <A, E>(
         calls,
         finish: Deferred.succeed(done, outcome).pipe(Effect.asVoid),
         asked,
+        endGate,
       });
     }).pipe(
       Effect.provide(
         ExportService.layer.pipe(
-          Layer.provide(fakeEngine(calls, done)),
+          Layer.provide(fakeEngine(calls, done, endGate)),
           Layer.provide(fakeTranscripts(setup.cached ?? {}, asked)),
           Layer.provide(layerSlowExists),
           Layer.provideMerge(layerEditTest(baseDir)),
@@ -270,6 +301,48 @@ describe("ExportService", () => {
         assert.isTrue(NodeFS.existsSync(NodePath.join(root, started.path)));
         assert.isTrue(isIgnored(root, started.path));
       }),
+    ),
+  );
+
+  // S7V-101: the Editor reads the status when the jobs stream says the job ended. The result is
+  // recorded before then, so the first export of a project shows it too.
+  it.effect("records the finished export before the engine publishes the job's end", () =>
+    withExports(
+      "ok",
+      ({ projectId, exports, finish, endGate }) =>
+        Effect.gen(function* () {
+          const started = yield* exports.start({ projectId, captions: false });
+          yield* finish;
+          yield* Deferred.await(endGate.reached);
+          const atEnd = yield* exports.status(started.jobId);
+          assert.strictEqual(atEnd?.state, "succeeded");
+          assert.strictEqual(atEnd?.result?.path, started.path);
+          yield* Deferred.succeed(endGate.release, undefined);
+          assert.strictEqual((yield* settled(exports, started.jobId)).state, "succeeded");
+        }),
+      { ops: withVideo, holdEnd: true },
+    ),
+  );
+
+  it.effect("records a finished editors export before the engine publishes the job's end", () =>
+    withExports(
+      "ok",
+      ({ projectId, exports, finish, endGate }) =>
+        Effect.gen(function* () {
+          const started = yield* exports.startInterchange({
+            projectId,
+            format: "fcpxml",
+            captions: "none",
+          });
+          assert.isDefined(started.jobId);
+          yield* finish;
+          yield* Deferred.await(endGate.reached);
+          const atEnd = yield* exports.status(started.jobId!);
+          assert.strictEqual(atEnd?.state, "succeeded");
+          assert.deepStrictEqual(atEnd?.files, started.files);
+          yield* Deferred.succeed(endGate.release, undefined);
+        }),
+      { ops: withVideo, holdEnd: true },
     ),
   );
 

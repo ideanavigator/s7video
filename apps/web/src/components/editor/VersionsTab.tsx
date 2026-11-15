@@ -88,6 +88,7 @@ function VersionRow(props: VersionsListProps & { readonly version: EditVersion }
         .filter(Boolean)
         .join(", ")}
       data-current={version.current}
+      data-version={version.n}
       className="flex flex-col gap-1 rounded-md px-2 py-1.5 hover:bg-accent data-[current=true]:bg-muted/40"
     >
       <div className="flex min-w-0 items-center gap-1.5 text-sm">
@@ -248,6 +249,8 @@ function TagForm(props: {
             value={value}
             maxLength={EDIT_VERSION_TAG_MAX}
             autoFocus
+            // A rename replaces the old name as you type (S7V-101).
+            onFocus={(event) => event.currentTarget.select()}
             aria-invalid={props.error !== null}
             aria-describedby={props.error === null ? undefined : errorId}
             onChange={(event) => setValue(event.target.value)}
@@ -313,9 +316,16 @@ export function VersionsTab(props: {
       setTagError(messageOf(squashAtomCommandFailure(result), "The name couldn't be saved."));
       return;
     }
+    const { n } = tagging;
     setTagging(null);
     setTagError(null);
     refreshProjectVersions(projectRef);
+    // The named row stays in view, even in a short tab (S7V-101).
+    window.requestAnimationFrame(() =>
+      document
+        .querySelector(`[role=list][aria-label=Versions] [data-version="${n}"]`)
+        ?.scrollIntoView({ block: "nearest" }),
+    );
   };
 
   const restore = async (version: EditVersion) => {

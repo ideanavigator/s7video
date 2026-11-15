@@ -76,7 +76,7 @@ import { applyOutcomeOfError, stepOutcomeOfError } from "../../editor/timelineEd
 import { editFrameToPlayerFrame } from "./timeline/editFrames";
 import type { TimelineEditing } from "./timeline/Timeline";
 import type { EditApplyOutcome, TimelineNotice } from "./timeline/timelineEditor";
-import { TimelinePane } from "./timeline/TimelinePane";
+import { TIMELINE_FLOOR_PX, TimelinePane } from "./timeline/TimelinePane";
 import { type TranscriptEditing, TranscriptTab } from "./TranscriptTab";
 import { VersionsTab } from "./VersionsTab";
 
@@ -101,12 +101,13 @@ export const PLAYER_SHARE = 0.45;
 const PLAYER_CONTROLS_PX = 30;
 /** The panel's padding on each axis. */
 const PANEL_PADDING_PX = 16;
-/** The tabs keep about one version row when the window allows it. */
-const TABS_MIN_PX = 56;
-/** Padding, header, tab bar and gaps above the timeline. */
-const ABOVE_CHROME_PX = 124;
-/** The tabs start from about one version row, then grow with what the player leaves. */
-const TABPANEL_STYLE = { flex: `1 1 ${TABS_MIN_PX}px` } as const;
+/** One version row with its gap (`VersionsTab`): the tabs show whole rows of this. */
+const TAB_ROW_PX = 62;
+const TAB_BAR_PX = 30;
+/** The one-line hint a collapsed tab panel shows instead of a sliced row. */
+const TAB_HINT_PX = 24;
+/** The gaps around the player, the tab bar, the tab room, the divider and the timeline. */
+const COLUMN_GAPS_PX = 5 * 8;
 
 interface PanelSize {
   readonly width: number;
@@ -122,6 +123,22 @@ function playerRoomPx(
   if (canvas === undefined) return { min, max: undefined };
   const fullWidth = ((panel.width - PANEL_PADDING_PX) * canvas.height) / canvas.width;
   return { min, max: Math.max(min, Math.ceil(fullWidth) + PLAYER_CONTROLS_PX) };
+}
+
+/**
+ * What the tab room starts from (S7V-101): one whole version row when the timeline can still keep
+ * its floor beside the player's share, or the one-line hint.
+ */
+function tabsMinPx(panelHeight: number, topPx: number, playerMinPx: number): number {
+  const spare =
+    panelHeight -
+    PANEL_PADDING_PX -
+    topPx -
+    playerMinPx -
+    TAB_BAR_PX -
+    COLUMN_GAPS_PX -
+    TIMELINE_FLOOR_PX;
+  return spare >= TAB_ROW_PX ? TAB_ROW_PX : TAB_HINT_PX;
 }
 
 function PlayerMessage(props: {
@@ -591,7 +608,7 @@ function ExportButton(props: {
     });
     if (result._tag === "Failure") {
       const error = squashAtomCommandFailure(result);
-      toastManager.add({
+      const toastId = toastManager.add({
         type: "error",
         title: "Couldn't start the export",
         description: error instanceof Error ? error.message : "Check the project, then try again.",
@@ -600,7 +617,11 @@ function ExportButton(props: {
           ? {
               actionProps: {
                 children: "Export without captions",
-                onClick: () => void exportEdit(false),
+                // The export starts, so "Couldn't start" goes (S7V-101).
+                onClick: () => {
+                  toastManager.close(toastId);
+                  void exportEdit(false);
+                },
               },
             }
           : {}),
@@ -689,6 +710,8 @@ export const CHANGED_ELSEWHERE_NOTICE = "The assistant changed the edit; try aga
 function showTimelineNotice(notice: TimelineNotice) {
   if (notice.kind === "changed-elsewhere") {
     toastManager.add({ type: "info", title: CHANGED_ELSEWHERE_NOTICE });
+  } else if (notice.kind === "refused") {
+    toastManager.add({ type: "info", title: notice.message, timeout: 4000 });
   } else {
     toastManager.add({ type: "error", title: notice.title, description: notice.message });
   }
@@ -796,6 +819,14 @@ export default function EditorPanel(props: {
               : { width: element.clientWidth, height: element.clientHeight },
           ),
         );
+  // The header, the export row and the notices: they keep their full height (S7V-101).
+  const [topPx, setTopPx] = useState(0);
+  const observeTop = (element: HTMLDivElement | null) =>
+    element === null ? undefined : observeResize(element, () => setTopPx(element.offsetHeight));
+  // The room the tabs got; a panel shows whole rows of it, or the hint under one row.
+  const [tabRoomPx, setTabRoomPx] = useState<number | null>(null);
+  const observeTabRoom = (element: HTMLDivElement | null) =>
+    element === null ? undefined : observeResize(element, () => setTabRoomPx(element.clientHeight));
   const [startedExport, setStartedExport] = useState<StartedExport | null>(null);
   const projectExport = useProjectExport(
     props.environmentId,
@@ -833,6 +864,18 @@ export default function EditorPanel(props: {
           panelSize,
           view._tag === "play" || view._tag === "play-timeline" ? view.plan.canvas : undefined,
         );
+  const tabsMin =
+    panelSize === null || playerRoom === null
+      ? TAB_ROW_PX
+      : tabsMinPx(panelSize.height, topPx, playerRoom.min);
+  const tabsCollapsed = tabRoomPx !== null && tabRoomPx < TAB_ROW_PX;
+  const tabPanelStyle = {
+    height:
+      tabRoomPx === null || tabsCollapsed
+        ? undefined
+        : Math.floor(tabRoomPx / TAB_ROW_PX) * TAB_ROW_PX,
+  };
+  const tabLabel = TABS.find((entry) => entry.id === tab)?.label ?? "this";
 
   const showEdit = () => {
     rememberPlayerFrame(projectKey, 0);
@@ -884,7 +927,7 @@ export default function EditorPanel(props: {
   return (
     <div
       ref={observePanel}
-      className="relative flex h-full min-h-0 flex-col gap-2 p-2"
+      className="relative flex h-full min-h-0 flex-col gap-2 overflow-hidden p-2"
       data-testid="editor-panel"
       // The Editor owns its keys: S, Delete and Mod+Z never reach the chat composer (S7V-101).
       data-editor-keys
@@ -904,57 +947,54 @@ export default function EditorPanel(props: {
       <div role="status" aria-live="polite" className="sr-only">
         {dragging ? DROP_OVERLAY_TEXT : ""}
       </div>
-      <div className="flex min-h-7 shrink-0 items-center justify-between gap-2">
-        <div className="flex min-w-0 items-center gap-2 text-sm">
-          {view._tag === "play" && view.mode === "clip" ? (
-            <>
-              <span className="min-w-0 truncate text-muted-foreground">
-                Clip: {view.asset.label}
-              </span>
-              {source.kind === "clip" ? (
+      <div ref={observeTop} className="flex shrink-0 flex-col gap-2" data-testid="editor-top">
+        <div className="flex min-h-7 shrink-0 items-center justify-between gap-2">
+          <div className="flex min-w-0 items-center gap-2 text-sm">
+            {view._tag === "play" && view.mode === "clip" ? (
+              <>
+                <span className="min-w-0 truncate text-muted-foreground">
+                  Clip: {view.asset.label}
+                </span>
+                {source.kind === "clip" ? (
+                  <Button size="compact" variant="ghost" onClick={showEdit}>
+                    Back to edit
+                  </Button>
+                ) : null}
+              </>
+            ) : null}
+            {previewingVersion !== null ? (
+              <>
+                <span role="status" className="min-w-0 truncate text-muted-foreground">
+                  Previewing v{previewingVersion}
+                </span>
                 <Button size="compact" variant="ghost" onClick={showEdit}>
-                  Back to edit
+                  Back to main
                 </Button>
-              ) : null}
-            </>
-          ) : null}
-          {previewingVersion !== null ? (
-            <>
-              <span role="status" className="min-w-0 truncate text-muted-foreground">
-                Previewing v{previewingVersion}
-              </span>
-              <Button size="compact" variant="ghost" onClick={showEdit}>
-                Back to main
-              </Button>
-            </>
+              </>
+            ) : null}
+          </div>
+          {edit._tag === "ready" &&
+          previewingVersion === null &&
+          (view._tag === "play-timeline" || (view._tag === "play" && view.mode === "edit")) ? (
+            <div className="flex min-w-0 items-center gap-2">
+              <CaptionStylePicker projectRef={projectRef} document={edit.snapshot.document} />
+              <ExportButton
+                projectRef={projectRef}
+                projectExport={projectExport}
+                started={startedExport}
+                onStarted={setStartedExport}
+              />
+            </div>
           ) : null}
         </div>
-        {edit._tag === "ready" &&
-        previewingVersion === null &&
-        (view._tag === "play-timeline" || (view._tag === "play" && view.mode === "edit")) ? (
-          <div className="flex min-w-0 items-center gap-2">
-            <CaptionStylePicker projectRef={projectRef} document={edit.snapshot.document} />
-            <ExportButton
-              projectRef={projectRef}
-              projectExport={projectExport}
-              started={startedExport}
-              onStarted={setStartedExport}
-            />
-          </div>
-        ) : null}
-      </div>
-      <ExportResult projectRef={projectRef} projectExport={projectExport} />
-      {/* Notices give way first: they shrink well ahead of the tabs and the timeline, and scroll. */}
-      <div
-        className="flex min-h-11 flex-col gap-2 overflow-y-auto empty:hidden"
-        style={{ flex: "0 10 auto" }}
-      >
-        <SpeechModelPrompt projectRef={projectRef} />
+        <ExportResult projectRef={projectRef} projectExport={projectExport} />
+        {/* Notices keep their full height; the one to read now comes first. */}
         <RefusedChangeNotice snapshot={edit._tag === "ready" ? edit.snapshot : null} />
         <HistoryCleanupBanner
           projectRef={projectRef}
           snapshot={edit._tag === "ready" ? edit.snapshot : null}
         />
+        <SpeechModelPrompt projectRef={projectRef} />
       </div>
       {/*
         The player takes the room first, in its canvas shape, and keeps its share of the panel. It
@@ -987,62 +1027,77 @@ export default function EditorPanel(props: {
           </button>
         ))}
       </div>
-      {/* Every tab stays mounted, so each keeps its scroll position. */}
+      {/*
+        The tab room: whole rows of the active tab, or one plain line when not even one row fits.
+        Every tab stays mounted, so each keeps its scroll position.
+      */}
       <div
-        role="tabpanel"
-        id="editor-tabpanel-transcript"
-        aria-labelledby="editor-tab-transcript"
-        hidden={tab !== "transcript"}
-        className="min-h-0"
-        style={TABPANEL_STYLE}
+        ref={observeTabRoom}
+        className="flex min-h-0 flex-col"
+        style={{ flex: "1 1 0%", minHeight: tabsMin }}
+        data-testid="editor-tab-room"
       >
-        {view._tag === "play-timeline" ? (
-          <TimelineTranscriptTab
+        {tabsCollapsed ? (
+          <p className="truncate text-xs text-muted-foreground" data-testid="editor-tabs-hint">
+            Make the window taller to see {tabLabel}.
+          </p>
+        ) : null}
+        <div
+          role="tabpanel"
+          id="editor-tabpanel-transcript"
+          aria-labelledby="editor-tab-transcript"
+          hidden={tabsCollapsed || tab !== "transcript"}
+          className="min-h-0"
+          style={tabPanelStyle}
+        >
+          {view._tag === "play-timeline" ? (
+            <TimelineTranscriptTab
+              projectRef={projectRef}
+              plan={view.plan}
+              editing={transcriptEditing}
+            />
+          ) : (
+            <TranscriptTab
+              projectRef={projectRef}
+              editing={transcriptEditing}
+              {...transcriptSourceOf(view, library, edit)}
+            />
+          )}
+        </div>
+        <div
+          role="tabpanel"
+          id="editor-tabpanel-media"
+          aria-labelledby="editor-tab-media"
+          hidden={tabsCollapsed || tab !== "media"}
+          className="min-h-0"
+          style={tabPanelStyle}
+        >
+          <AssetsTab
             projectRef={projectRef}
-            plan={view.plan}
-            editing={transcriptEditing}
+            onOpenMedia={(mediaId) => {
+              rememberPlayerFrame(projectKey, 0);
+              setSource(projectKey, { kind: "clip", mediaId });
+            }}
           />
-        ) : (
-          <TranscriptTab
+        </div>
+        <div
+          role="tabpanel"
+          id="editor-tabpanel-versions"
+          aria-labelledby="editor-tab-versions"
+          hidden={tabsCollapsed || tab !== "versions"}
+          className="min-h-0"
+          style={tabPanelStyle}
+        >
+          <VersionsTab
             projectRef={projectRef}
-            editing={transcriptEditing}
-            {...transcriptSourceOf(view, library, edit)}
+            previewing={previewingVersion}
+            onPreview={(n, document) => {
+              rememberPlayerFrame(projectKey, 0);
+              setSource(projectKey, { kind: "version", n, document });
+            }}
+            onShowCurrent={showEdit}
           />
-        )}
-      </div>
-      <div
-        role="tabpanel"
-        id="editor-tabpanel-media"
-        aria-labelledby="editor-tab-media"
-        hidden={tab !== "media"}
-        className="min-h-0"
-        style={TABPANEL_STYLE}
-      >
-        <AssetsTab
-          projectRef={projectRef}
-          onOpenMedia={(mediaId) => {
-            rememberPlayerFrame(projectKey, 0);
-            setSource(projectKey, { kind: "clip", mediaId });
-          }}
-        />
-      </div>
-      <div
-        role="tabpanel"
-        id="editor-tabpanel-versions"
-        aria-labelledby="editor-tab-versions"
-        hidden={tab !== "versions"}
-        className="min-h-0"
-        style={TABPANEL_STYLE}
-      >
-        <VersionsTab
-          projectRef={projectRef}
-          previewing={previewingVersion}
-          onPreview={(n, document) => {
-            rememberPlayerFrame(projectKey, 0);
-            setSource(projectKey, { kind: "version", n, document });
-          }}
-          onShowCurrent={showEdit}
-        />
+        </div>
       </div>
       {edit._tag === "unavailable" ? null : (
         <TimelinePane
@@ -1056,7 +1111,9 @@ export default function EditorPanel(props: {
           mediaById={mediaById}
           editing={editing}
           minAbovePx={
-            playerRoom === null ? undefined : ABOVE_CHROME_PX + playerRoom.min + TABS_MIN_PX
+            playerRoom === null
+              ? undefined
+              : PANEL_PADDING_PX + topPx + playerRoom.min + TAB_BAR_PX + COLUMN_GAPS_PX + tabsMin
           }
         />
       )}

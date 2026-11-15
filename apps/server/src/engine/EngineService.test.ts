@@ -485,6 +485,14 @@ describe.skipIf(!realEngineAvailable)("EngineService with the real engine", () =
         Stream.runHead,
         Effect.forkChild,
       );
+      // S7V-101: the caller gets the result before the job's end is published.
+      let endPublishedFirst: boolean | undefined;
+      const seen: EngineJobsEvent[] = [];
+      yield* engine.subscribeJobs.pipe(
+        Stream.runForEach((event) => Effect.sync(() => seen.push(event))),
+        Effect.forkScoped,
+      );
+      yield* Effect.yieldNow;
       const projectId = ProjectId.make("project-start");
       const jobId = yield* engine.startJob({
         kind: "test",
@@ -492,8 +500,15 @@ describe.skipIf(!realEngineAvailable)("EngineService with the real engine", () =
         params: { outputPath: output, steps: 3, stepMs: 1 },
         success: SlowJobResult,
         projectId,
+        onSucceeded: () =>
+          Effect.sync(() => {
+            endPublishedFirst = seen.some(
+              (event) => event.type === "updated" && event.job.state !== "running",
+            );
+          }),
       });
       const last = yield* Fiber.join(finished);
+      expect(endPublishedFirst).toBe(false);
       expect(last).toMatchObject({
         _tag: "Some",
         value: { type: "updated", job: { id: jobId, state: "succeeded", projectId } },

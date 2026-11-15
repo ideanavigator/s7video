@@ -89,7 +89,11 @@ active tab from the Editor, and a chat link to a clip in Media plays it in the E
 The player gets space first (UX guide rule 3, S7V-101). Its box follows the canvas shape, and its
 picture never gets shorter than `PLAYER_SHARE` (45%) of the Editor's height (`playerRoomPx` in
 `EditorPanel.tsx`), at 1180x760 too. A 16:9 picture in a narrow Editor fills the width instead,
-and its area still keeps the share. The notices shrink and scroll, the tabs get what is left (about
-one version row in a 760 px window), and the timeline gives way down to its toolbar, ruler and
-video row, with the other rows scrolling (`TIMELINE_FLOOR_PX` in `TimelinePane.tsx`). A saved
-timeline height still applies wherever it fits.
+and its area still keeps the share. Above it, the header, the export row and the notices keep
+their full height, with a refused change first, so a notice is never clipped; the speech-model
+prompt is one line. Below it, the tabs show whole version rows (`TAB_ROW_PX`), or one plain line
+("Make the window taller to see Versions.") when not even one row fits. The tabs get a row only
+when the timeline can still keep its floor (`TIMELINE_FLOOR_PX` in `TimelinePane.tsx`: toolbar,
+ruler and video row). The timeline is clamped so the column always ends inside the panel; in the
+shortest panel it keeps only its toolbar and ruler, and its rows scroll. A saved timeline height
+still applies wherever it fits.

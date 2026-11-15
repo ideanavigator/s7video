@@ -78,6 +78,11 @@ export interface EngineJobInput<A> {
   readonly projectId?: ProjectId;
   /** Gets the job id before the engine is called, for callers that answer at once. */
   readonly onStart?: (jobId: EngineJobId) => Effect.Effect<void>;
+  /**
+   * Gets the result before the job's end is published on `subscribeJobs`, so a client that reads
+   * the caller's own record of it when the job ends finds the outcome there (S7V-101).
+   */
+  readonly onSucceeded?: (result: A) => Effect.Effect<void>;
 }
 
 /** The waveform and filmstrip of one media as one job; either step may be left out. */
@@ -346,8 +351,11 @@ const make = Effect.fn("EngineService.make")(function* (options: EngineServiceOp
     return jobId;
   });
 
-  const runStartedJob = <A>(jobId: EngineJobId, input: EngineJobInput<A>) =>
-    settleJob(jobId, call(input.method, { ...input.params, jobId }, input.success, undefined));
+  const runStartedJob = <A>(jobId: EngineJobId, input: EngineJobInput<A>) => {
+    const { onSucceeded } = input;
+    const work = call(input.method, { ...input.params, jobId }, input.success, undefined);
+    return settleJob(jobId, onSucceeded === undefined ? work : work.pipe(Effect.tap(onSucceeded)));
+  };
 
   const settleJob = <A>(jobId: EngineJobId, work: Effect.Effect<A, EngineError>) =>
     work.pipe(

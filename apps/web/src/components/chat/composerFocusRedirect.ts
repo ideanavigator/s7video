@@ -66,7 +66,6 @@ export function shouldRedirectInputToComposer(event: Event): boolean {
   if (eventPathContainsSelector(event, SECRET_REQUEST_SELECTOR)) return false;
   if (eventPathContainsSelector(event, TYPE_TO_FOCUS_EDITABLE_SELECTOR)) return false;
   if (eventPathContainsSelector(event, TYPE_TO_FOCUS_INTERACTIVE_SELECTOR)) return false;
-  if (eventPathContainsSelector(event, EDITOR_KEYS_SELECTOR)) return false;
   if (document.querySelector(TYPE_TO_FOCUS_FLOATING_LAYER_SELECTOR)) return false;
   return true;
 }
@@ -76,6 +75,8 @@ export function shouldTypeToFocusComposer(event: KeyboardEvent): boolean {
   if (event.metaKey || event.ctrlKey || event.altKey) return false;
   if (event.key.length !== 1) return false;
   if (!shouldRedirectInputToComposer(event)) return false;
+  // The Editor and the file view own their keys (S7V-101); a paste there still reaches the chat.
+  if (eventPathContainsSelector(event, EDITOR_KEYS_SELECTOR)) return false;
   if (isSurfaceLauncherKey(event)) return false;
 
   return true;

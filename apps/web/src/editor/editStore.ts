@@ -86,7 +86,10 @@ export const editEnvironment = {
   exportStatus: createEnvironmentRpcQueryAtomFamily(connectionAtomRuntime, {
     label: "environment-data:export:status",
     tag: WS_METHODS.exportStatus,
-    isFinal: (status) => status !== null && status.state !== "running",
+    // Read once the job has ended; a status still running is asked again, never kept (S7V-101).
+    // Null is an export this server did not start, which never changes.
+    refreshIntervalMs: 500,
+    isFinal: (status) => status === null || status.state !== "running",
   }),
   transcribeRun: createEnvironmentRpcCommand(connectionAtomRuntime, {
     label: "environment-data:transcribe:run",
