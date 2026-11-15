@@ -47,7 +47,7 @@ import { mediaFileReference } from "@t3tools/client-runtime/media-reference";
 import { FolderTree, Globe2, WrapTextIcon } from "lucide-react";
 import { Code2, Eye, Table2 } from "lucide";
 import * as Schema from "effect/Schema";
-import { lazy, Suspense, useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState, type KeyboardEvent } from "react";
 
 import { isBrowserPreviewFile, openFileInPreview } from "~/browser/openFileInPreview";
 import { useAssetUrlRefresh, useAssetUrlState } from "~/assets/assetUrls";
@@ -118,7 +118,11 @@ import {
   shouldShowFileExplorer,
   workspaceAssetResource,
 } from "./filePreviewMode";
-import { changeFileSaveSession, useFileSaveSession } from "./fileSaveSessions";
+import {
+  changeFileSaveSession,
+  flushFileSaveSession,
+  useFileSaveSession,
+} from "./fileSaveSessions";
 import { revisionedQuery } from "~/state/revisionedQuery";
 import {
   getOptimisticProjectFileQueryData,
@@ -863,7 +867,17 @@ function EditableFileSurface({
 
   return (
     <EditProvider createEditor={createFileEditor}>
-      <div ref={surfaceRef} className="flex min-h-0 flex-1">
+      {/* Mod+S saves the file now, instead of reaching the chat composer (S7V-101). */}
+      <div
+        ref={surfaceRef}
+        data-editor-keys
+        className="flex min-h-0 flex-1"
+        onKeyDown={(event) => {
+          if (!isSaveChord(event)) return;
+          event.preventDefault();
+          flushFileSaveSession(saveTarget);
+        }}
+      >
         <Virtualizer
           className="file-preview-virtualizer min-h-0 flex-1 overflow-auto"
           config={{
@@ -965,6 +979,12 @@ function RenderedMarkdownSurface({
     </ScrollArea>
   );
 }
+
+const isSaveChord = (event: KeyboardEvent<HTMLElement>) =>
+  (event.metaKey || event.ctrlKey) &&
+  !event.altKey &&
+  !event.shiftKey &&
+  event.key.toLowerCase() === "s";
 
 function renderedToggleLabel(
   mode: "markdown" | "mermaid" | "html" | "table",

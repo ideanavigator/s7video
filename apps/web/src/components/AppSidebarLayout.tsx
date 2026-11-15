@@ -24,6 +24,7 @@ import {
   shortcutLabelForCommand,
 } from "../keybindings";
 import { isEditableFocused } from "../lib/editableFocus";
+import { isInEditorKeysRegion } from "../lib/editorKeys";
 import { isPreviewFocused } from "../lib/previewFocus";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import { isModelPickerOpen } from "../modelPickerVisibility";
@@ -238,7 +239,8 @@ function registerThreadUndoCommands(
     {},
     {
       capture: true,
-      when: threadSidebarShown,
+      // The Editor's own Mod+Z undoes the edit (S7V-101).
+      when: (event) => threadSidebarShown() && !isInEditorKeysRegion(event.target),
       onKeyDown: (event) => {
         // Cancel a held key's repeats so they cannot fall through to the
         // editor's own undo, even after the last notice is gone.

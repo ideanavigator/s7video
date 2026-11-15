@@ -139,6 +139,11 @@ export function createFileSaveSessions(deps: FileSaveSessionDeps) {
       const session = sessions.get(fileSaveKey(target));
       if (session && session.leases > 0) session.coordinator.change(contents);
     },
+    /** Writes a held file's unsaved edit now, as Mod+S in the file view asks (S7V-101). */
+    flush(target: FileSaveTarget): void {
+      const session = sessions.get(fileSaveKey(target));
+      if (session && session.leases > 0) session.coordinator.flush();
+    },
   };
 }
 
@@ -206,4 +211,8 @@ export function useFileSaveSession(
 
 export function changeFileSaveSession(target: FileSaveTarget, contents: string): void {
   fileSaveSessions.change(target, contents);
+}
+
+export function flushFileSaveSession(target: FileSaveTarget): void {
+  fileSaveSessions.flush(target);
 }

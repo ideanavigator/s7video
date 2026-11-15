@@ -43,19 +43,27 @@ const renderPlayer = (overrides: Partial<MultiClipPlayerProps> = {}) => {
     onSourceError: vi.fn(),
     ...overrides,
   };
-  return render(<MultiClipPlayer {...props} />, { router: false });
+  // The Editor gives the player its room (S7V-101); here a fixed box stands in for it.
+  return render(
+    <div className="flex flex-col" style={{ width: 640, height: 400 }}>
+      <MultiClipPlayer {...props} />
+    </div>,
+    { router: false },
+  );
 };
 
 describe("MultiClipPlayer", () => {
-  it("shows the other shapes inside the 16:9 frame, with a pool of hidden elements", async () => {
+  it("shows the picture in the canvas shape, filling the room's height, with a pool of hidden elements", async () => {
     await using screen = await renderPlayer();
     const stage = (await screen.getByTestId("multi-clip-stage").findElement()) as HTMLElement;
     expect(stage.querySelectorAll("video")).toHaveLength(3);
     const canvas = stage.closest("[data-canvas]") as HTMLElement;
     expect(canvas.dataset.canvas).toBe("1080x1920");
-    const frame = canvas.parentElement!.parentElement!.getBoundingClientRect();
-    expect(frame.width / frame.height).toBeCloseTo(16 / 9, 1);
-    expect(canvas.getBoundingClientRect().height).toBeCloseTo(frame.height, 0);
+    const room = canvas.closest("[data-testid=player-stage]")!.getBoundingClientRect();
+    const picture = canvas.getBoundingClientRect();
+    expect(room.height).toBeGreaterThan(300);
+    expect(picture.height).toBeCloseTo(room.height, 0);
+    expect(picture.width / picture.height).toBeCloseTo(1080 / 1920, 2);
   });
 
   it("should handle a missing source file", async () => {

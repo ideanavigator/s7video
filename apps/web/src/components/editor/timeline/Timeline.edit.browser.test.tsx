@@ -13,6 +13,8 @@ import "../../../index.css";
 import { act, fakeTimers, render } from "../../../../test/render";
 import { Timeline, type TimelineEditing } from "./Timeline";
 import {
+  NO_CLIP_TO_SPLIT,
+  NOT_ON_SELECTED_CLIP,
   NUDGE_SETTLE_MS,
   type EditApplyOutcome,
   type EditStepOutcome,
@@ -318,6 +320,67 @@ describe("Timeline editing (S7V-034)", () => {
     expect(view.harness.undo).toHaveBeenCalledTimes(1);
     await view.key("z", { metaKey: true, shiftKey: true });
     expect(view.harness.redo).toHaveBeenCalledTimes(1);
+  });
+
+  // S7V-101: "click a clip, press S" splits where the click was; S off every clip says why.
+  it("moves the playhead to a click on a clip, so S splits there, and says when S finds no clip", async () => {
+    const view = await mount({ initialFrame: 250 });
+    await using _screen = view.screen;
+    await view.key("s");
+    expect(view.harness.apply).not.toHaveBeenCalled();
+    expect(view.harness.notify).toHaveBeenCalledWith({
+      kind: "refused",
+      message: NO_CLIP_TO_SPLIT,
+    });
+    view.pointer("pointerdown", view.block("v3"), view.xOf(340.5), view.yOf("v3"));
+    view.pointer("pointerup", window.document, view.xOf(340.5), view.yOf("v3"));
+    await act(async () => {});
+    await view.key("s");
+    expect(view.harness.apply).toHaveBeenLastCalledWith(
+      [{ _tag: "splitItem", itemId: "v3", atFrame: 340 }],
+      7,
+    );
+  });
+
+  it("does not move the playhead when the browser cancels a press on a clip", async () => {
+    const view = await mount({ initialFrame: 250 });
+    await using _screen = view.screen;
+    view.pointer("pointerdown", view.block("v3"), view.xOf(340.5), view.yOf("v3"));
+    view.pointer("pointercancel", window.document, view.xOf(340.5), view.yOf("v3"));
+    await act(async () => {});
+    // The playhead stayed in the gap: S has nothing under it to split.
+    await view.key("s");
+    expect(view.harness.apply).not.toHaveBeenCalled();
+  });
+
+  it("says when the playhead is on another clip than the selected one", async () => {
+    const view = await mount({ initialFrame: 0 });
+    await using _screen = view.screen;
+    // Select v1 with a click (the playhead moves into it), then move the playhead onto v3.
+    view.pointer("pointerdown", view.block("v1"), view.xOf(50.5), view.yOf("v1"));
+    view.pointer("pointerup", window.document, view.xOf(50.5), view.yOf("v1"));
+    await act(async () => {});
+    view.pointer("pointerdown", view.scroller, view.xOf(340.5), 10);
+    view.pointer("pointerup", view.scroller, view.xOf(340.5), 10);
+    await act(async () => {});
+    view.harness.notify.mockClear();
+    await view.key("s");
+    expect(view.harness.apply).not.toHaveBeenCalled();
+    expect(view.harness.notify).toHaveBeenCalledWith({
+      kind: "refused",
+      message: NOT_ON_SELECTED_CLIP,
+    });
+  });
+
+  it("keeps a drag of a clip from moving the playhead", async () => {
+    const view = await mount({ initialFrame: 250 });
+    await using _screen = view.screen;
+    await view.drag("v3", 350, 470, 20, { metaKey: true });
+    view.harness.apply.mockClear();
+    await view.screen.rerender(view.ui(edit, 8));
+    // The playhead stayed in the gap: S has no clip to split.
+    await view.key("s");
+    expect(view.harness.apply).not.toHaveBeenCalled();
   });
 
   it("makes one move of a burst of arrow nudges", async () => {

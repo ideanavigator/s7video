@@ -31,27 +31,34 @@ export interface EditPlayerProps {
 }
 
 /**
- * An edit plays inside its canvas, filled and cropped from the centre as export renders it
- * (S7V-061), with black bars in the 16:9 frame around any other shape. A raw clip plays whole.
+ * The player's picture in its own shape (S7V-101): an edit fills its canvas, cropped from the
+ * centre as export renders it (S7V-061), and a raw clip plays whole. The frame around the picture
+ * is the page, not black bars; a hairline keeps a dark picture's edge visible on a dark page.
  */
+const PICTURE_CLASS =
+  "relative overflow-hidden rounded-sm bg-black ring-1 ring-muted-foreground/70";
+
 export function CanvasFrame(props: {
-  readonly canvas: PlaybackPlan["canvas"] | undefined;
+  readonly canvas: { readonly width: number; readonly height: number } | undefined;
   readonly children: ReactNode;
 }) {
   const { canvas } = props;
-  if (canvas === undefined) return props.children;
-  const ratio = canvas.width / canvas.height;
+  // One tree for both cases, so a raw clip's shape arriving never remounts its video.
   return (
     // Out of flow and size-contained, so the video never stretches the frame, and the canvas fits
-    // both of the frame's sides, whatever shape `max-h` gives the frame.
+    // both of the frame's sides, whatever room the panel gives the frame.
     <div className="absolute inset-0 flex items-center justify-center [container-type:size]">
       <div
-        data-canvas={`${canvas.width}x${canvas.height}`}
-        className="relative overflow-hidden"
-        style={{
-          aspectRatio: `${canvas.width} / ${canvas.height}`,
-          width: `min(100cqw, ${ratio} * 100cqh)`,
-        }}
+        data-canvas={canvas === undefined ? undefined : `${canvas.width}x${canvas.height}`}
+        className={cn(PICTURE_CLASS, canvas === undefined && "size-full")}
+        style={
+          canvas === undefined
+            ? undefined
+            : {
+                aspectRatio: `${canvas.width} / ${canvas.height}`,
+                width: `min(100cqw, ${canvas.width / canvas.height} * 100cqh)`,
+              }
+        }
       >
         {props.children}
       </div>
@@ -72,6 +79,8 @@ export function EditPlayer(props: EditPlayerProps) {
     onPlayingChange?.(next);
   };
   const [clock, setClock] = useState(props.startFrame);
+  // A raw clip has no canvas: its frame takes the clip's own shape once the file says it.
+  const [natural, setNatural] = useState<{ width: number; height: number } | undefined>();
 
   const attachVideo = (element: HTMLVideoElement) => {
     const created = createPlaybackLoop(element, {
@@ -148,11 +157,11 @@ export function EditPlayer(props: EditPlayerProps) {
       role="group"
       aria-label={`Player: ${props.label}`}
       tabIndex={0}
-      className="flex min-h-0 flex-col gap-1.5 outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+      className="flex min-h-0 flex-1 flex-col gap-1.5 outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
       onKeyDown={onKeyDown}
     >
-      <div className="relative flex aspect-video max-h-[50vh] min-h-0 w-full items-center justify-center overflow-hidden rounded-md bg-black">
-        <CanvasFrame canvas={plan.canvas}>
+      <div className="relative min-h-0 w-full flex-1" data-testid="player-stage">
+        <CanvasFrame canvas={plan.canvas ?? natural}>
           <video
             ref={attachVideo}
             src={props.src}
@@ -163,7 +172,11 @@ export function EditPlayer(props: EditPlayerProps) {
               "size-full",
               plan.canvas === undefined ? "object-contain" : "object-cover",
             )}
-            onLoadedMetadata={() => {
+            onLoadedMetadata={(event) => {
+              const { videoWidth, videoHeight } = event.currentTarget;
+              if (videoWidth > 0 && videoHeight > 0) {
+                setNatural({ width: videoWidth, height: videoHeight });
+              }
               loop?.setPlan(plan);
               loop?.seekToTimelineFrame(props.startFrame);
             }}

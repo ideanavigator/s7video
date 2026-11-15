@@ -61,6 +61,7 @@ import {
   useState,
 } from "react";
 import { BackgroundThreadContext } from "./backgroundThread";
+import { isInEditorKeysRegion } from "../../lib/editorKeys";
 import { isInSideChatPane } from "../../lib/sideChatPane";
 import { useStableCallback } from "../../hooks/useStableCallback";
 
@@ -703,7 +704,7 @@ export function useComposerStash(input: {
       {
         capture: true,
         context: readShortcutContext,
-        when: (event) => !isInSideChatPane(event.target),
+        when: (event) => !isInSideChatPane(event.target) && !isInEditorKeysRegion(event.target),
       },
     );
   }, [backgroundThread, handleStashShortcut, readShortcutContext]);

@@ -88,7 +88,8 @@ const status = (
 const press = (name: string) =>
   act(async () => {
     const found = [...document.querySelectorAll("button")].find(
-      (element) => element.textContent?.trim() === name,
+      (element) =>
+        element.textContent?.trim() === name || element.getAttribute("aria-label") === name,
     );
     expect(found, `button ${name}`).toBeDefined();
     found!.click();
@@ -115,14 +116,17 @@ describe("SpeechModelPrompt", () => {
       router: false,
     });
     await expect.element(screen.getByText(PROMPT)).toBeVisible();
-    const button = screen.getByRole("button", { name: "Download speech model" });
+    // One line (S7V-101): the prompt and two icon buttons, so it never squeezes the player.
+    const region = screen.getByRole("region", { name: "Speech model" }).element();
+    expect(region.getBoundingClientRect().height).toBeLessThanOrEqual(40);
+    const button = screen.getByRole("button", { name: "Download the speech model (once)" });
     await expect.element(button).toBeVisible();
     // Keyboard reachable: the prompt's button takes focus with Tab.
     await act(async () => (button.element() as HTMLElement).focus());
     expect(document.activeElement).toBe(button.element());
 
     // Pressing it only opens the question; nothing downloads before the user says yes.
-    await press("Download speech model");
+    await press("Download the speech model (once)");
     expect(commands.download).not.toHaveBeenCalled();
     await expect.element(screen.getByRole("radio", { name: /Light/ })).toBeChecked();
     await press("Download 2.3 GB");
@@ -143,7 +147,7 @@ describe("SpeechModelPrompt", () => {
     await using screen = await render(<SpeechModelPrompt projectRef={projectRef} />, {
       router: false,
     });
-    await press("Download speech model");
+    // The prompt's own X says Not now, without opening the question.
     await press("Not now");
     expect(commands.dismiss).toHaveBeenCalledWith({ environmentId, input: {} });
     await act(async () => store.set({ status: status({ consent: "dismissed" }) }));
@@ -173,7 +177,9 @@ describe("SpeechModelPrompt", () => {
     });
     await expect.element(screen.getByText("Downloading the speech model…")).toBeVisible();
     await expect.element(screen.getByText(/25% downloaded/)).toBeVisible();
-    expect(document.body.textContent).not.toContain("Download speech model");
+    expect(
+      screen.getByRole("button", { name: "Download the speech model (once)" }).query(),
+    ).toBeNull();
   });
 
   it("says it is checking, not downloading, while it takes a copy found on this Mac", async () => {

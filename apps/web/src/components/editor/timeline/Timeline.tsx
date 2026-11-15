@@ -85,6 +85,7 @@ export function Timeline(props: {
       pxPerFrame: () => controller.getView().pxPerFrame,
       playheadFrame: controller.playheadFrame,
       focus: controller.focus,
+      seekToClientX: controller.seekToClientX,
     }),
   );
   const { attachLanes, attachPreview, attachAnnouncer } = editor;
