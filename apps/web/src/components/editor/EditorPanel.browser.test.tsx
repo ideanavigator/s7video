@@ -1783,9 +1783,14 @@ describe("EditorPanel", () => {
             if (cue !== null) {
               expect(cue.textContent).toMatch(/^Show \d more notices?$/u);
               await screen.getByRole("button", { name: /^Show \d more notices?$/u }).click();
+              // Opened, the cue stays only while some notices are still left out.
               await expect
-                .element(screen.getByRole("button", { name: "Show fewer notices" }))
-                .toBeVisible();
+                .poll(
+                  () =>
+                    document.querySelector("[data-testid=editor-notices-cue] button")
+                      ?.textContent ?? "every notice shown",
+                )
+                .toMatch(/^(Show fewer notices|every notice shown)$/u);
               // Opened: still whole notices, and the timeline keeps its toolbar and ruler.
               await checkColumn(56);
             }

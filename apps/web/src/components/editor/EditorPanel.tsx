@@ -152,20 +152,18 @@ const NOTICE_CUE_PX = 24;
 
 /**
  * How many notices show whole (S7V-101): from the top, as many as fit in `roomPx` with the cue
- * line when some are left out (or always, once opened). The first one shows anyway when it is
- * urgent (a refused change).
+ * line when some are left out. The first one shows anyway when it is urgent (a refused change).
  */
 function fitNotices(
   heights: ReadonlyArray<number>,
   roomPx: number,
   urgentFirst: boolean,
-  cueAlways: boolean,
 ): { readonly shown: number; readonly heightPx: number } {
   let shown = 0;
   let heightPx = 0;
   for (const height of heights) {
     const next = heightPx + (shown > 0 ? NOTICE_GAP_PX : 0) + height;
-    const cue = cueAlways || shown + 1 < heights.length ? NOTICE_CUE_PX + NOTICE_GAP_PX : 0;
+    const cue = shown + 1 < heights.length ? NOTICE_CUE_PX + NOTICE_GAP_PX : 0;
     if (next + cue > roomPx && !(shown === 0 && urgentFirst)) break;
     heightPx = next;
     shown += 1;
@@ -953,18 +951,20 @@ export default function EditorPanel(props: {
         top.aboveNoticesPx -
         keepPx;
   const urgentFirst = notices.keys[0] === "refused";
-  const closedFit = fitNotices(notices.heights, noticeRoom(TIMELINE_FLOOR_PX), urgentFirst, false);
+  const closedFit = fitNotices(notices.heights, noticeRoom(TIMELINE_FLOOR_PX), urgentFirst);
   const noticesFit = closedFit.shown === notices.heights.length;
   const fit =
     noticesFit || !noticesOpen
       ? closedFit
-      : fitNotices(notices.heights, noticeRoom(TIMELINE_SHORTEST_PX), urgentFirst, true);
+      : fitNotices(notices.heights, noticeRoom(TIMELINE_SHORTEST_PX), urgentFirst);
   const noticesLeft = notices.heights.length - fit.shown;
   /** A notice out of view is clipped at a notice boundary and kept out of the Tab order. */
   const noticeOutOfView = (key: string) => {
     const at = notices.keys.indexOf(key);
     return !noticesFit && at >= fit.shown;
   };
+  // Opened and every notice in view, the cue goes too: its room is better spent on a notice.
+  const showNoticesCue = !noticesFit && (!noticesOpen || noticesLeft > 0);
   const tabPanelStyle = {
     height:
       tabRoomPx === null || tabRoomPx < TAB_ROW_PX
@@ -1130,7 +1130,7 @@ export default function EditorPanel(props: {
               </div>
             </div>
           </div>
-          {noticesFit ? null : (
+          {showNoticesCue ? (
             <div
               className={cn("flex h-6 items-center gap-2 text-xs", fit.shown > 0 && "mt-2")}
               data-testid="editor-notices-cue"
@@ -1150,7 +1150,7 @@ export default function EditorPanel(props: {
                 <span className="text-muted-foreground">Close one to see {noticesLeft} more.</span>
               ) : null}
             </div>
-          )}
+          ) : null}
         </div>
       </div>
       {exportResult.dialog}
