@@ -962,6 +962,8 @@ export default function EditorPanel(props: {
   );
   const noticesFit = closedFit.shown === notices.heights.length;
   const noticesOpen = openedFor === notices.keys.join();
+  // A changed set closes them for good: the same set coming back later doesn't reopen.
+  if (openedFor !== null && !noticesOpen) setOpenedFor(null);
   // Opening always shows at least the next whole notice; the timeline may drop to its toolbar
   // and ruler for it. When even that leaves no room beside the ones already shown, opening pages:
   // the notices from the next one on take their place.
@@ -984,6 +986,8 @@ export default function EditorPanel(props: {
   /** A notice out of view is clipped at a notice boundary and kept out of the Tab order. */
   const noticeOutOfView = (key: string) => {
     const at = notices.keys.indexOf(key);
+    // A notice not measured yet (it just arrived) is in view until the next fit says otherwise.
+    if (at === -1) return false;
     return !noticesFit && (at < page.from || at >= page.from + page.shown);
   };
   const opened = noticesOpen && !noticesFit;

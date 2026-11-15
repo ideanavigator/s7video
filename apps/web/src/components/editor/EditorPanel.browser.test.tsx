@@ -1866,7 +1866,7 @@ describe("EditorPanel", () => {
       );
 
       // S7V-101: opened is tied to the notices it opened; one arriving later doesn't open at once.
-      it("closes the notices again when a new one arrives", async () => {
+      it("closes the notices when their set changes, and the same set coming back stays closed", async () => {
         await page.viewport(1180, 760);
         setState([asset("clip-0")], true);
         withCanvas({ width: 1080, height: 1920 });
@@ -1900,25 +1900,58 @@ describe("EditorPanel", () => {
         );
         try {
           await using screen = await render(layoutUi(), { router: false });
+          const notice = "That change was not kept; the edit is back to its last saved version.";
+          const withRevision = (refused: boolean) => {
+            const current = state.edit as Extract<ProjectEditState, { _tag: "ready" }>;
+            const { notice: _old, ...rest } = current.snapshot;
+            state.edit = {
+              _tag: "ready",
+              snapshot: {
+                ...rest,
+                revision: current.snapshot.revision + 1,
+                ...(refused ? { notice } : {}),
+              },
+            };
+          };
+          const closed = async () => {
+            await expect
+              .element(screen.getByRole("button", { name: /^Show \d more notices?$/u }))
+              .toBeVisible();
+            expect(screen.getByRole("button", { name: "Show fewer notices" }).query()).toBeNull();
+          };
+          // Refused change, old versions and the speech prompt; open them.
+          withRevision(true);
+          await screen.rerender(layoutUi());
+          await expect.element(screen.getByText(notice)).toBeInTheDocument();
           await screen.getByRole("button", { name: /^Show \d more notices?$/u }).click();
           await expect
             .element(screen.getByRole("button", { name: "Show fewer notices" }))
             .toBeVisible();
-          // A refused change arrives: the set changed, so the notices are closed again.
-          const opened = state.edit as Extract<ProjectEditState, { _tag: "ready" }>;
-          state.edit = {
-            _tag: "ready",
-            snapshot: {
-              ...opened.snapshot,
-              revision: opened.snapshot.revision + 1,
-              notice: "That change was not kept; the edit is back to its last saved version.",
-            },
-          };
+          // The refusal goes: the set changed, so the notices close.
+          withRevision(false);
           await screen.rerender(layoutUi());
-          await expect
-            .element(screen.getByRole("button", { name: /^Show \d more notices?$/u }))
-            .toBeVisible();
-          expect(screen.getByRole("button", { name: "Show fewer notices" }).query()).toBeNull();
+          await closed();
+          // It comes back: the same set as when they were opened, but they stay closed, and the
+          // refusal is in view, not hidden behind a count.
+          withRevision(true);
+          await screen.rerender(layoutUi());
+          await closed();
+          const refusal = screen
+            .getByText(notice)
+            .element()
+            .closest("[data-notice]") as HTMLElement;
+          const refusalInView = () => {
+            const scroller = document
+              .querySelector("[data-testid=editor-notices-scroller]")!
+              .getBoundingClientRect();
+            const rect = refusal.getBoundingClientRect();
+            return (
+              !refusal.inert &&
+              rect.top >= scroller.top - 0.5 &&
+              rect.bottom <= scroller.bottom + 0.5
+            );
+          };
+          await expect.poll(refusalInView).toBe(true);
         } finally {
           state.speech = null;
         }

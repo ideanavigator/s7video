@@ -97,7 +97,8 @@ timeline keeps its video row (`TIMELINE_FLOOR_PX`), the refusal always. The rest
 it; the notices may take the timeline down to its toolbar and ruler (`TIMELINE_SHORTEST_PX`),
 and when even then the next notice can't sit beside the ones shown, it takes their place. A
 28 px "Show fewer notices" button stays beside the opened notices, with a count of any still
-left out. Opened belongs to the notices it opened: a new notice closes them again. A notice out
+left out. Opened belongs to the notices it opened: when the set changes they close, and they stay closed
+if the same set comes back. A notice out
 of view is clipped at a notice boundary and `inert`, so Tab never reaches it. Below the player, the tabs show whole version rows
 (`TAB_ROW_PX`), or, when not even one row fits, the tab bar ends with one plain line: "Close a
 notice above or make the window taller to see Versions." while something above can be closed,
