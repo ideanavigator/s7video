@@ -150,6 +150,8 @@ describe("brand-check", () => {
     ["const hint = 'Quit T3.';"],
     ['const note = "A T3-managed folder";'],
     ['const hint = "Quit T3, then reopen it.";'],
+    ['const label = "T3/Codex bridge";'],
+    ['const hint = "Open T3.app";'],
   ])("fails on T3 as a product name: %s", (source) => {
     expect(findBannedText("x.tsx", source).map(({ message }) => message)).toEqual([
       'hard-coded "T3" as a product name; read it from the brand config',
@@ -172,6 +174,7 @@ describe("brand-check", () => {
     ["apps/web/index.html", "<title>T3</title>"],
     ["apps/web/public/page.html", "<p>Restart T3.</p>"],
     ["apps/desktop/resources/dmg/background.svg", '<text x="1">Drag T3 here</text>'],
+    ["apps/desktop/resources/dmg/mark.svg", "<text>T3/s7video</text>"],
   ])("fails on T3 as a product name in markup: %s", (file, markup) => {
     expect(findBannedText(file, markup)).toHaveLength(1);
   });

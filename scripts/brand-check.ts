@@ -46,7 +46,7 @@ const BANNED_TEXT: ReadonlyArray<{ readonly pattern: RegExp; readonly label: str
 const BANNED_CODE: ReadonlyArray<{ readonly pattern: RegExp; readonly label: string }> = [
   // "T3 Code" and "T3 Tools" have their own rules; `T3.Env`, `T3-Mode-Limit` or `T3_` are not names.
   {
-    pattern: /(?<![\w.$/-])T3(?![\w/]|\.[A-Za-z_]|-[A-Z]| Code\b| Tools\b)/g,
+    pattern: /(?<![\w.$/-])T3(?![\w]|\.(?!app\b)[A-Za-z_]|-[A-Z]| Code\b| Tools\b)/g,
     label: '"T3" as a product name',
   },
   {
