@@ -96,7 +96,6 @@ vi.mock(import("../../editor/editStore"), async (importOriginal) => ({
   useProjectVersions: () => state.versions,
   // The caption overlay (S7V-075) has its own tests.
   useCaptionStills: () => ({ _tag: "none" }),
-  useCaptionPresets: () => null,
   useSpeechModelStatus: () => state.speech,
 }));
 vi.mock(import("../../editor/exportFiles"), async (importOriginal) => ({

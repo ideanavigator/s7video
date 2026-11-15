@@ -1111,7 +1111,6 @@ export default function EditorPanel(props: {
           previewingVersion === null &&
           (view._tag === "play-timeline" || (view._tag === "play" && view.mode === "edit")) ? (
             <div className="flex min-w-0 items-center gap-2">
-              <CaptionStylePicker projectRef={projectRef} document={edit.snapshot.document} />
               {exportResult.playHidden === null ? null : (
                 // The hidden export row's way back, so the latest export stays reachable.
                 <IconAction label="Play the latest export" onClick={exportResult.playHidden}>
