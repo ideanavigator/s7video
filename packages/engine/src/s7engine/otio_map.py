@@ -36,6 +36,12 @@ FORMATS = ("otio", "fcpxml", "fcp7xml", "edl")
 EXTENSIONS = {"otio": "otio", "fcpxml": "fcpxml", "fcp7xml": "xml", "edl": "edl"}
 #: The frame size editors open a project at when the file names none.
 _EDITOR_DEFAULT = (1920, 1080)
+_NO_CAPTION_STYLES = {
+    "otio": "Premiere and Resolve don't read caption styles",
+    "fcpxml": "Final Cut Pro doesn't read caption styles",
+    "fcp7xml": "editors don't read caption styles",
+    "edl": "editors don't read caption styles",
+}
 _ITEM_TIMES = ("id", "start", "duration", "in")
 _COLOURS = {
     "red": otio.schema.MarkerColor.RED,
@@ -426,15 +432,14 @@ def dropped(edit: dict[str, Any], fmt: str, captions: str, caption_chunks: int, 
             "the words on the timeline's caption clips "
             + ("(the captions file beside it has them)" if captions != "none" else "(no captions file chosen)")
         )
+    elif caption_chunks and fmt == "fcpxml" and captions == "ass":
+        # Final Cut imports CEA-608, iTT and SRT captions only.
+        out.append("captions (Final Cut Pro can't open an ASS file; choose SRT to bring them in)")
     elif caption_chunks and fmt != "otio":
         out.append("captions on the timeline (they are in the captions file beside it)" if captions != "none" else "captions (no captions file chosen)")
-    if fmt == "otio" and (caption_chunks or _all_items(edit, "caption")):
-        # Premiere doesn't import ASS, and Resolve doesn't apply its styles.
-        out.append("the caption look (Premiere and Resolve don't read caption styles; export the video to keep it)")
-    elif caption_chunks and captions == "srt":
-        out.append("the caption look (an SRT file has no style; choose ASS to keep it)")
-    if caption_chunks and captions == "ass":
-        out.append("the caption font, Inter Bold, is named in the ASS file but not included")
+    if caption_chunks or (fmt == "otio" and _all_items(edit, "caption")):
+        # No editor applies a captions file's style, ASS included; only video players do.
+        out.append(f"the caption look ({_NO_CAPTION_STYLES[fmt]}; export the video to keep it)")
     if captions != "none" and not caption_chunks:
         out.append("no captions file: the edit shows no captions")
     out.extend(f"missing media: {name} (the file is not on disk)" for name in missing_media(edit, project_dir))

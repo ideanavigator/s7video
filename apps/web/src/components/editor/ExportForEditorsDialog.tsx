@@ -48,7 +48,7 @@ const CAPTION_CHOICES: ReadonlyArray<{
   readonly title: string;
 }> = [
   { captions: "srt", title: "SRT (opens in most editors)" },
-  { captions: "ass", title: "ASS (keeps the caption look)" },
+  { captions: "ass", title: "ASS (keeps the look in video players, not in editors)" },
   { captions: "none", title: "No captions file" },
 ];
 
