@@ -9,6 +9,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import {
+  CAPTION_LOOK_PARTS,
   CaptionPresetId,
   CaptionStillsResult,
   EngineError,
@@ -69,7 +70,7 @@ const previewOf = (calls: Calls, params: Record<string, unknown>) => {
   if (preset === calls.failPreview) return null;
   const folder = sha(`look ${preset}`).slice(0, 32);
   const png = `preview-${sha(preset).slice(0, 16)}.png`;
-  const file = NodePath.join(String(params["cacheDir"]), folder, png);
+  const file = NodePath.join(String(params["cacheDir"]), "previews", folder, png);
   NodeFS.mkdirSync(NodePath.dirname(file), { recursive: true });
   // Drawn only when missing, as the engine does.
   if (!NodeFS.existsSync(file)) NodeFS.writeFileSync(file, `png:${preset}`);
@@ -384,6 +385,12 @@ describe("CaptionStillsService (S7V-075)", () => {
       .filter((name) => name.endsWith(".json"))
       .map((name) => name.slice(0, -".json".length));
     assert.deepStrictEqual(files.toSorted(), [...CaptionPresetId.literals].toSorted());
+    // S7V-099: the parts a custom colour can change are the ones each style file draws.
+    for (const id of CaptionPresetId.literals) {
+      const style = JSON.parse(NodeFS.readFileSync(NodePath.join(styles, `${id}.json`), "utf8"));
+      const parts = (["box", "highlight"] as const).filter((part) => part in style);
+      assert.deepStrictEqual(parts, [...CAPTION_LOOK_PARTS[id]], id);
+    }
   });
 
   // S7V-037: the highlighted look draws one still per word being said, so the reply has an entry
@@ -433,6 +440,7 @@ describe("CaptionStillsService (S7V-075)", () => {
               NodeFS.realpathSync(root),
               ".s7cache",
               "captions",
+              "previews",
               sha(`look ${preset}`).slice(0, 32),
               `preview-${sha(preset).slice(0, 16)}.png`,
             );

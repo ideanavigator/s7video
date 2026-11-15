@@ -637,7 +637,7 @@ describe("video_undo and video_redo", () => {
 
         const added = yield* call("video_add_captions");
         expect(added.isError).toBe(false);
-        expect(textOf(added).join("")).toContain("Added 1 captions to the edit.");
+        expect(textOf(added).join("")).toContain("Added captions to the edit.");
         const captioned = readFile(root, "edit.json");
         const track = JSON.parse(captioned).tracks.find(
           (entry: { kind: string }) => entry.kind === "caption",
@@ -742,7 +742,7 @@ describe("video_undo and video_redo", () => {
         // No captions yet: the look adds them, in the same step.
         const boxed = yield* call("video_caption_style", { preset: "s7-box" });
         expect(boxed.isError).toBe(false);
-        expect(textOf(boxed).join("")).toContain("Added 2 captions in the Boxed look.");
+        expect(textOf(boxed).join("")).toContain("Added captions in the Boxed look.");
         const captions = JSON.parse(readFile(root, "edit.json")).tracks.find(
           (entry: { kind: string }) => entry.kind === "caption",
         );

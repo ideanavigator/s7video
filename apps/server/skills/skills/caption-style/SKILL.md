@@ -14,8 +14,8 @@ The user asked how their captions look. There are four looks, all ours:
 
 On top of any look, `custom` changes only these, and keeps the ones not given:
 
-- `textColor`, `highlightColor` (the lit word in Highlighted word), `boxColor` (the box in
-  Boxed): hex colours. Turn the user's words into one: orange `#FF8800`, red `#FF3B30`, yellow
+- `textColor`, `highlightColor` (only in Highlighted word: the lit word), `boxColor` (only in
+  Boxed: the box): hex colours. Turn the user's words into one: orange `#FF8800`, red `#FF3B30`, yellow
   `#FFD60A`, green `#34C759`, blue `#0A84FF`, pink `#FF2D92`, purple `#AF52DE`, black `#000000`,
   white `#FFFFFF`;
 - `size`: 0.6 to 1.6, where 1 is the look's own size; "a bit bigger" is about 0.2 more than now;
@@ -31,11 +31,12 @@ On top of any look, `custom` changes only these, and keeps the ones not given:
    bottom) and ask. Never make a style up.
 4. If it says a clip has no transcript, call `video_transcribe` with that clip and wait for its
    job with `video_job_status` (`waitSeconds: 30`), then call `video_caption_style` again. If it
-   says a clip already shows captions in its picture, ask the user its question and stop; after
-   they say yes, call again with `confirm: true` and keep it on every caption call.
+   says a clip already shows captions in its picture, ask the user the question it gives and stop;
+   then do what it said for their answer (`confirm: true`, with the other `position` if they
+   chose it), and keep `confirm: true` on every caption call.
 5. Do not export. Call `video_export` only when this message asks for a video file.
-6. Reply in one plain sentence saying the look, from the tool's result: it shows over the player
-   and in the export. End with: "Say undo to go back."
+6. Reply in one plain sentence saying the look in the tool's words (colour names, never codes or
+   size numbers): it shows over the player and in the export. End with: "Say undo to go back."
 
 Never edit `edit.json` yourself and never use git on it. If a tool fails, say what went wrong in
 plain words and stop.

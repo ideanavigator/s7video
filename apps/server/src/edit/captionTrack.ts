@@ -15,7 +15,13 @@ import {
   sameCaptions,
   transcriptCaptionTrackOf,
 } from "@t3tools/shared/captionWords";
-import type { EditCaptionTrack, EditDocument, EditMedia, EditOp } from "@t3tools/contracts";
+import type {
+  BurnedInCaptions,
+  EditCaptionTrack,
+  EditDocument,
+  EditMedia,
+  EditOp,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Path from "effect/Path";
 
@@ -26,9 +32,18 @@ export interface CaptionTranscripts {
   readonly transcripts: ReadonlyMap<string, CaptionTranscript>;
   /** Media on the video track with sound but no cached transcript (or an unreadable one). */
   readonly missing: ReadonlyArray<string>;
-  /** Media whose picture already shows captions (S7V-099); unchecked clips are not listed. */
-  readonly burnedIn: ReadonlyArray<string>;
+  /** Media whose picture already shows captions (S7V-099), with where; unchecked clips aren't listed. */
+  readonly burnedIn: ReadonlyMap<string, BurnedInCaptions["region"]>;
 }
+
+/** Media captioned in the transcript track: the user has said yes to captions over these. */
+export const captionedMedia = (document: EditDocument): ReadonlySet<string> =>
+  new Set(
+    (transcriptCaptionTrackOf(document)?.items ?? []).flatMap((item) => {
+      const media = captionMediaOfItem(item);
+      return media === undefined ? [] : [media];
+    }),
+  );
 
 /** The cached transcripts of the media the edit's captions come from. */
 export const loadCaptionTranscripts = Effect.fn("captionTrack.loadCaptionTranscripts")(function* (
@@ -41,7 +56,7 @@ export const loadCaptionTranscripts = Effect.fn("captionTrack.loadCaptionTranscr
     media.path !== undefined ? path.resolve(root, media.path) : path.resolve(media.reference ?? "");
   const transcripts = new Map<string, CaptionTranscript>();
   const missing: string[] = [];
-  const burnedIn: string[] = [];
+  const burnedIn = new Map<string, BurnedInCaptions["region"]>();
   for (const id of captionMediaOf(document)) {
     const media = document.media.find((entry) => entry.id === id)!;
     const found = yield* mediaFingerprint(locate(media)).pipe(
@@ -51,7 +66,7 @@ export const loadCaptionTranscripts = Effect.fn("captionTrack.loadCaptionTranscr
     if (found === null) missing.push(id);
     else {
       transcripts.set(id, found);
-      if (found.burnedInCaptions?.found === true) burnedIn.push(id);
+      if (found.burnedInCaptions?.found === true) burnedIn.set(id, found.burnedInCaptions.region);
     }
   }
   return { transcripts, missing, burnedIn } satisfies CaptionTranscripts;
@@ -80,9 +95,9 @@ export const mergeCaptionTrack = (
 };
 
 /**
- * The `setCaptions` rebuilding `after`'s transcript caption track when the change touched the video
- * track; a hand-written track is never rebuilt. A clip whose transcript can't be read keeps its
- * items, carried through the cut (`carryCaptions`); the player names the clip.
+ * The `setCaptions` rebuilding `after`'s transcript track when the change touched the video track.
+ * A clip whose transcript can't be read keeps its items, carried through the cut. A clip showing
+ * captions in its picture stays out unless the track captioned it before (S7V-099).
  */
 export const rebuildCaptionOps = Effect.fn("captionTrack.rebuildCaptionOps")(function* (
   root: string,
@@ -91,8 +106,12 @@ export const rebuildCaptionOps = Effect.fn("captionTrack.rebuildCaptionOps")(fun
 ) {
   const track = transcriptCaptionTrackOf(after);
   if (track === undefined || videoItemsOf(before) === videoItemsOf(after)) return [];
-  const { transcripts, missing } = yield* loadCaptionTranscripts(root, after);
-  const captions = mergeCaptionTrack(before, after, track, transcripts, missing);
+  const { transcripts, missing, burnedIn } = yield* loadCaptionTranscripts(root, after);
+  const confirmed = captionedMedia(before);
+  const allowed = new Map(
+    [...transcripts].filter(([media]) => !burnedIn.has(media) || confirmed.has(media)),
+  );
+  const captions = mergeCaptionTrack(before, after, track, allowed, missing);
   if (sameCaptions(track, captions)) return [];
   return [{ _tag: "setCaptions", trackId: track.id, captions }] satisfies EditOp[];
 });

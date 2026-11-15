@@ -17,7 +17,11 @@ import {
   ThreadId,
   type Transcript,
 } from "@t3tools/contracts";
-import { captionItemsFor, type CaptionTranscript } from "@t3tools/shared/captionWords";
+import {
+  captionItemsFor,
+  captionMediaOfItem,
+  type CaptionTranscript,
+} from "@t3tools/shared/captionWords";
 import { convertFrame, wordEditOps } from "@t3tools/shared/editWordCuts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -688,10 +692,12 @@ describe("CaptionTrackService in the chat (S7V-099)", () => {
           yield* project.captions.looks(project.projectId, {}).pipe(Effect.flip),
         ]) {
           assert.strictEqual(refused._tag, "CaptionsError");
+          // The way forward for each answer (UX guide rule 9): the other place, anyway, or not.
           assert.include(
             refused.message,
-            "This clip already has captions in the picture. Add more on top?",
+            "This clip already has captions near the bottom. Add new ones at the top, add them anyway, or leave it as it is?",
           );
+          assert.include(refused.message, 'custom {"position": "top"}');
           assert.include(refused.message, "confirm: true");
         }
         assert.strictEqual(readEdit(project.root), text);
@@ -784,7 +790,7 @@ describe("CaptionTrackService in the chat (S7V-099)", () => {
           assert.strictEqual(historyLog(project.root)!.entries.length, steps + 1);
           const [newest] = yield* project.edits.versions(project.projectId);
           assert.deepStrictEqual(newest!.changes, [
-            "Changed the caption look to Boxed (text colour #FF8800, at the top, size 1.2)",
+            "Changed the caption look to Boxed (orange, at the top, a bit bigger)",
           ]);
           const same = yield* project.captions.setStyle(
             project.projectId,
@@ -808,5 +814,139 @@ describe("CaptionTrackService in the chat (S7V-099)", () => {
           });
         }),
       ),
+  );
+});
+
+// S7V-099 review: a clip placed after the captions that shows its own asks first, too.
+describe("CaptionTrackService with a burned-in clip placed later (S7V-099)", () => {
+  const twoClips = (project: Project) =>
+    Effect.gen(function* () {
+      writeClip(project.root, "cam");
+      writeClip(project.root, "burnt", true, true);
+      const initial = yield* project.edits.read(project.projectId);
+      yield* project.edits.apply(
+        project.projectId,
+        [
+          { _tag: "putMedia", media: mediaEntry("cam") },
+          { _tag: "putMedia", media: mediaEntry("burnt") },
+          {
+            _tag: "addTrack",
+            track: {
+              kind: "video",
+              id: "V1",
+              items: [{ id: "v1", media: "cam", start: 0, duration: 240, in: 0 }],
+            },
+          },
+        ],
+        { origin: "agent", baseRevision: initial.revision },
+      );
+      yield* project.captions.addCaptions(project.projectId, {});
+      const captioned = yield* project.edits.read(project.projectId);
+      // The user places the clip that has captions in its picture after the first one.
+      return yield* project.edits.apply(
+        project.projectId,
+        [
+          {
+            _tag: "insertItem",
+            trackId: "V1",
+            item: { id: "v2", media: "burnt", start: 240, duration: 240, in: 0 },
+          },
+        ],
+        { origin: "timeline", baseRevision: captioned.revision },
+      );
+    });
+  const captionedClips = (document: EditDocument) =>
+    new Set(captionTracks(document)[0]!.items.map((item) => captionMediaOfItem(item)));
+
+  it.effect("the rebuild leaves it out, and every caption tool asks until confirmed", () =>
+    withProject((project) =>
+      Effect.gen(function* () {
+        const placed = yield* twoClips(project);
+        assert.deepStrictEqual(captionedClips(placed.document), new Set(["cam"]));
+        const text = readEdit(project.root);
+        for (const refused of [
+          yield* project.captions.addCaptions(project.projectId, {}).pipe(Effect.flip),
+          yield* project.captions
+            .setStyle(project.projectId, { preset: "s7-box" }, { origin: "agent" })
+            .pipe(Effect.flip),
+          yield* project.captions.looks(project.projectId, {}).pipe(Effect.flip),
+        ]) {
+          assert.strictEqual(refused._tag, "CaptionsError");
+          assert.include(refused.message, "burnt already shows captions in its picture");
+        }
+        assert.strictEqual(readEdit(project.root), text);
+        // A cut elsewhere rebuilds the captions and still leaves it out.
+        const cut = yield* project.edits.apply(
+          project.projectId,
+          [{ _tag: "trimItem", itemId: "v1", edge: "end", frame: 200 }],
+          { origin: "timeline", baseRevision: placed.revision },
+        );
+        assert.deepStrictEqual(captionedClips(cut.document), new Set(["cam"]));
+      }),
+    ),
+  );
+
+  it.effect("with the user's yes, one change captions it and restyles; later cuts keep it", () =>
+    withProject((project) =>
+      Effect.gen(function* () {
+        const placed = yield* twoClips(project);
+        const styled = yield* project.captions.setStyle(
+          project.projectId,
+          { preset: "s7-box", custom: { position: "top" } },
+          { origin: "agent", confirm: true },
+        );
+        assert.deepInclude(styled, { revision: placed.revision + 1, changed: true });
+        const after = yield* project.edits.read(project.projectId);
+        assert.deepStrictEqual(captionedClips(after.document), new Set(["cam", "burnt"]));
+        assert.strictEqual(captionTracks(after.document)[0]!.style, "s7-box");
+        // Asked once: rebuilding and restyling now ask nothing.
+        assert.isFalse((yield* project.captions.addCaptions(project.projectId, {})).changed);
+        const cut = yield* project.edits.apply(
+          project.projectId,
+          [{ _tag: "trimItem", itemId: "v1", edge: "end", frame: 200 }],
+          { origin: "timeline", baseRevision: after.revision },
+        );
+        assert.deepStrictEqual(captionedClips(cut.document), new Set(["cam", "burnt"]));
+      }),
+    ),
+  );
+
+  it.effect("a colour for a part the look doesn't draw is refused plainly", () =>
+    withProject((project) =>
+      Effect.gen(function* () {
+        writeClip(project.root, "cam");
+        yield* setUp(project);
+        const box = yield* project.captions
+          .setStyle(
+            project.projectId,
+            { preset: "s7-neutral", custom: { boxColor: "#0A84FF" } },
+            { origin: "agent" },
+          )
+          .pipe(Effect.flip);
+        assert.strictEqual(box.message, 'The Plain look has no box. Say "boxed" to add one.');
+        const lit = yield* project.captions
+          .setStyle(
+            project.projectId,
+            { custom: { highlightColor: "#0A84FF" } },
+            { origin: "agent" },
+          )
+          .pipe(Effect.flip);
+        assert.include(lit.message, "The Plain look doesn't light up the word being said.");
+        // A box colour kept from Boxed never stops a change to another look.
+        yield* project.captions.setStyle(
+          project.projectId,
+          { preset: "s7-box", custom: { boxColor: "#0A84FF" } },
+          { origin: "agent" },
+        );
+        const plain = yield* project.captions.setStyle(
+          project.projectId,
+          { preset: "s7-neutral" },
+          { origin: "agent", reply },
+        );
+        assert.isTrue(plain.changed);
+        const [newest] = yield* project.edits.versions(project.projectId);
+        assert.deepStrictEqual(newest!.changes, ["Changed the caption look to Plain"]);
+      }),
+    ),
   );
 });

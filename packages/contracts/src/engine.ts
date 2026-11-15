@@ -551,10 +551,11 @@ export type CaptionStillsResult = typeof CaptionStillsResult.Type;
 
 /**
  * "Add captions" refused (S7V-075): a clip on the video track has no transcript, or none has sound;
- * or a clip already has captions in its picture and the user hasn't said to add more (S7V-099).
+ * or a clip already has captions in its picture and the user hasn't said to add more, or a colour
+ * names a part the look doesn't draw (S7V-099).
  */
 export class CaptionsError extends Schema.TaggedError<CaptionsError>()("CaptionsError", {
-  reason: Schema.Literals(["no-transcript", "no-clips", "burned-in"]),
+  reason: Schema.Literals(["no-transcript", "no-clips", "burned-in", "look-part"]),
   detail: Schema.String,
 }) {
   override get message(): string {
@@ -580,6 +581,19 @@ export const CAPTION_PRESET_NAMES: Readonly<Record<CaptionPresetId, string>> = {
   "s7-box": "Boxed",
   "s7-karaoke": "Highlighted word",
   "s7-minimal": "Minimal",
+};
+
+/**
+ * The parts a look draws that a caption track's own colour can change (S7V-099): a box, or the
+ * word being said. A test keeps this in step with the style files' `box` and `highlight` keys.
+ */
+export const CAPTION_LOOK_PARTS: Readonly<
+  Record<CaptionPresetId, ReadonlyArray<"box" | "highlight">>
+> = {
+  "s7-neutral": [],
+  "s7-box": ["box"],
+  "s7-karaoke": ["highlight"],
+  "s7-minimal": [],
 };
 
 /** `captions.preview`: one look's sample caption at a canvas, as a small PNG in `cacheDir/<folder>/`. */

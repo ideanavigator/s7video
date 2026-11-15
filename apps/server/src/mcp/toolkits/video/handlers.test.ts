@@ -1218,8 +1218,7 @@ describe("video toolkit", () => {
           expect(added.isError).toBe(false);
           expect(added.structuredContent).toEqual({
             revision: 9,
-            message:
-              "Added 12 captions to the edit. They follow later cuts; say undo to remove them.",
+            message: "Added captions to the edit. They follow later cuts; say undo to remove them.",
           });
           const refused = yield* call(threadB, "video_add_captions", {});
           expect(refused.isError).toBe(true);
@@ -1305,7 +1304,7 @@ describe("video toolkit", () => {
         });
         expect(added.structuredContent).toEqual({
           revision: 12,
-          message: "Added 12 captions in the Highlighted word look. Say undo to take them out.",
+          message: "Added captions in the Highlighted word look. Say undo to take them out.",
         });
         // Only our looks: anything else fails the tool's own schema and reaches no service.
         const unknown = yield* call(threadA, "video_caption_style", { preset: "kigaru" }).pipe(
@@ -1332,7 +1331,7 @@ describe("video toolkit", () => {
         expect(styled.structuredContent).toEqual({
           revision: 12,
           message:
-            "The captions now use the Boxed look (text colour #FF8800, at the top, size 1.4), over the player and in the export. Say undo to go back.",
+            "The captions now use the Boxed look (orange, at the top, bigger), over the player and in the export. Say undo to go back.",
         });
         for (const [custom, reason] of [
           [{ size: 2 }, "size is a number from 0.6 to 1.6; 1 is the look's own size."],
@@ -1373,12 +1372,15 @@ describe("video toolkit", () => {
         expect(listed.isError).toBe(false);
         expect(listed.structuredContent).toEqual({
           revision: 12,
+          // Each name, then its picture on a line of its own: the four line up at any width.
           message: [
-            "Nothing changed. Put these lines in your reply as they are, then ask which look the user wants, or what they have in mind (colours, size, top, middle or bottom):",
-            "- Plain: ![Plain](</My Project/.s7cache/p1.png>)",
-            "- Boxed",
-            "- Highlighted word",
-          ].join("\n"),
+            "Nothing changed. Put the lines between the rules in your reply exactly as they are, then ask which look the user wants, or what they have in mind (colours, size, top, middle or bottom).",
+            "---",
+            "**Plain**\\\n![Plain](</My Project/.s7cache/p1.png>)",
+            "**Boxed**",
+            "**Highlighted word**",
+            "---",
+          ].join("\n\n"),
         });
         // A clip that already shows captions asks first; the user's yes is `confirm`.
         const asked = yield* call(threadB, "video_caption_style", {});

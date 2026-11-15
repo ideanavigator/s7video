@@ -6,8 +6,11 @@
  * animation, another app's style) is refused by naming what can change; nothing is made up.
  */
 import {
+  CAPTION_LOOK_PARTS,
+  CAPTION_PRESET_NAMES,
   CAPTION_SIZE_RANGE,
   type CaptionPosition,
+  type CaptionPresetId,
   type EditCaptionCustom,
 } from "@t3tools/contracts";
 
@@ -77,18 +80,66 @@ export const sameCaptionCustom = (a: EditCaptionCustom | undefined, b: EditCapti
   );
 };
 
-/** "text colour #FF8800, at the top, size 1.4", or "" for none. */
-export const describeCaptionCustom = (custom: EditCaptionCustom | undefined) =>
-  [
-    custom?.textColor === undefined ? null : `text colour ${custom.textColor}`,
-    custom?.highlightColor === undefined ? null : `lit word colour ${custom.highlightColor}`,
-    custom?.boxColor === undefined ? null : `box colour ${custom.boxColor}`,
+/** The caption-style skill's colours, by name: what the user said is what they read back. */
+const COLOR_NAMES: Readonly<Record<string, string>> = {
+  "#FF8800": "orange",
+  "#FF3B30": "red",
+  "#FFD60A": "yellow",
+  "#34C759": "green",
+  "#0A84FF": "blue",
+  "#FF2D92": "pink",
+  "#AF52DE": "purple",
+  "#000000": "black",
+  "#FFFFFF": "white",
+};
+
+const sizeWords = (size: number) =>
+  size > 1 ? (size >= 1.3 ? "bigger" : "a bit bigger") : size <= 0.8 ? "smaller" : "a bit smaller";
+
+/**
+ * The look's own colours, size and place in editing words, never codes (UX guide rule 5):
+ * "orange, blue box, at the top, bigger", or "" for none. Parts the look doesn't draw are left out.
+ */
+export const describeCaptionCustom = (
+  custom: EditCaptionCustom | undefined,
+  preset: CaptionPresetId,
+) => {
+  const parts = CAPTION_LOOK_PARTS[preset];
+  const named = (hex: string | undefined, part: string, unnamed: string) =>
+    hex === undefined
+      ? null
+      : COLOR_NAMES[hex] === undefined
+        ? unnamed
+        : `${COLOR_NAMES[hex]}${part}`;
+  return [
+    named(custom?.textColor, "", "a custom text colour"),
+    parts.includes("highlight")
+      ? named(custom?.highlightColor, " lit word", "a custom colour for the lit word")
+      : null,
+    parts.includes("box") ? named(custom?.boxColor, " box", "a custom box colour") : null,
     custom?.position === undefined
       ? null
       : custom.position === "middle"
         ? "in the middle"
         : `at the ${custom.position}`,
-    custom?.size === undefined ? null : `size ${custom.size}`,
+    custom?.size === undefined ? null : sizeWords(custom.size),
   ]
     .filter((part) => part !== null)
     .join(", ");
+};
+
+/**
+ * A colour for a part the look doesn't draw, as the plain reason (S7V-099): checked on what the
+ * user asked for now, so a box colour kept from Boxed never stops a change to another look.
+ */
+export const missingLookPart = (changes: EditCaptionCustom, preset: CaptionPresetId) => {
+  const parts = CAPTION_LOOK_PARTS[preset];
+  const name = CAPTION_PRESET_NAMES[preset];
+  if (changes.boxColor !== undefined && !parts.includes("box")) {
+    return `The ${name} look has no box. Say "boxed" to add one.`;
+  }
+  if (changes.highlightColor !== undefined && !parts.includes("highlight")) {
+    return `The ${name} look doesn't light up the word being said. Say "highlighted word" to use that look.`;
+  }
+  return null;
+};

@@ -103,17 +103,22 @@ const editRefusal = (error: CaptionsError | ZoomError | EditDocumentService.Edit
   });
 
 /**
- * The looks for the agent's reply (S7V-099): each with its preview as a markdown image of its real
- * path, which the chat draws through its own signed URL (Claude and Codex threads alike). A path
- * that would break the markdown is left out; the look is still named.
+ * The looks for the agent's reply (S7V-099): each name, then its preview on a line of its own (a
+ * hard break), so the four line up at any width. The preview is a markdown image of its real path,
+ * which the chat draws through its own signed URL (Claude and Codex threads alike). A path that
+ * would break the markdown is left out; the look is still named.
  */
 const looksMessage = (looks: ReadonlyArray<CaptionStillsService.CaptionLookPreview>) =>
   [
-    "Nothing changed. Put these lines in your reply as they are, then ask which look the user wants, or what they have in mind (colours, size, top, middle or bottom):",
+    "Nothing changed. Put the lines between the rules in your reply exactly as they are, then ask which look the user wants, or what they have in mind (colours, size, top, middle or bottom).",
+    "---",
     ...looks.map(({ name, path }) =>
-      path === null || /[<>\r\n]/u.test(path) ? `- ${name}` : `- ${name}: ![${name}](<${path}>)`,
+      path === null || /[<>\r\n]/u.test(path)
+        ? `**${name}**`
+        : `**${name}**\\\n![${name}](<${path}>)`,
     ),
-  ].join("\n");
+    "---",
+  ].join("\n\n");
 
 const noSuchJob = () =>
   new OrchestratorMcpFailure({
@@ -736,8 +741,8 @@ const handlers = {
       return {
         revision: result.revision,
         message: result.changed
-          ? `Added ${result.captions} captions to the edit. They follow later cuts; say undo to remove them.`
-          : `The edit already has these ${result.captions} captions.`,
+          ? "Added captions to the edit. They follow later cuts; say undo to remove them."
+          : "The edit already has these captions.",
         ...hint,
       };
     }),
@@ -892,10 +897,11 @@ const handlers = {
           { reply: project.reply, origin: "agent", confirm: confirm === true },
         )
         .pipe(Effect.mapError(editRefusal));
-      const own = describeCaptionCustom(result.custom);
+      const own = describeCaptionCustom(result.custom, result.preset);
       const look = `the ${CAPTION_PRESET_NAMES[result.preset]} look${own === "" ? "" : ` (${own})`}`;
+      // No count: it is caption items, one per run of a clip, not the lines the player shows.
       const message = result.added
-        ? `Added ${result.captions} captions in ${look}. Say undo to take them out.`
+        ? `Added captions in ${look}. Say undo to take them out.`
         : result.changed
           ? `The captions now use ${look}, over the player and in the export. Say undo to go back.`
           : `The captions already use ${look}.`;
