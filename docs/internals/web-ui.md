@@ -93,9 +93,12 @@ and its area still keeps the share. Above it come the header, the export row and
 with a refused change first; the speech-model prompt is one line. Only whole notices show
 (`fitNotices` in `EditorPanel.tsx`, from their measured heights): as many as fit while the
 timeline keeps its video row (`TIMELINE_FLOOR_PX`), the refusal always. The rest wait behind
-"Show N more notices"; opened, they may take the timeline down to its toolbar and ruler
-(`TIMELINE_SHORTEST_PX`), and any still left out wait behind "Close one to see N more." A notice
-out of view is clipped at a notice boundary and `inert`, so Tab never reaches it. Below the player, the tabs show whole version rows
+"Show N more notices". Opening always shows at least the next whole notice and moves focus to
+it; the notices may take the timeline down to its toolbar and ruler (`TIMELINE_SHORTEST_PX`),
+and when even then the next notice can't sit beside the ones shown, it takes their place. A
+28 px "Show fewer notices" button stays beside the opened notices, and any still left out wait
+behind "Close one to see N more." A notice out of view is clipped at a notice boundary and
+`inert`, so Tab never reaches it. Below the player, the tabs show whole version rows
 (`TAB_ROW_PX`), or, when not even one row fits, the tab bar ends with one plain line: "Close a
 notice above or make the window taller to see Versions." while something above can be closed,
 else "Make the window taller to see Versions.". The tabs get a row only when the timeline can

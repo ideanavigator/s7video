@@ -147,24 +147,25 @@ function tabsMinPx(panelHeight: number, topPx: number, playerMinPx: number): num
 }
 
 const NOTICE_GAP_PX = 8;
-/** The "Show N more notices" line under the notices that fit. */
-const NOTICE_CUE_PX = 24;
+/** The line under the notices that fit: "Show N more notices", or "Close one to see N more.". */
+const NOTICE_CUE_PX = 28;
 
 /**
  * How many notices show whole (S7V-101): from the top, as many as fit in `roomPx` with the cue
- * line when some are left out. The first one shows anyway when it is urgent (a refused change).
+ * line when some are left out, and never fewer than `atLeast` (a refused change; once opened,
+ * the next notice too).
  */
 function fitNotices(
   heights: ReadonlyArray<number>,
   roomPx: number,
-  urgentFirst: boolean,
+  atLeast: number,
 ): { readonly shown: number; readonly heightPx: number } {
   let shown = 0;
   let heightPx = 0;
   for (const height of heights) {
     const next = heightPx + (shown > 0 ? NOTICE_GAP_PX : 0) + height;
     const cue = shown + 1 < heights.length ? NOTICE_CUE_PX + NOTICE_GAP_PX : 0;
-    if (next + cue > roomPx && !(shown === 0 && urgentFirst)) break;
+    if (next + cue > roomPx && shown >= atLeast) break;
     heightPx = next;
     shown += 1;
   }
@@ -951,20 +952,44 @@ export default function EditorPanel(props: {
         top.aboveNoticesPx -
         keepPx;
   const urgentFirst = notices.keys[0] === "refused";
-  const closedFit = fitNotices(notices.heights, noticeRoom(TIMELINE_FLOOR_PX), urgentFirst);
+  const closedFit = fitNotices(notices.heights, noticeRoom(TIMELINE_FLOOR_PX), urgentFirst ? 1 : 0);
   const noticesFit = closedFit.shown === notices.heights.length;
-  const fit =
+  // Opening always shows at least the next whole notice; the timeline may drop to its toolbar
+  // and ruler for it. When even that leaves no room beside the ones already shown, opening pages:
+  // the notices from the next one on take their place.
+  const openRoom = noticeRoom(TIMELINE_SHORTEST_PX);
+  const fromTop = fitNotices(notices.heights, openRoom, 0);
+  const page =
     noticesFit || !noticesOpen
-      ? closedFit
-      : fitNotices(notices.heights, noticeRoom(TIMELINE_SHORTEST_PX), urgentFirst);
-  const noticesLeft = notices.heights.length - fit.shown;
+      ? { from: 0, ...closedFit }
+      : fromTop.shown > closedFit.shown
+        ? { from: 0, ...fromTop }
+        : {
+            from: closedFit.shown,
+            ...fitNotices(notices.heights.slice(closedFit.shown), openRoom, 1),
+          };
+  const pageOffsetPx = notices.heights
+    .slice(0, page.from)
+    .reduce((total, height) => total + height + NOTICE_GAP_PX, 0);
+  const noticesLeft = notices.heights.length - page.shown;
   /** A notice out of view is clipped at a notice boundary and kept out of the Tab order. */
   const noticeOutOfView = (key: string) => {
     const at = notices.keys.indexOf(key);
-    return !noticesFit && at >= fit.shown;
+    return !noticesFit && (at < page.from || at >= page.from + page.shown);
   };
-  // Opened and every notice in view, the cue goes too: its room is better spent on a notice.
-  const showNoticesCue = !noticesFit && (!noticesOpen || noticesLeft > 0);
+  const opened = noticesOpen && !noticesFit;
+  /** Opening focuses the first notice it brought into view; closing, the "Show more" button. */
+  const toggleNotices = () => {
+    const next = !opened;
+    // The first notice opening brings into view is the one after those shown closed.
+    const target = next
+      ? `[data-notice="${notices.keys[closedFit.shown] ?? ""}"]`
+      : "[data-testid=editor-notices-cue] button";
+    setNoticesOpen(next);
+    window.requestAnimationFrame(() =>
+      document.querySelector<HTMLElement>(target)?.focus({ preventScroll: true }),
+    );
+  };
   const tabPanelStyle = {
     height:
       tabRoomPx === null || tabRoomPx < TAB_ROW_PX
@@ -1098,57 +1123,67 @@ export default function EditorPanel(props: {
           className="flex flex-col [&:not(:has([data-notice]:not(:empty)))]:hidden"
           data-testid="editor-notices-group"
         >
-          <div
-            className="overflow-hidden"
-            style={{ maxHeight: noticesFit ? undefined : fit.heightPx }}
-            data-testid="editor-notices-scroller"
-          >
-            <div ref={observeNotices} className="flex flex-col gap-2" data-testid="editor-notices">
+          <div className="flex items-start gap-2">
+            <div
+              className="min-w-0 flex-1 overflow-hidden"
+              style={{ maxHeight: noticesFit ? undefined : page.heightPx }}
+              data-testid="editor-notices-scroller"
+            >
               <div
-                data-notice="refused"
-                className="empty:hidden"
-                inert={noticeOutOfView("refused")}
+                ref={observeNotices}
+                className="flex flex-col gap-2"
+                style={{ marginTop: pageOffsetPx === 0 ? undefined : -pageOffsetPx }}
+                data-testid="editor-notices"
               >
-                <RefusedChangeNotice snapshot={edit._tag === "ready" ? edit.snapshot : null} />
-              </div>
-              <div
-                data-notice="old-versions"
-                className="empty:hidden"
-                inert={noticeOutOfView("old-versions")}
-              >
-                <HistoryCleanupBanner
-                  projectRef={projectRef}
-                  snapshot={edit._tag === "ready" ? edit.snapshot : null}
-                />
-              </div>
-              <div
-                data-notice="speech-model"
-                className="empty:hidden"
-                inert={noticeOutOfView("speech-model")}
-              >
-                <SpeechModelPrompt projectRef={projectRef} />
+                <div
+                  data-notice="refused"
+                  tabIndex={-1}
+                  className="outline-none empty:hidden"
+                  inert={noticeOutOfView("refused")}
+                >
+                  <RefusedChangeNotice snapshot={edit._tag === "ready" ? edit.snapshot : null} />
+                </div>
+                <div
+                  data-notice="old-versions"
+                  tabIndex={-1}
+                  className="outline-none empty:hidden"
+                  inert={noticeOutOfView("old-versions")}
+                >
+                  <HistoryCleanupBanner
+                    projectRef={projectRef}
+                    snapshot={edit._tag === "ready" ? edit.snapshot : null}
+                  />
+                </div>
+                <div
+                  data-notice="speech-model"
+                  tabIndex={-1}
+                  className="outline-none empty:hidden"
+                  inert={noticeOutOfView("speech-model")}
+                >
+                  <SpeechModelPrompt projectRef={projectRef} />
+                </div>
               </div>
             </div>
+            {/* Once opened, the way back stays beside the notices, even when they all fit. */}
+            {opened ? (
+              <IconAction label="Show fewer notices" onClick={toggleNotices}>
+                <ChevronUpIcon aria-hidden />
+              </IconAction>
+            ) : null}
           </div>
-          {showNoticesCue ? (
+          {!noticesFit && noticesLeft > 0 ? (
             <div
-              className={cn("flex h-6 items-center gap-2 text-xs", fit.shown > 0 && "mt-2")}
+              className={cn("flex h-7 items-center gap-2 text-xs", page.shown > 0 && "mt-2")}
               data-testid="editor-notices-cue"
             >
-              <Button
-                size="xs"
-                variant="ghost"
-                aria-expanded={noticesOpen}
-                onClick={() => setNoticesOpen((open) => !open)}
-              >
-                {noticesOpen ? <ChevronUpIcon aria-hidden /> : <ChevronDownIcon aria-hidden />}
-                {noticesOpen
-                  ? "Show fewer notices"
-                  : `Show ${noticesLeft} more ${noticesLeft === 1 ? "notice" : "notices"}`}
-              </Button>
-              {noticesOpen && noticesLeft > 0 ? (
+              {opened ? (
                 <span className="text-muted-foreground">Close one to see {noticesLeft} more.</span>
-              ) : null}
+              ) : (
+                <Button size="sm" variant="ghost" aria-expanded={false} onClick={toggleNotices}>
+                  <ChevronDownIcon aria-hidden />
+                  {`Show ${noticesLeft} more ${noticesLeft === 1 ? "notice" : "notices"}`}
+                </Button>
+              )}
             </div>
           ) : null}
         </div>

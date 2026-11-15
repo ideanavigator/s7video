@@ -1687,16 +1687,19 @@ describe("EditorPanel", () => {
       // rest wait behind "Show N more notices". Closed, the timeline keeps its video row (unless the
       // refusal needs the room); opened, its toolbar and ruler. The player keeps its share.
       it.each([
-        [1440, 900, "with a refused change"],
-        [1180, 760, "with a refused change"],
-        [1440, 900, "without one"],
-        [1180, 760, "without one"],
+        [1440, 900, "with a refused change", "9:16"],
+        [1180, 760, "with a refused change", "9:16"],
+        [1440, 900, "without one", "9:16"],
+        [1180, 760, "without one", "9:16"],
+        [1180, 760, "without one", "16:9"],
       ] as const)(
-        "fits whole notices and keeps the column inside at %ix%i, %s",
-        async (w, h, which) => {
+        "fits whole notices and keeps the column inside at %ix%i, %s, %s",
+        async (w, h, which, shape) => {
           await page.viewport(w, h);
           setState([asset("clip-0")], true);
-          withCanvas({ width: 1080, height: 1920 });
+          withCanvas(
+            shape === "9:16" ? { width: 1080, height: 1920 } : { width: 1920, height: 1080 },
+          );
           const ready = state.edit as Extract<ProjectEditState, { _tag: "ready" }>;
           const refused = which === "with a refused change";
           const notice =
@@ -1759,10 +1762,16 @@ describe("EditorPanel", () => {
             };
             const timelineHeight = () => box("[data-testid=editor-timeline]").height;
             const checkColumn = async (minTimeline: number) => {
-              const picture = (await videoOf(screen)).closest<HTMLElement>("[data-canvas]")!;
-              await expect
-                .poll(() => picture.getBoundingClientRect().height)
-                .toBeGreaterThanOrEqual(PLAYER_SHARE * editor.height - 0.5);
+              // A 9:16 picture keeps the share itself; a 16:9 one fills the width, and its area
+              // keeps the share.
+              const share =
+                shape === "9:16"
+                  ? () =>
+                      (
+                        screen.container.querySelector("[data-canvas]") as HTMLElement
+                      ).getBoundingClientRect().height
+                  : () => box("[data-testid=editor-player-area]").height;
+              await expect.poll(share).toBeGreaterThanOrEqual(PLAYER_SHARE * editor.height - 0.5);
               await expect
                 .poll(() => box("[data-testid=editor-timeline]").bottom)
                 .toBeLessThanOrEqual(editor.bottom - 7.5);
@@ -1779,20 +1788,45 @@ describe("EditorPanel", () => {
             }
             // Closed: the timeline keeps its video row, unless the refusal needs the room.
             await checkColumn(refused ? 56 : 152);
-            const cue = document.querySelector("[data-testid=editor-notices-cue] button");
+            /** The notices wholly in view. */
+            const inView = () => {
+              const scroller = box("[data-testid=editor-notices-scroller]");
+              return [...document.querySelectorAll<HTMLElement>("[data-notice]")].filter(
+                (notice) => {
+                  const rect = notice.getBoundingClientRect();
+                  return (
+                    notice.offsetHeight > 0 &&
+                    inside(rect, scroller) &&
+                    rect.bottom <= scroller.bottom + 0.5
+                  );
+                },
+              );
+            };
+            const cue = document.querySelector<HTMLElement>(
+              "[data-testid=editor-notices-cue] button",
+            );
             if (cue !== null) {
               expect(cue.textContent).toMatch(/^Show \d more notices?$/u);
+              expect(cue.getBoundingClientRect().height).toBeGreaterThanOrEqual(28);
+              const before = inView();
               await screen.getByRole("button", { name: /^Show \d more notices?$/u }).click();
-              // Opened, the cue stays only while some notices are still left out.
-              await expect
-                .poll(
-                  () =>
-                    document.querySelector("[data-testid=editor-notices-cue] button")
-                      ?.textContent ?? "every notice shown",
-                )
-                .toMatch(/^(Show fewer notices|every notice shown)$/u);
+              // Opening shows at least the next whole notice (beside the others, or in their place
+              // when they can't share the room), and focus goes to it.
+              const opened = () => inView().filter((notice) => !before.includes(notice));
+              await expect.poll(() => opened().length).toBeGreaterThan(0);
+              await expect.poll(() => document.activeElement).toBe(opened()[0]);
+              // The way back stays, a 28 px icon button, even when every notice fits.
+              const fewer = screen.getByRole("button", { name: "Show fewer notices" });
+              await expect.element(fewer).toBeVisible();
+              const fewerBox = fewer.element().getBoundingClientRect();
+              expect(Math.min(fewerBox.width, fewerBox.height)).toBeGreaterThanOrEqual(28);
               // Opened: still whole notices, and the timeline keeps its toolbar and ruler.
               await checkColumn(56);
+              await fewer.click();
+              await expect.poll(() => inView()).toEqual(before);
+              await expect
+                .poll(() => document.activeElement?.textContent ?? "")
+                .toMatch(/^Show \d more notices?$/u);
             }
             const hint = document.querySelector("[data-testid=editor-tabs-hint]");
             if (hint !== null) {
