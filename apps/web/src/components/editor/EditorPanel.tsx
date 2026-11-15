@@ -104,10 +104,9 @@ const PANEL_PADDING_PX = 16;
 /** One version row with its gap (`VersionsTab`): the tabs show whole rows of this. */
 const TAB_ROW_PX = 62;
 const TAB_BAR_PX = 30;
-/** The one-line hint a collapsed tab panel shows instead of a sliced row. */
-const TAB_HINT_PX = 24;
-/** The gaps around the player, the tab bar, the tab room, the divider and the timeline. */
-const COLUMN_GAPS_PX = 5 * 8;
+/** The gaps around the player, the tab bar, the divider and the timeline; the tab room adds one. */
+const COLUMN_GAPS_PX = 4 * 8;
+const GAP_PX = 8;
 
 interface PanelSize {
   readonly width: number;
@@ -127,7 +126,7 @@ function playerRoomPx(
 
 /**
  * What the tab room starts from (S7V-101): one whole version row when the timeline can still keep
- * its floor beside the player's share, or the one-line hint.
+ * its floor beside the player's share; otherwise none, and the tab bar says why.
  */
 function tabsMinPx(panelHeight: number, topPx: number, playerMinPx: number): number {
   const spare =
@@ -137,8 +136,9 @@ function tabsMinPx(panelHeight: number, topPx: number, playerMinPx: number): num
     playerMinPx -
     TAB_BAR_PX -
     COLUMN_GAPS_PX -
+    GAP_PX -
     TIMELINE_FLOOR_PX;
-  return spare >= TAB_ROW_PX ? TAB_ROW_PX : TAB_HINT_PX;
+  return spare >= TAB_ROW_PX ? TAB_ROW_PX : 0;
 }
 
 function PlayerMessage(props: {
@@ -868,10 +868,10 @@ export default function EditorPanel(props: {
     panelSize === null || playerRoom === null
       ? TAB_ROW_PX
       : tabsMinPx(panelSize.height, topPx, playerRoom.min);
-  const tabsCollapsed = tabRoomPx !== null && tabRoomPx < TAB_ROW_PX;
+  const tabsCollapsed = tabsMin < TAB_ROW_PX;
   const tabPanelStyle = {
     height:
-      tabRoomPx === null || tabsCollapsed
+      tabRoomPx === null || tabRoomPx < TAB_ROW_PX
         ? undefined
         : Math.floor(tabRoomPx / TAB_ROW_PX) * TAB_ROW_PX,
   };
@@ -1026,6 +1026,14 @@ export default function EditorPanel(props: {
             {entry.label}
           </button>
         ))}
+        {tabsCollapsed ? (
+          <p
+            className="ml-auto min-w-0 self-center truncate ps-2 text-xs text-muted-foreground"
+            data-testid="editor-tabs-hint"
+          >
+            Make the window taller to see {tabLabel}.
+          </p>
+        ) : null}
       </div>
       {/*
         The tab room: whole rows of the active tab, or one plain line when not even one row fits.
@@ -1033,20 +1041,16 @@ export default function EditorPanel(props: {
       */}
       <div
         ref={observeTabRoom}
-        className="flex min-h-0 flex-col"
+        hidden={tabsCollapsed}
+        className={tabsCollapsed ? "hidden" : "flex min-h-0 flex-col"}
         style={{ flex: "1 1 0%", minHeight: tabsMin }}
         data-testid="editor-tab-room"
       >
-        {tabsCollapsed ? (
-          <p className="truncate text-xs text-muted-foreground" data-testid="editor-tabs-hint">
-            Make the window taller to see {tabLabel}.
-          </p>
-        ) : null}
         <div
           role="tabpanel"
           id="editor-tabpanel-transcript"
           aria-labelledby="editor-tab-transcript"
-          hidden={tabsCollapsed || tab !== "transcript"}
+          hidden={tab !== "transcript"}
           className="min-h-0"
           style={tabPanelStyle}
         >
@@ -1068,7 +1072,7 @@ export default function EditorPanel(props: {
           role="tabpanel"
           id="editor-tabpanel-media"
           aria-labelledby="editor-tab-media"
-          hidden={tabsCollapsed || tab !== "media"}
+          hidden={tab !== "media"}
           className="min-h-0"
           style={tabPanelStyle}
         >
@@ -1084,7 +1088,7 @@ export default function EditorPanel(props: {
           role="tabpanel"
           id="editor-tabpanel-versions"
           aria-labelledby="editor-tab-versions"
-          hidden={tabsCollapsed || tab !== "versions"}
+          hidden={tab !== "versions"}
           className="min-h-0"
           style={tabPanelStyle}
         >
@@ -1113,7 +1117,12 @@ export default function EditorPanel(props: {
           minAbovePx={
             playerRoom === null
               ? undefined
-              : PANEL_PADDING_PX + topPx + playerRoom.min + TAB_BAR_PX + COLUMN_GAPS_PX + tabsMin
+              : PANEL_PADDING_PX +
+                topPx +
+                playerRoom.min +
+                TAB_BAR_PX +
+                COLUMN_GAPS_PX +
+                (tabsCollapsed ? 0 : GAP_PX + tabsMin)
           }
         />
       )}

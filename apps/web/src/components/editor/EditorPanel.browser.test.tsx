@@ -1622,7 +1622,8 @@ describe("EditorPanel", () => {
           setState([asset("clip-0")], true);
           withCanvas({ width: 1080, height: 1920 });
           const ready = state.edit as Extract<ProjectEditState, { _tag: "ready" }>;
-          const notice = "The edit was changed outside the app. That change was not kept.";
+          const notice =
+            "The edit was changed outside the app and could not be read. That change was not kept; the edit is back to its last saved version.";
           state.edit = { _tag: "ready", snapshot: { ...ready.snapshot, notice } };
           state.versions = versions;
           state.speech = {
