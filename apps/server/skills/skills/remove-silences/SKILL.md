@@ -26,16 +26,16 @@ The user asked you to cut the pauses from their clip. Do it with the video tools
      exclusive, for example `412-436` (read `video_transcript_read` to find the frames);
    - a named clip: `media`.
 
-   If the clip was already cut and the user wants pauses back ("looser", "keep the pause
-   after ..."), check before you undo: an undo takes out the newest change, which may not be the
-   cut. A version holds every change from one reply, so call `video_versions`, then `video_versions` with the newest
-   version (`version: "vN"`) to read its `Changes:` list. An "Undid the last change" cancels the
-   change just before it and a "Redid a change" brings it back, so an undone change is not one to
-   put back. If a list ends in "…and more changes", or a later version is "Restored from vN",
-   you can't see every change since the cut. Name the ones you can see, say there were more, and
-   offer a safe choice, for example: "I can see the zoom and the music since the cut, and there
-   were more changes I can't list. Should I cut more loosely and redo just those two, or leave
-   the cut as it is?"
+   If the clip was already cut and the user wants pauses back ("looser", "keep the pause after
+   ..."), check before you undo: an undo takes out the newest change, which may not be the cut. A
+   version holds every change from one reply, so call `video_versions`, then `video_versions` with
+   the newest version (`version: "vN"`) to read its `Changes:` list. An "Undid the last change"
+   cancels the change just before it and a "Redid a change" brings it back, so an undone change is
+   not one to put back. If a list ends in "…and more changes", or a later version is "Restored from
+   vN", you can't see every change since the cut. Name the ones you can see, say there were more,
+   and offer a safe choice, for example: "I can see the zoom and the music since the cut, and there
+   were more changes I can't list. If I cut more loosely, I'll put back just those two and the
+   others will be lost (Versions keeps them all). Should I do that, or leave the cut as it is?"
    - If the cut is the last change, or only the `video_duck_music` you ran for it follows it,
      call `video_undo` once for each of those (once, or twice with the re-duck), then
      `video_remove_silences` with the new setting. Do not ask.

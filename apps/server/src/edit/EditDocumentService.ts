@@ -174,12 +174,12 @@ export class EditDocumentService extends Context.Service<
   }
 >()("t3/edit/EditDocumentService") {}
 
-/** What clients see of a version: its record without the object ids. */
 /** The version lines undo, redo and restore write; the remove-silences skill quotes them. */
 export const UNDO_CHANGE = "Undid the last change";
 export const REDO_CHANGE = "Redid a change";
 export const restoredChange = (n: number) => `Restored from v${n}`;
 
+/** What clients see of a version: its record without the object ids. */
 const versionOf = (record: EditVersionRecord, current: boolean): EditVersion => {
   const { files: _files, ...rest } = record;
   return { ...rest, current };

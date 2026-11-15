@@ -194,7 +194,7 @@ it.layer(NodeServices.layer)("built-in skills", (it) => {
       assert.include(flat, "you can't see every change since the cut.");
       assert.include(
         flat,
-        "Should I cut more loosely and redo just those two, or leave the cut as it is?",
+        "If I cut more loosely, I'll put back just those two and the others will be lost (Versions keeps them all). Should I do that, or leave the cut as it is?",
       );
       assert.include(
         flat,
