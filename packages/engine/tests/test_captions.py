@@ -200,6 +200,46 @@ def test_the_stills_follow_the_tracks_style(tmp_path: Path) -> None:
     assert _render(edit, cache)["drawn"] == 0
 
 
+def test_the_look_hashes_custom_only_when_a_track_has_it() -> None:
+    # S7V-099: an edit from before `custom` keeps its cached stills.
+    assert captions.look_key(W, H, "s7-box", None) == captions.look_key(W, H, "s7-box") == captions.look_key(W, H, "s7-box", {})
+    bigger = captions.look_key(W, H, "s7-box", {"size": 1.4, "position": "top"})
+    assert bigger != captions.look_key(W, H, "s7-box")
+    assert bigger != captions.look_key(W, H, "s7-box", {"size": 1.2, "position": "top"})
+    assert bigger == captions.look_key(W, H, "s7-box", {"position": "top", "size": 1.4})
+
+
+@pytest.mark.usefixtures("tools")
+def test_the_stills_follow_the_tracks_custom(tmp_path: Path) -> None:
+    edit = _edit(tmp_path, [(0, 90)], [{"id": "c1", "start": 0, "duration": 20, "text": "hello there"}])
+    cache = tmp_path / "cache"
+    plain = _render(edit, cache)
+    custom = {"textColor": "#FF8800", "position": "top", "size": 1.4}
+    edit["tracks"][1]["custom"] = custom
+    styled = _render(edit, cache)
+    assert styled["folder"] == captions.look_key(W, H, "s7-neutral", custom) != plain["folder"]
+    plain_alpha = _alpha(cache / plain["folder"] / plain["chunks"][0]["png"])
+    alpha = _alpha(cache / styled["folder"] / styled["chunks"][0]["png"])
+    rows = {i // W for i, a in enumerate(alpha) if a > 0}
+    layout = captions_ass.layout_for(W, H, captions_ass.styled("s7-neutral", custom))
+    # At the top of the safe zone, bigger than the plain look's bottom line, and orange.
+    assert min(rows) >= layout.safe[1] and max(rows) < H // 2
+    assert min(i // W for i, a in enumerate(plain_alpha) if a > 0) > H // 2
+    assert sum(a > 0 for a in alpha) > sum(a > 0 for a in plain_alpha)
+    assert FFMPEG is not None
+    rgba = subprocess.run(
+        [FFMPEG, "-v", "error", "-i", str(cache / styled["folder"] / styled["chunks"][0]["png"]), "-f", "rawvideo", "-pix_fmt", "rgba", "-"],
+        check=True,
+        capture_output=True,
+    ).stdout
+    solid = [rgba[i : i + 3] for i in range(0, len(rgba), 4) if rgba[i + 3] == 255]
+    assert max(solid, key=solid.count) == bytes([0xFF, 0x88, 0x00])
+    # The export reads the same custom from the edit.
+    assert export.caption_custom(edit) == custom
+    del edit["tracks"][1]["custom"]
+    assert export.caption_custom(edit) is None and _render(edit, cache)["drawn"] == 0
+
+
 @pytest.mark.usefixtures("tools")
 def test_karaoke_draws_one_still_per_word_state(tmp_path: Path) -> None:
     words = [{"text": "Say", "start": 0, "duration": 8}, {"text": "it", "start": 10, "duration": 5}, {"text": "loud", "start": 15, "duration": 10}]
@@ -246,10 +286,13 @@ def test_prune_keeps_the_newest_looks_and_never_counts_temp_folders(tmp_path: Pa
     fresh.mkdir()
     stale.mkdir()
     os.utime(stale, (1, 1))
+    # S7V-099: the looks' previews, shown in chat messages for good, are never pruned.
+    (cache / captions.PREVIEWS_DIR).mkdir()
+    os.utime(cache / captions.PREVIEWS_DIR, (1, 1))
     captions._prune(cache, "look0")
     left = sorted(entry.name for entry in cache.iterdir())
     newest = [f"look{index}" for index in range(captions.KEEP_LOOKS + 3)][-(captions.KEEP_LOOKS - 1) :]
-    assert left == sorted([".tmp-fresh", "look0", *newest])
+    assert left == sorted([".tmp-fresh", "look0", captions.PREVIEWS_DIR, *newest])
 
 
 @pytest.mark.usefixtures("tools")
@@ -319,8 +362,8 @@ def test_preview_is_a_small_band_of_the_sample_caption(tmp_path: Path, preset: s
     cache = tmp_path / "cache"
     params = {"preset": preset, "width": width, "height": height, "cacheDir": str(cache)}
     result = captions._preview(params, JobContext.detached())
-    still = cache / result["folder"] / result["png"]
-    # Cached in the look's own folder, beside the stills the player shows in that look.
+    still = cache / captions.PREVIEWS_DIR / result["folder"] / result["png"]
+    # Cached by look in the previews' own folder, out of the stills' pruning (S7V-099).
     assert result["folder"] == captions.look_key(width, height, preset)
     preview_width, preview_height, colour = _png_size_and_mode(still)
     assert (preview_width, colour) == (captions.PREVIEW_WIDTH, 2)  # RGB
@@ -331,6 +374,24 @@ def test_preview_is_a_small_band_of_the_sample_caption(tmp_path: Path, preset: s
     assert captions._preview(params, JobContext.detached()) == result
     assert still.stat().st_mtime_ns == mtime
     assert [entry.name for entry in cache.iterdir() if entry.name.startswith(".tmp-")] == []
+
+
+@pytest.mark.usefixtures("tools")
+def test_previews_survive_custom_restyles(tmp_path: Path) -> None:
+    """S7V-099: four previews fill the look count; custom styles' stills must not prune them."""
+    cache = tmp_path / "cache"
+    previews = [
+        cache / captions.PREVIEWS_DIR / r["folder"] / r["png"]
+        for r in (
+            captions._preview({"preset": preset, "width": W, "height": H, "cacheDir": str(cache)}, JobContext.detached())
+            for preset in captions_ass.presets()
+        )
+    ]
+    edit = _edit(tmp_path, [(0, 90)], [{"id": "c1", "start": 0, "duration": 20, "text": "hello there"}])
+    for size in (0.8, 1.0, 1.2, 1.4, 1.6, 0.7):
+        edit["tracks"][1]["custom"] = {"textColor": "#FF8800", "position": "top", "size": size}
+        _render(edit, cache)
+    assert all(preview.is_file() for preview in previews)
 
 
 def test_preview_band_frames_the_sample_line() -> None:

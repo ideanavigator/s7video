@@ -66,16 +66,16 @@ The looks are ours: `s7-neutral` (Plain, the default), `s7-box` (Boxed), `s7-kar
   of every line, because libass fits a line's advance to the margins and anti-aliasing and side
   bearings put up to a pixel of ink past it. So the whole caption stays inside (golden
   `zoom-crop-presets` checks every still's pixels).
-- **One look per edit.** The export, the stills and the Editor read the same rule
+- **One look per edit.** The export, the stills and the server read the same rule
   (`export.caption_style`, `captionLookOf`): the first shown caption track with items that names
   a look, else a shown caption track's (the transcript track before its clips have words), else
   `s7-neutral`. The look lives on the track, not its items: rebuilds replace only items, so a look
-  survives every cut.
+  survives every cut. The track's `custom` (S7V-099, below) is read by the same rule
+  (`export.caption_custom`, `captionCustomOf`).
 - **Picking a look on an edit with no captions adds them** in that look, in the same change (PO,
   2026-11-12): `CaptionTrackService.setStyle` runs `captionTrackOps` and `setCaptionStyle` in
   one apply. An empty unmarked track would not be the one "add captions" rebuilds, and a later
-  "add captions" would add a second track without the look. The `video_caption_style` tool and the
-  Editor's strip (`captions.setStyle`, origin `timeline`) both use it.
+  "add captions" would add a second track without the look. The `video_caption_style` tool uses it.
 - **The highlighted look shows each chunk once per word being said**, the word in the accent
   colour until the next word starts: one ASS event per word state (`captions_ass.cues`). ASS `\k`
   karaoke was not used: it times syllables in centiseconds from the event's start, so a word's
@@ -85,10 +85,66 @@ The looks are ours: `s7-neutral` (Plain, the default), `s7-box` (Boxed), `s7-kar
   under 200 KB (`CaptionStillsService.test.ts`).
 - **Previews** (`captions.preview`) draw a sample line on a flat slate frame at the project's
   canvas with the same ASS builder and libass, cut to the caption band and shrunk to 240 px, so
-  every shape gives the strip the same text size. Each sits in its look's cache folder as
-  `preview-<16 hex>.png`; `captions.presets` reads them by real path, no-follow, like the stills,
-  and sends them inline (four small PNGs). A look whose preview can't be drawn shows its name only.
-  Golden `zoom-crop-presets` compares each with the exported frame of the same caption.
+  every shape shows the same text size. Each sits in its look's cache folder as
+  `preview-<16 hex>.png`. Golden `zoom-crop-presets` compares each with the exported frame of the
+  same caption.
+
+## Captions in the chat (S7V-099)
+
+The Editor has no caption controls (the PO called S7V-037's look strip "really bad UX"): the user
+shapes captions by talking to the agent, through `video_caption_style` and `video_add_captions`.
+
+- **The looks in the chat.** `video_caption_style` with neither `preset` nor `custom` changes
+  nothing and answers with the four looks: each name, then its preview on a line of its own (a
+  markdown hard break), so the pictures line up at any width. A preview is a markdown image of
+  its real path (`CaptionStillsService.previews`, opened no-follow like the stills); the chat's
+  markdown draws a local path through its own signed `media-file` URL each time, in Claude and
+  Codex threads alike. Not S7V-079's still URL: its token expires, and a chat message is kept for
+  good. For the same reason previews live in `.s7cache/captions/previews/<look>/`, which the
+  stills' pruning never touches: custom styles add look folders, and four previews would
+  otherwise be pruned after a restyle or two. They draw on a flat slate, not the user's video
+  (a later card).
+- **Styles in words.** `custom` holds `textColor`, `highlightColor`, `boxColor` (`#RRGGBB`),
+  `size` (0.6–1.6) and `position` (`top`, `middle`, `bottom`) on the caption track, beside its
+  look. `captions_ass.styled` applies it to the look's file before the ASS is built, so the
+  export, the player's stills (whose look folder hashes it) and the editors' `.ass` draw it the
+  same way; golden `caption-overlay-parity` covers two custom styles. A custom box colour is
+  solid: each line of a caption has its own box, and two see-through boxes show a seam where they
+  overlap. A track without `custom` hashes and draws exactly as before. The tool's schema
+  advertises `custom` as a bare object (its fields would cost about 250 B on every turn); the
+  handler checks each field and refuses anything else by naming what can change, a box or
+  lit-word colour on a look that has none included (`CAPTION_LOOK_PARTS`, kept in step with the
+  style files by a test). The `caption-style` skill names the fields. A new `custom` merges into
+  the track's own; the look's own size and the bottom are stored as nothing.
+- **Editing words, not codes.** Replies and version notes name the skill's colours ("orange",
+  "blue box"; any other is "a custom colour") and say a size as "bigger" or "a bit smaller"
+  (`describeCaptionCustom`). They don't count captions: a caption item is a run of a clip, not a
+  line the player shows.
+- **Captions already in the picture.** The transcribe job reads ten frames with Apple Vision
+  (`burned_in.py`, on the device, in the language Vision detects) and stores `burnedInCaptions`
+  (`found`, `confidence`, `region`) with the transcript, never the text. It decides by variety:
+  enough frames show a line that is mostly the words being said, and at least two different
+  lines match. A sign or name card is one line, and a line in nearly every frame is part of the
+  picture. Chinese, Japanese and Korean match by character pairs, with the speech joined across
+  words: single characters let unrelated text match on particles (12% false "found" with four
+  lines of a shop notice a frame; none with pairs, `test_burned_in.py`). Each input decodes on one
+  thread (ten default decoders peaked at 8.75 GB on 4K HEVC), and any failure leaves the clip
+  unchecked.
+- **Asking first, only when adding.** The question comes only when captions would be added to a
+  clip with `found: true`: one with speech in its placed part that the transcript track doesn't
+  caption yet. `video_add_captions`, and `video_caption_style` or the looks on an edit with no
+  captions, refuse (`CaptionsError` `burned-in`) unless the call carries `confirm: true`. The
+  question names the clip by its file name and offers choices that fit where ours would go:
+  "talk.mp4 already has captions near the bottom. Add ours at the top, add them anyway, or leave
+  it as it is?", or "…; ours would be at the top. Add them, or leave it as it is?" when they
+  already would be. A rebuild after a cut or placement leaves such a clip out. Restyles and the
+  looks on existing captions never ask: they change the captions that exist, and the reply names
+  the clip that kept its own ("talk.mp4 keeps its own captions; say "caption that clip too" to
+  add ours"). That phrase is `video_add_captions` with `confirm: true`: it rebuilds the track's
+  items in the look and `custom` the track already has, and the note says "Added captions to
+  talk.mp4". A yes given at the looks travels with the look the user then picks, once; it is
+  never kept for the rest of the conversation. A clip transcribed before the check behaves as
+  before.
 
 ## The player overlay
 

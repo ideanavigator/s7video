@@ -11,6 +11,7 @@ import { ProjectId, RunId, ThreadId } from "./baseSchemas.ts";
 import {
   EditAudioItem,
   EditCanvas,
+  EditCaptionCustom,
   EditCaptionItem,
   EditCaptionWord,
   EditDocument,
@@ -132,9 +133,11 @@ export const AddTrackOp = Schema.TaggedStruct("addTrack", {
   index: Schema.optionalKey(Frame),
 });
 
+/** `custom` replaces the track's own colours, size and place (S7V-099); `{}` clears them. */
 export const SetCaptionStyleOp = Schema.TaggedStruct("setCaptionStyle", {
   trackId: EditId,
   style: EditStyleRef,
+  custom: Schema.optionalKey(EditCaptionCustom),
 });
 
 export const EditTrackProps = Schema.Struct({

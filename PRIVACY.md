@@ -21,6 +21,9 @@ differently; check their policy.
 - The built-in video helper, which reads clips, grabs frames and transcribes speech, runs on your
   Mac as a separate program and sends nothing anywhere. Transcription runs offline: the audio and
   the transcript never leave your computer, and agents get only the transcript text they ask for.
+  While it transcribes a clip, it also reads the text in ten of its frames with macOS's own text
+  recognition, to notice captions already in the picture. That text is never stored or sent; the
+  transcript keeps only whether captions were found and where in the frame.
   The helper's log (`logs/engine/` in the data folder) records what it did and how long it took,
   never your footage, transcripts or messages.
 - Secrets you save in settings, in the data folder. API keys for the planned bring-your-own-key

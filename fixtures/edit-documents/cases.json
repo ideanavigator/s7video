@@ -141,6 +141,16 @@
       "valid": false,
       "reason": "frame",
       "itemId": "b1"
+    },
+    {
+      "file": "28-caption-custom.json",
+      "valid": true
+    },
+    {
+      "file": "29-caption-custom-out-of-range.json",
+      "valid": false,
+      "reason": "schema",
+      "itemId": "C1"
     }
   ]
 }

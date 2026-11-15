@@ -200,6 +200,32 @@ it("loads the <picture> source for the current theme through the image route", a
     .toHaveAttribute("src", `${pixel}#/work/dark.png`);
 });
 
+// s7video (S7V-099): the agent's caption looks reply draws each preview from its real path.
+it("draws caption look previews from project paths with spaces", async () => {
+  setup();
+  const pixel =
+    "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=";
+  const hostImageUrl = vi.fn((path: string) => `${pixel}#${path}`);
+  const folder = "/Users/me/My Talk/.s7cache/captions";
+  const text = [
+    "Here are the looks:",
+    `- Plain: ![Plain](<${folder}/0a/preview-1111.png>)`,
+    `- Boxed: ![Boxed](<${folder}/0b/preview-2222.png>)`,
+  ].join("\n");
+  await using screen = await render(
+    <HostImageUrlContext value={hostImageUrl}>
+      <ChatMarkdown cwd="/Users/me/My Talk" text={text} />
+    </HostImageUrlContext>,
+  );
+  await expect
+    .element(screen.getByAltText("Boxed"))
+    .toHaveAttribute("src", `${pixel}#${folder}/0b/preview-2222.png`);
+  await expect.element(screen.getByAltText("Plain")).toBeVisible();
+  expect(new Set(hostImageUrl.mock.calls.map(([path]) => path))).toEqual(
+    new Set([`${folder}/0a/preview-1111.png`, `${folder}/0b/preview-2222.png`]),
+  );
+});
+
 it("reuses the parse of a streaming reply's finished blocks when it remounts", async () => {
   setup();
   const message = (

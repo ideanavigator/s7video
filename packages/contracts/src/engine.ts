@@ -549,9 +549,13 @@ export const CaptionStillsResult = Schema.Struct({
 });
 export type CaptionStillsResult = typeof CaptionStillsResult.Type;
 
-/** "Add captions" refused (S7V-075): a clip on the video track has no transcript, or none has sound. */
+/**
+ * "Add captions" refused (S7V-075): a clip on the video track has no transcript, or none has sound;
+ * or a clip already has captions in its picture and the user hasn't said to add more, or a colour
+ * names a part the look doesn't draw (S7V-099).
+ */
 export class CaptionsError extends Schema.TaggedError<CaptionsError>()("CaptionsError", {
-  reason: Schema.Literals(["no-transcript", "no-clips"]),
+  reason: Schema.Literals(["no-transcript", "no-clips", "burned-in", "look-part"]),
   detail: Schema.String,
 }) {
   override get message(): string {
@@ -571,12 +575,25 @@ export const CaptionPresetId = Schema.Literals([
 ]);
 export type CaptionPresetId = typeof CaptionPresetId.Type;
 
-/** Each look's plain name, as the Editor's strip and the agent's replies call it. */
+/** Each look's plain name, as the agent's replies call it. */
 export const CAPTION_PRESET_NAMES: Readonly<Record<CaptionPresetId, string>> = {
   "s7-neutral": "Plain",
   "s7-box": "Boxed",
   "s7-karaoke": "Highlighted word",
   "s7-minimal": "Minimal",
+};
+
+/**
+ * The parts a look draws that a caption track's own colour can change (S7V-099): a box, or the
+ * word being said. A test keeps this in step with the style files' `box` and `highlight` keys.
+ */
+export const CAPTION_LOOK_PARTS: Readonly<
+  Record<CaptionPresetId, ReadonlyArray<"box" | "highlight">>
+> = {
+  "s7-neutral": [],
+  "s7-box": ["box"],
+  "s7-karaoke": ["highlight"],
+  "s7-minimal": [],
 };
 
 /** `captions.preview`: one look's sample caption at a canvas, as a small PNG in `cacheDir/<folder>/`. */
@@ -585,31 +602,6 @@ export const CaptionsPreviewResult = Schema.Struct({
   png: TrimmedNonEmptyString,
 });
 export type CaptionsPreviewResult = typeof CaptionsPreviewResult.Type;
-
-/** `captions.presets`: each look's plain name and preview, a base64 PNG, for the Editor's strip. */
-export const CaptionPresetsResult = Schema.Struct({
-  presets: Schema.Array(
-    Schema.Struct({
-      id: CaptionPresetId,
-      name: TrimmedNonEmptyString,
-      /** Base64 PNG; empty when the preview could not be drawn (the strip shows the name only). */
-      png: Schema.String,
-    }),
-  ),
-});
-export type CaptionPresetsResult = typeof CaptionPresetsResult.Type;
-
-/** `captions.setStyle`: the Editor's strip picks a look; captions are added when the edit has none. */
-export const CaptionStyleInput = Schema.Struct({ projectId: ProjectId, preset: CaptionPresetId });
-export type CaptionStyleInput = typeof CaptionStyleInput.Type;
-
-export const CaptionStyleResult = Schema.Struct({
-  revision: Schema.Int,
-  /** The captions were added from the transcripts in the same change. */
-  added: Schema.Boolean,
-  changed: Schema.Boolean,
-});
-export type CaptionStyleResult = typeof CaptionStyleResult.Type;
 
 /** A punch-in zoom the agent can't add, with the plain next step (S7V-037). */
 export class ZoomError extends Schema.TaggedError<ZoomError>()("ZoomError", {

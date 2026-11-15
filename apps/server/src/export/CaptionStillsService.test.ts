@@ -9,6 +9,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import {
+  CAPTION_LOOK_PARTS,
   CaptionPresetId,
   CaptionStillsResult,
   EngineError,
@@ -69,7 +70,7 @@ const previewOf = (calls: Calls, params: Record<string, unknown>) => {
   if (preset === calls.failPreview) return null;
   const folder = sha(`look ${preset}`).slice(0, 32);
   const png = `preview-${sha(preset).slice(0, 16)}.png`;
-  const file = NodePath.join(String(params["cacheDir"]), folder, png);
+  const file = NodePath.join(String(params["cacheDir"]), "previews", folder, png);
   NodeFS.mkdirSync(NodePath.dirname(file), { recursive: true });
   // Drawn only when missing, as the engine does.
   if (!NodeFS.existsSync(file)) NodeFS.writeFileSync(file, `png:${preset}`);
@@ -384,6 +385,12 @@ describe("CaptionStillsService (S7V-075)", () => {
       .filter((name) => name.endsWith(".json"))
       .map((name) => name.slice(0, -".json".length));
     assert.deepStrictEqual(files.toSorted(), [...CaptionPresetId.literals].toSorted());
+    // S7V-099: the parts a custom colour can change are the ones each style file draws.
+    for (const id of CaptionPresetId.literals) {
+      const style = JSON.parse(NodeFS.readFileSync(NodePath.join(styles, `${id}.json`), "utf8"));
+      const parts = (["box", "highlight"] as const).filter((part) => part in style);
+      assert.deepStrictEqual(parts, [...CAPTION_LOOK_PARTS[id]], id);
+    }
   });
 
   // S7V-037: the highlighted look draws one still per word being said, so the reply has an entry
@@ -419,48 +426,50 @@ describe("CaptionStillsService (S7V-075)", () => {
     ),
   );
 
-  it.effect("S7V-037: each look's preview, inline, or its name alone when it can't be drawn", () =>
-    withStills(({ projectId, root, calls, edits, stills }) =>
-      Effect.gen(function* () {
-        writeClip(root, false);
-        yield* apply(edits, projectId, video);
-        const asked: Array<string> = [];
-        Object.assign(calls, { previews: asked, failPreview: "s7-minimal" });
-        const { presets } = yield* stills.presets(projectId);
-        assert.deepStrictEqual(asked, ["s7-neutral", "s7-box", "s7-karaoke", "s7-minimal"]);
-        assert.deepStrictEqual(
-          presets.map(({ id, name, png }) => [id, name, Buffer.from(png, "base64").toString()]),
-          [
-            ["s7-neutral", "Plain", "png:s7-neutral"],
-            ["s7-box", "Boxed", "png:s7-box"],
-            ["s7-karaoke", "Highlighted word", "png:s7-karaoke"],
-            ["s7-minimal", "Minimal", ""],
-          ],
-        );
-        // A preview swapped for a link is never read: it could point anywhere on the machine.
-        const preview = NodePath.join(
-          root,
-          ".s7cache",
-          "captions",
-          sha("look s7-box").slice(0, 32),
-          `preview-${sha("s7-box").slice(0, 16)}.png`,
-        );
-        const secret = NodePath.join(root, "secret.txt");
-        NodeFS.writeFileSync(secret, "not a preview");
-        NodeFS.rmSync(preview);
-        NodeFS.symlinkSync(secret, preview);
-        const again = yield* stills.presets(projectId);
-        assert.deepStrictEqual(
-          again.presets.map((entry) => [entry.id, Buffer.from(entry.png, "base64").toString()]),
-          [
-            ["s7-neutral", "png:s7-neutral"],
-            ["s7-box", ""],
-            ["s7-karaoke", "png:s7-karaoke"],
-            ["s7-minimal", ""],
-          ],
-        );
-      }),
-    ),
+  it.effect(
+    "S7V-099: each look's preview by its real path, or its name alone when it can't be drawn",
+    () =>
+      withStills(({ projectId, root, calls, edits, stills }) =>
+        Effect.gen(function* () {
+          writeClip(root, false);
+          yield* apply(edits, projectId, video);
+          const asked: Array<string> = [];
+          Object.assign(calls, { previews: asked, failPreview: "s7-minimal" });
+          const previewPath = (preset: string) =>
+            NodePath.join(
+              NodeFS.realpathSync(root),
+              ".s7cache",
+              "captions",
+              "previews",
+              sha(`look ${preset}`).slice(0, 32),
+              `preview-${sha(preset).slice(0, 16)}.png`,
+            );
+          const previews = yield* stills.previews(projectId);
+          assert.deepStrictEqual(asked, ["s7-neutral", "s7-box", "s7-karaoke", "s7-minimal"]);
+          assert.deepStrictEqual(previews, [
+            { id: "s7-neutral", name: "Plain", path: previewPath("s7-neutral") },
+            { id: "s7-box", name: "Boxed", path: previewPath("s7-box") },
+            { id: "s7-karaoke", name: "Highlighted word", path: previewPath("s7-karaoke") },
+            { id: "s7-minimal", name: "Minimal", path: null },
+          ]);
+          assert.strictEqual(NodeFS.readFileSync(previews[1]!.path!, "utf8"), "png:s7-box");
+          // A preview swapped for a link is never shown: it could point anywhere on the machine.
+          const secret = NodePath.join(root, "secret.txt");
+          NodeFS.writeFileSync(secret, "not a preview");
+          NodeFS.rmSync(previewPath("s7-box"));
+          NodeFS.symlinkSync(secret, previewPath("s7-box"));
+          const again = yield* stills.previews(projectId);
+          assert.deepStrictEqual(
+            again.map((entry) => [entry.id, entry.path]),
+            [
+              ["s7-neutral", previewPath("s7-neutral")],
+              ["s7-box", null],
+              ["s7-karaoke", previewPath("s7-karaoke")],
+              ["s7-minimal", null],
+            ],
+          );
+        }),
+      ),
   );
 
   it.effect("S7V-079: the reply for a 10-minute edit stays under 200 KB", (context) =>

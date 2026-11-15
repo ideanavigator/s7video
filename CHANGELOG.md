@@ -96,6 +96,9 @@ from; the per-ticket entries and how this file is compiled are in
 - Export an edit for Final Cut Pro, Premiere, DaVinci Resolve or as an EDL, with captions as a
   separate SRT or ASS file beside it. Every cut lands on the same frame, and before it exports the
   app says in plain words what won't carry over, such as volume changes and zooms. (S7V-040)
+- The assistant notices captions already in your video and asks first, shows the caption looks in
+  the chat, and changes colour, size and position when you describe them. The caption buttons
+  above the player are gone. (S7V-099)
 
 ### Changed
 

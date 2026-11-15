@@ -56,6 +56,9 @@ pnpm mcp-tool-use --model claude-haiku-5-5 --samples 3 --out runs/s7v-061 --case
 | `VID-04` | control | "make v12 the current version" calls `video_version_restore` once for v12, never git.          |
 | `VID-05` | control | "go back to the first cut" restores the version named "first cut" (S7V-070).                   |
 | `VID-06` | guard   | "what changed between v12 and v15?" answers from `video_versions`, restores nothing.           |
+| `VID-07` | control | "add captions" lists the looks with their pictures in the reply and asks, adding nothing yet.  |
+| `VID-08` | control | "boxed, but orange words, near the top" is one `video_caption_style` call with `custom`.       |
+| `VID-09` | guard   | "Comic Sans with a bounce" gets a plain reply naming what can change; no style is made up.     |
 
 ```sh
 pnpm mcp-tool-use --dry-run --case VID-01,VID-02,VID-03

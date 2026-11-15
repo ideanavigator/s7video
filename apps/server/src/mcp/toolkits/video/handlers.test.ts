@@ -20,6 +20,7 @@ import {
   type MediaProbeResult,
   ProjectId,
   ProviderInstanceId,
+  CAPTION_PRESET_NAMES,
   CaptionsError,
   SoundError,
   ZoomError,
@@ -379,24 +380,63 @@ const layerFor = (fixture: Fixture, cancelSignal: Deferred.Deferred<string>) => 
     }),
     Layer.mock(ClipPlacementService.ClipPlacementService)({}),
     Layer.mock(CaptionTrackService.CaptionTrackService)({
-      addCaptions: (projectId) =>
-        projectId === projectB
+      addCaptions: (projectId, options) => {
+        fixture.looks.push(["add", projectId, { confirm: options.confirm }]);
+        return projectId === projectB
           ? Effect.fail(
               new CaptionsError({
                 reason: "no-transcript",
                 detail: "Transcribe the clip first: cam has no transcript.",
               }),
             )
-          : Effect.succeed({ revision: 9, captions: 12, changed: true }),
+          : Effect.succeed({
+              revision: 9,
+              captions: 12,
+              changed: true,
+              captioned: options.confirm === true ? ["burnt.mp4"] : [],
+              look: "the Plain look (orange, at the top)",
+            });
+      },
       // Project A has captions; project B has none, so its first look adds them.
-      setStyle: (projectId, preset, options) => {
-        fixture.looks.push(["style", projectId, { preset, origin: options.origin }]);
+      setStyle: (projectId, input, options) => {
+        fixture.looks.push([
+          "style",
+          projectId,
+          { ...input, origin: options.origin, confirm: options.confirm },
+        ]);
+        const preset = input.preset ?? "s7-neutral";
         return Effect.succeed({
           revision: 12,
           captions: 12,
-          changed: preset !== "s7-neutral",
+          changed: preset !== "s7-neutral" || input.custom !== undefined,
           added: projectId === projectB,
+          preset,
+          custom: input.custom ?? {},
+          described: input.custom === undefined ? "" : "orange, at the top, bigger",
+          uncaptioned: projectId === projectA && input.custom?.size === 1.4 ? ["burnt.mp4"] : [],
+          captioned: [],
+          look: `the ${CAPTION_PRESET_NAMES[preset]} look${input.custom === undefined ? "" : " (orange, at the top, bigger)"}`,
         });
+      },
+      // Project B's clip already shows captions in its picture until the user confirms.
+      looks: (projectId, options) => {
+        fixture.looks.push(["looks", projectId, { confirm: options.confirm }]);
+        return projectId === projectB && options.confirm !== true
+          ? Effect.fail(
+              new CaptionsError({
+                reason: "burned-in",
+                detail: "cam already shows captions in its picture.",
+              }),
+            )
+          : Effect.succeed({
+              revision: 12,
+              looks: [
+                { id: "s7-neutral", name: "Plain", path: "/My Project/.s7cache/p1.png" },
+                { id: "s7-box", name: "Boxed", path: null },
+                { id: "s7-karaoke", name: "Highlighted word", path: "/odd<name>/p3.png" },
+              ],
+              uncaptioned: projectId === projectB ? ["burnt.mp4"] : [],
+            });
       },
     }),
     // Project B's range was cut: the service's plain refusal.
@@ -1190,8 +1230,7 @@ describe("video toolkit", () => {
           expect(added.isError).toBe(false);
           expect(added.structuredContent).toEqual({
             revision: 9,
-            message:
-              "Added 12 captions to the edit. They follow later cuts; say undo to remove them.",
+            message: "Added captions to the edit. They follow later cuts; say undo to remove them.",
           });
           const refused = yield* call(threadB, "video_add_captions", {});
           expect(refused.isError).toBe(true);
@@ -1271,10 +1310,13 @@ describe("video toolkit", () => {
           revision: 12,
           message: "The captions already use the Plain look.",
         });
-        const added = yield* call(threadB, "video_caption_style", { preset: "s7-karaoke" });
+        const added = yield* call(threadB, "video_caption_style", {
+          preset: "s7-karaoke",
+          confirm: true,
+        });
         expect(added.structuredContent).toEqual({
           revision: 12,
-          message: "Added 12 captions in the Highlighted word look. Say undo to take them out.",
+          message: "Added captions in the Highlighted word look. Say undo to take them out.",
         });
         // Only our looks: anything else fails the tool's own schema and reaches no service.
         const unknown = yield* call(threadA, "video_caption_style", { preset: "kigaru" }).pipe(
@@ -1282,9 +1324,102 @@ describe("video toolkit", () => {
         );
         expect(String(unknown)).toMatch(/preset/u);
         expect(fixture.looks).toEqual([
-          ["style", projectA, { preset: "s7-box", origin: "agent" }],
-          ["style", projectA, { preset: "s7-neutral", origin: "agent" }],
-          ["style", projectB, { preset: "s7-karaoke", origin: "agent" }],
+          ["style", projectA, { preset: "s7-box", origin: "agent", confirm: false }],
+          ["style", projectA, { preset: "s7-neutral", origin: "agent", confirm: false }],
+          ["style", projectB, { preset: "s7-karaoke", origin: "agent", confirm: true }],
+        ]);
+      }),
+    ),
+  );
+
+  // S7V-099: styles in the user's words, checked here with plain reasons before any service.
+  it.effect("video_caption_style takes colours, size and place, and refuses anything else", () =>
+    withTools(({ fixture, call }) =>
+      Effect.gen(function* () {
+        const styled = yield* call(threadA, "video_caption_style", {
+          preset: "s7-box",
+          custom: { textColor: "ff8800", position: "top", size: 1.4 },
+        });
+        expect(styled.structuredContent).toEqual({
+          revision: 12,
+          message:
+            'The captions now use the Boxed look (orange, at the top, bigger), over the player and in the export. Say undo to go back. burnt.mp4 keeps its own captions; say "caption that clip too" to add ours.',
+        });
+        for (const [custom, reason] of [
+          [{ size: 2 }, "size is a number from 0.6 to 1.6; 1 is the look's own size."],
+          [{ textColor: "orange" }, "textColor is a hex colour such as #FF8800."],
+          [{ boxColor: "#12345" }, "boxColor is a hex colour such as #FF8800."],
+          [{ position: "left" }, "position is top, middle or bottom."],
+        ] as const) {
+          const refused = yield* call(threadA, "video_caption_style", { custom });
+          expect(refused.isError, JSON.stringify(custom)).toBe(true);
+          expect(textOf(refused)).toEqual([reason]);
+        }
+        const font = yield* call(threadA, "video_caption_style", {
+          custom: { font: "Comic Sans", animation: "bounce" },
+        });
+        expect(textOf(font)[0]).toMatch(
+          /^font, animation can't be changed\. Captions can change textColor, highlightColor .* size \(0\.6 to 1\.6/u,
+        );
+        expect(fixture.looks).toEqual([
+          [
+            "style",
+            projectA,
+            {
+              preset: "s7-box",
+              custom: { textColor: "#FF8800", position: "top", size: 1.4 },
+              origin: "agent",
+              confirm: false,
+            },
+          ],
+        ]);
+      }),
+    ),
+  );
+
+  it.effect("video_caption_style with no look lists the looks with their pictures", () =>
+    withTools(({ fixture, call }) =>
+      Effect.gen(function* () {
+        const listed = yield* call(threadA, "video_caption_style", {});
+        expect(listed.isError).toBe(false);
+        expect(listed.structuredContent).toEqual({
+          revision: 12,
+          // Each name, then its picture on a line of its own: the four line up at any width.
+          message: [
+            "Nothing changed. Put the lines between the rules in your reply exactly as they are, then ask which look the user wants, or what they have in mind (colours, size, top, middle or bottom).",
+            "---",
+            "**Plain**\\\n![Plain](</My Project/.s7cache/p1.png>)",
+            "**Boxed**",
+            "**Highlighted word**",
+            "---",
+          ].join("\n\n"),
+        });
+        // A clip that already shows captions asks first; the user's yes is `confirm`.
+        const asked = yield* call(threadB, "video_caption_style", {});
+        expect(textOf(asked)).toEqual(["cam already shows captions in its picture."]);
+        const confirmed = yield* call(threadB, "video_caption_style", { confirm: true });
+        expect(confirmed.isError).toBe(false);
+        // A clip that keeps its own captions is named in a paragraph after the closing rule, so the
+        // rule stays a rule and the lines the agent copies stay between the two.
+        const paragraphs = String(
+          (confirmed.structuredContent as { message: string }).message,
+        ).split("\n\n");
+        expect(paragraphs.slice(-2)).toEqual([
+          "---",
+          'burnt.mp4 keeps its own captions; say "caption that clip too" to add ours.',
+        ]);
+        // "Caption that clip too" is video_add_captions with confirm, and says what it did.
+        const added = yield* call(threadA, "video_add_captions", { confirm: true });
+        expect(added.structuredContent).toEqual({
+          revision: 9,
+          message:
+            "Added captions to burnt.mp4 in the Plain look (orange, at the top). They follow later cuts; say undo to remove them.",
+        });
+        expect(fixture.looks).toEqual([
+          ["looks", projectA, { confirm: false }],
+          ["looks", projectB, { confirm: false }],
+          ["looks", projectB, { confirm: true }],
+          ["add", projectA, { confirm: true }],
         ]);
       }),
     ),

@@ -5,6 +5,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   captionItemsFor,
+  captionCustomOf,
   captionLookOf,
   captionMediaOf,
   captionTrackOps,
@@ -241,6 +242,22 @@ describe("captionLookOf", () => {
     expect(captionLookOf(edit([[0, 30, 0]], { extraTracks: [empty, shown] }))).toBe("s7-minimal");
     const plain = { kind: "caption" as const, id: "C2", items: [item] };
     expect(captionLookOf(edit([[0, 30, 0]], { extraTracks: [plain] }))).toBe("s7-neutral");
+  });
+});
+
+// S7V-099: the same rule as the export's `caption_custom`.
+describe("captionCustomOf", () => {
+  const item = { id: "c1", start: 0, duration: 20, text: "hi there" };
+  it("is the shown track's own colours, size and place, or none", () => {
+    expect(captionCustomOf(edit([[0, 30, 0]]))).toBeUndefined();
+    const custom = { textColor: "#FF8800", position: "top" as const };
+    const empty = { kind: "caption" as const, id: "C1", custom, items: [] };
+    expect(captionCustomOf(edit([[0, 30, 0]], { extraTracks: [empty] }))).toEqual(custom);
+    expect(
+      captionCustomOf(edit([[0, 30, 0]], { extraTracks: [{ ...empty, muted: true }] })),
+    ).toBeUndefined();
+    const shown = { kind: "caption" as const, id: "C2", items: [item] };
+    expect(captionCustomOf(edit([[0, 30, 0]], { extraTracks: [empty, shown] }))).toBeUndefined();
   });
 });
 

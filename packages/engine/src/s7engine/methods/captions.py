@@ -9,12 +9,14 @@ word being said, one word state), drawn by the same ASS builder and libass onto 
 canvas of the edit's size, so the player shows what the export shows.
 
 Stills are cached in ``cacheDir/<look>/<cue>.png``. ``look`` hashes everything the pixels depend
-on besides the cue: canvas size, the look's style file, the bundled fonts and `RENDER_VERSION`;
+on besides the cue: canvas size, the look's style file, the track's ``custom`` (S7V-099), the
+bundled fonts and `RENDER_VERSION`;
 ``cue`` hashes the text and the lit word. Timing never changes a still, so a cut or trim draws only
 the cues it makes new. All missing cues are drawn in one FFmpeg run, retimed to one per second.
 
 `captions.preview` draws a look's sample caption on a flat synthetic frame with the same builder,
-cut to the caption band, for the Editor's look picker; it is cached in that look's folder.
+cut to the caption band, for the looks the agent shows in the chat (S7V-099). It is cached in
+``cacheDir/previews/<look>/``, out of the stills' pruning: a chat message shows it for good.
 """
 
 from __future__ import annotations
@@ -57,6 +59,8 @@ PREVIEW_LIT = 1
 #: A flat slate frame: the white text, its shadow and the dark box all read on it.
 PREVIEW_BACKGROUND = "0x5B6270"
 PREVIEW_WIDTH = 240
+#: The previews' own folder in the cache, never pruned with the stills' looks (S7V-099).
+PREVIEWS_DIR = "previews"
 
 
 def timeline_end(edit: dict[str, Any]) -> int:
@@ -87,15 +91,21 @@ def _digest(*parts: bytes) -> str:
     return hasher.hexdigest()
 
 
-def look_key(width: int, height: int, style_id: str = captions_ass.DEFAULT_STYLE) -> str:
-    """Everything a still's pixels depend on besides its cue."""
+def look_key(
+    width: int, height: int, style_id: str = captions_ass.DEFAULT_STYLE, custom: dict[str, Any] | None = None
+) -> str:
+    """Everything a still's pixels depend on besides its cue. Without ``custom`` the key is the one
+    it was before S7V-099, so cached stills stay valid."""
     style = (captions_ass.STYLES_DIR / f"{style_id}.json").read_bytes()
     fonts = [
         font.name.encode() + font.read_bytes()
         for font in sorted(captions_ass.FONTS_DIR.iterdir())
         if font.suffix.lower() in (".ttf", ".otf")
     ]
-    header = json.dumps({"render": RENDER_VERSION, "width": width, "height": height, "style": style_id}).encode()
+    fields: dict[str, Any] = {"render": RENDER_VERSION, "width": width, "height": height, "style": style_id}
+    if custom:
+        fields["custom"] = custom
+    header = json.dumps(fields, sort_keys=bool(custom)).encode()
     return _digest(header, style, *fonts)[:32]
 
 
@@ -115,8 +125,9 @@ def _render(params: dict[str, Any], job: JobContext) -> dict[str, Any]:
         raise RpcError(INVALID_PARAMS, "invalid params at cacheDir: must be absolute")
     width, height = int(edit["canvas"]["width"]), int(edit["canvas"]["height"])
     style_id = export.caption_style(edit)
+    custom = export.caption_custom(edit)
     cues = captions_ass.cues(chunks_of(edit, params.get("transcripts")), style_id)
-    look = look_key(width, height, style_id)
+    look = look_key(width, height, style_id, custom)
     folder = cache_dir / look
     # One still per distinct cue; retimed, a cue keeps only what it draws.
     shapes = {_still_name(cue): captions_ass.Cue(cue.words, 0, 1, cue.lit) for cue in cues}
@@ -127,7 +138,7 @@ def _render(params: dict[str, Any], job: JobContext) -> dict[str, Any]:
             folder.mkdir(parents=True, exist_ok=True)
         except OSError:
             raise RpcError(OUTPUT_ERROR, "the captions folder cannot be created") from None
-        _draw([(name, shapes[name]) for name in missing], style_id, width, height, cache_dir, folder, job)
+        _draw([(name, shapes[name]) for name in missing], style_id, custom, width, height, cache_dir, folder, job)
     now = time.time()
     for name in shapes:
         # Marks the still as used, so pruning keeps it.
@@ -145,6 +156,7 @@ def _render(params: dict[str, Any], job: JobContext) -> dict[str, Any]:
 def _draw(
     stills: list[tuple[str, captions_ass.Cue]],
     style_id: str,
+    custom: dict[str, Any] | None,
     width: int,
     height: int,
     cache_dir: Path,
@@ -158,7 +170,7 @@ def _draw(
         raise RpcError(OUTPUT_ERROR, "the captions folder cannot be written") from None
     try:
         timed = [captions_ass.Cue(cue.words, number, number + 1, cue.lit) for number, (_, cue) in enumerate(stills)]
-        captions_ass.write_cues(workdir / "captions.ass", timed, Fraction(1), width, height, style_id)
+        captions_ass.write_cues(workdir / "captions.ass", timed, Fraction(1), width, height, style_id, custom)
         captions_ass.link_fonts(workdir / "fonts")
         run_tool(
             "ffmpeg",
@@ -236,7 +248,7 @@ def _preview(params: dict[str, Any], job: JobContext) -> dict[str, Any]:
     if not cache_dir.is_absolute():
         raise RpcError(INVALID_PARAMS, "invalid params at cacheDir: must be absolute")
     look = look_key(width, height, style_id)
-    folder = cache_dir / look
+    folder = cache_dir / PREVIEWS_DIR / look
     sample = json.dumps([PREVIEW_WORDS, PREVIEW_BACKGROUND, PREVIEW_WIDTH]).encode()
     name = f"preview-{_digest(sample)[:16]}.png"
     if not (folder / name).is_file():
@@ -295,7 +307,7 @@ def _prune(cache_dir: Path, current: str) -> None:
             if entry.name.startswith(".tmp-") and now - entry.stat().st_mtime > STALE_TEMP_SECONDS:
                 shutil.rmtree(entry, ignore_errors=True)
         looks = sorted(
-            (entry for entry in entries if entry.is_dir() and not entry.name.startswith(".")),
+            (entry for entry in entries if entry.is_dir() and not entry.name.startswith(".") and entry.name != PREVIEWS_DIR),
             key=lambda entry: (entry.name == current, entry.stat().st_mtime),
             reverse=True,
         )

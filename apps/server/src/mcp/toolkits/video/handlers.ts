@@ -3,7 +3,6 @@
 // Thin handlers: resolve the caller's project and media (VideoProjectScope), call one engine or
 // edit service method, map its errors. The Editor panel reaches the same services directly.
 import {
-  CAPTION_PRESET_NAMES,
   type CaptionsError,
   type EditConflict,
   type EditDocument,
@@ -29,6 +28,7 @@ import * as Stream from "effect/Stream";
 import { RE_DUCK_REMINDER } from "../../../edit/audioPlacement.ts";
 import * as AudioTrackService from "../../../edit/AudioTrackService.ts";
 import { CANVAS_FOR_RATIO } from "../../../edit/canvasForClip.ts";
+import { parseCaptionCustom } from "../../../edit/captionCustom.ts";
 import * as CaptionTrackService from "../../../edit/CaptionTrackService.ts";
 import * as ClipPlacementService from "../../../edit/ClipPlacementService.ts";
 import * as EditDocumentService from "../../../edit/EditDocumentService.ts";
@@ -36,6 +36,7 @@ import * as SilenceCutService from "../../../edit/SilenceCutService.ts";
 import { parseZoomRange, ZOOM_RANGE_FORMAT } from "../../../edit/zoomOps.ts";
 import * as ZoomService from "../../../edit/ZoomService.ts";
 import * as EngineService from "../../../engine/EngineService.ts";
+import type * as CaptionStillsService from "../../../export/CaptionStillsService.ts";
 import * as ExportService from "../../../export/ExportService.ts";
 import * as TranscriptService from "../../../transcript/TranscriptService.ts";
 import * as MediaLibraryService from "../../../media/MediaLibraryService.ts";
@@ -99,6 +100,35 @@ const editRefusal = (error: CaptionsError | ZoomError | EditDocumentService.Edit
         : "orchestration_error",
     message: error._tag === "EditUnavailableError" ? error.explanation : error.message,
   });
+
+/**
+ * The looks for the agent's reply (S7V-099): each name, then its preview on a line of its own (a
+ * hard break), so the four line up at any width. The preview is a markdown image of its real path,
+ * which the chat draws through its own signed URL (Claude and Codex threads alike). A path that
+ * would break the markdown is left out; the look is still named.
+ */
+const looksMessage = (looks: ReadonlyArray<CaptionStillsService.CaptionLookPreview>) =>
+  [
+    "Nothing changed. Put the lines between the rules in your reply exactly as they are, then ask which look the user wants, or what they have in mind (colours, size, top, middle or bottom).",
+    "---",
+    ...looks.map(({ name, path }) =>
+      path === null || /[<>\r\n]/u.test(path)
+        ? `**${name}**`
+        : `**${name}**\\\n![${name}](<${path}>)`,
+    ),
+    "---",
+  ].join("\n\n");
+
+/**
+ * S7V-099: clips placed after the captions whose picture shows its own keep it; the reply names
+ * them, and "caption that clip too" is `video_add_captions` with `confirm: true`, in the same look.
+ */
+const keepsOwnCaptions = (clips: ReadonlyArray<string>) =>
+  clips.length === 0
+    ? ""
+    : clips.length === 1
+      ? `${clips[0]} keeps its own captions; say "caption that clip too" to add ours.`
+      : `${CaptionTrackService.listed(clips)} keep their own captions; say "caption those clips too" to add ours.`;
 
 const noSuchJob = () =>
   new OrchestratorMcpFailure({
@@ -709,20 +739,23 @@ const handlers = {
     }),
   ),
   // Writes the edit (one checkpoint), so plan-mode and read-only callers are refused.
-  video_add_captions: McpToolAccess.actsAsCaller(() =>
+  video_add_captions: McpToolAccess.actsAsCaller(({ confirm }) =>
     Effect.gen(function* () {
       yield* refusePlanMode("add captions");
       const project = yield* callerProject();
       const captions = yield* CaptionTrackService.CaptionTrackService;
       const result = yield* captions
-        .addCaptions(project.projectId, { reply: project.reply })
+        .addCaptions(project.projectId, { reply: project.reply, confirm: confirm === true })
         .pipe(Effect.mapError(editRefusal));
       const hint = yield* cleanupAfterChange(project, result.changed);
       return {
         revision: result.revision,
-        message: result.changed
-          ? `Added ${result.captions} captions to the edit. They follow later cuts; say undo to remove them.`
-          : `The edit already has these ${result.captions} captions.`,
+        message:
+          result.captioned.length > 0
+            ? `Added captions to ${CaptionTrackService.listed(result.captioned)} in ${result.look}. They follow later cuts; say undo to remove them.`
+            : result.changed
+              ? "Added captions to the edit. They follow later cuts; say undo to remove them."
+              : "The edit already has these captions.",
         ...hint,
       };
     }),
@@ -850,24 +883,51 @@ const handlers = {
       };
     }),
   ),
-  // Writes the edit (one checkpoint), so plan-mode and read-only callers are refused.
-  video_caption_style: McpToolAccess.actsAsCaller(({ preset }) =>
+  // Writes the edit (one checkpoint), so plan-mode and read-only callers are refused; listing the
+  // looks changes nothing and works in plan mode too.
+  video_caption_style: McpToolAccess.actsAsCaller(({ preset, custom, confirm }) =>
     Effect.gen(function* () {
-      yield* refusePlanMode("change the caption look");
       const project = yield* callerProject();
       const captions = yield* CaptionTrackService.CaptionTrackService;
+      if (preset === undefined && custom === undefined) {
+        const listed = yield* captions
+          .looks(project.projectId, { confirm: confirm === true })
+          .pipe(Effect.mapError(editRefusal));
+        return {
+          revision: listed.revision,
+          // The note is its own paragraph after the closing rule, which stays a rule.
+          message: [looksMessage(listed.looks), keepsOwnCaptions(listed.uncaptioned)]
+            .filter(Boolean)
+            .join("\n\n"),
+        };
+      }
+      yield* refusePlanMode("change the caption look");
+      const parsed = custom === undefined ? undefined : parseCaptionCustom(custom);
+      if (parsed !== undefined && "error" in parsed) {
+        return yield* new OrchestratorMcpFailure({
+          code: "invalid_request",
+          message: parsed.error,
+        });
+      }
       const result = yield* captions
-        .setStyle(project.projectId, preset, { reply: project.reply, origin: "agent" })
+        .setStyle(
+          project.projectId,
+          { preset, ...(parsed === undefined ? {} : { custom: parsed.custom }) },
+          { reply: project.reply, origin: "agent", confirm: confirm === true },
+        )
         .pipe(Effect.mapError(editRefusal));
-      const name = CAPTION_PRESET_NAMES[preset];
+      const { look } = result;
+      // No count: it is caption items, one per run of a clip, not the lines the player shows.
       const message = result.added
-        ? `Added ${result.captions} captions in the ${name} look. Say undo to take them out.`
-        : result.changed
-          ? `The captions now use the ${name} look, over the player and in the export. Say undo to go back.`
-          : `The captions already use the ${name} look.`;
+        ? `Added captions in ${look}. Say undo to take them out.`
+        : result.captioned.length > 0
+          ? `Added captions to ${CaptionTrackService.listed(result.captioned)} in ${look}. Say undo to take them out.`
+          : result.changed
+            ? `The captions now use ${look}, over the player and in the export. Say undo to go back.`
+            : `The captions already use ${look}.`;
       return {
         revision: result.revision,
-        message,
+        message: [message, keepsOwnCaptions(result.uncaptioned)].filter(Boolean).join(" "),
         ...(yield* cleanupAfterChange(project, result.changed)),
       };
     }),

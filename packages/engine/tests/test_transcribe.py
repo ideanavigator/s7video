@@ -22,9 +22,9 @@ from typing import Any
 
 import numpy as np
 import pytest
-from engine_support import Wire
+from engine_support import Wire, make_clip
 
-from s7engine import models, rpc
+from s7engine import burned_in, models, rpc
 from s7engine.jobs import Cancelled, JobContext
 from s7engine.methods import silence as silence_method
 from s7engine.methods import transcribe
@@ -508,6 +508,35 @@ def test_changed_model_invalidates_the_cache(
     _run(wire, talk, tmp_path / "cache", "a")
     light = _run(wire, talk, tmp_path / "cache", "b", model="light")["result"]
     assert light["cached"] is False and light["model"] == "test/asr-small"
+
+
+def test_a_clip_with_a_picture_keeps_its_burned_in_check(
+    hub: FakeHub, fake_models: Loads, tools: None, wire: Wire, talk: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """S7V-099: the transcript keeps the check's result; a sound file, or a check that can't run, adds nothing."""
+    _download()
+    clip = make_clip(
+        tmp_path / "talk.mkv",
+        "color=c=gray:s=64x64:r=30:d=3.1",
+        ["-i", str(talk), "-map", "0:v", "-map", "1:a", "-c:v", "ffv1", "-c:a", "pcm_s16le", "-shortest"],
+    )
+    checked: list[tuple[str, list[str], Fraction]] = []
+    answer: dict[str, Any] | None = {"found": True, "confidence": 0.9, "region": {"y0": 0.7, "y1": 0.8}}
+
+    def detect(path: str, words: list[dict[str, Any]], rate: Fraction, offset: Fraction, job: JobContext) -> dict[str, Any] | None:
+        checked.append((Path(path).name, [word["text"] for word in words], rate))
+        return answer
+
+    monkeypatch.setattr(burned_in, "detect", detect)
+    result = _run(wire, clip, tmp_path / "cache", "a")["result"]
+    assert json.loads(Path(result["path"]).read_text())["burnedInCaptions"] == answer
+    assert checked == [("talk.mkv", ["alpha", "bravo"], Fraction(30))]
+    sound = _run(wire, talk, tmp_path / "cache", "b")["result"]
+    assert "burnedInCaptions" not in json.loads(Path(sound["path"]).read_text())
+    assert len(checked) == 1
+    answer = None
+    unchecked = _run(wire, clip, tmp_path / "other", "c")["result"]
+    assert "burnedInCaptions" not in json.loads(Path(unchecked["path"]).read_text())
 
 
 def test_silent_audio_returns_no_words(
