@@ -45,7 +45,7 @@ export const NO_CLIP_TO_SPLIT =
   "Move the playhead onto a clip to split it, or say \u201csplit at 0:30\u201d.";
 /** S with a clip selected while the playhead is on another clip. */
 export const NOT_ON_SELECTED_CLIP =
-  "The playhead isn't on the selected clip. Click the clip you want to split.";
+  "The playhead isn't on the selected clip. Click the clip you want to split, or say \u201csplit at 0:30\u201d.";
 
 export interface TimelineEditActions {
   readonly apply: (ops: ReadonlyArray<EditOp>, baseRevision: number) => Promise<EditApplyOutcome>;
