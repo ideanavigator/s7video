@@ -881,9 +881,7 @@ describe("EditorPanel", () => {
         const result = screen.getByTestId("export-result");
         await expect
           .element(result)
-          .toHaveTextContent(
-            "Your files for editors are ready · in exports: edit.fcpxml, edit.srt",
-          );
+          .toHaveTextContent("Your files for editors are ready · in exports: edit.fcpxml and .srt");
         await result.getByRole("button", { name: "Hide" }).click();
         await expect.element(result).not.toBeInTheDocument();
       } finally {
@@ -916,7 +914,7 @@ describe("EditorPanel", () => {
           const result = screen.getByTestId("export-result");
           await expect
             .element(result)
-            .toHaveTextContent("Your files for editors are ready · edit.fcpxml, edit.srt");
+            .toHaveTextContent("Your files for editors are ready · edit.fcpxml and .srt");
           await result.getByRole("button", { name: "Show in Finder" }).click();
           await vi.waitFor(() =>
             expect(commands.openInEditor).toHaveBeenCalledWith({
@@ -936,7 +934,7 @@ describe("EditorPanel", () => {
           const result = screen.getByTestId("export-result");
           await expect
             .element(result)
-            .toHaveTextContent("Latest files for editors · edit.fcpxml, edit.srt");
+            .toHaveTextContent("Latest files for editors · edit.fcpxml and .srt");
           await expect
             .element(result.getByRole("button", { name: "Show in Finder" }))
             .toBeVisible();
@@ -967,7 +965,7 @@ describe("EditorPanel", () => {
           await expect
             .element(screen.getByTestId("export-result"))
             .toHaveTextContent(
-              "Your files for editors are ready · in exports: edit.fcpxml, edit.srt",
+              "Your files for editors are ready · in exports: edit.fcpxml and .srt",
             );
         }
         state.export = { job: null, status: null };
@@ -975,7 +973,7 @@ describe("EditorPanel", () => {
         const result = screen.getByTestId("export-result");
         await expect
           .element(result)
-          .toHaveTextContent("Latest files for editors · in exports: edit.fcpxml, edit.srt");
+          .toHaveTextContent("Latest files for editors · in exports: edit.fcpxml and .srt");
         expect(result.getByRole("button", { name: "Show in Finder" }).query()).toBeNull();
         await result.getByRole("button", { name: "Copy where the files are" }).click();
         await vi.waitFor(() => expect(write).toHaveBeenCalledWith(`${WORKSPACE_ROOT}/exports`));

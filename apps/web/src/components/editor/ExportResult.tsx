@@ -92,6 +92,17 @@ const latestOf = (status: ExportStatus | null): LatestExport | null => {
 
 const fileName = (path: string) => path.split("/").at(-1) ?? path;
 
+/** "edit.fcpxml and .srt": one export's files share a name, so the rest are named by type. */
+const filesText = (files: ReadonlyArray<string>) => {
+  const [first, ...rest] = files.map(fileName);
+  const stem = first!.replace(/\.[^.]+$/u, "");
+  const names = [
+    first!,
+    ...rest.map((name) => (name.startsWith(`${stem}.`) ? name.slice(stem.length) : name)),
+  ];
+  return names.length < 2 ? names[0]! : `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`;
+};
+
 /** The project's own exports folder, where every export's files are. */
 const EXPORTS_FOLDER = "exports";
 
@@ -269,11 +280,13 @@ export function useExportResult(props: {
           <>
             {freshFiles === null ? "Latest files for editors" : "Your files for editors are ready"}
             <span className="text-muted-foreground">
-              {` · ${canReveal ? "" : "in exports: "}${editorsFiles.map(fileName).join(", ")}`}
+              {` · ${canReveal ? "" : "in exports: "}${filesText(editorsFiles)}`}
             </span>
           </>
         ),
         tone: "done",
+        // The names are where to find the files, so they wrap rather than being cut off.
+        wraps: true,
         actions: (
           <>
             {canReveal ? (
@@ -338,7 +351,7 @@ export function useExportResult(props: {
         ) : null}
         <span
           role="status"
-          className="min-w-0 flex-1 truncate data-[tone=error]:text-destructive-foreground data-[tone=muted]:text-muted-foreground"
+          className={`min-w-0 flex-1 ${"wraps" in row ? "break-words py-1" : "truncate"} data-[tone=error]:text-destructive-foreground data-[tone=muted]:text-muted-foreground`}
           data-tone={row.tone}
         >
           {row.text}
