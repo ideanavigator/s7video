@@ -163,7 +163,7 @@ import EditorPanel, {
   DROP_OVERLAY_TEXT,
   PLAYER_SHARE,
 } from "./EditorPanel";
-import { EXPORT_GONE, latestExportStorageKey } from "./ExportResult";
+import { EXPORT_GONE, latestEditorsFilesStorageKey, latestExportStorageKey } from "./ExportResult";
 import { SPEECH_MODEL_PROMPT } from "./SpeechModelPrompt";
 
 const FPS = { num: 30, den: 1 };
@@ -600,6 +600,7 @@ describe("EditorPanel", () => {
     const environmentId = EnvironmentId.make("env-1");
     const EXPORT_PATH = "exports/charger-reel-20261114-2227.mp4";
     const STORAGE_KEY = latestExportStorageKey({ environmentId, projectId });
+    const EDITORS_KEY = latestEditorsFilesStorageKey({ environmentId, projectId });
     const finished: ProjectExport = {
       job: exportJob({ state: "succeeded", progress: 1 }),
       status: {
@@ -635,6 +636,7 @@ describe("EditorPanel", () => {
       state.export = { job: null, status: null };
       state.exportFile = { size: 68_000_000, check: "present", canReveal: true };
       localStorage.removeItem(STORAGE_KEY);
+      localStorage.removeItem(EDITORS_KEY);
       delete window.desktopBridge;
     };
     /** The panel's row that holds `element`. */
@@ -879,13 +881,156 @@ describe("EditorPanel", () => {
         const result = screen.getByTestId("export-result");
         await expect
           .element(result)
-          .toHaveTextContent("Your files for editors are ready · edit.fcpxml, edit.srt");
+          .toHaveTextContent(
+            "Your files for editors are ready · in exports: edit.fcpxml, edit.srt",
+          );
         await result.getByRole("button", { name: "Hide" }).click();
         await expect.element(result).not.toBeInTheDocument();
       } finally {
         reset();
       }
     });
+
+    // S7V-109: the files for editors lead somewhere, and are still there after a reload.
+    const editorsFiles = ["exports/edit.fcpxml", "exports/edit.srt"];
+    const editorsDone: ProjectExport = {
+      job: exportJob({ id: EngineJobId.make("job-7"), state: "succeeded", progress: 1 }),
+      status: {
+        jobId: EngineJobId.make("job-7"),
+        projectId,
+        path: "exports/edit.fcpxml",
+        state: "succeeded",
+        files: editorsFiles,
+      },
+    };
+
+    it("files for editors: Show in Finder in the desktop app, and kept after a reload", async () => {
+      setState([asset("clip-0")], true);
+      kept();
+      state.export = editorsDone;
+      window.desktopBridge = {} as NonNullable<typeof window.desktopBridge>;
+      commands.openInEditor.mockClear();
+      try {
+        {
+          await using screen = await renderPanel();
+          const result = screen.getByTestId("export-result");
+          await expect
+            .element(result)
+            .toHaveTextContent("Your files for editors are ready · edit.fcpxml, edit.srt");
+          await result.getByRole("button", { name: "Show in Finder" }).click();
+          await vi.waitFor(() =>
+            expect(commands.openInEditor).toHaveBeenCalledWith({
+              environmentId,
+              input: {
+                cwd: `${WORKSPACE_ROOT}/exports/edit.fcpxml`,
+                editor: "file-manager",
+                reveal: true,
+              },
+            }),
+          );
+        }
+        // A reload: the newest export is still the files for editors, not the older video.
+        state.export = { job: null, status: null };
+        {
+          await using screen = await renderPanel();
+          const result = screen.getByTestId("export-result");
+          await expect
+            .element(result)
+            .toHaveTextContent("Latest files for editors · edit.fcpxml, edit.srt");
+          await expect
+            .element(result.getByRole("button", { name: "Show in Finder" }))
+            .toBeVisible();
+          // The older video export stays playable from beside Export.
+          await expect
+            .element(screen.getByRole("button", { name: "Play the latest export" }))
+            .toBeVisible();
+          // Hidden stays hidden after the next reload.
+          await result.getByRole("button", { name: "Hide" }).click();
+          await expect.element(result).not.toBeInTheDocument();
+        }
+        await using screen = await renderPanel();
+        await expect.element(screen.getByRole("button", { name: "Export" })).toBeVisible();
+        expect(screen.getByTestId("export-result").query()).toBeNull();
+      } finally {
+        reset();
+      }
+    });
+
+    it("files for editors in the browser build: names the folder and copies where it is", async () => {
+      setState([asset("clip-0")], true);
+      state.export = editorsDone;
+      toasts.add.mockReset();
+      const write = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue(undefined);
+      try {
+        {
+          await using screen = await renderPanel();
+          await expect
+            .element(screen.getByTestId("export-result"))
+            .toHaveTextContent(
+              "Your files for editors are ready · in exports: edit.fcpxml, edit.srt",
+            );
+        }
+        state.export = { job: null, status: null };
+        await using screen = await renderPanel();
+        const result = screen.getByTestId("export-result");
+        await expect
+          .element(result)
+          .toHaveTextContent("Latest files for editors · in exports: edit.fcpxml, edit.srt");
+        expect(result.getByRole("button", { name: "Show in Finder" }).query()).toBeNull();
+        await result.getByRole("button", { name: "Copy where the files are" }).click();
+        await vi.waitFor(() => expect(write).toHaveBeenCalledWith(`${WORKSPACE_ROOT}/exports`));
+        await vi.waitFor(() =>
+          expect(toasts.add).toHaveBeenCalledWith({
+            type: "success",
+            title: "Copied where your files for editors are",
+            description: `${WORKSPACE_ROOT}/exports`,
+          }),
+        );
+      } finally {
+        write.mockRestore();
+        reset();
+      }
+    });
+
+    it("drops kept files for editors once a video export is newer, or their file is gone", async () => {
+      setState([asset("clip-0")], true);
+      localStorage.setItem(EDITORS_KEY, JSON.stringify({ files: editorsFiles }));
+      state.export = finished;
+      try {
+        {
+          await using screen = await renderPanel();
+          await expect
+            .element(screen.getByTestId("export-result"))
+            .toHaveTextContent("Your video is ready · 2:02 · 1080×1920 · 68 MB");
+          await vi.waitFor(() => expect(localStorage.getItem(EDITORS_KEY) ?? "null").toBe("null"));
+        }
+        state.export = { job: null, status: null };
+        localStorage.setItem(EDITORS_KEY, JSON.stringify({ files: editorsFiles }));
+        state.exportFile.size = "missing";
+        await using screen = await renderPanel();
+        await expect.element(screen.getByRole("button", { name: "Export" })).toBeVisible();
+        expect(screen.getByTestId("export-result").query()).toBeNull();
+        await vi.waitFor(() => expect(localStorage.getItem(EDITORS_KEY) ?? "null").toBe("null"));
+      } finally {
+        reset();
+      }
+    });
+
+    it.each([["../edit.fcpxml"], ["exports/../edit.json"]])(
+      "drops kept files for editors outside exports/ (%s)",
+      async (path) => {
+        setState([asset("clip-0")], true);
+        localStorage.setItem(EDITORS_KEY, JSON.stringify({ files: ["exports/edit.srt", path] }));
+        try {
+          await using screen = await renderPanel();
+          await expect.element(screen.getByRole("button", { name: "Export" })).toBeVisible();
+          expect(screen.getByTestId("export-result").query()).toBeNull();
+          await vi.waitFor(() => expect(localStorage.getItem(EDITORS_KEY) ?? "null").toBe("null"));
+        } finally {
+          reset();
+        }
+      },
+    );
 
     it("closes the start error when Export without captions is pressed", async () => {
       setState([asset("clip-0")], true);
