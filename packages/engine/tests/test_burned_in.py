@@ -114,8 +114,8 @@ def test_a_sign_with_two_lines_is_not_captions() -> None:
     assert burned_in.assess(card, spoken)["found"] is False
 
 
-def test_words_without_spaces_are_matched_by_character() -> None:
-    assert burned_in.tokens("我们今天 cut 静音") == ["我", "们", "今", "天", "cut", "静", "音"]
+def test_words_without_spaces_are_matched_by_character_pairs() -> None:
+    assert burned_in.tokens("我们今天 cut 静音") == ["我们", "们今", "今天", "cut", "静音"]
     words = [{"text": char, "startFrame": index * 10, "endFrame": index * 10 + 9} for index, char in enumerate("我们今天剪掉静音然后加上字幕吧")]
     seconds = burned_in.sample_seconds(words, RATE)
     frames = []
@@ -124,6 +124,65 @@ def test_words_without_spaces_are_matched_by_character() -> None:
         frames.append([burned_in.Line("".join(w["text"] for w in words[index : index + 5]), 0.8, 0.85)])
     spoken = [burned_in.spoken_near(words, RATE, at) for at in seconds]
     assert burned_in.assess(frames, spoken)["found"] is True
+
+
+#: About 25 s of Japanese talk, in two-character words at about 7 characters a second.
+JA_SPEECH = (
+    "今日は動画の編集について話します。まず無音の部分を切って、それからテロップを入れます。"
+    "字幕の色は自分で選べるので、オレンジにしたり、上に置いたりできます。最後に書き出して、"
+    "スマホで確認してから投稿します。編集は難しそうに見えますが、慣れるとすぐにできるようになります。"
+    "みなさんもぜひ試してみてください。"
+)
+#: Text in the picture that has nothing to do with the speech: a shop notice.
+JA_NOTICE = (
+    "本日は店内改装のため午後六時で閉店いたします。ご来店のお客様にはご不便をおかけしますが、"
+    "何卒ご理解のほどよろしくお願い申し上げます。ポイントカードは明日から新しいものに切り替わります。"
+    "セール品の返品はできませんのでご注意ください。駐車場は第二駐車場をご利用ください。"
+)
+
+
+def _ja_words() -> list[dict[str, Any]]:
+    text = "".join(char for char in JA_SPEECH if burned_in._CJK.match(char))
+    return [
+        {"text": text[index : index + 2], "startFrame": index // 2 * 9, "endFrame": index // 2 * 9 + 8}
+        for index in range(0, len(text), 2)
+    ]
+
+
+def test_japanese_captions_are_found() -> None:
+    words = _ja_words()
+    seconds = burned_in.sample_seconds(words, RATE)
+    frames = []
+    for at in seconds:
+        index = min(int(at * 30 / 9), len(words) - 1) // 4 * 4
+        frames.append([burned_in.Line("".join(w["text"] for w in words[index : index + 4]), 0.8, 0.85)])
+    spoken = [burned_in.spoken_near(words, RATE, at) for at in seconds]
+    assert burned_in.assess(frames, spoken)["found"] is True
+
+
+@pytest.mark.parametrize("lines", [1, 2, 4])
+def test_unrelated_japanese_text_is_rarely_captions(lines: int) -> None:
+    """S7V-099 re-check: single characters matched particles in any speech (12-18% false "found" at
+    4 lines a frame); character pairs keep it at 2% or less."""
+    import random
+
+    words = _ja_words()
+    seconds = burned_in.sample_seconds(words, RATE)
+    spoken = [burned_in.spoken_near(words, RATE, at) for at in seconds]
+    notice = "".join(char for char in JA_NOTICE if burned_in._CJK.match(char))
+    rng = random.Random(99)
+    trials, found = 300, 0
+    for _ in range(trials):
+        frames = []
+        for _ in seconds:
+            frame = []
+            for _ in range(lines):
+                length = rng.randint(8, 16)
+                start = rng.randrange(len(notice) - length)
+                frame.append(burned_in.Line(notice[start : start + length], 0.3, 0.35))
+            frames.append(frame)
+        found += burned_in.assess(frames, spoken)["found"]
+    assert found <= 0.02 * trials, found
 
 
 @pytest.mark.usefixtures("tools")

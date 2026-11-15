@@ -4,10 +4,11 @@
 
 Ten frames are taken at the middle of evenly spaced spoken words, and Apple's Vision framework
 reads their text on this Mac (no download; nothing leaves the device), detecting the language
-itself. A frame shows captions when a line of its text is mostly words said within
-``WINDOW_SECONDS`` of it. Captions change with the speech, so the clip has them when enough frames
-show such a line and at least two different lines match; a sign or a name card the speaker says
-is one line. A line in nearly every frame is part of the picture and never counts.
+itself (text without spaces matches by character pairs). A frame shows captions when a line of
+its text is mostly words said within ``WINDOW_SECONDS`` of it. Captions change with the speech,
+so the clip has them when enough frames show such a line and at least two different lines match;
+a sign or a name card the speaker says is one line. A line in nearly every frame is part of the
+picture and never counts.
 
 The result keeps only ``found``, ``confidence`` (the share of frames that showed captions) and the
 caption band (``region``, from the top of the frame, 0–1); the text read is never stored.
@@ -42,8 +43,9 @@ SAMPLE_HEIGHT = 960
 EXTRACT_TIMEOUT = 60.0
 
 _TOKEN = re.compile(r"[\w']+", re.UNICODE)
-#: Chinese, Japanese and Korean script, written without spaces: each character is a token.
+#: Chinese, Japanese and Korean script, written without spaces: matched by character pairs.
 _CJK = re.compile(r"[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7af]")
+_CJK_RUN = re.compile(r"[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7af]+")
 
 
 @dataclass(frozen=True)
@@ -55,13 +57,20 @@ class Line:
     bottom: float
 
 
+def _pairs(run: str) -> list[str]:
+    """A run of characters written without spaces, as its overlapping character pairs: single
+    characters (particles like の or は) are in almost any few seconds of speech, pairs are not."""
+    return [run] if len(run) == 1 else [run[index : index + 2] for index in range(len(run) - 1)]
+
+
 def tokens(text: str) -> list[str]:
     """Words of two characters or more, lower case, without punctuation: "I" and "a" match anything.
-    Text in a script written without spaces gives one token per character."""
+    Chinese, Japanese and Korean runs give their character pairs."""
     out: list[str] = []
     for token in _TOKEN.findall(text.lower()):
         if _CJK.search(token):
-            out.extend(char for char in token if _CJK.match(char))
+            for run in _CJK_RUN.findall(token):
+                out.extend(_pairs(run))
         elif len(token) >= 2:
             out.append(token)
     return out
@@ -79,11 +88,19 @@ def sample_seconds(words: list[dict[str, Any]], rate: Fraction, count: int = SAM
 
 
 def spoken_near(words: list[dict[str, Any]], rate: Fraction, at: float) -> set[str]:
+    """The tokens said within ``WINDOW_SECONDS`` of ``at``. Words in a script without spaces are
+    joined first, so a caption's character pairs that cross a word boundary still match."""
     out: set[str] = set()
+    joined: list[str] = []
     for word in words:
         start, end = float(word["startFrame"] / rate), float(word["endFrame"] / rate)
         if start - WINDOW_SECONDS <= at <= end + WINDOW_SECONDS:
-            out.update(tokens(word["text"]))
+            text = str(word["text"])
+            if _CJK.search(text):
+                joined.append("".join(_CJK_RUN.findall(text)))
+            out.update(token for token in tokens(text) if not _CJK.search(token))
+    for run in _CJK_RUN.findall("".join(joined)):
+        out.update(_pairs(run))
     return out
 
 
