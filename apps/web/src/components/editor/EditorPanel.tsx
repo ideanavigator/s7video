@@ -29,7 +29,7 @@ import {
   UploadIcon,
 } from "lucide-react";
 import * as Schema from "effect/Schema";
-import { useEffect, useId, useState, type DragEvent, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type DragEvent, type ReactNode } from "react";
 
 import { useAssetUrlState } from "../../assets/assetUrls";
 import {
@@ -893,6 +893,9 @@ export default function EditorPanel(props: {
         });
   // Opened for one set of notices: a notice arriving later never opens straight away.
   const [openedFor, setOpenedFor] = useState<string | null>(null);
+  // Whether keyboard focus is in the notices, and whether the user just opened or closed them.
+  const focusInNotices = useRef(false);
+  const toggledByUser = useRef(false);
   // The room the tabs got; a panel shows whole rows of it, or the hint under one row.
   const [tabRoomPx, setTabRoomPx] = useState<number | null>(null);
   const observeTabRoom = (element: HTMLDivElement | null) =>
@@ -998,11 +1001,27 @@ export default function EditorPanel(props: {
     const target = next
       ? `[data-notice="${notices.keys[closedFit.shown] ?? ""}"]`
       : "[data-testid=editor-notices-cue] button";
+    toggledByUser.current = true;
     setOpenedFor(next ? notices.keys.join() : null);
     window.requestAnimationFrame(() =>
       document.querySelector<HTMLElement>(target)?.focus({ preventScroll: true }),
     );
   };
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- moves DOM focus, outside React, to the first notice in view when a new notice closes the opened list while focus was in it
+  useEffect(() => {
+    const byUser = toggledByUser.current;
+    toggledByUser.current = false;
+    if (openedFor !== null || byUser || !focusInNotices.current) return;
+    const frame = window.requestAnimationFrame(() => {
+      const first = [...document.querySelectorAll<HTMLElement>("[data-notice]")].find(
+        (notice) => notice.offsetHeight > 0 && !notice.inert,
+      );
+      const target =
+        first ?? document.querySelector<HTMLElement>("[data-testid=editor-notices-cue] button");
+      target?.focus({ preventScroll: true });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [openedFor]);
   const tabPanelStyle = {
     height:
       tabRoomPx === null || tabRoomPx < TAB_ROW_PX
@@ -1135,6 +1154,16 @@ export default function EditorPanel(props: {
         <div
           className="flex flex-col [&:not(:has([data-notice]:not(:empty)))]:hidden"
           data-testid="editor-notices-group"
+          onFocus={() => {
+            focusInNotices.current = true;
+          }}
+          onBlur={(event) => {
+            // A notice or button that goes away blurs with nowhere to go: focus is still "here".
+            const next = event.relatedTarget;
+            if (next instanceof Node && !event.currentTarget.contains(next)) {
+              focusInNotices.current = false;
+            }
+          }}
         >
           <div className="flex items-start gap-2">
             <div
@@ -1180,19 +1209,23 @@ export default function EditorPanel(props: {
             {/* Once opened, the way back stays beside the notices, even when they all fit. */}
             {opened ? (
               <div className="relative shrink-0">
-                <IconAction label="Show fewer notices" onClick={toggleNotices}>
+                <IconAction
+                  label={
+                    noticesLeft > 0
+                      ? `Show fewer notices · ${noticesLeft} more: close one to see ${noticesLeft === 1 ? "it" : "them"}`
+                      : "Show fewer notices"
+                  }
+                  onClick={toggleNotices}
+                >
                   <ChevronUpIcon aria-hidden />
                 </IconAction>
                 {noticesLeft > 0 ? (
                   <span
+                    aria-hidden
                     className="pointer-events-none absolute -end-1 -bottom-1 rounded-full bg-muted px-1 text-3xs leading-4 text-muted-foreground tabular-nums"
                     data-testid="editor-notices-left"
                   >
                     +{noticesLeft}
-                    <span className="sr-only">
-                      {noticesLeft === 1 ? " notice" : " notices"} left out; close one to see{" "}
-                      {noticesLeft === 1 ? "it" : "them"}
-                    </span>
                   </span>
                 ) : null}
               </div>

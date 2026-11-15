@@ -1825,7 +1825,7 @@ describe("EditorPanel", () => {
               await expect.poll(() => opened().length).toBeGreaterThan(0);
               await expect.poll(() => document.activeElement).toBe(opened()[0]);
               // The way back stays, a 28 px icon button, even when every notice fits.
-              const fewer = screen.getByRole("button", { name: "Show fewer notices" });
+              const fewer = screen.getByRole("button", { name: /^Show fewer notices/u });
               await expect.element(fewer).toBeVisible();
               const fewerBox = fewer.element().getBoundingClientRect();
               expect(Math.min(fewerBox.width, fewerBox.height)).toBeGreaterThanOrEqual(28);
@@ -1834,10 +1834,18 @@ describe("EditorPanel", () => {
               await checkColumn(56);
               expect(outOfView().every((notice) => notice.inert)).toBe(true);
               const left = document.querySelector("[data-testid=editor-notices-left]");
-              if (outOfView().length > 0) {
-                expect(left?.textContent?.startsWith(`+${outOfView().length}`)).toBe(true);
+              const left_ = outOfView().length;
+              if (left_ > 0) {
+                expect(left?.textContent?.startsWith(`+${left_}`)).toBe(true);
+                // The count is in the button's name and tooltip, in words.
+                await expect
+                  .element(fewer)
+                  .toHaveAccessibleName(
+                    `Show fewer notices · ${left_} more: close one to see ${left_ === 1 ? "it" : "them"}`,
+                  );
               } else {
                 expect(left).toBeNull();
+                await expect.element(fewer).toHaveAccessibleName("Show fewer notices");
               }
               await fewer.click();
               await expect.poll(() => inView()).toEqual(before);
@@ -1916,7 +1924,7 @@ describe("EditorPanel", () => {
             await expect
               .element(screen.getByRole("button", { name: /^Show \d more notices?$/u }))
               .toBeVisible();
-            expect(screen.getByRole("button", { name: "Show fewer notices" }).query()).toBeNull();
+            expect(screen.getByRole("button", { name: /^Show fewer notices/u }).query()).toBeNull();
           };
           // Refused change, old versions and the speech prompt; open them.
           withRevision(true);
@@ -1924,12 +1932,18 @@ describe("EditorPanel", () => {
           await expect.element(screen.getByText(notice)).toBeInTheDocument();
           await screen.getByRole("button", { name: /^Show \d more notices?$/u }).click();
           await expect
-            .element(screen.getByRole("button", { name: "Show fewer notices" }))
+            .element(screen.getByRole("button", { name: /^Show fewer notices/u }))
             .toBeVisible();
-          // The refusal goes: the set changed, so the notices close.
+          // The refusal goes: the set changed, so the notices close, and focus (which was on the
+          // notice that opened) moves to the first notice now in view, not out of the notices.
           withRevision(false);
           await screen.rerender(layoutUi());
           await closed();
+          const firstInView = () =>
+            [...document.querySelectorAll<HTMLElement>("[data-notice]")].find(
+              (notice) => notice.offsetHeight > 0 && !notice.inert,
+            ) ?? document.querySelector<HTMLElement>("[data-testid=editor-notices-cue] button");
+          await expect.poll(() => document.activeElement).toBe(firstInView());
           // It comes back: the same set as when they were opened, but they stay closed, and the
           // refusal is in view, not hidden behind a count.
           withRevision(true);
