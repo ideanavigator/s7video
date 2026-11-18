@@ -516,6 +516,43 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     ),
   );
 
+  it.effect("ships the engine runtime on Mac only, for macOS 14 or later (S7V-112)", () =>
+    Effect.gen(function* () {
+      const mac = yield* createBuildConfig(
+        "mac",
+        "dmg",
+        "0.0.33",
+        false,
+        false,
+        undefined,
+        undefined,
+      );
+      assert.deepInclude(mac.extraResources as ReadonlyArray<unknown>, {
+        from: "engine-runtime/python",
+        to: "python",
+      });
+      assert.deepInclude(mac.extraResources as ReadonlyArray<unknown>, {
+        from: "engine-runtime/engine",
+        to: "engine",
+      });
+      assert.equal((mac.mac as { minimumSystemVersion: string }).minimumSystemVersion, "14.0");
+      assert.include(mac.files as ReadonlyArray<string>, "!engine-runtime/**/*");
+      const linux = yield* createBuildConfig(
+        "linux",
+        "AppImage",
+        "0.0.33",
+        false,
+        false,
+        undefined,
+        undefined,
+      );
+      assert.notDeepInclude(linux.extraResources as ReadonlyArray<unknown>, {
+        from: "engine-runtime/python",
+        to: "python",
+      });
+    }),
+  );
+
   it("renders Linux metadata from the brand config", () => {
     const metainfo = renderLinuxMetainfo();
     assert.include(metainfo, "<id>app.s7video.desktop</id>");
