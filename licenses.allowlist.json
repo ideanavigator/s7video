@@ -1,5 +1,5 @@
 {
-  "$comment": "Licences that pnpm licenses:check accepts. Source of truth: the allowlist in s7video-planning tickets/README.md, ADR-001 and ADR-003. Order matters: for a dual licence the check elects the first allowed option in this list (most permissive first).",
+  "$comment": "Licences that pnpm licenses:check accepts. Source of truth: the allowlist in s7video-planning tickets/README.md, ADR-001 and ADR-003 (amendment 2: FTL, BSD-3-Clause-Open-MPI, MIT-Modern-Variant as MIT, and the FFmpeg helper's 'helper' allowances). Order matters: for a dual licence the check elects the first allowed option in this list (most permissive first).",
   "allowed": [
     "MIT",
     "MIT-0",
@@ -7,8 +7,10 @@
     "0BSD",
     "BSD-2-Clause",
     "BSD-3-Clause",
+    "BSD-3-Clause-Open-MPI",
     "Apache-2.0",
     "Zlib",
+    "FTL",
     "Unlicense",
     "BlueOak-1.0.0",
     "Python-2.0",
@@ -27,12 +29,25 @@
       "reason": "Permissive, not OSI-approved. truncate-utf8-bytes only, in electron-builder's build chain; never shipped. S7V-005 audit: keep (dev). PO decision recorded as an ADR-003 amendment."
     }
   ],
+  "helper": [
+    {
+      "license": "LGPL-2.1-or-later",
+      "dynamicOnly": true,
+      "reason": "ADR-003: LGPL only as a dynamically linked library of the separate FFmpeg helper (FFmpeg, FriBidi), which the app runs as a subprocess; never linked into our code."
+    },
+    {
+      "license": "WTFPL",
+      "packages": ["zimg"],
+      "reason": "ADR-003 amendment 2: zimg only, shipped in the FFmpeg helper for HDR export (zscale). Any other WTFPL package still fails."
+    }
+  ],
   "elections": {
     "jszip": "MIT",
     "dompurify": "Apache-2.0"
   },
   "aliases": {
     "MIT/X11": "MIT",
-    "Apache2": "Apache-2.0"
+    "Apache2": "Apache-2.0",
+    "MIT-Modern-Variant": "MIT"
   }
 }
