@@ -184,6 +184,8 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
       : options.releaseAsset;
   const managedDirectory = path.join(options.baseDir, "tools", "codex");
   const activePath = path.join(managedDirectory, "active.json");
+  // s7video: Codex writes into CODEX_HOME (or ~/.codex) even for --version; probes use the data folder.
+  const probeHome = path.join(options.baseDir, "tools", ".codex-probe-home");
   const executableName = platform === "win32" ? "codex.exe" : "codex";
   const gate = yield* Semaphore.make(1);
   let leases = 0;
@@ -322,8 +324,13 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
     const resolved = yield* resolveSpawnCommand(command, args).pipe(
       Effect.provideService(HostProcess.Platform, platform),
     );
+    yield* fs.makeDirectory(probeHome, { recursive: true, mode: 0o700 });
     const child = yield* spawner.spawn(
-      ChildProcess.make(resolved.command, resolved.args, { shell: resolved.shell }),
+      ChildProcess.make(resolved.command, resolved.args, {
+        shell: resolved.shell,
+        env: { CODEX_HOME: probeHome },
+        extendEnv: true,
+      }),
     );
     const [output, , exitCode] = yield* Effect.all(
       [

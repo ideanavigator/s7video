@@ -1343,6 +1343,8 @@ export const make = Effect.gen(function* () {
         } else {
           const config = decodeCodexSettings(instance.config ?? {});
           if (Option.isNone(config)) continue;
+          // s7video: a managed account's sessions are this app's own threads, kept in the data folder.
+          if (config.value.setupMode === "managed") continue;
           const codexHome = environmentHome("CODEX_HOME");
           const codexSettings =
             config.value.homePath.trim().length === 0 &&

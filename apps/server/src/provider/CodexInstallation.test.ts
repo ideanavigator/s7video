@@ -41,6 +41,7 @@ const makeHarness = Effect.fn("test.makeCodexInstallation")(function* (
     spawner?: ChildProcessSpawner.ChildProcessSpawner["Service"];
     runtimeRenameFailures?: number;
     pinned?: boolean;
+    realValidate?: boolean;
   } = {},
 ) {
   const fs = yield* FileSystem.FileSystem;
@@ -49,11 +50,12 @@ const makeHarness = Effect.fn("test.makeCodexInstallation")(function* (
   const localDirectory = `${baseDir}/local`;
   const localBinaryPath = `${localDirectory}/codex${input.platform === "win32" ? ".exe" : ""}`;
   const probeLog = `${baseDir}/local-probes.txt`;
+  const codexHomeLog = `${baseDir}/probe-codex-home.txt`;
   if (input.local) {
     yield* fs.makeDirectory(localDirectory, { recursive: true });
     yield* fs.writeFileString(
       localBinaryPath,
-      `#!/bin/sh\nprintf '%s\\n' "$*" >> '${probeLog}'\ncase "$1" in\n--version) ${input.local.versionFails ? "exit 1" : `printf '%s\\n' 'codex-cli ${input.local.version}'`};;\napp-server) exit ${input.local.appServerFails ? "1" : "0"};;\nesac\n`,
+      `#!/bin/sh\nprintf '%s\\n' "$*" >> '${probeLog}'\nprintf '%s\\n' "$CODEX_HOME" >> '${codexHomeLog}'\ncase "$1" in\n--version) ${input.local.versionFails ? "exit 1" : `printf '%s\\n' 'codex-cli ${input.local.version}'`};;\napp-server) exit ${input.local.appServerFails ? "1" : "0"};;\nesac\n`,
       { mode: 0o755 },
     );
   }
@@ -87,7 +89,7 @@ const makeHarness = Effect.fn("test.makeCodexInstallation")(function* (
   const installation = yield* CodexInstallation.makeCodexInstallation({
     baseDir,
     ...(input.pinned ? {} : { releaseAsset: { ...asset, sha256 } }),
-    validate: () => Effect.void,
+    ...(input.realValidate ? {} : { validate: () => Effect.void }),
     ...input.options,
   }).pipe(
     Effect.provideService(ModelManifest.ModelManifest, {
@@ -129,6 +131,7 @@ const makeHarness = Effect.fn("test.makeCodexInstallation")(function* (
     baseDir,
     localBinaryPath,
     probeLog,
+    codexHomeLog,
     failedRenames,
     downloads: () => downloads,
   };
@@ -221,6 +224,41 @@ const compileNative = Effect.fn("test.compileNative")(function* (
   );
   expect(yield* compiler.exitCode).toBe(0);
 }, Effect.scoped);
+
+it.effect("probes a local Codex with CODEX_HOME in the data folder, not ~/.codex", () =>
+  Effect.gen(function* () {
+    const h = yield* makeHarness({ local: { version: "0.170.0" } });
+    expect((yield* h.installation.resolve()).source).toBe("local");
+    const probeHome = `${h.baseDir}/tools/.codex-probe-home`;
+    expect((yield* h.fs.readFileString(h.codexHomeLog)).trim().split("\n")).toEqual([
+      probeHome,
+      probeHome,
+    ]);
+    expect(yield* h.fs.exists(probeHome)).toBe(true);
+    expect(yield* h.fs.exists(h.installation.managedDirectory)).toBe(false);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect("checks a managed Codex copy with CODEX_HOME in the data folder, not ~/.codex", () =>
+  Effect.gen(function* () {
+    const first = yield* makeHarness();
+    yield* first.installation.start;
+    expect((yield* terminalState(first.installation)).phase).toBe("succeeded");
+    const executable = yield* first.installation.resolve();
+    const homeLog = `${first.baseDir}/managed-codex-home.txt`;
+    yield* first.fs.writeFileString(
+      executable.executablePath,
+      `#!/bin/sh\nprintf '%s\\n' "$CODEX_HOME" >> '${homeLog}'\nprintf 'codex-cli 0.170.0\\n'\n`,
+      { mode: 0o755 },
+    );
+    const again = yield* makeHarness({ baseDir: first.baseDir, realValidate: true });
+    yield* again.installation.start;
+    expect((yield* terminalState(again.installation)).phase).toBe("succeeded");
+    expect((yield* again.fs.readFileString(homeLog)).trim()).toBe(
+      `${first.baseDir}/tools/.codex-probe-home`,
+    );
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
 
 it.effect("rechecks compatibility after the local executable is replaced", () =>
   Effect.gen(function* () {

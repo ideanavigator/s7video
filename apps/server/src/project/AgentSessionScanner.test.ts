@@ -9,6 +9,7 @@ import {
   ProviderInstanceId,
   type ServerSettings as ContractServerSettings,
 } from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -701,6 +702,45 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
             },
           },
         });
+
+        expect(result.candidates).toEqual([]);
+      }),
+    );
+
+    it.effect("does not scan managed Codex accounts, whose sessions are the app's own", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
+        const userHome = yield* makeTempDir("t3code-user-home-");
+        const workspace = yield* makeTempDir("t3code-workspace-own-cli-");
+        yield* writeTranscript({
+          filePath: path.join(
+            userHome,
+            ".codex",
+            "sessions",
+            "2026",
+            "08",
+            "24",
+            "rollout-own.jsonl",
+          ),
+          contents: codexRolloutLine(workspace),
+          mtimeMs: Date.parse("2026-08-24T12:00:00.000Z"),
+        });
+
+        const result = yield* runScan({
+          claudeHomePath,
+          codexHomePath: path.join(claudeHomePath, "unused-codex"),
+          providerInstances: {
+            [ProviderInstanceId.make("codex")]: {
+              driver: ProviderDriverKind.make("codex"),
+              config: { enabled: true, setupMode: "managed" },
+            },
+            [ProviderInstanceId.make("codex-personal")]: {
+              driver: ProviderDriverKind.make("codex"),
+              config: { enabled: true, setupMode: "managed" },
+            },
+          },
+        }).pipe(Effect.provideService(HostProcess.HomeDirectory, userHome));
 
         expect(result.candidates).toEqual([]);
       }),
