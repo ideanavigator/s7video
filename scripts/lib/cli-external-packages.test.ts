@@ -1,4 +1,3 @@
-import * as NodeFS from "node:fs";
 import * as NodeURL from "node:url";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -59,19 +58,20 @@ describe("undici is a runtime external", () => {
       { undici: "8.11.2" },
     );
   });
+});
 
-  it("stays in the staged dependencies of the real server manifest", () => {
-    const serverManifest = decodeManifest(
-      NodeFS.readFileSync(
-        NodeURL.fileURLToPath(new URL("../../apps/server/package.json", import.meta.url)),
-        "utf8",
-      ),
-    );
-    assert.property(
-      selectCliRuntimeExternalDependencies(serverManifest.dependencies ?? {}),
-      "undici",
-    );
-  });
+it.layer(NodeServices.layer)("undici in the real server manifest", (it) => {
+  it.effect("stays in the staged server dependencies", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const server = decodeManifest(
+        yield* fileSystem.readFileString(
+          NodeURL.fileURLToPath(new URL("../../apps/server/package.json", import.meta.url)),
+        ),
+      );
+      assert.property(selectCliRuntimeExternalDependencies(server.dependencies ?? {}), "undici");
+    }),
+  );
 });
 
 it.layer(NodeServices.layer)("external package dependency closure", (it) => {
