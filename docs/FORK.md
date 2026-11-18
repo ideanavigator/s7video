@@ -725,3 +725,31 @@ dependencies (`@legendapp/list`, `morphicons`) on its own. That added 26 package
 lock did not have (Expo config and modules, `noxcturnal` and its platform binaries, `xcode`). All are
 MIT except `xcode` (Apache-2.0), so all are on the licence allowlist, and none is bundled at runtime.
 The list is in the planning repo at `evidence/S7V-002/lockfile-delta.tsv`.
+
+## Managed Codex for ChatGPT (S7V-113)
+
+"Continue with ChatGPT" keeps T3 Code's managed Codex: it downloads a pinned release into
+`<data folder>/tools/codex/<version>/` and signs in through the browser. Nothing it runs uses the
+user's `~/.codex`. These upstream files differ:
+
+- `apps/server/src/provider/CodexInstallation.ts`: the pin is Codex 0.170.0 on every platform, from
+  the release's own sizes and SHA-256 digests. s7video's video tools need 0.159 or later. The
+  install checks (`codex --version`, `codex app-server --help`, for the managed copy and a Codex on
+  `PATH`) run with `CODEX_HOME=<data folder>/tools/.codex-probe-home`, because Codex 0.170 writes
+  `CODEX_HOME/tmp/arg0-macos/` (by default `~/.codex`) even for `--version`.
+- `apps/server/src/provider/model-manifest.json`: 0.159 is the supported floor; 0.156 to 0.158 are
+  `graceful`. So the managed install no longer reuses a Codex 0.156 to 0.158 found on `PATH`, and an
+  older managed copy is replaced by the pin. An upstream pin bump must stay at 0.159 or later.
+- `apps/server/src/provider/CodexManagedHome.ts`: **this changes upstream behaviour.** When the
+  account's settings name no `CODEX_HOME` path, every managed account keeps Codex's state
+  (sessions, databases, logs, skills) in `<data folder>/userdata/providers/codex-home` (`dev/`
+  instead of `userdata/` in development), not the user's `~/.codex`. Extra accounts keep their
+  private shadow home beside it, and the shared folders it links to are created there too, so a
+  person's own Codex config doesn't change how s7video's assistant behaves. "Use existing CLI"
+  still uses `~/.codex` (or `CODEX_HOME`). Managed threads started before this change live in
+  `~/.codex` and can't be resumed.
+- `apps/server/src/provider/Drivers/codexUsage.ts` and `Drivers/CodexDriver.ts`: the Usage page
+  reads managed accounts' sessions from that same folder (`resolveManagedCodexHomeLayout`), so
+  `ServerConfig` joins the Codex usage reader's requirements.
+- `apps/server/src/project/AgentSessionScanner.ts`: the import scan skips managed Codex accounts;
+  their sessions are this app's own threads. A "Use existing CLI" account still offers `~/.codex`.

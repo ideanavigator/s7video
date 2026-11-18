@@ -759,6 +759,67 @@ describe("UsageService", () => {
     }).pipe(Effect.scoped),
   );
 
+  it.live("reads managed accounts' history from the data folder, not the user's ~/.codex", () =>
+    Effect.gen(function* () {
+      const { home, settings } = yield* setup;
+      const userHome = NodePath.join(home, "user-home");
+      const prefix = "usage-managed-data-folder";
+      const write = (sessions: string, id: string, output: number) =>
+        Effect.promise(async () => {
+          await NodeFSP.mkdir(sessions, { recursive: true });
+          await NodeFSP.writeFile(
+            NodePath.join(sessions, `${id}-rollout.jsonl`),
+            [
+              { type: "session_meta", payload: { id } },
+              { type: "turn_context", payload: { model: "gpt-5.6-sol" } },
+              {
+                type: "event_msg",
+                timestamp: "2026-08-01T10:00:00Z",
+                payload: {
+                  type: "token_count",
+                  info: { last_token_usage: { input_tokens: 10, output_tokens: output } },
+                },
+              },
+            ]
+              .map((line) => encodeUnknownJsonString(line))
+              .join("\n") + "\n",
+          );
+        });
+      const summary = yield* Effect.gen(function* () {
+        const { stateDir } = yield* ServerConfig.ServerConfig;
+        const managedSessions = NodePath.join(stateDir, "providers", "codex-home", "sessions");
+        yield* write(managedSessions, "codex", 17);
+        yield* write(managedSessions, "codex-personal", 23);
+        yield* write(NodePath.join(userHome, ".codex", "sessions"), "own-cli", 1000);
+        const service = yield* UsageService.make;
+        return yield* service.readSummary(WINDOW);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          layerService({
+            prefix,
+            home,
+            settings: {
+              ...settings,
+              providerInstances: {
+                ...settings.providerInstances,
+                [ProviderInstanceId.make("codex")]: {
+                  driver: ProviderDriverKind.make("codex"),
+                  config: { enabled: true, setupMode: "managed" },
+                },
+                [ProviderInstanceId.make("codex-personal")]: {
+                  driver: ProviderDriverKind.make("codex"),
+                  config: { enabled: true, setupMode: "managed" },
+                },
+              },
+            },
+          }).pipe(Layer.provideMerge(Layer.succeed(HostProcess.HomeDirectory, userHome))),
+        ),
+      );
+      assert.strictEqual(totalOutputTokens(summary), 40);
+    }).pipe(Effect.scoped),
+  );
+
   it.live("reads Antigravity history from each instance's data directory", () =>
     Effect.gen(function* () {
       const { settings, home } = yield* setup;

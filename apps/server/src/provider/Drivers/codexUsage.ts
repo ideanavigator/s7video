@@ -14,6 +14,8 @@ import {
 import type { UsageTokenTotals } from "@t3tools/contracts";
 
 import * as CodexUsageHistory from "../../usage/CodexUsageHistory.ts";
+import * as ServerConfig from "../../config.ts";
+import { resolveManagedCodexHomeLayout } from "../CodexManagedHome.ts";
 import { resolveCodexHomeLayout } from "./CodexHomeLayout.ts";
 
 const TokenCount = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0));
@@ -349,7 +351,7 @@ export const codexUsageFormat: TranscriptUsageFormat<CodexScanState> = {
 
 export const codexUsageReader: ProviderUsageReader<
   CodexSettings,
-  Path.Path | CodexUsageHistory.CodexUsageHistory
+  Path.Path | CodexUsageHistory.CodexUsageHistory | ServerConfig.ServerConfig
 > = {
   kind: "transcripts",
   provider: "codex",
@@ -381,18 +383,27 @@ export const codexUsageReader: ProviderUsageReader<
     }
     return speeds;
   }),
-  directories: Effect.fn("codexUsageReader.directories")(function* ({ config, environment }) {
+  directories: Effect.fn("codexUsageReader.directories")(function* ({
+    instanceId,
+    config,
+    environment,
+  }) {
     if (config === undefined) return [];
     const path = yield* Path.Path;
     const environmentHome = environment.CODEX_HOME?.trim();
-    const layout = yield* resolveCodexHomeLayout(
-      config.setupMode !== "managed" &&
-        !config.homePath.trim() &&
-        !config.shadowHomePath.trim() &&
-        environmentHome
-        ? { ...config, homePath: environmentHome }
-        : config,
-    );
+    // s7video: managed accounts keep sessions in the data folder (CodexManagedHome.ts).
+    const layout =
+      config.setupMode === "managed"
+        ? yield* resolveManagedCodexHomeLayout(
+            (yield* ServerConfig.ServerConfig).stateDir,
+            instanceId,
+            config,
+          )
+        : yield* resolveCodexHomeLayout(
+            !config.homePath.trim() && !config.shadowHomePath.trim() && environmentHome
+              ? { ...config, homePath: environmentHome }
+              : config,
+          );
     return [{ dir: path.resolve(layout.sharedHomePath, "sessions") }];
   }),
 };

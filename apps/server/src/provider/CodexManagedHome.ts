@@ -11,6 +11,8 @@ export const resolveManagedCodexHomeLayout = Effect.fn("resolveManagedCodexHomeL
   const path = yield* Path.Path;
   return yield* resolveCodexHomeLayout({
     ...config,
+    // s7video: managed accounts keep Codex state in the data folder, never the user's ~/.codex.
+    homePath: config.homePath.trim() || path.join(stateDir, "providers", "codex-home"),
     shadowHomePath:
       config.shadowHomePath.trim() ||
       (instanceId === "codex"
