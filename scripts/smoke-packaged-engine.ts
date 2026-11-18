@@ -2,13 +2,15 @@
 // SPDX-License-Identifier: MIT
 // @effect-diagnostics nodeBuiltinImport:off globalConsole:off globalTimers:off globalFetch:off globalDate:off
 // Packaged engine smoke (S7V-112 Tier 3, no Electron harness yet):
-//   node scripts/smoke-packaged-engine.ts --app "release/mac-arm64/<name>.app" [--ffmpeg-dir DIR] [--keep]
+//   node scripts/smoke-packaged-engine.ts --app "<name>.app" [--ffmpeg-dir DIR] [--models-from DIR] [--keep]
 // Copies the app to a scratch folder with read-only Python and engine resources, starts it with a
 // temp HOME, S7VIDEO_HOME and a system-only PATH (`env -i`), asks its server for
 // `transcribe.models.status` over the WebSocket RPC (which starts the engine), then checks the engine
 // log names the bundled Python, nothing was written inside the app, and the temp home holds no
 // Hugging Face cache. Without `--ffmpeg-dir` it expects the "reinstall" error until the app ships
 // FFmpeg (S7V-016); with it, the folder's ffmpeg and ffprobe stand in for the bundled ones.
+// `--models-from` clones (APFS, no copy) an HF_HOME holding the speech model into the temp data
+// folder's userdata/models, and the default profile must then report ready.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
@@ -85,9 +87,10 @@ async function main(args: ReadonlyArray<string>): Promise<number> {
   };
   const app = valueOf("--app");
   const ffmpegDir = valueOf("--ffmpeg-dir");
+  const modelsFrom = valueOf("--models-from");
   if (app === undefined) {
     console.error(
-      'usage: node scripts/smoke-packaged-engine.ts --app "<name>.app" [--ffmpeg-dir DIR] [--keep]',
+      'usage: node scripts/smoke-packaged-engine.ts --app "<name>.app" [--ffmpeg-dir DIR] [--models-from DIR] [--keep]',
     );
     return 2;
   }
@@ -103,6 +106,11 @@ async function main(args: ReadonlyArray<string>): Promise<number> {
   NodeFS.mkdirSync(home);
   NodeChildProcess.execFileSync("/bin/cp", ["-cR", NodePath.resolve(app), copy]);
   NodeChildProcess.execFileSync("/bin/chmod", ["-R", "a-w", ...readOnly]);
+  if (modelsFrom) {
+    NodeFS.mkdirSync(NodePath.join(dataHome, "userdata"), { recursive: true });
+    const models = NodePath.join(dataHome, "userdata/models");
+    NodeChildProcess.execFileSync("/bin/cp", ["-cR", NodePath.resolve(modelsFrom), models]);
+  }
   const before = snapshot(resources);
   const executable = NodePath.join(
     copy,
@@ -143,19 +151,26 @@ async function main(args: ReadonlyArray<string>): Promise<number> {
       [backendEntry, "auth", "session", "issue", "--base-dir", dataHome, "--token-only"],
       { env: { ...env, ELECTRON_RUN_AS_NODE: "1" }, encoding: "utf8" },
     ).trim();
-    const ticketResponse = await fetch(
-      `http://127.0.0.1:${String(port)}/api/auth/websocket-ticket/rpc`,
-      { method: "POST", headers: { authorization: `Bearer ${token}` } },
-    );
-    if (!ticketResponse.ok)
-      throw new Error(`websocket ticket: HTTP ${String(ticketResponse.status)}`);
+    // The server listens before it serves, and answers 503 until then.
+    let ticketResponse: Response | undefined;
+    for (let attempt = 0; attempt < 120; attempt += 1) {
+      ticketResponse = await fetch(
+        `http://127.0.0.1:${String(port)}/api/auth/websocket-ticket/rpc`,
+        { method: "POST", headers: { authorization: `Bearer ${token}` } },
+      );
+      if (ticketResponse.status !== 503) break;
+      await sleep(500);
+    }
+    if (!ticketResponse?.ok) {
+      throw new Error(`websocket ticket: HTTP ${String(ticketResponse?.status)}`);
+    }
     const { ticket } = (await ticketResponse.json()) as { ticket: string };
 
     const startedAt = Date.now();
     const outcome = await Effect.runPromise(
-      modelsStatus(`ws://127.0.0.1:${String(port)}/ws?wsTicket=${encodeURIComponent(ticket)}`).pipe(
-        Effect.result,
-      ),
+      modelsStatus(
+        `ws://127.0.0.1:${String(port)}/ws?orchestrationProtocol=2&wsTicket=${encodeURIComponent(ticket)}`,
+      ).pipe(Effect.result),
     );
     const elapsed = Date.now() - startedAt;
     if (outcome._tag === "Success") {
@@ -167,8 +182,18 @@ async function main(args: ReadonlyArray<string>): Promise<number> {
       );
       if (!ffmpegDir)
         problems.push("the engine started without a bundled FFmpeg; expected the reinstall error");
+      const profiles = outcome.success.profiles as Record<string, { ready: boolean }>;
+      if (modelsFrom && profiles.default?.ready !== true) {
+        problems.push("the engine did not find the speech model in userdata/models");
+      }
     } else {
-      const message = String((outcome.failure as { message?: string }).message ?? outcome.failure);
+      const failure = outcome.failure as { message?: string; cause?: unknown };
+      const message = [
+        failure.message ?? String(failure),
+        failure.cause ? String(failure.cause) : "",
+      ]
+        .filter(Boolean)
+        .join(": ");
       console.log(`smoke: transcribe.models.status failed: ${message}`);
       if (ffmpegDir || !message.includes("ffmpeg that comes with the app is missing")) {
         problems.push(`transcribe.models.status failed: ${message}`);
