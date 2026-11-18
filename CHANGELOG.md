@@ -99,6 +99,9 @@ from; the per-ticket entries and how this file is compiled are in
 - The assistant notices captions already in your video and asks first, shows the caption looks in
   the chat, and changes colour, size and position when you describe them. The caption buttons
   above the player are gone. (S7V-099)
+- Sign in with your ChatGPT account inside s7video, and the assistant edits with Codex. The app
+  downloads Codex 0.170.0 into its own data folder and keeps Codex's files there too, never in
+  `~/.codex`. (S7V-113)
 
 ### Changed
 
