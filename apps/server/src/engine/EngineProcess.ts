@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 s7video contributors
 // SPDX-License-Identifier: MIT
-// One engine process: `uv run … python -m s7engine` spawned as its own process group (the
+// One engine process: `python -m s7engine`, directly or under `uv run`, spawned as its own process group (the
 // `htmlRender/headlessChrome.ts` pattern). The PID captured at spawn is the only one ever
 // signalled: closing the scope ends stdin, sends SIGTERM to that group, and the spawner escalates
 // to SIGKILL after two seconds. stderr goes to the engine log and a 2 KiB tail in memory.
@@ -27,7 +27,8 @@ const textEncoder = new TextEncoder();
 export type SignalGroup = (pid: number, signal: NodeJS.Signals) => void;
 
 export interface EngineProcessInput {
-  readonly uv: string;
+  /** The bundled Python, or uv in development (`engineCommand`). */
+  readonly command: string;
   readonly args: ReadonlyArray<string>;
   readonly cwd: string;
   readonly env: Record<string, string>;
@@ -62,7 +63,7 @@ export const start = Effect.fn("EngineProcess.start")(function* (input: EnginePr
   const outgoing = yield* Queue.unbounded<Uint8Array, Cause.Done>();
   const child = yield* spawner
     .spawn(
-      ChildProcess.make(input.uv, input.args, {
+      ChildProcess.make(input.command, input.args, {
         cwd: input.cwd,
         env: input.env,
         extendEnv: false,

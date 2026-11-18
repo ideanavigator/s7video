@@ -20,6 +20,7 @@ import rootPackageJson from "../package.json" with { type: "json" };
 import desktopPackageJson from "../apps/desktop/package.json" with { type: "json" };
 import gnomeCaptureBundle from "../apps/desktop/gnome-extension/bundle.json" with { type: "json" };
 import serverPackageJson from "../apps/server/package.json" with { type: "json" };
+import engineRuntimeLock from "../packages/engine/runtime/runtime.lock.json" with { type: "json" };
 
 import {
   ReleasePackageManifestError,
@@ -933,6 +934,9 @@ export const DESKTOP_FILE_EXCLUSIONS = [
   // Shipped once, as the `skills` extra resource (S7V-048).
   "!apps/server/skills",
   "!apps/server/skills/**/*",
+  // Shipped once, as the `python` and `engine` extra resources (S7V-112).
+  "!engine-runtime",
+  "!engine-runtime/**/*",
 ] as const;
 // Windows terminal helpers cannot run on macOS and slow signing and notarization.
 export const MAC_FILE_EXCLUSIONS = [
@@ -1029,6 +1033,15 @@ export const DESKTOP_EXTRA_RESOURCES = [
     to: "skills",
   },
 ] as const;
+/** Where `scripts/build-engine-runtime.ts --out` stages the runtime, inside the stage app dir. */
+export const ENGINE_RUNTIME_STAGE_DIR = "engine-runtime";
+// The video engine and its Python runtime (S7V-112): Apple Silicon only, outside app.asar.
+export const MAC_EXTRA_RESOURCES = [
+  { from: `${ENGINE_RUNTIME_STAGE_DIR}/python`, to: "python" },
+  { from: `${ENGINE_RUNTIME_STAGE_DIR}/engine`, to: "engine" },
+] as const;
+/** The bundled runtime's wheels are chosen for this macOS; older Macs get macOS's own message. */
+export const MAC_MINIMUM_SYSTEM_VERSION = engineRuntimeLock.macosMinimum;
 export const LINUX_CAPTURE_EXTRA_RESOURCES = [
   {
     from: "apps/desktop/prod-resources/hyprland-capture",
@@ -2032,6 +2045,63 @@ export const stageResourceMonitor = Effect.fn("stageResourceMonitor")(function* 
   }
 });
 
+export class EngineRuntimeArchError extends Schema.TaggedError<EngineRuntimeArchError>()(
+  "EngineRuntimeArchError",
+  { arch: Schema.String },
+) {
+  override get message(): string {
+    return `The video engine's Python runtime is Apple Silicon only; a mac ${this.arch} build cannot bundle it (S7V-112).`;
+  }
+}
+
+/** Builds (or reuses the cached) engine runtime and stages it for `MAC_EXTRA_RESOURCES`. */
+export const stageEngineRuntime = Effect.fn("stageEngineRuntime")(function* (input: {
+  readonly repoRoot: string;
+  readonly outDir: string;
+  readonly arch: typeof BuildArch.Type;
+  readonly verbose: boolean;
+}) {
+  if (input.arch !== "arm64") return yield* new EngineRuntimeArchError({ arch: input.arch });
+  const path = yield* Path.Path;
+  yield* runCommand(
+    ChildProcess.make(
+      process.execPath,
+      [path.join(input.repoRoot, "scripts/build-engine-runtime.ts"), "--out", input.outDir],
+      { cwd: input.repoRoot },
+    ),
+    { label: "build the engine runtime (scripts/build-engine-runtime.ts)", verbose: input.verbose },
+  );
+});
+
+/** Every packaged `.app`: Mach-O minimum macOS and links, Info.plist minimum, the engine imports. */
+export const checkMacBundledEngine = Effect.fn("checkMacBundledEngine")(function* (input: {
+  readonly repoRoot: string;
+  readonly stageDistDir: string;
+  readonly verbose: boolean;
+}) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  for (const entry of yield* fs.readDirectory(input.stageDistDir)) {
+    if (!entry.startsWith("mac")) continue;
+    const outputDir = path.join(input.stageDistDir, entry);
+    for (const app of yield* fs.readDirectory(outputDir).pipe(Effect.orElseSucceed(() => []))) {
+      if (!app.endsWith(".app")) continue;
+      yield* runCommand(
+        ChildProcess.make(
+          process.execPath,
+          [
+            path.join(input.repoRoot, "scripts/build-engine-runtime.ts"),
+            "--check-app",
+            path.join(outputDir, app),
+          ],
+          { cwd: input.repoRoot },
+        ),
+        { label: `check the bundled engine in ${app}`, verbose: input.verbose },
+      );
+    }
+  }
+});
+
 export const stageBrowserSecret = Effect.fn("stageBrowserSecret")(function* (input: {
   readonly repoRoot: string;
   readonly stageResourcesDir: string;
@@ -2444,6 +2514,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       : {}),
     extraResources: [
       ...DESKTOP_EXTRA_RESOURCES,
+      ...(platform === "mac" ? MAC_EXTRA_RESOURCES : []),
       ...(platform === "linux" ? LINUX_CAPTURE_EXTRA_RESOURCES : []),
       ...(platform === "linux" ? LINUX_BROWSER_SECRET_EXTRA_RESOURCES : []),
       ...(platform === "win" ? WINDOWS_SERVER_EXTRA_RESOURCES : []),
@@ -2474,6 +2545,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       target: target === "dmg" ? [target, "zip"] : [target],
       icon: "icon.icns",
       category: "public.app-category.developer-tools",
+      minimumSystemVersion: MAC_MINIMUM_SYSTEM_VERSION,
       extendInfo: {
         // macOS 26 offers Messages/Mail codes in every text field unless opted out.
         NSAutoFillRequiresTextContentTypeForOneTimeCodeOnMac: true,
@@ -3408,6 +3480,14 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
     arch: options.arch,
     verbose: options.verbose,
   });
+  if (options.platform === "mac") {
+    yield* stageEngineRuntime({
+      repoRoot,
+      outDir: path.join(stageAppDir, ENGINE_RUNTIME_STAGE_DIR),
+      arch: options.arch,
+      verbose: options.verbose,
+    });
+  }
   if (options.platform === "linux") {
     for (const backend of ["kde", "hyprland"] as const)
       yield* stageLinuxCaptureHelper({
@@ -3655,6 +3735,7 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
   // x64 builds on arm64 runners; the arm64 check covers the shared JS bundle.
   if (options.platform === "mac" && options.arch === "arm64" && hostPlatform === "darwin") {
     yield* validateMacPackagedPayload({ stageDistDir, verbose: options.verbose });
+    yield* checkMacBundledEngine({ repoRoot, stageDistDir, verbose: options.verbose });
   }
 
   const copiedArtifacts = yield* copyDesktopBuildArtifacts(

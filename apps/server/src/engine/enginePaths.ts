@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 // Absolute paths and the explicit environment for the video engine. Electron starts the server
 // with a minimal PATH (spike A1), so nothing here searches PATH: each tool comes from a configured
-// path, then its S7VIDEO_* variable, then the usual install folders.
+// path, then its S7VIDEO_* variable, then the usual install folders (never in a packaged app).
 import { EngineError, type EngineTool } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -12,27 +12,38 @@ import { isUpstreamT3Home } from "@t3tools/shared/dataHome";
 
 const TOOL_ENV_VARS: Record<EngineTool, string> = {
   uv: "S7VIDEO_UV",
+  python: "S7VIDEO_PYTHON",
   ffmpeg: "S7VIDEO_FFMPEG",
   ffprobe: "S7VIDEO_FFPROBE",
 };
 
 const ENGINE_DIR_ENV_VAR = "S7VIDEO_ENGINE_DIR";
 
+/**
+ * The desktop sets `S7VIDEO_PACKAGED=1` when it runs from an installed app (S7V-016, S7V-112). Then
+ * the engine runs on the app's own Python and tools, and no install folder is searched.
+ */
+const isPackagedServer = (env: Readonly<Record<string, string | undefined>>) =>
+  env.S7VIDEO_PACKAGED === "1";
+
 /** The engine's PATH: system folders only, never the parent's PATH. */
 export const ENGINE_SYSTEM_PATH = "/usr/bin:/bin:/usr/sbin:/sbin";
 
-export interface EngineTools {
-  readonly uv: string;
+/** The engine runs on `python` (the app's bundled runtime, S7V-112) or through `uv` (development). */
+export type EngineTools = {
   readonly ffmpeg: string;
   readonly ffprobe: string;
-}
+} & (
+  | { readonly python: string; readonly uv?: undefined }
+  | { readonly uv: string; readonly python?: undefined }
+);
 
 export interface EngineToolSources {
   /** Paths chosen in settings; they win over everything else. */
   readonly configured?: Partial<Record<EngineTool, string>>;
   readonly env: Readonly<Record<string, string | undefined>>;
   readonly homeDir: string;
-  /** Defaults to Homebrew's, /usr/local/bin and ~/.local/bin. */
+  /** Defaults to Homebrew's, /usr/local/bin and ~/.local/bin; a packaged server searches none. */
   readonly knownDirs?: ReadonlyArray<string>;
 }
 
@@ -54,16 +65,23 @@ const firstExecutable = Effect.fnUntraced(function* (
   return undefined;
 });
 
-/** uv, ffmpeg and ffprobe as absolute paths; a missing one fails with `missing_tool` naming it. */
+/**
+ * The engine's Python (or uv), ffmpeg and ffprobe as absolute paths; a missing one fails with
+ * `missing_tool` naming it. A set `S7VIDEO_PYTHON` (or configured Python) runs the engine directly
+ * and uv is not looked for; a packaged server requires it and searches no install folder.
+ */
 export const resolveEngineTools = Effect.fn("enginePaths.resolveEngineTools")(function* (
   sources: EngineToolSources,
 ) {
   const path = yield* Path.Path;
-  const knownDirs = sources.knownDirs ?? [
-    "/opt/homebrew/bin",
-    "/usr/local/bin",
-    path.join(sources.homeDir, ".local/bin"),
-  ];
+  const packaged = isPackagedServer(sources.env);
+  const knownDirs = packaged
+    ? []
+    : (sources.knownDirs ?? [
+        "/opt/homebrew/bin",
+        "/usr/local/bin",
+        path.join(sources.homeDir, ".local/bin"),
+      ]);
   const resolve = Effect.fnUntraced(function* (
     tool: EngineTool,
     extra: ReadonlyArray<string> = [],
@@ -75,15 +93,26 @@ export const resolveEngineTools = Effect.fn("enginePaths.resolveEngineTools")(fu
       ...knownDirs.map((directory) => path.join(directory, tool)),
     ]);
     if (found === undefined) {
-      return yield* new EngineError({ reason: "missing_tool", method: "start", tool });
+      return yield* new EngineError({
+        reason: "missing_tool",
+        method: "start",
+        tool,
+        ...(packaged ? { packaged: true } : {}),
+      });
     }
     return found;
   });
-  const uv = yield* resolve("uv");
+  const wantsPython =
+    packaged ||
+    sources.configured?.python !== undefined ||
+    sources.env.S7VIDEO_PYTHON !== undefined;
+  const launcher = wantsPython
+    ? { python: yield* resolve("python") }
+    : { uv: yield* resolve("uv") };
   const ffmpeg = yield* resolve("ffmpeg");
   // A configured FFmpeg brings its own ffprobe; prefer it over another install's.
   const ffprobe = yield* resolve("ffprobe", [path.join(path.dirname(ffmpeg), "ffprobe")]);
-  return { uv, ffmpeg, ffprobe } satisfies EngineTools;
+  return { ...launcher, ffmpeg, ffprobe } satisfies EngineTools;
 });
 
 /** packages/engine, from the source tree or a bundled server; `S7VIDEO_ENGINE_DIR` overrides. */
@@ -172,10 +201,12 @@ export function engineEnvironment(input: EngineEnvironmentInput): Record<string,
   };
 }
 
+// `-I` keeps the working directory and PYTHON* variables out of Python's import path. It also
+// ignores PYTHONDONTWRITEBYTECODE, so `-B` stops `.pyc` writes: under `packages/` they restart
+// the dev server mid-job, and a shipped app must not write into its own bundle (S7V-071).
+const PYTHON_ARGS = ["-I", "-B", "-m", "s7engine"] as const;
+
 export function engineCommandArgs(projectDir: string): ReadonlyArray<string> {
-  // `-I` keeps the working directory and PYTHON* variables out of Python's import path. It also
-  // ignores PYTHONDONTWRITEBYTECODE, so `-B` stops `.pyc` writes: under `packages/` they restart
-  // the dev server mid-job, and a shipped app must not write into its own bundle (S7V-071).
   return [
     "run",
     "--frozen",
@@ -184,9 +215,19 @@ export function engineCommandArgs(projectDir: string): ReadonlyArray<string> {
     "--project",
     projectDir,
     "python",
-    "-I",
-    "-B",
-    "-m",
-    "s7engine",
+    ...PYTHON_ARGS,
   ];
+}
+
+/**
+ * The program and arguments that start the engine: the bundled Python directly (it finds the
+ * engine source through a `.pth` file in its own site-packages, S7V-112), or `uv run` in dev.
+ */
+export function engineCommand(
+  tools: EngineTools,
+  projectDir: string,
+): { readonly command: string; readonly args: ReadonlyArray<string> } {
+  return tools.python !== undefined
+    ? { command: tools.python, args: PYTHON_ARGS }
+    : { command: tools.uv, args: engineCommandArgs(projectDir) };
 }
