@@ -153,13 +153,25 @@ function walkFiles(root: string, relative = ""): string[] {
 export function scanMachOFiles(root: string): MachOFile[] {
   const files: MachOFile[] = [];
   const header = new Uint8Array(8);
-  for (const path of walkFiles(root)) {
-    const fd = NodeFS.openSync(NodePath.join(root, path), "r");
-    const read = NodeFS.readSync(fd, header, 0, 8, 0);
-    NodeFS.closeSync(fd);
-    if (read < 8 || !isMachO(header)) continue;
-    const output = run("/usr/bin/otool", ["-arch", "arm64", "-l", NodePath.join(root, path)]);
-    files.push({ path, commands: parseOtoolLoadCommands(output) });
+  // otool reads `name(member)` as an archive member, and Electron's helpers are "… Helper (GPU)".
+  const links = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "s7v-otool-"));
+  try {
+    for (const path of walkFiles(root)) {
+      const absolute = NodePath.join(root, path);
+      const fd = NodeFS.openSync(absolute, "r");
+      const read = NodeFS.readSync(fd, header, 0, 8, 0);
+      NodeFS.closeSync(fd);
+      if (read < 8 || !isMachO(header)) continue;
+      let target = absolute;
+      if (absolute.endsWith(")")) {
+        target = NodePath.join(links, String(files.length));
+        NodeFS.symlinkSync(absolute, target);
+      }
+      const output = run("/usr/bin/otool", ["-arch", "arm64", "-l", target]);
+      files.push({ path, commands: parseOtoolLoadCommands(output) });
+    }
+  } finally {
+    NodeFS.rmSync(links, { recursive: true, force: true });
   }
   return files;
 }
