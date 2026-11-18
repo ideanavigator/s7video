@@ -40,6 +40,7 @@ const makeHarness = Effect.fn("test.makeCodexInstallation")(function* (
     platform?: NodeJS.Platform;
     spawner?: ChildProcessSpawner.ChildProcessSpawner["Service"];
     runtimeRenameFailures?: number;
+    pinned?: boolean;
   } = {},
 ) {
   const fs = yield* FileSystem.FileSystem;
@@ -85,7 +86,7 @@ const makeHarness = Effect.fn("test.makeCodexInstallation")(function* (
   const spawner = input.spawner ?? (yield* ChildProcessSpawner.ChildProcessSpawner);
   const installation = yield* CodexInstallation.makeCodexInstallation({
     baseDir,
-    releaseAsset: { ...asset, sha256 },
+    ...(input.pinned ? {} : { releaseAsset: { ...asset, sha256 } }),
     validate: () => Effect.void,
     ...input.options,
   }).pipe(
@@ -143,7 +144,7 @@ it.effect.each(["darwin", "linux", "win32"] as const)(
   "the pinned %s release is new enough for the video tools",
   (platform) =>
     Effect.gen(function* () {
-      const h = yield* makeHarness({ platform, options: { releaseAsset: undefined } });
+      const h = yield* makeHarness({ platform, pinned: true });
       const version = (yield* h.installation.state).version;
       expect(version).not.toBeNull();
       expect(codexVideoToolsVersionMessage(version!)).toBeUndefined();
