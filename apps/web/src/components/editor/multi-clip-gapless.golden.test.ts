@@ -111,7 +111,8 @@ describe("multi-clip-gapless", () => {
     let ended: () => void = () => {};
     const finished = new Promise<void>((resolve) => (ended = resolve));
     const container = document.createElement("div");
-    container.style.cssText = "width:640px;height:480px";
+    // A flex column, as the Editor's player area is, so the player fills it (S7V-101).
+    container.style.cssText = "display:flex;flex-direction:column;width:640px;height:480px";
     await using screen = await render(
       createElement(MultiClipPlayer, {
         projectKey,

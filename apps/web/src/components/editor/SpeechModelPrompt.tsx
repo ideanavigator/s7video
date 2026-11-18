@@ -3,10 +3,11 @@
 /**
  * The Editor panel's speech model prompt (S7V-067): while no model is downloaded it asks at the
  * top of the panel, so the user finds what the assistant asked for without the Transcript tab.
- * After "Not now" it stays away until the assistant asks again. The download still needs a yes.
+ * After "Not now" (kept by the server) it stays away until the assistant asks again. The download
+ * still needs a yes, in the dialog.
  */
 import type { ScopedProjectRef, TranscribeModel } from "@t3tools/contracts";
-import { AudioLinesIcon } from "lucide-react";
+import { AudioLinesIcon, DownloadIcon, XIcon } from "lucide-react";
 import { useState } from "react";
 
 import {
@@ -14,11 +15,12 @@ import {
   useSpeechModelRequests,
   useSpeechModelStatus,
 } from "../../editor/editStore";
-import { Alert, AlertAction, AlertDescription, AlertTitle } from "../ui/alert";
-import { Button } from "../ui/button";
 import { toastManager } from "../ui/toast";
+import { IconAction } from "./IconAction";
 import { type FoundModel, ModelDownloadDialog } from "./ModelDownloadDialog";
 import { REUSE_STAGE, useModelDownload } from "./useModelDownload";
+
+export const SPEECH_MODEL_PROMPT = "The assistant needs the speech model to read your clip";
 
 export function SpeechModelPrompt(props: { readonly projectRef: ScopedProjectRef }) {
   const { environmentId, projectId } = props.projectRef;
@@ -48,35 +50,45 @@ export function SpeechModelPrompt(props: { readonly projectRef: ScopedProjectRef
   const progress = Math.round((model.job?.progress ?? 0) * 100);
 
   return (
-    <div className="shrink-0">
-      <Alert variant="info">
-        <AudioLinesIcon aria-hidden />
-        <AlertTitle>
-          {running
-            ? checking
-              ? "Checking the speech model copy on this Mac…"
-              : "Downloading the speech model…"
-            : "The assistant needs the speech model to read your clip"}
-        </AlertTitle>
-        <AlertDescription>
-          {running
-            ? `${progress}% ${checking ? "checked" : "downloaded"}. Edits that need it can go ahead when it's done.`
-            : "Cutting silences and captions use it. It downloads once and stays on this Mac."}
-        </AlertDescription>
-        {running ? null : (
-          <AlertAction>
-            <Button
-              size="sm"
-              onClick={() => {
-                model.reset();
-                setOpen(true);
-              }}
-            >
-              Download speech model
-            </Button>
-          </AlertAction>
+    // One line (S7V-101, the layout part of audit finding 8), so it never squeezes the player.
+    <div
+      role="region"
+      aria-label="Speech model"
+      className="flex min-h-9 shrink-0 items-center gap-2 rounded-md border border-info/32 bg-info/4 py-0.5 ps-2.5 pe-1 text-sm"
+    >
+      <AudioLinesIcon aria-hidden className="size-4 shrink-0 text-info" />
+      <span className="min-w-0 flex-1 truncate">
+        {running ? (
+          <>
+            <span>
+              {checking
+                ? "Checking the speech model copy on this Mac…"
+                : "Downloading the speech model…"}
+            </span>{" "}
+            <span className="text-muted-foreground tabular-nums">
+              {progress}% {checking ? "checked" : "downloaded"}
+            </span>
+          </>
+        ) : (
+          SPEECH_MODEL_PROMPT
         )}
-      </Alert>
+      </span>
+      {running ? null : (
+        <>
+          <IconAction
+            label="Download the speech model (once)"
+            onClick={() => {
+              model.reset();
+              setOpen(true);
+            }}
+          >
+            <DownloadIcon aria-hidden />
+          </IconAction>
+          <IconAction label="Not now" onClick={() => void model.notNow()}>
+            <XIcon aria-hidden />
+          </IconAction>
+        </>
+      )}
       {open ? (
         <ModelDownloadDialog
           open

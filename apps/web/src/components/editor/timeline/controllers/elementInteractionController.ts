@@ -58,6 +58,8 @@ export interface ElementInteractionConfig {
   /** The row under a viewport y, or -1 above or below the rows. */
   readonly rowIndexAtClientY: (clientY: number) => number;
   readonly previewMove: (result: GroupMoveResult, snapFrame: number | null) => void;
+  /** A plain click that never became a drag, at its viewport x (S7V-101). */
+  readonly click?: (clientX: number) => void;
   readonly discardPreview: () => void;
   readonly commitMove: (gesture: MoveGesture) => void;
   /** A refused move: the clip went back, and the block shows why for a moment. */
@@ -218,10 +220,13 @@ export class ElementInteractionController {
     if (session.kind === "idle" || event.pointerId !== session.down.pointerId) return;
     this.finishSession();
     if (session.kind === "pending") {
+      // A press the browser or OS cancelled is not a click: no reselect, no seek (S7V-101).
+      if (event.type === "pointercancel") return;
       // A click: shift toggles a clip that was already selected; a plain click keeps only it.
       if (session.down.wasSelected) {
         this.config.select(session.down.itemId, session.down.shift ? "toggle" : "only");
       }
+      if (!session.down.shift) this.config.click?.(session.down.x);
       return;
     }
     const { group, result } = session.drag;

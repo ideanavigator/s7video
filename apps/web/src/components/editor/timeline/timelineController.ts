@@ -60,6 +60,8 @@ export interface TimelineController extends TimelineViewSource {
   /** Zooms by `factor` around lane pixel `anchorX` (from the left of the visible lanes). */
   readonly zoomBy: (factor: number, anchorX: number) => void;
   readonly seekToFrame: (editFrame: number) => void;
+  /** Moves the playhead under a viewport x, as a press on the lanes does (S7V-101). */
+  readonly seekToClientX: (clientX: number) => void;
   readonly playheadFrame: () => number;
   /** Edit keys (S7V-034) run first; a handler that returns true takes the key. */
   readonly setKeyHandler: (handler: ((event: KeyboardEvent) => boolean) | null) => void;
@@ -348,12 +350,20 @@ export function createTimelineController(options: TimelineControllerOptions): Ti
   };
 
   let scrubbing: number | null = null;
-  const onPointerDown = (event: PointerEvent) => {
-    if (event.button !== 0 || scroller === null) return;
+  const seekToClientX = (clientX: number) => {
+    if (scroller === null) return;
     measureScroller();
-    const x = laneXOfClient(event.clientX);
+    const x = laneXOfClient(clientX);
     if (x === null) return;
     seekToFrame(frameAtPx(scrollLeftNow + x, pxPerFrame, lastFrame()));
+  };
+
+  const onPointerDown = (event: PointerEvent) => {
+    if (event.button !== 0 || scroller === null) return;
+    // A click anywhere on the timeline gives it the keys: S splits, Delete deletes (S7V-101).
+    scroller.focus({ preventScroll: true });
+    seekToClientX(event.clientX);
+    if (laneXOfClient(event.clientX) === null) return;
     const onRuler =
       event.target instanceof Element && event.target.closest("[data-timeline-ruler]");
     if (onRuler) {
@@ -485,6 +495,7 @@ export function createTimelineController(options: TimelineControllerOptions): Ti
     },
     zoomBy: (factor, anchorX) => applyZoom(pxPerFrame * factor, anchorX),
     seekToFrame,
+    seekToClientX,
     playheadFrame: () => playhead.frame(),
     setKeyHandler: (handler) => {
       keyHandler = handler;

@@ -1,13 +1,31 @@
 // SPDX-FileCopyrightText: 2026 s7video contributors
 // SPDX-License-Identifier: MIT
 /**
- * "Add captions" (S7V-075): writes the edit's caption track from the cached transcripts of the
- * clips on the video track, as one change ("Added captions"), so it makes one version and one
- * undo step. Asking again rebuilds the same track; there is never a second one. Later cuts keep
- * it in step inside `EditDocumentService.apply`.
+ * "Add captions" (S7V-075) writes the one transcript caption track as one change and one undo
+ * step; cuts rebuild it in `EditDocumentService.apply` and keep its look (S7V-037). A look picked
+ * with no captions adds them in the same change (PO 2026-11-12). S7V-099: a clip already showing
+ * captions in its picture is refused until the user confirms (`docs/internals/captions.md`).
  */
-import { CaptionsError, EditUnavailableError, type ProjectId } from "@t3tools/contracts";
-import { captionTrackOps, transcriptCaptionTrackOf } from "@t3tools/shared/captionWords";
+import {
+  CAPTION_PRESET_NAMES,
+  type CaptionPosition,
+  CaptionPresetId,
+  CaptionsError,
+  type EditCaptionCustom,
+  type EditDocument,
+  type EditOp,
+  type EditOrigin,
+  EditUnavailableError,
+  type ProjectId,
+} from "@t3tools/contracts";
+import {
+  captionCustomOf,
+  captionItemsFor,
+  captionLookOf,
+  captionTrackOps,
+  shownCaptionTracks,
+  transcriptCaptionTrackOf,
+} from "@t3tools/shared/captionWords";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -15,38 +33,178 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 
+import * as CaptionStillsService from "../export/CaptionStillsService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
-import { loadCaptionTranscripts } from "./captionTrack.ts";
+import {
+  describeCaptionCustom,
+  mergeCaptionCustom,
+  missingLookPart,
+  sameCaptionCustom,
+} from "./captionCustom.ts";
+import {
+  type CaptionTranscripts,
+  clipName,
+  loadCaptionTranscripts,
+  unconfirmed,
+} from "./captionTrack.ts";
 import * as EditDocumentService from "./EditDocumentService.ts";
+import { ASSEMBLE_FIRST } from "./videoTrack.ts";
 
 const ADDED_CAPTIONS = "Added captions";
+/** The engine's look when a caption track names none (`captions_ass.DEFAULT_STYLE`). */
+const DEFAULT_PRESET: CaptionPresetId = "s7-neutral";
 
 export interface AddCaptionsResult {
   readonly revision: number;
   readonly captions: number;
+  /** Clips that waited (their picture shows captions) and got ours in this change, by name. */
+  readonly captioned: ReadonlyArray<string>;
+  /** Clips that show their own captions and were left uncaptioned, by the names the user knows. */
+  readonly uncaptioned: ReadonlyArray<string>;
+  /** "the Plain look (orange, at the top)": the look the captions have now, as replies say it. */
+  readonly look: string;
   readonly changed: boolean;
 }
+
+export interface SetStyleResult extends AddCaptionsResult {
+  /** The look's own colours, size and place in editing words, as the version note says them. */
+  readonly described: string;
+  /** The captions were added from the transcripts in the same change. */
+  readonly added: boolean;
+  /** The look and the user's own colours, size and place the captions now have. */
+  readonly preset: CaptionPresetId;
+  readonly custom: EditCaptionCustom;
+}
+
+export interface StyleInput {
+  /** The look; the current one when missing. */
+  readonly preset?: CaptionPresetId | undefined;
+  /** Colours, size or place to change, on top of the track's own; the rest are kept. */
+  readonly custom?: EditCaptionCustom | undefined;
+}
+
+/**
+ * The user's answer about captions already in a clip's picture: true adds ours over them too
+ * (S7V-099), false captions only the other clips (S7V-109), and none asks first.
+ */
+export interface Confirmed {
+  readonly confirm?: boolean | undefined;
+}
+
+export interface LooksResult {
+  readonly revision: number;
+  readonly looks: ReadonlyArray<CaptionStillsService.CaptionLookPreview>;
+  /** As in `SetStyleResult`. */
+  readonly uncaptioned: ReadonlyArray<string>;
+}
+
+const captionCount = (document: EditDocument) =>
+  shownCaptionTracks(document).reduce((sum, track) => sum + track.items.length, 0);
+
+const presetOf = (document: EditDocument): CaptionPresetId => {
+  const look = captionLookOf(document);
+  return CaptionPresetId.literals.find((id) => id === look) ?? DEFAULT_PRESET;
+};
+
+const LOOKS_RETRY = "ask for the looks";
+
+/**
+ * "the Plain look (orange, at the top)". With `sizeBefore` null, the size is left out: captioning
+ * a clip doesn't make the captions bigger.
+ */
+const lookPhrase = (
+  preset: CaptionPresetId,
+  custom: EditCaptionCustom,
+  sizeBefore: number | null,
+) => {
+  const { size: _size, ...rest } = custom;
+  const words =
+    sizeBefore === null
+      ? describeCaptionCustom(rest, preset)
+      : describeCaptionCustom(custom, preset, sizeBefore);
+  return `the ${CAPTION_PRESET_NAMES[preset]} look${words === "" ? "" : ` (${words})`}`;
+};
+
+/** "a.mp4", "a.mp4 and b.mp4", "a.mp4, b.mp4 and c.mp4". */
+export const listed = (names: ReadonlyArray<string>) =>
+  names.length < 2 ? (names[0] ?? "") : `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`;
+
+const placeWords = (position: CaptionPosition) =>
+  position === "middle" ? "in the middle" : `at the ${position}`;
+
+/**
+ * Captions about to be added over a clip whose picture shows its own (S7V-099): the question for
+ * the user, naming the clip, with choices that fit where the new captions would go, and what the
+ * agent does with each answer (UX guide rule 9).
+ */
+const burnedInRefusal = (
+  document: EditDocument,
+  pending: CaptionTranscripts["burnedIn"],
+  retry: string,
+  position: CaptionPosition,
+  othersSpeak: boolean,
+) => {
+  const names = [...pending.keys()].map((id) => clipName(document, id));
+  const region = [...pending.values()].find((entry) => entry !== undefined);
+  const where = region === undefined ? null : region.y0 + region.y1 < 1 ? "top" : "bottom";
+  const other = where === "top" ? "bottom" : "top";
+  const subject = `${listed(names)} already ${names.length === 1 ? "has" : "have"} captions`;
+  // S7V-109: in an edit with other clips that speak, ours can go on those alone.
+  const onlyOthers = othersSpeak ? " add them only to the other clips," : "";
+  const question =
+    where === null
+      ? `${subject} in the picture. Add ours anyway,${onlyOthers} or leave it as it is?`
+      : where !== position
+        ? `${subject} near the ${where}; ours would be ${placeWords(position)}. Add them,${onlyOthers} or leave it as it is?`
+        : `${subject} near the ${where}. Add ours at the ${other}, add them anyway,${onlyOthers} or leave it as it is?`;
+  const atOther =
+    where === position
+      ? ` If they choose the ${other}, call video_caption_style with confirm: true and custom {"position": "${other}"}.`
+      : "";
+  const answer = (value: boolean) =>
+    `${retry} again with confirm: ${value}${retry === LOOKS_RETRY ? `, and pass confirm: ${value} with the look they pick` : ""}`;
+  const others = othersSpeak ? ` If they say only the other clips, ${answer(false)}.` : "";
+  return new CaptionsError({
+    reason: "burned-in",
+    detail: `${listed(names)} already ${names.length === 1 ? "shows" : "show"} captions in the picture. Nothing changed. Ask the user: "${question}"${atOther} If they say add them, ${answer(true)}.${others} If they say leave it, change nothing.`,
+  });
+};
 
 export class CaptionTrackService extends Context.Service<
   CaptionTrackService,
   {
     readonly addCaptions: (
       projectId: ProjectId,
-      options: EditDocumentService.EditCaller,
+      options: EditDocumentService.EditCaller & Confirmed,
     ) => Effect.Effect<AddCaptionsResult, CaptionsError | EditDocumentService.EditApplyError>;
+    /** The look and the user's own colours, size and place, as one change and one undo. */
+    readonly setStyle: (
+      projectId: ProjectId,
+      input: StyleInput,
+      options: EditDocumentService.EditCaller & Confirmed & { readonly origin: EditOrigin },
+    ) => Effect.Effect<SetStyleResult, CaptionsError | EditDocumentService.EditApplyError>;
+    /**
+     * The four looks with their previews, changing nothing. On an edit with no captions it first
+     * asks what adding them would (transcripts, captions already in the picture).
+     */
+    readonly looks: (
+      projectId: ProjectId,
+      options: Confirmed,
+    ) => Effect.Effect<LooksResult, CaptionsError | EditDocumentService.EditApplyError>;
   }
 >()("t3/edit/CaptionTrackService") {}
 
 const make = Effect.gen(function* () {
   const edits = yield* EditDocumentService.EditDocumentService;
   const projects = yield* ProjectService.ProjectService;
+  const stills = yield* CaptionStillsService.CaptionStillsService;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
 
-  const addCaptions: CaptionTrackService["Service"]["addCaptions"] = Effect.fn(
-    "CaptionTrackService.addCaptions",
-  )(function* (projectId, options) {
-    const snapshot = yield* edits.read(projectId);
+  const transcriptsOf = Effect.fn("CaptionTrackService.transcriptsOf")(function* (
+    projectId: ProjectId,
+    document: EditDocument,
+  ) {
     const project = yield* projects.getById(projectId).pipe(Effect.orElseSucceed(Option.none));
     if (Option.isNone(project)) {
       return yield* new EditUnavailableError({
@@ -56,39 +214,253 @@ const make = Effect.gen(function* () {
       });
     }
     const root = path.resolve(project.value.workspaceRoot);
-    const { transcripts, missing } = yield* loadCaptionTranscripts(root, snapshot.document).pipe(
+    return yield* loadCaptionTranscripts(root, document).pipe(
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(Path.Path, path),
     );
+  });
+
+  /**
+   * The ops that write the transcript caption track, or the plain reason they can't. A clip that
+   * already shows captions counts as a yes only once the track captions it (S7V-099); with
+   * `confirm` false it is left out and the other clips are captioned (S7V-109).
+   */
+  const transcriptTrackOps = Effect.fn("CaptionTrackService.transcriptTrackOps")(function* (
+    projectId: ProjectId,
+    document: EditDocument,
+    retry: string,
+    confirm: boolean | undefined,
+    position: CaptionPosition,
+  ) {
+    const loaded = yield* transcriptsOf(projectId, document);
+    const { transcripts, missing } = loaded;
     if (missing.length > 0) {
       const clips = missing.join(", ");
       return yield* new CaptionsError({
         reason: "no-transcript",
-        detail: `Transcribe the clip first: ${clips} has no transcript. Run video_transcribe, then add captions again.`,
+        detail: `Transcribe the clip first: ${clips} has no transcript. Run video_transcribe, then ${retry} again.`,
       });
+    }
+    const pending = unconfirmed(loaded, document);
+    const others = new Map([...transcripts].filter(([media]) => !pending.has(media)));
+    const othersSpeak = pending.size > 0 && captionItemsFor(document, others).length > 0;
+    if (pending.size > 0 && confirm === undefined) {
+      // Offered only on a first add: once the track exists, the other clips already have ours.
+      const offerOthers = othersSpeak && transcriptCaptionTrackOf(document) === undefined;
+      return yield* burnedInRefusal(document, pending, retry, position, offerOthers);
+    }
+    const waiting = [...pending.keys()].map((id) => clipName(document, id));
+    if (pending.size > 0 && confirm === false) {
+      if (!othersSpeak) {
+        const one = waiting.length === 1;
+        return yield* new CaptionsError({
+          reason: "no-clips",
+          detail: `Nothing changed: ${listed(waiting)} ${one ? "keeps its" : "keep their"} own captions, and no other clip has speech to caption. Say "add them anyway" to put ours over them. If they do, ${retry} again with confirm: true.`,
+        });
+      }
+      return { ops: captionTrackOps(document, others), captioned: [], uncaptioned: waiting };
     }
     if (transcripts.size === 0) {
+      const noVideo = document.tracks.every(
+        (track) => track.kind !== "video" || track.items.length === 0,
+      );
       return yield* new CaptionsError({
         reason: "no-clips",
-        detail: "There is nothing to caption: no clip with sound is on the timeline.",
+        detail: noVideo
+          ? `There is nothing to caption: the timeline has no clip yet. ${ASSEMBLE_FIRST}`
+          : "There is nothing to caption: no clip with sound is on the timeline.",
       });
     }
-    const ops = captionTrackOps(snapshot.document, transcripts);
+    return {
+      ops: captionTrackOps(document, transcripts),
+      /** The waiting clips this captions, with the user's yes. */
+      captioned: waiting,
+      /** The waiting clips left with their own captions, with the user's no. */
+      uncaptioned: [] as ReadonlyArray<string>,
+    };
+  });
+
+  const addCaptions: CaptionTrackService["Service"]["addCaptions"] = Effect.fn(
+    "CaptionTrackService.addCaptions",
+  )(function* (projectId, options) {
+    const snapshot = yield* edits.read(projectId);
+    const { ops, captioned, uncaptioned } = yield* transcriptTrackOps(
+      projectId,
+      snapshot.document,
+      "add captions",
+      options.confirm,
+      captionCustomOf(snapshot.document)?.position ?? "bottom",
+    );
+    // "Caption that clip too": the track exists, so this captions the waiting clips in its look.
+    const addedTo = transcriptCaptionTrackOf(snapshot.document) === undefined ? [] : captioned;
+    const look = lookPhrase(
+      presetOf(snapshot.document),
+      captionCustomOf(snapshot.document) ?? {},
+      null,
+    );
     const after = yield* edits.apply(projectId, ops, {
       origin: "agent",
       baseRevision: snapshot.revision,
       reply: options.reply,
-      summary: ADDED_CAPTIONS,
+      summary:
+        addedTo.length > 0 ? `Added captions to ${listed(addedTo)} in ${look}` : ADDED_CAPTIONS,
     });
     const track = transcriptCaptionTrackOf(after.document);
     return {
       revision: after.revision,
       captions: track?.items.length ?? 0,
       changed: after.revision !== snapshot.revision,
+      captioned: addedTo,
+      uncaptioned,
+      look,
     };
   });
 
-  return CaptionTrackService.of({ addCaptions });
+  const setStyle: CaptionTrackService["Service"]["setStyle"] = Effect.fn(
+    "CaptionTrackService.setStyle",
+  )(function* (projectId, input, options) {
+    const snapshot = yield* edits.read(projectId);
+    const { document } = snapshot;
+    const preset = input.preset ?? presetOf(document);
+    const custom =
+      input.custom === undefined
+        ? (captionCustomOf(document) ?? {})
+        : mergeCaptionCustom(captionCustomOf(document), input.custom);
+    const ownCustom = input.custom === undefined ? {} : { custom };
+    const name = CAPTION_PRESET_NAMES[preset];
+    // A size asked for now is said against the size before ("a bit smaller" from 1.4 to 1.2).
+    const sizeBefore = captionCustomOf(document)?.size ?? 1;
+    const own = describeCaptionCustom(
+      custom,
+      preset,
+      input.custom?.size === undefined ? undefined : sizeBefore,
+    );
+    const ownNote = own === "" ? "" : ` (${own})`;
+    // Captioning a waiting clip changes no size: it names one only if this call changed it.
+    const sizeChanged = input.custom?.size !== undefined && sizeBefore !== (custom.size ?? 1);
+    const addedLook = lookPhrase(preset, custom, sizeChanged ? sizeBefore : null);
+    const lacking = input.custom === undefined ? null : missingLookPart(input.custom, preset);
+    if (lacking !== null) return yield* new CaptionsError({ reason: "look-part", detail: lacking });
+    const tracks = shownCaptionTracks(document);
+    let ops: EditOp[];
+    let uncaptioned: ReadonlyArray<string> = [];
+    let captioned: ReadonlyArray<string> = [];
+    if (tracks.length > 0) {
+      // A restyle adds no captions, so it never asks. A clip placed later that shows its own
+      // stays uncaptioned and is named in the reply; with the user's yes, this change captions it.
+      const pending: CaptionTranscripts["burnedIn"] =
+        transcriptCaptionTrackOf(document) === undefined
+          ? new Map()
+          : unconfirmed(yield* transcriptsOf(projectId, document), document);
+      const confirmed = pending.size > 0 && options.confirm === true;
+      uncaptioned = confirmed ? [] : [...pending.keys()].map((id) => clipName(document, id));
+      const recaptioned = confirmed
+        ? yield* transcriptTrackOps(projectId, document, "pick the look", true, "bottom")
+        : { ops: [], captioned: [] };
+      captioned = recaptioned.captioned;
+      const restyled = tracks
+        .filter(
+          (track) =>
+            (track.style ?? DEFAULT_PRESET) !== preset ||
+            (input.custom !== undefined && !sameCaptionCustom(track.custom, custom)),
+        )
+        .map((track): EditOp => ({
+          _tag: "setCaptionStyle",
+          trackId: track.id,
+          style: preset,
+          ...ownCustom,
+        }));
+      ops = [...recaptioned.ops, ...restyled];
+      if (ops.length === 0) {
+        return {
+          revision: snapshot.revision,
+          captions: captionCount(document),
+          changed: false,
+          added: false,
+          preset,
+          custom,
+          described: own,
+          uncaptioned,
+          captioned: [],
+          look: `the ${name} look${ownNote}`,
+        };
+      }
+    } else {
+      const { ops: trackOps, uncaptioned: leftOut } = yield* transcriptTrackOps(
+        projectId,
+        document,
+        "pick the look",
+        options.confirm,
+        custom.position ?? "bottom",
+      );
+      uncaptioned = leftOut;
+      const addTrack = trackOps.find(
+        (op): op is Extract<EditOp, { _tag: "addTrack" }> => op._tag === "addTrack",
+      );
+      // No captions show, so `captionTrackOps` adds the transcript track; never a second one.
+      const trackId = addTrack!.track.id;
+      ops = [
+        ...trackOps,
+        {
+          _tag: "setCaptionStyle",
+          trackId,
+          style: preset,
+          ...(Object.keys(custom).length > 0 ? { custom } : {}),
+        },
+      ];
+    }
+    const added = tracks.length === 0;
+    const after = yield* edits.apply(projectId, ops, {
+      origin: options.origin,
+      baseRevision: snapshot.revision,
+      reply: options.reply,
+      summary: added
+        ? `Added captions in the ${name} look${ownNote}`
+        : captioned.length > 0
+          ? `Added captions to ${listed(captioned)} in ${addedLook}`
+          : `Changed the caption look to ${name}${ownNote}`,
+    });
+    return {
+      revision: after.revision,
+      captions: captionCount(after.document),
+      changed: after.revision !== snapshot.revision,
+      added,
+      preset,
+      custom,
+      described: own,
+      uncaptioned,
+      captioned,
+      look: captioned.length > 0 ? addedLook : `the ${name} look${ownNote}`,
+    };
+  });
+
+  const looks: CaptionTrackService["Service"]["looks"] = Effect.fn("CaptionTrackService.looks")(
+    function* (projectId, options) {
+      const snapshot = yield* edits.read(projectId);
+      const { document } = snapshot;
+      let uncaptioned: ReadonlyArray<string> = [];
+      if (shownCaptionTracks(document).length === 0) {
+        yield* transcriptTrackOps(
+          projectId,
+          document,
+          LOOKS_RETRY,
+          options.confirm,
+          captionCustomOf(document)?.position ?? "bottom",
+        );
+      } else if (transcriptCaptionTrackOf(document) !== undefined) {
+        // The looks restyle captions that exist; a clip placed later with its own is only named.
+        const pending = unconfirmed(yield* transcriptsOf(projectId, document), document);
+        uncaptioned = [...pending.keys()].map((id) => clipName(document, id));
+      }
+      return {
+        revision: snapshot.revision,
+        looks: yield* stills.previews(projectId),
+        uncaptioned,
+      };
+    },
+  );
+
+  return CaptionTrackService.of({ addCaptions, setStyle, looks });
 });
 
 export const layer = Layer.effect(CaptionTrackService, make);

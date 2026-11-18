@@ -48,11 +48,30 @@ const rendered = (path: string): ExportRenderResult => ({
   truePeak: -1.4,
 });
 
+/**
+ * Where the real engine publishes a job's end on the jobs stream, after `onSucceeded` (S7V-101).
+ * A test that holds it reads the export's status at that moment.
+ */
+interface EndGate {
+  readonly reached: Deferred.Deferred<void>;
+  readonly release: Deferred.Deferred<void>;
+}
+
 /** An engine whose export jobs finish when the test says so. */
 const fakeEngine = (
   calls: Array<RunJobCall>,
   outcome: Deferred.Deferred<"ok" | "cancelled" | "no-libass">,
+  endGate?: EndGate,
 ) => {
+  const published = <A>(result: A, onSucceeded?: (result: A) => Effect.Effect<void>) =>
+    Effect.gen(function* () {
+      if (onSucceeded) yield* onSucceeded(result);
+      if (endGate) {
+        yield* Deferred.succeed(endGate.reached, undefined);
+        yield* Deferred.await(endGate.release);
+      }
+      return result;
+    });
   let counter = 0;
   const runJob: EngineService.EngineService["Service"]["runJob"] = (input) =>
     Effect.gen(function* () {
@@ -76,12 +95,31 @@ const fakeEngine = (
           feature: "libass",
         });
       }
+      if (input.method === "interchange.export") {
+        const base = String(input.params.outputBase);
+        const extension = input.params.format === "fcp7xml" ? "xml" : String(input.params.format);
+        const files = [`${base}.${extension}`];
+        if (input.params.captions !== "none")
+          files.push(`${base}.${String(input.params.captions)}`);
+        for (const file of files) NodeFS.writeFileSync(file, "interchange");
+        return yield* published(
+          { files, dropped: ["zooms"], captions: 2 } as never,
+          input.onSucceeded,
+        );
+      }
       const output = String(input.params.outputPath);
       NodeFS.writeFileSync(output, "mp4");
-      return rendered(output) as never;
+      return yield* published(rendered(output) as never, input.onSucceeded);
+    });
+  // `interchange.check`: what the export would drop, and its caption chunks.
+  const call: EngineService.EngineService["Service"]["call"] = (method, params) =>
+    Effect.sync(() => {
+      calls.push({ kind: "call", projectId: undefined, method, params });
+      return { dropped: ["zooms"], captions: 2 } as never;
     });
   return Layer.mock(EngineService.EngineService)({
     runJob,
+    call,
     cancelJob: () => Effect.succeed(true),
     subscribeJobs: Stream.empty,
   });
@@ -154,10 +192,13 @@ const withExports = <A, E>(
     readonly calls: ReadonlyArray<RunJobCall>;
     readonly finish: Effect.Effect<void>;
     readonly asked: ReadonlyArray<string>;
+    readonly endGate: EndGate;
   }) => Effect.Effect<A, E>,
   setup: {
     readonly ops?: ReadonlyArray<EditOp>;
     readonly cached?: Record<string, Transcript>;
+    /** Hold each job where the engine publishes its end, until `endGate.release`. */
+    readonly holdEnd?: boolean;
   } = {},
 ) =>
   Effect.gen(function* () {
@@ -166,6 +207,11 @@ const withExports = <A, E>(
     const calls: Array<RunJobCall> = [];
     const asked: Array<string> = [];
     const done = yield* Deferred.make<"ok" | "cancelled" | "no-libass">();
+    const endGate: EndGate = {
+      reached: yield* Deferred.make<void>(),
+      release: yield* Deferred.make<void>(),
+    };
+    if (!setup.holdEnd) yield* Deferred.succeed(endGate.release, undefined);
     return yield* Effect.gen(function* () {
       const folders = yield* ManagedProjectFolders.ManagedProjectFolders;
       const edits = yield* EditDocumentService.EditDocumentService;
@@ -185,11 +231,12 @@ const withExports = <A, E>(
         calls,
         finish: Deferred.succeed(done, outcome).pipe(Effect.asVoid),
         asked,
+        endGate,
       });
     }).pipe(
       Effect.provide(
         ExportService.layer.pipe(
-          Layer.provide(fakeEngine(calls, done)),
+          Layer.provide(fakeEngine(calls, done, endGate)),
           Layer.provide(fakeTranscripts(setup.cached ?? {}, asked)),
           Layer.provide(layerSlowExists),
           Layer.provideMerge(layerEditTest(baseDir)),
@@ -254,6 +301,48 @@ describe("ExportService", () => {
         assert.isTrue(NodeFS.existsSync(NodePath.join(root, started.path)));
         assert.isTrue(isIgnored(root, started.path));
       }),
+    ),
+  );
+
+  // S7V-101: the Editor reads the status when the jobs stream says the job ended. The result is
+  // recorded before then, so the first export of a project shows it too.
+  it.effect("records the finished export before the engine publishes the job's end", () =>
+    withExports(
+      "ok",
+      ({ projectId, exports, finish, endGate }) =>
+        Effect.gen(function* () {
+          const started = yield* exports.start({ projectId, captions: false });
+          yield* finish;
+          yield* Deferred.await(endGate.reached);
+          const atEnd = yield* exports.status(started.jobId);
+          assert.strictEqual(atEnd?.state, "succeeded");
+          assert.strictEqual(atEnd?.result?.path, started.path);
+          yield* Deferred.succeed(endGate.release, undefined);
+          assert.strictEqual((yield* settled(exports, started.jobId)).state, "succeeded");
+        }),
+      { ops: withVideo, holdEnd: true },
+    ),
+  );
+
+  it.effect("records a finished editors export before the engine publishes the job's end", () =>
+    withExports(
+      "ok",
+      ({ projectId, exports, finish, endGate }) =>
+        Effect.gen(function* () {
+          const started = yield* exports.startInterchange({
+            projectId,
+            format: "fcpxml",
+            captions: "none",
+          });
+          assert.isDefined(started.jobId);
+          yield* finish;
+          yield* Deferred.await(endGate.reached);
+          const atEnd = yield* exports.status(started.jobId!);
+          assert.strictEqual(atEnd?.state, "succeeded");
+          assert.deepStrictEqual(atEnd?.files, started.files);
+          yield* Deferred.succeed(endGate.release, undefined);
+        }),
+      { ops: withVideo, holdEnd: true },
     ),
   );
 
@@ -410,6 +499,78 @@ describe("ExportService", () => {
     ),
   );
 
+  // S7V-109: a clip whose picture already shows captions keeps only its own, in both exports.
+  const withBurnt: ReadonlyArray<EditOp> = [
+    ...withVideo,
+    {
+      _tag: "putMedia",
+      media: {
+        id: "burnt",
+        kind: "video",
+        path: "assets/burnt.mp4",
+        fingerprint: { sha256: "cd".repeat(32), size: 4096 },
+        probe: { durationFrames: 900, hasVideo: true, hasAudio: true },
+      },
+    },
+    {
+      _tag: "insertItem",
+      trackId: "V1",
+      item: { id: "burnt-1", media: "burnt", start: 600, duration: 300, in: 0 },
+    },
+  ];
+  const spoken = (text: string, found?: boolean): Transcript => ({
+    ...transcriptOf([{ text, startFrame: 12, endFrame: 20, confidence: 0.9, speaker: "S1" }]),
+    ...(found === undefined
+      ? {}
+      : {
+          burnedInCaptions: found
+            ? { found: true, confidence: 0.9, region: { y0: 0.7, y1: 0.8 } }
+            : { found: false, confidence: 0 },
+        }),
+  });
+  const mediaOf = (call: RunJobCall | undefined) =>
+    (call?.params.transcripts as ReadonlyArray<{ media: string }> | undefined)?.map(
+      (entry) => entry.media,
+    );
+
+  it.effect("S7V-109: the fallback leaves out a clip whose picture shows captions", () =>
+    withExports(
+      "ok",
+      ({ projectId, exports, calls }) =>
+        Effect.gen(function* () {
+          yield* exports.start({ projectId });
+          yield* exports.startInterchange({ projectId, format: "fcpxml" });
+          // The video export, then the editors export's check and job.
+          assert.deepStrictEqual(calls.map(mediaOf), [["cam"], ["cam"], ["cam"]]);
+        }),
+      { ops: withBurnt, cached: { cam: spoken("hello"), burnt: spoken("theirs", true) } },
+    ),
+  );
+
+  it.effect("S7V-109: a clip checked with no captions in its picture is captioned as before", () =>
+    withExports(
+      "ok",
+      ({ projectId, exports, calls }) =>
+        Effect.gen(function* () {
+          yield* exports.start({ projectId });
+          assert.deepStrictEqual(mediaOf(calls[0]), ["cam", "burnt"]);
+        }),
+      { ops: withBurnt, cached: { cam: spoken("hello"), burnt: spoken("ours", false) } },
+    ),
+  );
+
+  it.effect("S7V-109: with only burned-in clips the export has no transcript captions", () =>
+    withExports(
+      "ok",
+      ({ projectId, exports, calls }) =>
+        Effect.gen(function* () {
+          yield* exports.start({ projectId });
+          assert.isUndefined(calls[0]?.params.transcripts);
+        }),
+      { ops: withVideo, cached: { cam: spoken("theirs", true) } },
+    ),
+  );
+
   it.effect("fails plainly without a transcript and writes nothing", () =>
     withExports(
       "ok",
@@ -426,6 +587,127 @@ describe("ExportService", () => {
           // Captions off needs no transcript.
           yield* exports.start({ projectId, captions: false });
           assert.strictEqual(calls.length, 1);
+          assert.isUndefined(calls[0]?.params.transcripts);
+        }),
+      { ops: withVideo },
+    ),
+  );
+
+  it.effect("starts an editors export with its captions file beside it (S7V-040)", () =>
+    withExports(
+      "ok",
+      ({ projectId, root, exports, calls, finish }) =>
+        Effect.gen(function* () {
+          const started = yield* exports.startInterchange({ projectId, format: "fcpxml" });
+          const stem = started.files[0]?.replace(/\.fcpxml$/u, "");
+          assert.match(String(stem), /^exports\/my-reel-2-\d{8}-\d{4}$/u);
+          assert.deepStrictEqual(started.files, [`${stem}.fcpxml`, `${stem}.srt`]);
+          assert.deepStrictEqual(started.dropped, ["zooms"]);
+
+          // The engine's check runs first, with the same inputs as the job; SRT is the default.
+          const [check, job] = calls;
+          assert.strictEqual(check?.method, "interchange.check");
+          assert.strictEqual(job?.method, "interchange.export");
+          assert.strictEqual(job?.kind, "export");
+          assert.strictEqual(job?.projectId, projectId);
+          assert.strictEqual(job?.params.captions, "srt");
+          assert.strictEqual(
+            job?.params.outputBase,
+            NodePath.join(NodePath.resolve(root), String(stem)),
+          );
+          assert.deepStrictEqual(
+            { ...job?.params, outputBase: undefined },
+            { ...check?.params, outputBase: undefined },
+          );
+
+          yield* finish;
+          const status = yield* settled(exports, String(started.jobId) as EngineJobId);
+          assert.deepStrictEqual(status, {
+            jobId: started.jobId,
+            projectId,
+            path: `${stem}.fcpxml`,
+            files: started.files,
+            dropped: ["zooms"],
+            state: "succeeded",
+          } as ExportStatus);
+          for (const file of started.files) {
+            assert.isTrue(NodeFS.existsSync(NodePath.join(root, file)));
+            assert.isTrue(isIgnored(root, file));
+          }
+          assert.deepStrictEqual(
+            historyLog(root)?.versions?.map((version) => version.exported),
+            [true],
+          );
+        }),
+      { ops: withVideo, cached: { cam: transcriptOf([]) } },
+    ),
+  );
+
+  it.effect("a check lists what won't carry over and starts nothing", () =>
+    withExports(
+      "ok",
+      ({ projectId, root, exports, calls }) =>
+        Effect.gen(function* () {
+          const checked = yield* exports.startInterchange({
+            projectId,
+            format: "edl",
+            captions: "none",
+            check: true,
+          });
+          assert.deepStrictEqual(checked, { files: [], dropped: ["zooms"] });
+          assert.deepStrictEqual(
+            calls.map((entry) => entry.method),
+            ["interchange.check"],
+          );
+          assert.deepStrictEqual(NodeFS.readdirSync(NodePath.join(root, "exports")), []);
+        }),
+      { ops: withVideo },
+    ),
+  );
+
+  it.effect("interchange names never collide with an MP4 export in the same minute", () =>
+    withExports("ok", ({ projectId, exports }) =>
+      Effect.gen(function* () {
+        const started = yield* Effect.all(
+          [
+            exports.startInterchange({ projectId, format: "otio", captions: "srt" }),
+            exports.startInterchange({ projectId, format: "fcpxml", captions: "srt" }),
+            exports.startInterchange({ projectId, format: "fcp7xml", captions: "ass" }),
+          ],
+          { concurrency: 3 },
+        );
+        const mp4 = yield* exports.start({ projectId, captions: false });
+        const files = [...started.flatMap((entry) => entry.files), mp4.path];
+        assert.strictEqual(new Set(files).size, files.length, files.join(", "));
+        // Each export's files share one free index: no `.srt` pairs with another export's file.
+        const stems = started.map(
+          (entry) => new Set(entry.files.map((file) => file.replace(/\.[a-z0-9]+$/u, ""))),
+        );
+        assert.isTrue(stems.every((stem) => stem.size === 1));
+        const srts = started.flatMap((entry) =>
+          entry.files.filter((file) => file.endsWith(".srt")),
+        );
+        assert.strictEqual(new Set(srts).size, 2);
+      }),
+    ),
+  );
+
+  it.effect("an editors export without a transcript fails plainly unless captions are off", () =>
+    withExports(
+      "ok",
+      ({ projectId, exports, calls }) =>
+        Effect.gen(function* () {
+          const error = yield* exports
+            .startInterchange({ projectId, format: "fcpxml" })
+            .pipe(Effect.flip);
+          assert.strictEqual(error._tag, "ExportStartError");
+          assert.strictEqual(calls.length, 0);
+          const started = yield* exports.startInterchange({
+            projectId,
+            format: "fcpxml",
+            captions: "none",
+          });
+          assert.strictEqual(started.files.length, 1);
           assert.isUndefined(calls[0]?.params.transcripts);
         }),
       { ops: withVideo },

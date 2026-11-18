@@ -1,7 +1,17 @@
-import { AuthFilesystemWriteScope, type EnvironmentId } from "@t3tools/contracts";
-import { type AtomCommandResult, runAtomCommand } from "@t3tools/client-runtime/state/runtime";
+import {
+  AuthFilesystemWriteScope,
+  type EnvironmentId,
+  ProjectWriteFileError,
+} from "@t3tools/contracts";
+import {
+  type AtomCommandResult,
+  runAtomCommand,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
+import * as Schema from "effect/Schema";
 import { useEffect } from "react";
 
+import { toastManager } from "~/components/ui/toast";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { projectEnvironment } from "~/state/projects";
 import { environmentSession, readEnvironmentScope, sessionHasScope } from "~/state/session";
@@ -129,7 +139,23 @@ export function createFileSaveSessions(deps: FileSaveSessionDeps) {
       const session = sessions.get(fileSaveKey(target));
       if (session && session.leases > 0) session.coordinator.change(contents);
     },
+    /** Writes a held file's unsaved edit now, as Mod+S in the file view asks (S7V-101). */
+    flush(target: FileSaveTarget): void {
+      const session = sessions.get(fileSaveKey(target));
+      if (session && session.leases > 0) session.coordinator.flush();
+    },
   };
+}
+
+const isProjectWriteFileError = Schema.is(ProjectWriteFileError);
+
+/** The server's plain reason for refusing a save the user can't fix by retrying (S7V-077). */
+export function refusedSaveMessage(result: AtomCommandResult<unknown, unknown>): string | null {
+  if (result._tag !== "Failure") return null;
+  const error = squashAtomCommandFailure(result);
+  return isProjectWriteFileError(error) && error.failure === "protected_file"
+    ? error.message
+    : null;
 }
 
 function fileSaveKey({ environmentId, cwd, relativePath }: FileSaveTarget): string {
@@ -150,11 +176,21 @@ const fileSaveSessions = createFileSaveSessions({
       },
     );
   },
-  persist: ({ environmentId, cwd, relativePath }, contents) =>
-    runAtomCommand(appAtomRegistry, projectEnvironment.writeFile, {
+  persist: async ({ environmentId, cwd, relativePath }, contents) => {
+    const result = await runAtomCommand(appAtomRegistry, projectEnvironment.writeFile, {
       environmentId,
       input: { cwd, relativePath, contents },
-    }),
+    });
+    const refused = refusedSaveMessage(result);
+    if (refused !== null) {
+      toastManager.add({
+        type: "error",
+        title: `Could not save ${relativePath}`,
+        description: refused,
+      });
+    }
+    return result;
+  },
   confirm: ({ environmentId, cwd, relativePath }, contents) =>
     confirmProjectFileQueryData(environmentId, cwd, relativePath, contents),
   readUnsaved: ({ environmentId, cwd, relativePath }) =>
@@ -175,4 +211,8 @@ export function useFileSaveSession(
 
 export function changeFileSaveSession(target: FileSaveTarget, contents: string): void {
   fileSaveSessions.change(target, contents);
+}
+
+export function flushFileSaveSession(target: FileSaveTarget): void {
+  fileSaveSessions.flush(target);
 }

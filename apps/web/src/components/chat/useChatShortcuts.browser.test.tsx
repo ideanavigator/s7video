@@ -6,6 +6,7 @@ import { userEvent } from "vite-plus/test/browser";
 import { surfaceShortcutKey } from "~/lib/surfaceShortcutKey";
 import { render } from "../../../test/render";
 import type { ChatComposerHandle } from "./ChatComposer";
+import { pasteTextToFocusComposer } from "./composerFocusRedirect";
 import { useChatShortcuts } from "./useChatShortcuts";
 
 const shortcutContext = {
@@ -186,4 +187,50 @@ it("runs a side chat's composer chords only from its composer, and never thread 
 
   expect(toggles).toEqual(["model"]);
   expect(stops).toEqual([]);
+});
+
+// S7V-101: the Editor and the file view own their keys; elsewhere letters still go to the composer.
+it("leaves keys pressed in the Editor to the Editor, and types other keys into the composer", async () => {
+  const composerKeys: string[] = [];
+  const editorKeys: string[] = [];
+  await using _screen = await render(
+    <>
+      <Chat composerKeys={composerKeys} />
+      <div data-editor-keys>
+        <div
+          role="group"
+          aria-label="Timeline tracks"
+          tabIndex={-1}
+          ref={focusOnMount}
+          onKeyDown={(event) => editorKeys.push(event.key)}
+        />
+      </div>
+    </>,
+    options,
+  );
+
+  await userEvent.keyboard("s");
+  expect(editorKeys).toEqual(["s"]);
+  expect(composerKeys).toEqual([]);
+
+  (document.activeElement as HTMLElement).blur();
+  await userEvent.keyboard("a");
+  expect(composerKeys).toEqual(["a"]);
+});
+
+it("still pastes into the composer from the Editor, as from anywhere outside a text field", () => {
+  const editor = document.createElement("div");
+  editor.setAttribute("data-editor-keys", "");
+  const timeline = document.createElement("div");
+  timeline.tabIndex = -1;
+  editor.append(timeline);
+  document.body.append(editor);
+  using _editor = { [Symbol.dispose]: () => editor.remove() };
+  const clipboardData = new DataTransfer();
+  clipboardData.setData("text/plain", "cut the pauses");
+  const paste = new ClipboardEvent("paste", { clipboardData, bubbles: true, cancelable: true });
+  let routed: string | null = null;
+  timeline.addEventListener("paste", (event) => (routed = pasteTextToFocusComposer(event)));
+  timeline.dispatchEvent(paste);
+  expect(routed).toBe("cut the pauses");
 });

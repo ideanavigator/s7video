@@ -8,7 +8,15 @@
  */
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
-import type { EditOp, ProjectId, Transcript } from "@t3tools/contracts";
+import {
+  CAPTION_LOOK_PARTS,
+  CaptionPresetId,
+  CaptionStillsResult,
+  EngineError,
+  type EditOp,
+  type ProjectId,
+  type Transcript,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -17,6 +25,7 @@ import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
+import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as EditDocumentService from "../edit/EditDocumentService.ts";
 import { layerEditTest } from "../edit/editHarness.testkit.ts";
 import * as EngineService from "../engine/EngineService.ts";
@@ -41,15 +50,49 @@ interface RenderParams {
 interface Calls {
   readonly renders: Array<RenderParams>;
   drawn: number;
+  /** The bytes of a new still; a short marker by default. */
+  stillBytes?: (text: string) => Uint8Array;
+  /** S7V-037: the looks asked for a preview, and the one whose drawing fails. */
+  readonly previews?: Array<string>;
+  failPreview?: string;
 }
 
 const sha = (text: string) => NodeCrypto.createHash("sha256").update(text).digest("hex");
+/** Named as the engine names them: 32 hex digits for the look, and for each text. */
+const LOOK = sha("look").slice(0, 32);
+const stillName = (text: string) => `${sha(text).slice(0, 32)}.png`;
 
 /** Answers `captions.render` as the engine does: the track's chunks, else the transcripts'. */
+/** Answers `captions.preview` as the engine does: a PNG in the look's folder, by look. */
+const previewOf = (calls: Calls, params: Record<string, unknown>) => {
+  const preset = String(params["preset"]);
+  calls.previews?.push(preset);
+  if (preset === calls.failPreview) return null;
+  const folder = sha(`look ${preset}`).slice(0, 32);
+  const png = `preview-${sha(preset).slice(0, 16)}.png`;
+  const file = NodePath.join(String(params["cacheDir"]), "previews", folder, png);
+  NodeFS.mkdirSync(NodePath.dirname(file), { recursive: true });
+  // Drawn only when missing, as the engine does.
+  if (!NodeFS.existsSync(file)) NodeFS.writeFileSync(file, `png:${preset}`);
+  return { folder, png };
+};
+
 const fakeEngine = (calls: Calls) =>
   Layer.mock(EngineService.EngineService)({
-    call: (_method, params, success) =>
+    call: (method, params, success) =>
       Effect.gen(function* () {
+        if (method === "captions.preview") {
+          const preview = previewOf(calls, params);
+          if (preview === null) {
+            return yield* new EngineError({
+              reason: "missing_tool",
+              method,
+              tool: "ffmpeg",
+              feature: "libass",
+            });
+          }
+          return yield* Schema.decodeEffect(success)(preview).pipe(Effect.orDie);
+        }
         const input = params as unknown as RenderParams;
         calls.renders.push(input);
         const items = input.edit.tracks
@@ -71,23 +114,23 @@ const fakeEngine = (calls: Calls) =>
                 text: word.text,
               })),
             );
-        const folder = NodePath.join(input.cacheDir, "look");
+        const folder = NodePath.join(input.cacheDir, LOOK);
         NodeFS.mkdirSync(folder, { recursive: true });
         for (const text of new Set(chunks.map((chunk) => chunk.text))) {
-          const file = NodePath.join(folder, `${sha(text).slice(0, 8)}.png`);
+          const file = NodePath.join(folder, stillName(text));
           if (NodeFS.existsSync(file)) continue;
-          NodeFS.writeFileSync(file, `png:${text}`);
+          NodeFS.writeFileSync(file, calls.stillBytes?.(text) ?? `png:${text}`);
           calls.drawn += 1;
         }
         return yield* Schema.decodeEffect(success)({
           width: 1080,
           height: 1920,
-          folder: "look",
+          folder: LOOK,
           drawn: 0,
           chunks: chunks.map((chunk) => ({
             start: chunk.start,
             end: chunk.end,
-            png: `${sha(chunk.text).slice(0, 8)}.png`,
+            png: stillName(chunk.text),
           })),
         }).pipe(Effect.orDie);
       }),
@@ -130,6 +173,56 @@ const writeClip = (root: string, transcribed: boolean) => {
   );
 };
 
+/** S7V-109: a second clip whose transcript says (`found`) whether its picture shows captions. */
+const burnt = Buffer.from("a clip with captions in its picture");
+const burntFingerprint = { sha256: sha(burnt.toString()), size: burnt.length };
+const burntMedia = {
+  ...media,
+  id: "burnt",
+  path: "assets/burnt.mp4",
+  label: "burnt.mp4",
+  fingerprint: burntFingerprint,
+} as const;
+const writeBurnt = (root: string, found: boolean) => {
+  NodeFS.mkdirSync(NodePath.join(root, "assets"), { recursive: true });
+  NodeFS.writeFileSync(NodePath.join(root, "assets", "burnt.mp4"), burnt);
+  const transcript: Transcript = {
+    transcriptVersion: 1,
+    mediaFingerprint: burntFingerprint,
+    model: "test",
+    revision: "test",
+    fps: { num: 30, den: 1 },
+    durationFrames: 900,
+    words: [{ text: "theirs", startFrame: 0, endFrame: 10, confidence: 1, speaker: "S1" }],
+    createdAt: "2026-11-09T00:00:00.000Z",
+    burnedInCaptions: found
+      ? { found: true, confidence: 0.9, region: { y0: 0.7, y1: 0.8 } }
+      : { found: false, confidence: 0 },
+  };
+  const dir = NodePath.join(root, ".s7cache", "transcripts");
+  NodeFS.mkdirSync(dir, { recursive: true });
+  NodeFS.writeFileSync(
+    NodePath.join(dir, `${burntFingerprint.sha256}.json`),
+    JSON.stringify(transcript),
+  );
+};
+/** The plain clip, then the burnt one after it. */
+const twoClips: ReadonlyArray<EditOp> = [
+  { _tag: "putMedia", media },
+  { _tag: "putMedia", media: burntMedia },
+  {
+    _tag: "addTrack",
+    track: {
+      kind: "video",
+      id: "V1",
+      items: [
+        { id: "v1", media: "cam", start: 0, duration: 90, in: 0 },
+        { id: "v2", media: "burnt", start: 90, duration: 90, in: 0 },
+      ],
+    },
+  },
+];
+
 const video: ReadonlyArray<EditOp> = [
   { _tag: "putMedia", media },
   {
@@ -160,6 +253,32 @@ const captions = (texts: ReadonlyArray<string>, metadata?: { s7: { media: string
   })),
 });
 
+/** S7V-075's measured 10-minute talk: 534 chunks over 452 texts, about 21 KB per PNG still. */
+const TEN_MINUTES = 10 * 60 * 30;
+const LONG_CHUNKS = 534;
+const LONG_TEXTS = 452;
+const longEdit: ReadonlyArray<EditOp> = [
+  { _tag: "putMedia", media: { ...media, probe: { ...media.probe, durationFrames: TEN_MINUTES } } },
+  {
+    _tag: "addTrack",
+    track: {
+      kind: "video",
+      id: "V1",
+      items: [{ id: "v1", media: "cam", start: 0, duration: TEN_MINUTES, in: 0 }],
+    },
+  },
+  captionTrack,
+  {
+    _tag: "setCaptions",
+    trackId: "C1",
+    captions: Array.from({ length: LONG_CHUNKS }, (_, index) => ({
+      start: index * 33,
+      duration: 30,
+      text: `spoken words number ${index % LONG_TEXTS}`,
+    })),
+  },
+];
+
 const withStills = <A, E>(
   body: (input: {
     readonly projectId: ProjectId;
@@ -187,6 +306,7 @@ const withStills = <A, E>(
       Effect.provide(
         CaptionStillsService.layer.pipe(
           Layer.provide(fakeEngine(calls)),
+          Layer.provide(ServerSecretStore.layer),
           Layer.provideMerge(layerEditTest(baseDir)),
         ),
       ),
@@ -206,8 +326,15 @@ const apply = (
       ),
     );
 
-const decoded = (stills: ReadonlyArray<string>) =>
-  stills.map((still) => Buffer.from(still, "base64").toString());
+const encodeReply = Schema.encodeSync(CaptionStillsResult);
+const replyBytes = (result: CaptionStillsResult) =>
+  Buffer.byteLength(JSON.stringify(encodeReply(result)));
+
+/** The stills the reply names, read where the asset route serves them from. */
+const decoded = (root: string, result: CaptionStillsResult) =>
+  result.stills.map((name) =>
+    NodeFS.readFileSync(NodePath.join(root, ".s7cache", "captions", result.folder, name), "utf8"),
+  );
 
 describe("CaptionStillsService (S7V-075)", () => {
   it.effect("serves the track's stills, one per text, and serves undo without drawing", () =>
@@ -225,7 +352,10 @@ describe("CaptionStillsService (S7V-075)", () => {
           { start: 20, end: 35, still: 1 },
           { start: 40, end: 55, still: 0 },
         ]);
-        assert.deepStrictEqual(decoded(first.stills), ["png:hello there", "png:again"]);
+        assert.deepStrictEqual(decoded(root, first), ["png:hello there", "png:again"]);
+        // S7V-079: the reply names the stills, and one signed URL serves the look's folder.
+        assert.strictEqual(first.folder, LOOK);
+        assert.match(first.stillsUrl, /^\/api\/assets\/[\w-]+\.[\w-]+\/$/);
         assert.deepStrictEqual(first.missing, []);
         // A track with items never sends the transcripts.
         assert.isUndefined(calls.renders[0]!.transcripts);
@@ -249,7 +379,7 @@ describe("CaptionStillsService (S7V-075)", () => {
         writeClip(root, true);
         yield* apply(edits, projectId, video);
         const fallback = yield* stills.stills(projectId);
-        assert.deepStrictEqual(decoded(fallback.stills), ["png:hello", "png:there"]);
+        assert.deepStrictEqual(decoded(root, fallback), ["png:hello", "png:there"]);
         assert.deepStrictEqual(
           calls.renders[0]!.transcripts?.map((entry) => entry.media),
           ["cam"],
@@ -257,6 +387,83 @@ describe("CaptionStillsService (S7V-075)", () => {
         // An empty caption track still falls back, as in the export.
         yield* apply(edits, projectId, [captionTrack]);
         assert.deepStrictEqual((yield* stills.stills(projectId)).chunks, fallback.chunks);
+      }),
+    ),
+  );
+
+  it.effect("S7V-109: the fallback leaves out a clip whose picture shows captions", () =>
+    withStills(({ projectId, root, calls, edits, stills }) =>
+      Effect.gen(function* () {
+        writeClip(root, true);
+        writeBurnt(root, true);
+        yield* apply(edits, projectId, twoClips);
+        const result = yield* stills.stills(projectId);
+        assert.deepStrictEqual(
+          calls.renders[0]!.transcripts?.map((entry) => entry.media),
+          ["cam"],
+        );
+        assert.deepStrictEqual(decoded(root, result), ["png:hello", "png:there"]);
+        assert.deepStrictEqual(result.missing, []);
+      }),
+    ),
+  );
+
+  it.effect(
+    "S7V-109: a clip checked with no captions, or never checked, is captioned as before",
+    () =>
+      withStills(({ projectId, root, calls, edits, stills }) =>
+        Effect.gen(function* () {
+          writeClip(root, true);
+          writeBurnt(root, false);
+          yield* apply(edits, projectId, twoClips);
+          yield* stills.stills(projectId);
+          assert.deepStrictEqual(
+            calls.renders[0]!.transcripts?.map((entry) => entry.media),
+            ["cam", "burnt"],
+          );
+        }),
+      ),
+  );
+
+  it.effect("S7V-109: a burned-in clip the caption track covers keeps its captions", () =>
+    withStills(({ projectId, root, calls, edits, stills }) =>
+      Effect.gen(function* () {
+        writeClip(root, true);
+        writeBurnt(root, true);
+        yield* apply(edits, projectId, twoClips);
+        // The user said yes: the transcript track captions it, so the track's items show.
+        yield* apply(edits, projectId, [
+          transcriptTrack,
+          captions(["ours over theirs"], { s7: { media: "burnt" } }),
+        ]);
+        const result = yield* stills.stills(projectId);
+        assert.deepStrictEqual(decoded(root, result), ["png:ours over theirs"]);
+        assert.isUndefined(calls.renders[0]!.transcripts);
+      }),
+    ),
+  );
+
+  it.effect("S7V-109: with only a burned-in clip and no caption track, nothing is drawn", () =>
+    withStills(({ projectId, root, calls, edits, stills }) =>
+      Effect.gen(function* () {
+        writeBurnt(root, true);
+        yield* apply(edits, projectId, [
+          { _tag: "putMedia", media: burntMedia },
+          {
+            _tag: "addTrack",
+            track: {
+              kind: "video",
+              id: "V1",
+              items: [{ id: "v1", media: "burnt", start: 0, duration: 90, in: 0 }],
+            },
+          },
+        ]);
+        const result = yield* stills.stills(projectId);
+        assert.deepStrictEqual(
+          { key: result.key, chunks: result.chunks },
+          { key: "none", chunks: [] },
+        );
+        assert.strictEqual(calls.renders.length, 0);
       }),
     ),
   );
@@ -272,7 +479,7 @@ describe("CaptionStillsService (S7V-075)", () => {
         ]);
         const result = yield* stills.stills(projectId);
         assert.deepStrictEqual(result.missing, ["cam.mp4"]);
-        assert.deepStrictEqual(decoded(result.stills), ["png:kept words"]);
+        assert.deepStrictEqual(decoded(root, result), ["png:kept words"]);
         assert.strictEqual(calls.renders.length, 1);
       }),
     ),
@@ -292,6 +499,123 @@ describe("CaptionStillsService (S7V-075)", () => {
         ]);
         assert.deepStrictEqual((yield* stills.stills(projectId)).stills, []);
         assert.strictEqual(calls.renders.length, 0);
+      }),
+    ),
+  );
+
+  it("S7V-037: the app's caption looks are the engine's style files", () => {
+    const styles = NodePath.join(
+      import.meta.dirname,
+      "../../../../packages/engine/src/s7engine/styles/captions",
+    );
+    const files = NodeFS.readdirSync(styles)
+      .filter((name) => name.endsWith(".json"))
+      .map((name) => name.slice(0, -".json".length));
+    assert.deepStrictEqual(files.toSorted(), [...CaptionPresetId.literals].toSorted());
+    // S7V-099: the parts a custom colour can change are the ones each style file draws.
+    for (const id of CaptionPresetId.literals) {
+      const style = JSON.parse(NodeFS.readFileSync(NodePath.join(styles, `${id}.json`), "utf8"));
+      const parts = (["box", "highlight"] as const).filter((part) => part in style);
+      assert.deepStrictEqual(parts, [...CAPTION_LOOK_PARTS[id]], id);
+    }
+  });
+
+  // S7V-037: the highlighted look draws one still per word being said, so the reply has an entry
+  // per word: at most 4 per chunk (the looks' maxWords), each word state its own still.
+  it.effect("S7V-037: the 10-minute reply in the highlighted look stays under 200 KB", (context) =>
+    withStills(({ projectId, root, edits, stills }) =>
+      Effect.gen(function* () {
+        writeClip(root, false);
+        const states = LONG_CHUNKS * 4;
+        yield* apply(edits, projectId, [
+          ...longEdit.slice(0, 3),
+          {
+            _tag: "setCaptions",
+            trackId: "C1",
+            captions: Array.from({ length: states }, (_, index) => ({
+              start: index * 8,
+              duration: 8,
+              text: `spoken words number ${index % (LONG_TEXTS * 4)}`,
+            })),
+          },
+        ]);
+        const result = yield* stills.stills(projectId);
+        assert.strictEqual(result.chunks.length, states);
+        assert.strictEqual(result.stills.length, LONG_TEXTS * 4);
+        const bytes = replyBytes(result);
+        yield* Effect.promise(() =>
+          context.annotate(
+            `captions.stills for 10 minutes, one entry per word: ${states} entries, ${result.stills.length} stills, ${(bytes / 1000).toFixed(1)} KB`,
+          ),
+        );
+        assert.isBelow(bytes, 200_000);
+      }),
+    ),
+  );
+
+  it.effect(
+    "S7V-099: each look's preview by its real path, or its name alone when it can't be drawn",
+    () =>
+      withStills(({ projectId, root, calls, edits, stills }) =>
+        Effect.gen(function* () {
+          writeClip(root, false);
+          yield* apply(edits, projectId, video);
+          const asked: Array<string> = [];
+          Object.assign(calls, { previews: asked, failPreview: "s7-minimal" });
+          const previewPath = (preset: string) =>
+            NodePath.join(
+              NodeFS.realpathSync(root),
+              ".s7cache",
+              "captions",
+              "previews",
+              sha(`look ${preset}`).slice(0, 32),
+              `preview-${sha(preset).slice(0, 16)}.png`,
+            );
+          const previews = yield* stills.previews(projectId);
+          assert.deepStrictEqual(asked, ["s7-neutral", "s7-box", "s7-karaoke", "s7-minimal"]);
+          assert.deepStrictEqual(previews, [
+            { id: "s7-neutral", name: "Plain", path: previewPath("s7-neutral") },
+            { id: "s7-box", name: "Boxed", path: previewPath("s7-box") },
+            { id: "s7-karaoke", name: "Highlighted word", path: previewPath("s7-karaoke") },
+            { id: "s7-minimal", name: "Minimal", path: null },
+          ]);
+          assert.strictEqual(NodeFS.readFileSync(previews[1]!.path!, "utf8"), "png:s7-box");
+          // A preview swapped for a link is never shown: it could point anywhere on the machine.
+          const secret = NodePath.join(root, "secret.txt");
+          NodeFS.writeFileSync(secret, "not a preview");
+          NodeFS.rmSync(previewPath("s7-box"));
+          NodeFS.symlinkSync(secret, previewPath("s7-box"));
+          const again = yield* stills.previews(projectId);
+          assert.deepStrictEqual(
+            again.map((entry) => [entry.id, entry.path]),
+            [
+              ["s7-neutral", previewPath("s7-neutral")],
+              ["s7-box", null],
+              ["s7-karaoke", previewPath("s7-karaoke")],
+              ["s7-minimal", null],
+            ],
+          );
+        }),
+      ),
+  );
+
+  it.effect("S7V-079: the reply for a 10-minute edit stays under 200 KB", (context) =>
+    withStills(({ projectId, root, calls, edits, stills }) =>
+      Effect.gen(function* () {
+        writeClip(root, false);
+        calls.stillBytes = () => NodeCrypto.randomBytes(21_000);
+        yield* apply(edits, projectId, longEdit);
+        const result = yield* stills.stills(projectId);
+        assert.strictEqual(result.chunks.length, LONG_CHUNKS);
+        assert.strictEqual(calls.drawn, LONG_TEXTS);
+        const bytes = replyBytes(result);
+        // Shown in the test report: the size S7V-079's AC-1 records.
+        yield* Effect.promise(() =>
+          context.annotate(
+            `captions.stills for 10 minutes: ${LONG_CHUNKS} chunks, ${LONG_TEXTS} stills, ${(bytes / 1000).toFixed(1)} KB`,
+          ),
+        );
+        assert.isBelow(bytes, 200_000);
       }),
     ),
   );

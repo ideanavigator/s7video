@@ -8,13 +8,14 @@ import {
   ExportStartError,
   type MediaAsset,
   ProjectId,
+  type TranscribeModelsStatus,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
-import { useSyncExternalStore } from "react";
+import { type ReactNode, useSyncExternalStore } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
-import { act, render } from "../../../test/render";
+import { act, fakeTimers, render } from "../../../test/render";
 import { scopedProjectKey } from "@t3tools/client-runtime/environment";
 
 import {
@@ -36,6 +37,13 @@ const state = vi.hoisted(() => ({
   transcriptMedia: [] as Array<string | null>,
   transcript: { _tag: "loading" } as MediaTranscriptState,
   versions: { _tag: "loading" } as ProjectVersionsState,
+  speech: null as TranscribeModelsStatus | null,
+  /** The export's file on the server (S7V-101). */
+  exportFile: {
+    size: 68_000_000 as number | "missing" | null,
+    check: "present" as "present" | "missing" | "unknown",
+    canReveal: true,
+  },
 }));
 
 /** The export as the jobs stream would deliver it: setting it re-renders its readers. */
@@ -62,12 +70,17 @@ const commands = vi.hoisted(() => ({
   undo: vi.fn(),
   redo: vi.fn(),
   plan: vi.fn(),
+  interchange: vi.fn(),
+  openInEditor: vi.fn(async () => ({ _tag: "Success", value: undefined })),
 }));
-const toasts = vi.hoisted(() => ({ add: vi.fn() }));
+const toasts = vi.hoisted(() => ({ add: vi.fn(), close: vi.fn() }));
 
 vi.mock(import("../ui/toast"), async (importOriginal) => {
   const actual = await importOriginal();
-  return { ...actual, toastManager: { ...actual.toastManager, add: toasts.add } };
+  return {
+    ...actual,
+    toastManager: { ...actual.toastManager, add: toasts.add, close: toasts.close },
+  };
 });
 
 vi.mock(import("../../editor/editStore"), async (importOriginal) => ({
@@ -83,6 +96,15 @@ vi.mock(import("../../editor/editStore"), async (importOriginal) => ({
   useProjectVersions: () => state.versions,
   // The caption overlay (S7V-075) has its own tests.
   useCaptionStills: () => ({ _tag: "none" }),
+  useSpeechModelStatus: () => state.speech,
+}));
+vi.mock(import("../../editor/exportFiles"), async (importOriginal) => ({
+  ...(await importOriginal()),
+  useWorkspaceRoot: () => WORKSPACE_ROOT,
+  useCanRevealFiles: () => state.exportFile.canReveal,
+  useExportFileSize: (_environmentId: unknown, path: string | null) =>
+    path === null ? null : state.exportFile.size,
+  useExportFileCheck: () => async () => state.exportFile.check,
 }));
 vi.mock(import("../../state/media"), () => ({
   useMediaLibrary: () => state.library,
@@ -92,21 +114,25 @@ vi.mock(import("../../state/use-atom-command"), () => ({
   useAtomCommand: ((command: { label: string } | undefined) =>
     command?.label.endsWith("export:start")
       ? commands.start
-      : command?.label.endsWith("engine:cancel")
-        ? commands.cancel
-        : command?.label.endsWith("edit:history-clean")
-          ? commands.historyClean
-          : command?.label.endsWith("edit:history-dismiss")
-            ? commands.historyDismiss
-            : command?.label.endsWith("edit:apply")
-              ? commands.apply
-              : command?.label.endsWith("edit:undo")
-                ? commands.undo
-                : command?.label.endsWith("edit:redo")
-                  ? commands.redo
-                  : command?.label.endsWith("media:import-plan")
-                    ? commands.plan
-                    : vi.fn()) as never,
+      : command?.label.endsWith("export:interchange")
+        ? commands.interchange
+        : command?.label.endsWith("engine:cancel")
+          ? commands.cancel
+          : command?.label.endsWith("edit:history-clean")
+            ? commands.historyClean
+            : command?.label.endsWith("edit:history-dismiss")
+              ? commands.historyDismiss
+              : command?.label.endsWith("edit:apply")
+                ? commands.apply
+                : command?.label.endsWith("edit:undo")
+                  ? commands.undo
+                  : command?.label.endsWith("edit:redo")
+                    ? commands.redo
+                    : command?.label.endsWith("media:import-plan")
+                      ? commands.plan
+                      : command?.label.endsWith("shell:open-in-editor")
+                        ? commands.openInEditor
+                        : vi.fn()) as never,
 }));
 vi.mock(import("../../assets/assetUrls"), () => ({
   useAssetUrlState: ((
@@ -121,14 +147,24 @@ vi.mock(import("../../assets/assetUrls"), () => ({
     }
     return { _tag: "Success", url: "" };
   }) as never,
-  // The timeline's waveforms and filmstrips (S7V-035) mint part URLs; none are served here.
-  useAssetUrlMinter: () => async () => null,
+  // The timeline's waveforms and filmstrips (S7V-035) mint part URLs; none are served here. An
+  // export's file gets one, for Play and Open (S7V-101).
+  useAssetUrlMinter: (() => async (resource: { readonly _tag: string; readonly path?: string }) =>
+    resource._tag === "draft-workspace-file" ? `about:blank#${resource.path}` : null) as never,
 }));
+const WORKSPACE_ROOT = vi.hoisted(() => "/Users/me/Movies/Charger reel");
 
 import "../../index.css";
 
+import { shouldTypeToFocusComposer } from "../chat/composerFocusRedirect";
 import { BROWSER_ADD_MEDIA_HINT } from "./addMediaHint";
-import EditorPanel, { CHANGED_ELSEWHERE_NOTICE, DROP_OVERLAY_TEXT } from "./EditorPanel";
+import EditorPanel, {
+  CHANGED_ELSEWHERE_NOTICE,
+  DROP_OVERLAY_TEXT,
+  PLAYER_SHARE,
+} from "./EditorPanel";
+import { EXPORT_GONE, latestEditorsFilesStorageKey, latestExportStorageKey } from "./ExportResult";
+import { SPEECH_MODEL_PROMPT } from "./SpeechModelPrompt";
 
 const FPS = { num: 30, den: 1 };
 const projectId = ProjectId.make("project-1");
@@ -179,9 +215,9 @@ const setState = (items: ReadonlyArray<MediaAsset>, cut: boolean) => {
   };
 };
 
-const sized = () => {
+const sized = (height = 760) => {
   const container = document.createElement("div");
-  container.style.height = "760px";
+  container.style.height = `${height}px`;
   container.style.width = "420px";
   return container;
 };
@@ -190,7 +226,10 @@ const panel = () => (
   <EditorPanel environmentId={EnvironmentId.make("env-1")} projectId={projectId} />
 );
 
-const renderPanel = () => render(panel(), { container: sized(), router: false });
+const renderPanel = (height?: number) =>
+  render(panel(), { container: sized(height), router: false });
+/** The player keeps 45% of the panel (S7V-101), so a list that must scroll gets a tall one. */
+const TALL_PX = 1200;
 
 const videoOf = async (screen: Awaited<ReturnType<typeof renderPanel>>) =>
   (await screen.getByLabelText("clip-0.mov", { exact: true }).findElement()) as HTMLVideoElement;
@@ -321,7 +360,7 @@ describe("EditorPanel", () => {
 
     it("shows nothing below the limit", async () => {
       withCleanup();
-      await using screen = await renderPanel();
+      await using screen = await renderPanel(TALL_PX);
       await expect.element(screen.getByRole("button", { name: "Export" })).toBeVisible();
       expect(banner(screen).query()).toBeNull();
     });
@@ -336,7 +375,7 @@ describe("EditorPanel", () => {
       });
       commands.historyDismiss.mockReset();
       commands.historyDismiss.mockResolvedValueOnce({ _tag: "Success", value: {} });
-      await using screen = await renderPanel();
+      await using screen = await renderPanel(TALL_PX);
       await expect
         .element(
           banner(screen).getByText(
@@ -377,7 +416,7 @@ describe("EditorPanel", () => {
           _tag: "Success",
           value: { removedVersions: 61, removedSteps: 61, freedBytes: 17.5 * 1024 * 1024 },
         });
-      await using screen = await renderPanel();
+      await using screen = await renderPanel(TALL_PX);
       await userEvent.click(screen.getByRole("button", { name: "Remove all old versions" }));
       expect(commands.historyClean).toHaveBeenCalledWith({
         environmentId,
@@ -419,7 +458,7 @@ describe("EditorPanel", () => {
       withCleanup({ versions: 51, bytes: 1024 * 1024 });
       commands.historyDismiss.mockReset();
       commands.historyDismiss.mockResolvedValueOnce({ _tag: "Success", value: {} });
-      await using screen = await renderPanel();
+      await using screen = await renderPanel(TALL_PX);
       const notNow = screen.getByRole("button", { name: "Not now" });
       (await notNow.findElement()).focus();
       await userEvent.keyboard("{Enter}");
@@ -432,6 +471,10 @@ describe("EditorPanel", () => {
     await using screen = await renderPanel();
     await expect.element(screen.getByRole("group", { name: "Player: clip-0.mov" })).toBeVisible();
     await expect.element(screen.getByRole("button", { name: "Export" })).toBeVisible();
+    // S7V-099: captions are shaped in the chat; no caption looks sit beside Export.
+    expect(screen.getByRole("group", { name: "Caption look" }).query()).toBeNull();
+    expect(screen.getByText("Pick a look to add captions.").query()).toBeNull();
+    expect(screen.getByRole("button", { name: /^Caption style/u }).query()).toBeNull();
   });
 
   it("plays an edit from several clips on the player clock, each clip with its own state", async () => {
@@ -491,7 +534,7 @@ describe("EditorPanel", () => {
       Array.from({ length: 40 }, (_, index) => asset(`clip-${index}`)),
       true,
     );
-    await using screen = await renderPanel();
+    await using screen = await renderPanel(TALL_PX);
     await screen.getByRole("tab", { name: "Media" }).click();
     await expect
       .element(screen.getByRole("tab", { name: "Media" }))
@@ -553,6 +596,539 @@ describe("EditorPanel", () => {
     state.export = { job: null, status: null };
   });
 
+  describe("export result (S7V-101)", () => {
+    const environmentId = EnvironmentId.make("env-1");
+    const EXPORT_PATH = "exports/charger-reel-20261114-2227.mp4";
+    const STORAGE_KEY = latestExportStorageKey({ environmentId, projectId });
+    const EDITORS_KEY = latestEditorsFilesStorageKey({ environmentId, projectId });
+    const finished: ProjectExport = {
+      job: exportJob({ state: "succeeded", progress: 1 }),
+      status: {
+        jobId: EngineJobId.make("job-1"),
+        projectId,
+        path: EXPORT_PATH,
+        state: "succeeded",
+        result: {
+          path: EXPORT_PATH,
+          durationFrames: 3660,
+          fps: FPS,
+          width: 1080,
+          height: 1920,
+          captions: 12,
+          lufs: -14,
+          truePeak: -1,
+        },
+      },
+    };
+    const kept = (path = EXPORT_PATH, extra: Record<string, unknown> = {}) =>
+      localStorage.setItem(
+        STORAGE_KEY,
+        JSON.stringify({
+          path,
+          durationFrames: 3660,
+          fps: FPS,
+          width: 1080,
+          height: 1920,
+          ...extra,
+        }),
+      );
+    const reset = () => {
+      state.export = { job: null, status: null };
+      state.exportFile = { size: 68_000_000, check: "present", canReveal: true };
+      localStorage.removeItem(STORAGE_KEY);
+      localStorage.removeItem(EDITORS_KEY);
+      delete window.desktopBridge;
+    };
+    /** The panel's row that holds `element`. */
+    const rowOf = (element: Element) =>
+      [...document.querySelector("[data-testid=editor-top]")!.children].find((row) =>
+        row.contains(element),
+      );
+
+    it("says the video is ready on its own row, with Play and Show in Finder", async () => {
+      setState([asset("clip-0")], true);
+      state.export = finished;
+      window.desktopBridge = {} as NonNullable<typeof window.desktopBridge>;
+      commands.openInEditor.mockClear();
+      try {
+        await using screen = await renderPanel();
+        const result = screen.getByTestId("export-result");
+        await expect
+          .element(result)
+          .toHaveTextContent("Your video is ready · 2:02 · 1080×1920 · 68 MB");
+        // Not in the row with the caption looks and Export, and not over it.
+        const exportButton = screen.getByRole("button", { name: "Export" }).element();
+        expect(rowOf(result.element())).not.toBe(rowOf(exportButton));
+        expect(result.element().getBoundingClientRect().top).toBeGreaterThanOrEqual(
+          rowOf(exportButton)!.getBoundingClientRect().bottom,
+        );
+        await result.getByRole("button", { name: "Show in Finder" }).click();
+        await vi.waitFor(() =>
+          expect(commands.openInEditor).toHaveBeenCalledWith({
+            environmentId,
+            input: {
+              cwd: `${WORKSPACE_ROOT}/${EXPORT_PATH}`,
+              editor: "file-manager",
+              reveal: true,
+            },
+          }),
+        );
+        await result.getByRole("button", { name: "Play the export" }).click();
+        const dialog = page.getByRole("dialog", { name: "Your export · 2:02" });
+        await expect.element(dialog).toBeVisible();
+        await expect
+          .element(dialog.getByText("1080×1920, saved as charger-reel-20261114-2227.mp4"))
+          .toBeVisible();
+        await expect
+          .element(dialog.getByLabelText("Your export"))
+          .toHaveAttribute("src", `about:blank#${EXPORT_PATH}`);
+      } finally {
+        reset();
+      }
+    });
+
+    it("keeps the latest export after a reload, and offers Open in the browser build", async () => {
+      setState([asset("clip-0")], true);
+      state.export = finished;
+      const open = vi.spyOn(window, "open").mockReturnValue(null);
+      try {
+        {
+          await using screen = await renderPanel();
+          await expect
+            .element(screen.getByTestId("export-result"))
+            .toHaveTextContent("Your video is ready · 2:02 · 1080×1920 · 68 MB");
+        }
+        // A reload: the jobs stream no longer has the job, and nothing was started here.
+        state.export = { job: null, status: null };
+        await using screen = await renderPanel();
+        const result = screen.getByTestId("export-result");
+        await expect.element(result).toHaveTextContent("Latest export · 2:02 · 1080×1920 · 68 MB");
+        await expect.element(result.getByRole("button", { name: "Play the export" })).toBeVisible();
+        expect(result.getByRole("button", { name: "Show in Finder" }).query()).toBeNull();
+        await result.getByRole("button", { name: "Open the export" }).click();
+        await vi.waitFor(() =>
+          expect(open).toHaveBeenCalledWith(`about:blank#${EXPORT_PATH}`, "_blank", "noopener"),
+        );
+      } finally {
+        open.mockRestore();
+        reset();
+      }
+    });
+
+    it("offers Open, not Show in Finder, when the server can't show files", async () => {
+      setState([asset("clip-0")], true);
+      kept();
+      window.desktopBridge = {} as NonNullable<typeof window.desktopBridge>;
+      state.exportFile.canReveal = false;
+      try {
+        await using screen = await renderPanel();
+        const result = screen.getByTestId("export-result");
+        await expect.element(result.getByRole("button", { name: "Open the export" })).toBeVisible();
+        expect(result.getByRole("button", { name: "Show in Finder" }).query()).toBeNull();
+      } finally {
+        reset();
+      }
+    });
+
+    it("says an export that was moved or deleted is gone, and forgets it", async () => {
+      setState([asset("clip-0")], true);
+      kept();
+      window.desktopBridge = {} as NonNullable<typeof window.desktopBridge>;
+      state.exportFile.check = "missing";
+      toasts.add.mockReset();
+      commands.openInEditor.mockClear();
+      try {
+        await using screen = await renderPanel();
+        const result = screen.getByTestId("export-result");
+        await result.getByRole("button", { name: "Show in Finder" }).click();
+        await vi.waitFor(() =>
+          expect(toasts.add).toHaveBeenCalledWith({ type: "error", title: EXPORT_GONE }),
+        );
+        expect(commands.openInEditor).not.toHaveBeenCalled();
+        await expect.element(result).not.toBeInTheDocument();
+        expect(localStorage.getItem(STORAGE_KEY) ?? "null").toBe("null");
+      } finally {
+        reset();
+      }
+    });
+
+    it("drops a kept export whose file the server no longer has", async () => {
+      setState([asset("clip-0")], true);
+      kept();
+      state.exportFile.size = "missing";
+      try {
+        await using screen = await renderPanel();
+        await expect.element(screen.getByRole("button", { name: "Export" })).toBeVisible();
+        expect(screen.getByTestId("export-result").query()).toBeNull();
+        await vi.waitFor(() => expect(localStorage.getItem(STORAGE_KEY) ?? "null").toBe("null"));
+      } finally {
+        reset();
+      }
+    });
+
+    it.each(["../../../etc/passwd", "/Users/me/secret.mp4", "exports/../edit.json"])(
+      "drops a kept path outside exports/ (%s)",
+      async (path) => {
+        setState([asset("clip-0")], true);
+        kept(path);
+        try {
+          await using screen = await renderPanel();
+          await expect.element(screen.getByRole("button", { name: "Export" })).toBeVisible();
+          expect(screen.getByTestId("export-result").query()).toBeNull();
+          await vi.waitFor(() => expect(localStorage.getItem(STORAGE_KEY) ?? "null").toBe("null"));
+        } finally {
+          reset();
+        }
+      },
+    );
+
+    it("hides the row on X until the next export", async () => {
+      setState([asset("clip-0")], true);
+      kept();
+      try {
+        {
+          await using screen = await renderPanel();
+          const result = screen.getByTestId("export-result");
+          await result.getByRole("button", { name: "Hide" }).click();
+          await expect.element(result).not.toBeInTheDocument();
+        }
+        {
+          // Still hidden after a reload, and still reachable from beside Export.
+          await using screen = await renderPanel();
+          await expect.element(screen.getByRole("button", { name: "Export" })).toBeVisible();
+          expect(screen.getByTestId("export-result").query()).toBeNull();
+          await screen.getByRole("button", { name: "Play the latest export" }).click();
+          await expect
+            .element(page.getByRole("dialog", { name: "Your export · 2:02" }))
+            .toBeVisible();
+          await userEvent.keyboard("{Escape}");
+        }
+        const next = "exports/charger-reel-20261114-2300.mp4";
+        state.export = {
+          job: exportJob({ state: "succeeded", progress: 1 }),
+          status: {
+            ...finished.status!,
+            path: next,
+            result: { ...finished.status!.result!, path: next },
+          },
+        };
+        await using screen = await renderPanel();
+        await expect
+          .element(screen.getByTestId("export-result"))
+          .toHaveTextContent("Your video is ready · 2:02 · 1080×1920 · 68 MB");
+        // The row is back, so the extra way to play it is not.
+        expect(screen.getByRole("button", { name: "Play the latest export" }).query()).toBeNull();
+      } finally {
+        reset();
+      }
+    });
+
+    // Round 4: an outcome row takes the export row's place; the saved export stays playable.
+    it("keeps the saved export playable after a failed export, and hides the outcome row on X", async () => {
+      setState([asset("clip-0")], true);
+      kept();
+      state.export = {
+        job: exportJob({ state: "failed" }),
+        status: {
+          jobId: EngineJobId.make("job-1"),
+          projectId,
+          path: "exports/edit.mp4",
+          state: "failed",
+          message: "The disk is full.",
+        },
+      };
+      try {
+        await using screen = await renderPanel();
+        const result = screen.getByTestId("export-result");
+        await expect.element(result).toHaveTextContent("Export failed: The disk is full.");
+        await screen.getByRole("button", { name: "Play the latest export" }).click();
+        await expect
+          .element(page.getByRole("dialog", { name: "Your export · 2:02" }))
+          .toBeVisible();
+        await userEvent.keyboard("{Escape}");
+        await result.getByRole("button", { name: "Hide" }).click();
+        await expect.element(result).not.toBeInTheDocument();
+        await expect
+          .element(screen.getByRole("button", { name: "Play the latest export" }))
+          .toBeVisible();
+      } finally {
+        reset();
+      }
+    });
+
+    it("gives a cancelled export and the files for editors a Hide button too", async () => {
+      setState([asset("clip-0")], true);
+      state.export = { job: exportJob({ state: "cancelled" }), status: null };
+      try {
+        {
+          await using screen = await renderPanel();
+          const result = screen.getByTestId("export-result");
+          await expect.element(result).toHaveTextContent("Export cancelled");
+          await result.getByRole("button", { name: "Hide" }).click();
+          await expect.element(result).not.toBeInTheDocument();
+        }
+        state.export = {
+          job: exportJob({ id: EngineJobId.make("job-9"), state: "succeeded", progress: 1 }),
+          status: {
+            jobId: EngineJobId.make("job-9"),
+            projectId,
+            path: "exports/edit.fcpxml",
+            state: "succeeded",
+            files: ["exports/edit.fcpxml", "exports/edit.srt"],
+          },
+        };
+        await using screen = await renderPanel();
+        const result = screen.getByTestId("export-result");
+        await expect
+          .element(result)
+          .toHaveTextContent("Your files for editors are ready · in exports: edit.fcpxml and .srt");
+        await result.getByRole("button", { name: "Hide" }).click();
+        await expect.element(result).not.toBeInTheDocument();
+      } finally {
+        reset();
+      }
+    });
+
+    // S7V-109: the files for editors lead somewhere, and are still there after a reload.
+    const editorsFiles = ["exports/edit.fcpxml", "exports/edit.srt"];
+    const editorsDone: ProjectExport = {
+      job: exportJob({ id: EngineJobId.make("job-7"), state: "succeeded", progress: 1 }),
+      status: {
+        jobId: EngineJobId.make("job-7"),
+        projectId,
+        path: "exports/edit.fcpxml",
+        state: "succeeded",
+        files: editorsFiles,
+      },
+    };
+
+    /** A toast description's lines, as the toast would show them. */
+    const toastText = async (description: unknown) => {
+      await using shown = await render(<div>{description as ReactNode}</div>);
+      return [...shown.container.querySelectorAll(":scope > div > span")].map(
+        (line) => line.textContent,
+      );
+    };
+
+    it("files for editors: Show in Finder in the desktop app, and kept after a reload", async () => {
+      setState([asset("clip-0")], true);
+      kept();
+      state.export = editorsDone;
+      window.desktopBridge = {} as NonNullable<typeof window.desktopBridge>;
+      commands.openInEditor.mockClear();
+      try {
+        {
+          await using screen = await renderPanel();
+          const result = screen.getByTestId("export-result");
+          await expect
+            .element(result)
+            .toHaveTextContent("Your files for editors are ready · edit.fcpxml and .srt");
+          await result.getByRole("button", { name: "Show in Finder" }).click();
+          await vi.waitFor(() =>
+            expect(commands.openInEditor).toHaveBeenCalledWith({
+              environmentId,
+              input: {
+                cwd: `${WORKSPACE_ROOT}/exports/edit.fcpxml`,
+                editor: "file-manager",
+                reveal: true,
+              },
+            }),
+          );
+        }
+        // A reload: the newest export is still the files for editors, not the older video.
+        state.export = { job: null, status: null };
+        {
+          await using screen = await renderPanel();
+          const result = screen.getByTestId("export-result");
+          await expect
+            .element(result)
+            .toHaveTextContent("Latest files for editors · edit.fcpxml and .srt");
+          await expect
+            .element(result.getByRole("button", { name: "Show in Finder" }))
+            .toBeVisible();
+          // The older video export stays playable from beside Export.
+          await expect
+            .element(screen.getByRole("button", { name: "Play the latest export" }))
+            .toBeVisible();
+          // Hidden stays hidden after the next reload.
+          await result.getByRole("button", { name: "Hide" }).click();
+          await expect.element(result).not.toBeInTheDocument();
+        }
+        await using screen = await renderPanel();
+        await expect.element(screen.getByRole("button", { name: "Export" })).toBeVisible();
+        expect(screen.getByTestId("export-result").query()).toBeNull();
+      } finally {
+        reset();
+      }
+    });
+
+    it("files for editors in the browser build: names the folder and copies where it is", async () => {
+      setState([asset("clip-0")], true);
+      state.export = editorsDone;
+      toasts.add.mockReset();
+      const write = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue(undefined);
+      try {
+        {
+          await using screen = await renderPanel();
+          await expect
+            .element(screen.getByTestId("export-result"))
+            .toHaveTextContent(
+              "Your files for editors are ready · in exports: edit.fcpxml and .srt",
+            );
+        }
+        state.export = { job: null, status: null };
+        await using screen = await renderPanel();
+        const result = screen.getByTestId("export-result");
+        await expect
+          .element(result)
+          .toHaveTextContent("Latest files for editors · in exports: edit.fcpxml and .srt");
+        expect(result.getByRole("button", { name: "Show in Finder" }).query()).toBeNull();
+        await result.getByRole("button", { name: "Copy where the files are" }).click();
+        await vi.waitFor(() => expect(write).toHaveBeenCalledWith(`${WORKSPACE_ROOT}/exports`));
+        // The toast says what to do with it, then the folder on a line of its own.
+        await vi.waitFor(() => expect(toasts.add).toHaveBeenCalledTimes(1));
+        const copied = toasts.add.mock.calls[0]![0];
+        expect({ type: copied.type, title: copied.title }).toEqual({
+          type: "success",
+          title: "Copied where your files for editors are",
+        });
+        expect(await toastText(copied.description)).toEqual([
+          "In Finder, choose Go > Go to Folder (⇧⌘G) and paste it.",
+          `${WORKSPACE_ROOT}/exports`,
+        ]);
+      } finally {
+        write.mockRestore();
+        reset();
+      }
+    });
+
+    it("files for editors: when copying fails, the toast still says where the folder is", async () => {
+      setState([asset("clip-0")], true);
+      localStorage.setItem(EDITORS_KEY, JSON.stringify({ files: editorsFiles }));
+      toasts.add.mockReset();
+      const write = vi
+        .spyOn(navigator.clipboard, "writeText")
+        .mockRejectedValue(new Error("Write permission denied."));
+      const exec = vi.spyOn(document, "execCommand").mockReturnValue(false);
+      try {
+        await using screen = await renderPanel();
+        const result = screen.getByTestId("export-result");
+        await result.getByRole("button", { name: "Copy where the files are" }).click();
+        await vi.waitFor(() => expect(toasts.add).toHaveBeenCalledTimes(1));
+        const failed = toasts.add.mock.calls[0]![0];
+        expect({ type: failed.type, title: failed.title }).toEqual({
+          type: "error",
+          title: "Couldn't copy the folder's location",
+        });
+        expect(await toastText(failed.description)).toEqual([
+          "Your files for editors are in this folder:",
+          `${WORKSPACE_ROOT}/exports`,
+        ]);
+      } finally {
+        write.mockRestore();
+        exec.mockRestore();
+        reset();
+      }
+    });
+
+    it("files for editors: each file name wraps as one unit", async () => {
+      setState([asset("clip-0")], true);
+      localStorage.setItem(
+        EDITORS_KEY,
+        JSON.stringify({
+          files: [
+            "exports/charger-reel-20261115-1505.fcpxml",
+            "exports/charger-reel-20261115-1505.srt",
+          ],
+        }),
+      );
+      try {
+        await using screen = await renderPanel();
+        const result = screen.getByTestId("export-result");
+        await expect
+          .element(result)
+          .toHaveTextContent(
+            "Latest files for editors · in exports: charger-reel-20261115-1505.fcpxml and .srt",
+          );
+        // The panel is 420 px wide, so the row wraps: the long name moves down whole.
+        const name = result.getByText("charger-reel-20261115-1505.fcpxml", { exact: true });
+        const rects = name.element().getClientRects();
+        expect(rects.length).toBe(1);
+        const status = result.getByRole("status").element();
+        expect(status.scrollWidth).toBeLessThanOrEqual(status.clientWidth);
+      } finally {
+        reset();
+      }
+    });
+
+    it("drops kept files for editors once a video export is newer, or their file is gone", async () => {
+      setState([asset("clip-0")], true);
+      localStorage.setItem(EDITORS_KEY, JSON.stringify({ files: editorsFiles }));
+      state.export = finished;
+      try {
+        {
+          await using screen = await renderPanel();
+          await expect
+            .element(screen.getByTestId("export-result"))
+            .toHaveTextContent("Your video is ready · 2:02 · 1080×1920 · 68 MB");
+          await vi.waitFor(() => expect(localStorage.getItem(EDITORS_KEY) ?? "null").toBe("null"));
+        }
+        state.export = { job: null, status: null };
+        localStorage.setItem(EDITORS_KEY, JSON.stringify({ files: editorsFiles }));
+        state.exportFile.size = "missing";
+        await using screen = await renderPanel();
+        await expect.element(screen.getByRole("button", { name: "Export" })).toBeVisible();
+        expect(screen.getByTestId("export-result").query()).toBeNull();
+        await vi.waitFor(() => expect(localStorage.getItem(EDITORS_KEY) ?? "null").toBe("null"));
+      } finally {
+        reset();
+      }
+    });
+
+    it.each([["../edit.fcpxml"], ["exports/../edit.json"]])(
+      "drops kept files for editors outside exports/ (%s)",
+      async (path) => {
+        setState([asset("clip-0")], true);
+        localStorage.setItem(EDITORS_KEY, JSON.stringify({ files: ["exports/edit.srt", path] }));
+        try {
+          await using screen = await renderPanel();
+          await expect.element(screen.getByRole("button", { name: "Export" })).toBeVisible();
+          expect(screen.getByTestId("export-result").query()).toBeNull();
+          await vi.waitFor(() => expect(localStorage.getItem(EDITORS_KEY) ?? "null").toBe("null"));
+        } finally {
+          reset();
+        }
+      },
+    );
+
+    it("closes the start error when Export without captions is pressed", async () => {
+      setState([asset("clip-0")], true);
+      toasts.add.mockReset();
+      toasts.add.mockReturnValue("toast-1");
+      toasts.close.mockReset();
+      commands.start.mockReset();
+      commands.start
+        .mockResolvedValueOnce({
+          _tag: "Failure",
+          cause: Cause.fail(new ExportStartError({ projectId, reason: "no-transcript" })),
+        })
+        .mockResolvedValueOnce({
+          _tag: "Success",
+          value: { jobId: EngineJobId.make("job-2"), path: "exports/edit.mp4" },
+        });
+      try {
+        await using screen = await renderPanel();
+        await screen.getByRole("button", { name: "Export" }).click();
+        await vi.waitFor(() => expect(toasts.add).toHaveBeenCalledTimes(1));
+        await act(async () => toasts.add.mock.calls[0]![0].actionProps.onClick());
+        expect(toasts.close).toHaveBeenCalledWith("toast-1");
+      } finally {
+        toasts.add.mockReset();
+        reset();
+      }
+    });
+  });
+
   it("offers to export without captions when the clip has no transcript", async () => {
     setState([asset("clip-0")], true);
     toasts.add.mockReset();
@@ -587,6 +1163,148 @@ describe("EditorPanel", () => {
       input: { projectId, captions: false },
     });
     await expect.element(screen.getByRole("progressbar", { name: "Export" })).toBeVisible();
+  });
+
+  it("lists what won't carry over before an export for editors, then starts it", async () => {
+    setState([asset("clip-0")], true);
+    commands.interchange.mockReset();
+    commands.interchange
+      .mockResolvedValueOnce({
+        _tag: "Success",
+        value: { files: [], dropped: ["zooms", "volume changes and fades"] },
+      })
+      .mockResolvedValueOnce({
+        _tag: "Success",
+        value: {
+          jobId: EngineJobId.make("job-3"),
+          files: ["exports/edit.edl", "exports/edit.srt"],
+          dropped: ["zooms", "volume changes and fades"],
+        },
+      });
+    await using screen = await renderPanel();
+    await screen.getByRole("button", { name: "Export for editors" }).click();
+    const dialog = screen.getByRole("dialog", { name: "Export for editors" });
+    await expect.element(dialog.getByRole("radio", { name: /Final Cut Pro/u })).toBeChecked();
+    await dialog.getByRole("radio", { name: /EDL/u }).click();
+    await dialog.getByRole("radio", { name: /No captions file/u }).click();
+    await dialog.getByRole("radio", { name: /SRT/u }).click();
+    await dialog.getByRole("button", { name: "Next" }).click();
+    expect(commands.interchange).toHaveBeenNthCalledWith(1, {
+      environmentId: EnvironmentId.make("env-1"),
+      input: { projectId, format: "edl", captions: "srt", check: true },
+    });
+    await expect.element(dialog.getByText("What won't carry over to EDL:")).toBeVisible();
+    const list = dialog.getByRole("list", { name: "What won't carry over to EDL:" });
+    await expect.element(list.getByText("zooms")).toBeVisible();
+    await expect.element(list.getByText("volume changes and fades")).toBeVisible();
+    await expect.element(dialog.getByRole("button", { name: "Cancel" })).toBeVisible();
+    await dialog.getByRole("button", { name: "Continue" }).click();
+    expect(commands.interchange).toHaveBeenNthCalledWith(2, {
+      environmentId: EnvironmentId.make("env-1"),
+      input: { projectId, format: "edl", captions: "srt" },
+    });
+    await expect.element(screen.getByRole("dialog")).not.toBeInTheDocument();
+    await expect.element(screen.getByRole("progressbar", { name: "Export" })).toBeVisible();
+  });
+
+  it("cancels an export for editors from the notice without starting it", async () => {
+    setState([asset("clip-0")], true);
+    commands.interchange.mockReset();
+    commands.interchange.mockResolvedValueOnce({
+      _tag: "Success",
+      value: { files: [], dropped: [] },
+    });
+    await using screen = await renderPanel();
+    await screen.getByRole("button", { name: "Export for editors" }).click();
+    const dialog = screen.getByRole("dialog", { name: "Export for editors" });
+    await dialog.getByRole("radio", { name: /Premiere or DaVinci Resolve/u }).click();
+    await dialog.getByRole("button", { name: "Next" }).click();
+    await expect
+      .element(dialog.getByText("Everything carries over to Premiere or DaVinci Resolve."))
+      .toBeVisible();
+    await dialog.getByRole("button", { name: "Cancel" }).click();
+    await expect.element(screen.getByRole("dialog")).not.toBeInTheDocument();
+    expect(commands.interchange).toHaveBeenCalledTimes(1);
+  });
+
+  // S7V-097: Premiere and Resolve ignore s7video's OTIO metadata, so the engine lists those losses.
+  it("dialog lists OTIO losses instead of saying everything carries over", async () => {
+    setState([asset("clip-0")], true);
+    commands.interchange.mockReset();
+    const losses = [
+      "music dipping under speech (ducking)",
+      "zooms",
+      "the words on the timeline's caption clips (the captions file beside it has them)",
+      "the caption look (Premiere and Resolve don't read caption styles; export the video to keep it)",
+    ];
+    commands.interchange.mockResolvedValueOnce({
+      _tag: "Success",
+      value: { files: [], dropped: losses },
+    });
+    await using screen = await renderPanel();
+    await screen.getByRole("button", { name: "Export for editors" }).click();
+    const dialog = screen.getByRole("dialog", { name: "Export for editors" });
+    await dialog.getByRole("radio", { name: /Premiere or DaVinci Resolve/u }).click();
+    await dialog.getByRole("button", { name: "Next" }).click();
+    const list = dialog.getByRole("list", {
+      name: "What won't carry over to Premiere or DaVinci Resolve:",
+    });
+    for (const loss of losses) await expect.element(list.getByText(loss)).toBeVisible();
+    await expect.element(dialog.getByText(/Everything carries over/u)).not.toBeInTheDocument();
+  });
+
+  it("shows why the editors export couldn't be checked, and lets the user try again", async () => {
+    setState([asset("clip-0")], true);
+    commands.interchange.mockReset();
+    commands.interchange
+      .mockResolvedValueOnce({
+        _tag: "Failure",
+        cause: Cause.fail(new ExportStartError({ projectId, reason: "no-transcript" })),
+      })
+      .mockResolvedValueOnce({ _tag: "Success", value: { files: [], dropped: ["zooms"] } });
+    await using screen = await renderPanel();
+    await screen.getByRole("button", { name: "Export for editors" }).click();
+    const dialog = screen.getByRole("dialog", { name: "Export for editors" });
+    await dialog.getByRole("button", { name: "Next" }).click();
+    await expect
+      .element(dialog.getByText("Transcribe the clip first, or export without captions."))
+      .toBeVisible();
+    // Still choosing: the user can turn the captions file off and check again.
+    await dialog.getByRole("radio", { name: /No captions file/u }).click();
+    await dialog.getByRole("button", { name: "Next" }).click();
+    expect(commands.interchange).toHaveBeenNthCalledWith(2, {
+      environmentId: EnvironmentId.make("env-1"),
+      input: { projectId, format: "fcpxml", captions: "none", check: true },
+    });
+    await expect.element(dialog.getByText("What won't carry over to Final Cut Pro:")).toBeVisible();
+    await expect
+      .element(dialog.getByText("Transcribe the clip first, or export without captions."))
+      .not.toBeInTheDocument();
+  });
+
+  it("exports the editors choice that was checked, with the choices locked while checking", async () => {
+    setState([asset("clip-0")], true);
+    commands.interchange.mockReset();
+    let answer: (value: unknown) => void = () => {};
+    commands.interchange
+      .mockImplementationOnce(() => new Promise((resolve) => (answer = resolve)))
+      .mockResolvedValueOnce({
+        _tag: "Success",
+        value: { jobId: EngineJobId.make("job-4"), files: ["exports/edit.otio"], dropped: [] },
+      });
+    await using screen = await renderPanel();
+    await screen.getByRole("button", { name: "Export for editors" }).click();
+    const dialog = screen.getByRole("dialog", { name: "Export for editors" });
+    await dialog.getByRole("radio", { name: /Premiere or DaVinci Resolve/u }).click();
+    await dialog.getByRole("button", { name: "Next" }).click();
+    await expect.element(dialog.getByRole("radio", { name: /EDL/u })).toBeDisabled();
+    await expect.element(dialog.getByRole("radio", { name: /SRT/u })).toBeDisabled();
+    await act(async () => answer({ _tag: "Success", value: { files: [], dropped: [] } }));
+    await dialog.getByRole("button", { name: "Continue" }).click();
+    expect(commands.interchange).toHaveBeenNthCalledWith(2, {
+      environmentId: EnvironmentId.make("env-1"),
+      input: { projectId, format: "otio", captions: "srt" },
+    });
   });
 
   it("offers no export action for other start errors", async () => {
@@ -631,7 +1349,7 @@ describe("EditorPanel", () => {
       true,
     );
     state.urlRevisions = [];
-    await using screen = await renderPanel();
+    await using screen = await renderPanel(TALL_PX);
     await act(async () => (await videoOf(screen)).dispatchEvent(new Event("error")));
     // Media rows that render after the retry (a busy machine, a scroll) must not hide it.
     await screen.getByRole("tab", { name: "Media" }).click();
@@ -751,6 +1469,68 @@ describe("EditorPanel", () => {
     await expect.element(toolbar.getByRole("button", { name: "Redo" })).toBeDisabled();
   });
 
+  // S7V-101: the Editor owns its keys; the composer's type-to-focus takes them only outside it.
+  it("splits on S and undoes on Mod+Z after a click on the timeline; S in the composer types", async () => {
+    setState([asset("clip-0")], true);
+    state.edit =
+      state.edit._tag === "ready"
+        ? { _tag: "ready", snapshot: { ...state.edit.snapshot, canUndo: true } }
+        : state.edit;
+    commands.apply.mockReset();
+    commands.undo.mockReset();
+    commands.apply.mockResolvedValue({ _tag: "Success", value: { revision: 2 } });
+    commands.undo.mockResolvedValue({
+      _tag: "Success",
+      value: { revision: 3, document: {}, canUndo: false, canRedo: true },
+    });
+    const composer = document.createElement("textarea");
+    composer.setAttribute("aria-label", "Composer");
+    document.body.append(composer);
+    // The chat's type-to-focus as useChatShortcuts runs it: a window capture listener.
+    const redirect = (event: KeyboardEvent) => {
+      if (!shouldTypeToFocusComposer(event)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      composer.value += event.key;
+    };
+    window.addEventListener("keydown", redirect, true);
+    try {
+      await using screen = await renderPanel();
+      await expect.element(screen.getByRole("region", { name: "Timeline" })).toBeVisible();
+      const ruler = document.querySelector<HTMLElement>("[data-timeline-ruler]")!;
+      const scroller = document.querySelector<HTMLElement>("[data-testid=timeline-scroller]")!;
+      const ppf = Number(scroller.dataset.pxPerFrame);
+      await userEvent.click(ruler, { position: { x: 12.5 * ppf, y: 10 } });
+      expect(scroller.contains(document.activeElement)).toBe(true);
+      await userEvent.keyboard("s");
+      await vi.waitFor(() =>
+        expect(commands.apply).toHaveBeenCalledWith({
+          environmentId: EnvironmentId.make("env-1"),
+          input: {
+            projectId,
+            baseRevision: 1,
+            origin: "timeline",
+            ops: [{ _tag: "splitItem", itemId: "a", atFrame: 12 }],
+          },
+        }),
+      );
+      await userEvent.keyboard("{Meta>}z{/Meta}");
+      await vi.waitFor(() => expect(commands.undo).toHaveBeenCalledTimes(1));
+      expect(composer.value).toBe("");
+
+      await userEvent.click(composer);
+      await userEvent.keyboard("s");
+      expect(composer.value).toBe("s");
+      composer.blur();
+      await userEvent.keyboard("a");
+      expect(composer.value).toBe("sa");
+      expect(commands.apply).toHaveBeenCalledTimes(1);
+    } finally {
+      window.removeEventListener("keydown", redirect, true);
+      composer.remove();
+    }
+  });
+
   // S7V-038: text edits take the same edit.apply path, with origin transcript.
   it("cuts words from the Transcript tab through edit.apply, origin transcript", async () => {
     setState([asset("clip-0")], true);
@@ -841,6 +1621,7 @@ describe("EditorPanel", () => {
     await expect.element(await videoOf(screen)).toBeInTheDocument();
     // Export would write the current edit, so it waits until the preview ends.
     expect(screen.getByRole("button", { name: "Export" }).query()).toBeNull();
+    expect(screen.getByRole("button", { name: "Export for editors" }).query()).toBeNull();
     const playhead = document.querySelector<HTMLElement>("[data-testid=timeline-playhead]")!;
     await expect.poll(() => playhead.hidden).toBe(true);
     await screen.getByRole("button", { name: "Back to main" }).click();
@@ -1026,68 +1807,450 @@ describe("EditorPanel", () => {
           })),
         ],
       };
-      /** The app's right panel: its tab bar (52 px) over the Editor, at 60% beside the chat. */
+      /**
+       * The app at its window size: the project sidebar (255 px), then the chat, then the right
+       * panel's tab bar (52 px) over the Editor, at 60% beside the chat.
+       */
       const layout = () =>
         render(
           <div className="flex h-screen w-screen bg-background text-foreground">
-            <div className="flex min-w-0 flex-1 items-center justify-center border-r text-sm text-muted-foreground">
-              Chat column (stand-in)
+            <div className="w-[255px] shrink-0 border-r text-sm text-muted-foreground">
+              Sidebar (stand-in)
             </div>
-            <div className="flex h-full flex-col" style={{ width: "60%" }}>
-              <div className="flex h-[52px] shrink-0 items-center border-b px-3 text-sm text-muted-foreground">
-                Panel tabs (stand-in)
+            <div className="flex min-w-0 flex-1">
+              <div className="flex min-w-0 flex-1 items-center justify-center border-r text-sm text-muted-foreground">
+                Chat column (stand-in)
               </div>
-              <div className="min-h-0 flex-1">{panel()}</div>
+              <div className="flex h-full flex-col" style={{ width: "60%" }}>
+                <div className="flex h-[52px] shrink-0 items-center border-b px-3 text-sm text-muted-foreground">
+                  Panel tabs (stand-in)
+                </div>
+                <div className="min-h-0 flex-1">{panel()}</div>
+              </div>
             </div>
           </div>,
           { router: false },
         );
       const inside = (inner: DOMRect, outer: DOMRect) =>
         inner.top >= outer.top - 0.5 && inner.bottom <= outer.bottom + 0.5;
-      /** Version rows shown whole, without scrolling the list. */
-      const visibleRows = () => {
-        const list = document
-          .getElementById("editor-tabpanel-versions")!
-          .querySelector<HTMLElement>("[role=list]")!;
-        const shown = list.getBoundingClientRect();
-        return [...list.querySelectorAll("[role=listitem]")].filter((row) =>
-          inside(row.getBoundingClientRect(), shown),
-        ).length;
-      };
-      const timelineTracksShown = () => {
-        const timeline = document.querySelector("[data-testid=editor-timeline]")!;
-        const box = timeline.getBoundingClientRect();
-        const panelBox = document
-          .querySelector("[data-testid=editor-panel]")!
-          .getBoundingClientRect();
-        return (
-          inside(box, panelBox) &&
-          ["Overlays", "Video", "Captions", "Sound effects", "Music"].every((label) => {
-            const element = [...timeline.querySelectorAll("*")].find(
-              (node) => node.childElementCount === 0 && node.textContent === label,
-            );
-            return element !== undefined && inside(element.getBoundingClientRect(), box);
-          })
-        );
+      const box = (selector: string) => document.querySelector(selector)!.getBoundingClientRect();
+      const withCanvas = (canvas: { width: number; height: number }) => {
+        const ready = state.edit as Extract<ProjectEditState, { _tag: "ready" }>;
+        state.edit = {
+          _tag: "ready",
+          snapshot: { ...ready.snapshot, document: { ...ready.snapshot.document, canvas } },
+        };
       };
 
+      // S7V-101: the player's box follows the canvas and keeps 45% of the Editor; the tabs and
+      // the timeline give way. A 16:9 picture fills the width, its area keeps the share.
       it.each([
-        [1440, 900, 4],
-        [1180, 760, 2],
-      ] as const)("shows the version rows at %ix%i (at least %i)", async (w, h, rows) => {
-        await page.viewport(w, h);
+        [1440, 900, "9:16", { width: 1080, height: 1920 }],
+        [1180, 760, "9:16", { width: 1080, height: 1920 }],
+        [1440, 900, "1:1", { width: 1080, height: 1080 }],
+        [1180, 760, "1:1", { width: 1080, height: 1080 }],
+        [1440, 900, "16:9", { width: 1920, height: 1080 }],
+        [1180, 760, "16:9", { width: 1920, height: 1080 }],
+      ] as const)(
+        "gives the player its share at %ix%i with a %s canvas",
+        async (w, h, _, canvas) => {
+          await page.viewport(w, h);
+          setState([asset("clip-0")], true);
+          withCanvas(canvas);
+          state.versions = versions;
+          try {
+            await using screen = await layout();
+            await expect.element(screen.getByText("Main", { exact: true })).toBeVisible();
+            const picture = (await videoOf(screen)).closest<HTMLElement>("[data-canvas]")!;
+            expect(picture.dataset.canvas).toBe(`${canvas.width}x${canvas.height}`);
+            const editor = box("[data-testid=editor-panel]");
+            const share = PLAYER_SHARE * editor.height;
+            const shown = () => picture.getBoundingClientRect();
+            await expect
+              .poll(() => shown().width / shown().height)
+              .toBeCloseTo(canvas.width / canvas.height, 1);
+            if (canvas.height >= canvas.width) {
+              await expect.poll(() => shown().height).toBeGreaterThanOrEqual(share - 0.5);
+            } else {
+              // The picture fills (nearly) the width; its area keeps the share.
+              await expect
+                .poll(() => shown().width)
+                .toBeGreaterThanOrEqual((editor.width - 16) * 0.95);
+              expect(box("[data-testid=editor-player-area]").height).toBeGreaterThanOrEqual(share);
+            }
+            // Nothing overlaps, and the timeline stays in the panel with its video row shown.
+            const area = box("[data-testid=editor-player-area]");
+            const tabs = box("[role=tablist]");
+            const timeline = box("[data-testid=editor-timeline]");
+            expect(area.bottom).toBeLessThanOrEqual(tabs.top);
+            expect(tabs.bottom).toBeLessThanOrEqual(timeline.top);
+            expect(inside(timeline, editor)).toBe(true);
+            const videoRow = [...document.querySelectorAll("[data-testid=editor-timeline] *")].find(
+              (node) => node.childElementCount === 0 && node.textContent === "Video",
+            )!;
+            expect(inside(videoRow.getBoundingClientRect(), timeline)).toBe(true);
+          } finally {
+            state.versions = { _tag: "loading" };
+          }
+        },
+      );
+
+      // S7V-101: with the export row, the old-versions banner (S7V-050), the speech prompt and,
+      // in the worst case, a refused change: only whole notices show, the refusal first, and the
+      // rest wait behind "Show N more notices". Closed, the timeline keeps its video row (unless the
+      // refusal needs the room); opened, its toolbar and ruler. The player keeps its share.
+      it.each([
+        [1440, 900, "with a refused change", "9:16"],
+        [1180, 760, "with a refused change", "9:16"],
+        [1440, 900, "without one", "9:16"],
+        [1180, 760, "without one", "9:16"],
+        [1180, 760, "without one", "16:9"],
+      ] as const)(
+        "fits whole notices and keeps the column inside at %ix%i, %s, %s",
+        async (w, h, which, shape) => {
+          await page.viewport(w, h);
+          setState([asset("clip-0")], true);
+          withCanvas(
+            shape === "9:16" ? { width: 1080, height: 1920 } : { width: 1920, height: 1080 },
+          );
+          const ready = state.edit as Extract<ProjectEditState, { _tag: "ready" }>;
+          const refused = which === "with a refused change";
+          const notice =
+            "The edit was changed outside the app and could not be read. That change was not kept; the edit is back to its last saved version.";
+          state.edit = {
+            _tag: "ready",
+            snapshot: {
+              ...ready.snapshot,
+              ...(refused ? { notice } : {}),
+              cleanup: { versions: 64, bytes: 260_000_000 },
+            },
+          };
+          state.versions = versions;
+          state.speech = {
+            profiles: {
+              default: { sizeBytes: 3_744_329_895, downloadedBytes: 0, ready: false },
+              light: { sizeBytes: 2_287_244_626, downloadedBytes: 0, ready: false },
+            },
+            recommended: "default",
+            consent: "unasked",
+            loadedProfile: null,
+          } as TranscribeModelsStatus;
+          const exportKey = latestExportStorageKey({
+            environmentId: EnvironmentId.make("env-1"),
+            projectId,
+          });
+          localStorage.setItem(
+            exportKey,
+            JSON.stringify({
+              path: "exports/reel.mp4",
+              durationFrames: 3660,
+              fps: FPS,
+              width: 1080,
+              height: 1920,
+            }),
+          );
+          try {
+            await using screen = await layout();
+            await expect.element(screen.getByText(SPEECH_MODEL_PROMPT)).toBeInTheDocument();
+            await expect.element(screen.getByTestId("export-result")).toBeVisible();
+            await expect
+              .element(screen.getByRole("region", { name: "Old versions" }))
+              .toBeInTheDocument();
+            const editor = box("[data-testid=editor-panel]");
+            const whole = (element: Element) => {
+              const rect = element.getBoundingClientRect();
+              return inside(rect, editor) && rect.height > 0;
+            };
+            /** Every notice is either wholly in view or wholly out of it, never cut. */
+            const noticesWhole = () => {
+              const scroller = box("[data-testid=editor-notices-scroller]");
+              return [...document.querySelector("[data-testid=editor-notices]")!.children].every(
+                (child) => {
+                  const rect = child.getBoundingClientRect();
+                  const overlaps =
+                    rect.bottom > scroller.top + 0.5 && rect.top < scroller.bottom - 0.5;
+                  return !overlaps || inside(rect, scroller);
+                },
+              );
+            };
+            const timelineHeight = () => box("[data-testid=editor-timeline]").height;
+            const checkColumn = async (minTimeline: number) => {
+              // A 9:16 picture keeps the share itself; a 16:9 one fills the width, and its area
+              // keeps the share.
+              const share =
+                shape === "9:16"
+                  ? () =>
+                      (
+                        screen.container.querySelector("[data-canvas]") as HTMLElement
+                      ).getBoundingClientRect().height
+                  : () => box("[data-testid=editor-player-area]").height;
+              await expect.poll(share).toBeGreaterThanOrEqual(PLAYER_SHARE * editor.height - 0.5);
+              await expect
+                .poll(() => box("[data-testid=editor-timeline]").bottom)
+                .toBeLessThanOrEqual(editor.bottom - 7.5);
+              await expect.poll(timelineHeight).toBeGreaterThanOrEqual(minTimeline);
+              expect(noticesWhole()).toBe(true);
+            };
+            if (refused) {
+              const refusal = screen.getByText(notice).element().closest("[role=status]")!;
+              expect(whole(refusal)).toBe(true);
+              const first = document.querySelector(
+                "[data-testid=editor-notices]",
+              )!.firstElementChild;
+              expect(first?.contains(refusal)).toBe(true);
+            }
+            // Closed: the timeline keeps its video row, unless the refusal needs the room.
+            await checkColumn(refused ? 56 : 152);
+            /** The notices wholly in view. */
+            const inView = () => {
+              const scroller = box("[data-testid=editor-notices-scroller]");
+              return [...document.querySelectorAll<HTMLElement>("[data-notice]")].filter(
+                (notice) => {
+                  const rect = notice.getBoundingClientRect();
+                  return (
+                    notice.offsetHeight > 0 &&
+                    inside(rect, scroller) &&
+                    rect.bottom <= scroller.bottom + 0.5
+                  );
+                },
+              );
+            };
+            /** The notices up but out of view: each must be inert, so Tab never reaches it. */
+            const outOfView = () =>
+              [...document.querySelectorAll<HTMLElement>("[data-notice]")].filter(
+                (notice) => notice.offsetHeight > 0 && !inView().includes(notice),
+              );
+            expect(outOfView().every((notice) => notice.inert)).toBe(true);
+            if (w === 1180 && which === "without one") {
+              // The common state at 1180x760: both long-lived notices wait behind the cue.
+              expect(outOfView()).toHaveLength(2);
+            }
+            const cue = document.querySelector<HTMLElement>(
+              "[data-testid=editor-notices-cue] button",
+            );
+            if (cue !== null) {
+              expect(cue.textContent).toMatch(/^Show \d more notices?$/u);
+              expect(cue.getBoundingClientRect().height).toBeGreaterThanOrEqual(28);
+              const before = inView();
+              await screen.getByRole("button", { name: /^Show \d more notices?$/u }).click();
+              // Opening shows at least the next whole notice (beside the others, or in their place
+              // when they can't share the room), and focus goes to it.
+              const opened = () => inView().filter((notice) => !before.includes(notice));
+              await expect.poll(() => opened().length).toBeGreaterThan(0);
+              await expect.poll(() => document.activeElement).toBe(opened()[0]);
+              // The way back stays, a 28 px icon button, even when every notice fits.
+              const fewer = screen.getByRole("button", { name: /^Show fewer notices/u });
+              await expect.element(fewer).toBeVisible();
+              const fewerBox = fewer.element().getBoundingClientRect();
+              expect(Math.min(fewerBox.width, fewerBox.height)).toBeGreaterThanOrEqual(28);
+              // Opened: still whole notices, the rest inert and counted on "Show fewer notices",
+              // and the timeline keeps its toolbar and ruler.
+              await checkColumn(56);
+              expect(outOfView().every((notice) => notice.inert)).toBe(true);
+              const left = document.querySelector("[data-testid=editor-notices-left]");
+              const left_ = outOfView().length;
+              if (left_ > 0) {
+                expect(left?.textContent?.startsWith(`+${left_}`)).toBe(true);
+                // The count is in the button's name and tooltip, in words.
+                await expect
+                  .element(fewer)
+                  .toHaveAccessibleName(
+                    `Show fewer notices · ${left_} more: close one to see ${left_ === 1 ? "it" : "them"}`,
+                  );
+              } else {
+                expect(left).toBeNull();
+                await expect.element(fewer).toHaveAccessibleName("Show fewer notices");
+              }
+              await fewer.click();
+              await expect.poll(() => inView()).toEqual(before);
+              await expect
+                .poll(() => document.activeElement?.textContent ?? "")
+                .toMatch(/^Show \d more notices?$/u);
+            }
+            const hint = document.querySelector("[data-testid=editor-tabs-hint]");
+            if (hint !== null) {
+              expect(hint.textContent).toBe(
+                "Close a notice above or make the window taller to see Versions.",
+              );
+              expect(hint.scrollHeight).toBeLessThanOrEqual(hint.clientHeight + 1);
+              expect(whole(hint)).toBe(true);
+            }
+            await page.screenshot({
+              path: `../../../../../test-results/s7v-101/tests-notices-${refused ? "refused" : "common"}-${w}x${h}.png`,
+            });
+          } finally {
+            state.versions = { _tag: "loading" };
+            state.speech = null;
+            localStorage.removeItem(exportKey);
+          }
+        },
+      );
+
+      // S7V-101: opened is tied to the notices it opened; one arriving later doesn't open at once.
+      it("closes the notices when their set changes, and the same set coming back stays closed", async () => {
+        await page.viewport(1180, 760);
         setState([asset("clip-0")], true);
-        state.versions = versions;
+        withCanvas({ width: 1080, height: 1920 });
+        const ready = state.edit as Extract<ProjectEditState, { _tag: "ready" }>;
+        state.edit = {
+          _tag: "ready",
+          snapshot: { ...ready.snapshot, cleanup: { versions: 64, bytes: 260_000_000 } },
+        };
+        state.speech = {
+          profiles: {
+            default: { sizeBytes: 3_744_329_895, downloadedBytes: 0, ready: false },
+            light: { sizeBytes: 2_287_244_626, downloadedBytes: 0, ready: false },
+          },
+          recommended: "default",
+          consent: "unasked",
+          loadedProfile: null,
+        } as TranscribeModelsStatus;
+        const layoutUi = () => (
+          <div className="flex h-screen w-screen bg-background text-foreground">
+            <div className="w-[255px] shrink-0 border-r">Sidebar (stand-in)</div>
+            <div className="flex min-w-0 flex-1">
+              <div className="flex min-w-0 flex-1 border-r">Chat column (stand-in)</div>
+              <div className="flex h-full flex-col" style={{ width: "60%" }}>
+                <div className="flex h-[52px] shrink-0 items-center border-b px-3">
+                  Panel tabs (stand-in)
+                </div>
+                <div className="min-h-0 flex-1">{panel()}</div>
+              </div>
+            </div>
+          </div>
+        );
         try {
-          await using screen = await layout();
-          await expect.element(screen.getByText("Main", { exact: true })).toBeVisible();
-          await expect.poll(visibleRows).toBeGreaterThanOrEqual(rows);
-          expect(timelineTracksShown()).toBe(true);
-          // The player letterboxes rather than vanishing.
-          const player = (await videoOf(screen)).closest("[role=group]")!;
-          expect(player.getBoundingClientRect().height).toBeGreaterThanOrEqual(96);
+          await using screen = await render(layoutUi(), { router: false });
+          const notice = "That change was not kept; the edit is back to its last saved version.";
+          const withRevision = (refused: boolean) => {
+            const current = state.edit as Extract<ProjectEditState, { _tag: "ready" }>;
+            const { notice: _old, ...rest } = current.snapshot;
+            state.edit = {
+              _tag: "ready",
+              snapshot: {
+                ...rest,
+                revision: current.snapshot.revision + 1,
+                ...(refused ? { notice } : {}),
+              },
+            };
+          };
+          const closed = async () => {
+            await expect
+              .element(screen.getByRole("button", { name: /^Show \d more notices?$/u }))
+              .toBeVisible();
+            expect(screen.getByRole("button", { name: /^Show fewer notices/u }).query()).toBeNull();
+          };
+          // Refused change, old versions and the speech prompt; open them.
+          withRevision(true);
+          await screen.rerender(layoutUi());
+          await expect.element(screen.getByText(notice)).toBeInTheDocument();
+          await screen.getByRole("button", { name: /^Show \d more notices?$/u }).click();
+          await expect
+            .element(screen.getByRole("button", { name: /^Show fewer notices/u }))
+            .toBeVisible();
+          // The refusal goes: the set changed, so the notices close, and focus (which was on the
+          // notice that opened) moves to the first notice now in view, not out of the notices.
+          withRevision(false);
+          await screen.rerender(layoutUi());
+          await closed();
+          const firstInView = () =>
+            [...document.querySelectorAll<HTMLElement>("[data-notice]")].find(
+              (notice) => notice.offsetHeight > 0 && !notice.inert,
+            ) ?? document.querySelector<HTMLElement>("[data-testid=editor-notices-cue] button");
+          await expect.poll(() => document.activeElement).toBe(firstInView());
+          // It comes back: the same set as when they were opened, but they stay closed, and the
+          // refusal is in view, not hidden behind a count.
+          withRevision(true);
+          await screen.rerender(layoutUi());
+          await closed();
+          const refusal = screen
+            .getByText(notice)
+            .element()
+            .closest("[data-notice]") as HTMLElement;
+          const refusalInView = () => {
+            const scroller = document
+              .querySelector("[data-testid=editor-notices-scroller]")!
+              .getBoundingClientRect();
+            const rect = refusal.getBoundingClientRect();
+            return (
+              !refusal.inert &&
+              rect.top >= scroller.top - 0.5 &&
+              rect.bottom <= scroller.bottom + 0.5
+            );
+          };
+          await expect.poll(refusalInView).toBe(true);
         } finally {
-          state.versions = { _tag: "loading" };
+          state.speech = null;
+        }
+      });
+
+      // S7V-101: the notices closing on a new set moves focus only when it was in them.
+      it("leaves focus alone when it is outside the notices and their set changes", async () => {
+        await page.viewport(1180, 760);
+        setState([asset("clip-0")], true);
+        withCanvas({ width: 1080, height: 1920 });
+        const ready = state.edit as Extract<ProjectEditState, { _tag: "ready" }>;
+        state.edit = {
+          _tag: "ready",
+          snapshot: { ...ready.snapshot, cleanup: { versions: 64, bytes: 260_000_000 } },
+        };
+        state.speech = {
+          profiles: {
+            default: { sizeBytes: 3_744_329_895, downloadedBytes: 0, ready: false },
+            light: { sizeBytes: 2_287_244_626, downloadedBytes: 0, ready: false },
+          },
+          recommended: "default",
+          consent: "unasked",
+          loadedProfile: null,
+        } as TranscribeModelsStatus;
+        const layoutUi = () => (
+          <div className="flex h-screen w-screen bg-background text-foreground">
+            <div className="w-[255px] shrink-0 border-r">Sidebar (stand-in)</div>
+            <div className="flex min-w-0 flex-1">
+              <div className="flex min-w-0 flex-1 border-r">Chat column (stand-in)</div>
+              <div className="flex h-full flex-col" style={{ width: "60%" }}>
+                <div className="flex h-[52px] shrink-0 items-center border-b px-3">
+                  Panel tabs (stand-in)
+                </div>
+                <div className="min-h-0 flex-1">{panel()}</div>
+              </div>
+            </div>
+          </div>
+        );
+        try {
+          await using screen = await render(layoutUi(), { router: false });
+          // Old versions and the speech prompt; open them.
+          await screen.getByRole("button", { name: /^Show \d more notices?$/u }).click();
+          await expect
+            .element(screen.getByRole("button", { name: /^Show fewer notices/u }))
+            .toBeVisible();
+          // The user moves on to another Editor control, outside the notices.
+          const exportButton = screen
+            .getByRole("button", { name: "Export" })
+            .element() as HTMLElement;
+          await expect.poll(() => document.activeElement?.closest("[data-notice]")).not.toBeNull();
+          exportButton.focus();
+          expect(document.activeElement).toBe(exportButton);
+          // A refused change arrives: the set changes and the notices close, but focus stays put.
+          const current = state.edit as Extract<ProjectEditState, { _tag: "ready" }>;
+          state.edit = {
+            _tag: "ready",
+            snapshot: {
+              ...current.snapshot,
+              revision: current.snapshot.revision + 1,
+              notice: "That change was not kept; the edit is back to its last saved version.",
+            },
+          };
+          // The close's focus move is a frame later: fake the timers and run that frame.
+          using _timers = fakeTimers();
+          await screen.rerender(layoutUi());
+          await expect
+            .element(screen.getByRole("button", { name: /^Show \d more notices?$/u }))
+            .toBeVisible();
+          await act(() => vi.runOnlyPendingTimers());
+          expect(document.activeElement).toBe(exportButton);
+        } finally {
+          state.speech = null;
         }
       });
 
@@ -1122,6 +2285,28 @@ describe("EditorPanel", () => {
           }
         },
       );
+
+      // S7V-099: captions are shaped in the chat; the header keeps only Export.
+      it.each([
+        ["dark", 1440, 900],
+        ["light", 1440, 900],
+        ["dark", 1180, 760],
+        ["light", 1180, 760],
+      ] as const)("screenshots: the header without caption looks (%s, %i)", async (theme, w, h) => {
+        await page.viewport(w, h);
+        document.documentElement.classList.toggle("dark", theme === "dark");
+        setState([asset("clip-0")], true);
+        try {
+          await using screen = await layout();
+          await expect.element(screen.getByRole("button", { name: "Export" })).toBeVisible();
+          expect(screen.getByRole("group", { name: "Caption look" }).query()).toBeNull();
+          await page.screenshot({
+            path: `../../../../../test-results/s7v-099/editor-${theme}-${w}.png`,
+          });
+        } finally {
+          document.documentElement.classList.remove("dark");
+        }
+      });
     });
   });
 });

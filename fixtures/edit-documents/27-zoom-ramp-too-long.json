@@ -1,0 +1,341 @@
+{
+  "version": 1,
+  "fps": {
+    "num": 30,
+    "den": 1
+  },
+  "canvas": {
+    "width": 1080,
+    "height": 1920
+  },
+  "media": [
+    {
+      "id": "cam-a",
+      "kind": "video",
+      "path": "assets/cam-a.mp4",
+      "fingerprint": {
+        "sha256": "abababababababababababababababababababababababababababababababab",
+        "size": 3145728
+      },
+      "probe": {
+        "hasVideo": true,
+        "hasAudio": true,
+        "durationFrames": 1800,
+        "width": 3840,
+        "height": 2160,
+        "fps": {
+          "num": 30,
+          "den": 1
+        },
+        "codec": "hevc",
+        "variableFrameRate": true
+      }
+    },
+    {
+      "id": "cam-b",
+      "kind": "video",
+      "path": "assets/cam-b.mp4",
+      "fingerprint": {
+        "sha256": "abababababababababababababababababababababababababababababababab",
+        "size": 3145728
+      },
+      "probe": {
+        "hasVideo": true,
+        "hasAudio": true,
+        "durationFrames": 900,
+        "width": 1920,
+        "height": 1080,
+        "codec": "h264"
+      }
+    },
+    {
+      "id": "broll",
+      "kind": "video",
+      "reference": "/Users/someone/Movies/broll.mov",
+      "fingerprint": {
+        "sha256": "abababababababababababababababababababababababababababababababab",
+        "size": 3145728
+      },
+      "probe": {
+        "hasVideo": true,
+        "hasAudio": true,
+        "durationFrames": 600
+      }
+    },
+    {
+      "id": "ding",
+      "kind": "audio",
+      "path": "assets/sfx/ding.wav",
+      "fingerprint": {
+        "sha256": "abababababababababababababababababababababababababababababababab",
+        "size": 3145728
+      },
+      "probe": {
+        "hasVideo": false,
+        "hasAudio": true,
+        "durationFrames": 15,
+        "sampleRate": 48000,
+        "audioChannels": 2
+      }
+    },
+    {
+      "id": "whoosh",
+      "kind": "audio",
+      "path": "assets/sfx/whoosh.wav",
+      "fingerprint": {
+        "sha256": "abababababababababababababababababababababababababababababababab",
+        "size": 3145728
+      },
+      "probe": {
+        "hasVideo": false,
+        "hasAudio": true,
+        "durationFrames": 20,
+        "sampleRate": 48000
+      }
+    },
+    {
+      "id": "bed",
+      "kind": "audio",
+      "path": "assets/music/bed.m4a",
+      "fingerprint": {
+        "sha256": "abababababababababababababababababababababababababababababababab",
+        "size": 3145728
+      },
+      "probe": {
+        "hasVideo": false,
+        "hasAudio": true,
+        "durationFrames": 3600,
+        "sampleRate": 48000,
+        "audioChannels": 2
+      }
+    },
+    {
+      "id": "logo",
+      "kind": "image",
+      "path": "assets/logo.png",
+      "fingerprint": {
+        "sha256": "abababababababababababababababababababababababababababababababab",
+        "size": 3145728
+      },
+      "probe": {
+        "hasVideo": true,
+        "hasAudio": false,
+        "width": 512,
+        "height": 512
+      }
+    }
+  ],
+  "tracks": [
+    {
+      "kind": "video",
+      "id": "V1",
+      "role": "main",
+      "items": [
+        {
+          "id": "a1",
+          "media": "cam-a",
+          "start": 0,
+          "duration": 120,
+          "in": 30,
+          "linkId": "l1"
+        },
+        {
+          "id": "b1",
+          "media": "cam-b",
+          "start": 120,
+          "duration": 90,
+          "in": 0,
+          "zoom": {
+            "scale": 1.5,
+            "anchorX": 0.5,
+            "anchorY": 0.33,
+            "rampFrames": 61
+          }
+        },
+        {
+          "id": "c1",
+          "media": "broll",
+          "start": 210,
+          "duration": 60,
+          "in": 100,
+          "muted": true
+        },
+        {
+          "id": "a2",
+          "media": "cam-a",
+          "start": 270,
+          "duration": 150,
+          "in": 400,
+          "gainDb": -1.5,
+          "zoom": {
+            "scale": 1.15,
+            "anchorX": 0.5,
+            "anchorY": 0.3,
+            "rampFrames": 8
+          }
+        }
+      ]
+    },
+    {
+      "kind": "caption",
+      "id": "C1",
+      "role": "captions",
+      "style": "s7-karaoke",
+      "items": [
+        {
+          "id": "t1",
+          "start": 0,
+          "duration": 45,
+          "text": "Three cameras,",
+          "words": [
+            {
+              "text": "Three",
+              "start": 0,
+              "duration": 15
+            },
+            {
+              "text": "cameras,",
+              "start": 15,
+              "duration": 30
+            }
+          ]
+        },
+        {
+          "id": "t2",
+          "start": 45,
+          "duration": 40,
+          "text": "one edit.",
+          "style": "s7-box",
+          "words": [
+            {
+              "text": "one",
+              "start": 45,
+              "duration": 15
+            },
+            {
+              "text": "edit.",
+              "start": 60,
+              "duration": 25
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "kind": "sfx",
+      "id": "S1",
+      "role": "sfx",
+      "items": [
+        {
+          "id": "s1",
+          "media": "ding",
+          "start": 118,
+          "duration": 15,
+          "in": 0,
+          "gainDb": -9
+        },
+        {
+          "id": "s2",
+          "media": "whoosh",
+          "start": 205,
+          "duration": 20,
+          "in": 0,
+          "gainDb": -14,
+          "fadeOutFrames": 5
+        }
+      ]
+    },
+    {
+      "kind": "music",
+      "id": "M1",
+      "role": "bed",
+      "duck": {
+        "depthDb": -12,
+        "attackFrames": 5,
+        "releaseFrames": 12,
+        "ranges": [
+          {
+            "start": 0,
+            "end": 85
+          },
+          {
+            "start": 130,
+            "end": 260
+          }
+        ]
+      },
+      "items": [
+        {
+          "id": "m1",
+          "media": "bed",
+          "start": 0,
+          "duration": 420,
+          "in": 300,
+          "gainDb": -18,
+          "fadeInFrames": 30,
+          "fadeOutFrames": 60
+        }
+      ]
+    },
+    {
+      "kind": "overlay",
+      "id": "O1",
+      "role": "logo",
+      "items": [
+        {
+          "id": "o1",
+          "media": "logo",
+          "start": 0,
+          "duration": 420,
+          "transform": {
+            "x": 0.88,
+            "y": 0.08,
+            "scale": 0.15
+          },
+          "opacity": 0.9
+        }
+      ]
+    },
+    {
+      "kind": "overlay",
+      "id": "O2",
+      "role": "titles",
+      "items": [
+        {
+          "id": "o2",
+          "text": "Part 2",
+          "start": 270,
+          "duration": 60,
+          "style": "s7-minimal",
+          "transform": {
+            "x": 0.5,
+            "y": 0.8,
+            "scale": 1,
+            "rotationDeg": -4
+          },
+          "fadeInFrames": 6,
+          "fadeOutFrames": 6
+        }
+      ]
+    }
+  ],
+  "markers": [
+    {
+      "id": "mk1",
+      "start": 118,
+      "duration": 0,
+      "label": "ding here",
+      "color": "yellow"
+    },
+    {
+      "id": "mk2",
+      "start": 270,
+      "duration": 30,
+      "label": "check zoom",
+      "color": "red"
+    }
+  ],
+  "metadata": {
+    "transcriptModel": "qwen3-asr-1.7b"
+  }
+}

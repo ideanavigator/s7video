@@ -86,7 +86,24 @@ closes every tab, so a closed Editor stays closed after a reload. Proactive pane
 active tab from the Editor, and a chat link to a clip in Media plays it in the Editor
 ([`clipLinks.ts`](../../apps/web/src/editor/clipLinks.ts)). Other projects keep T3's layout.
 
-The Editor's tabs keep room for two version rows in a short panel and four in a 900 px window
-(`tabsRoomPx` in `EditorPanel.tsx`, sized from the row height in `VersionsTab.tsx`). The player
-shrinks and letterboxes first, and the timeline cannot be dragged into that room; a saved timeline
-height still applies wherever it fits.
+The player gets space first (UX guide rule 3, S7V-101). Its box follows the canvas shape, and its
+picture never gets shorter than `PLAYER_SHARE` (45%) of the Editor's height (`playerRoomPx` in
+`EditorPanel.tsx`), at 1180x760 too. A 16:9 picture in a narrow Editor fills the width instead,
+and its area still keeps the share. Above it come the header, the export row and the notices,
+with a refused change first; the speech-model prompt is one line. Only whole notices show
+(`fitNotices` in `EditorPanel.tsx`, from their measured heights): as many as fit while the
+timeline keeps its video row (`TIMELINE_FLOOR_PX`), the refusal always. The rest wait behind
+"Show N more notices". Opening always shows at least the next whole notice and moves focus to
+it; the notices may take the timeline down to its toolbar and ruler (`TIMELINE_SHORTEST_PX`),
+and when even then the next notice can't sit beside the ones shown, it takes their place. A
+28 px "Show fewer notices" button stays beside the opened notices, with a count of any still
+left out. Opened belongs to the notices it opened: when the set changes they close, and they stay closed
+if the same set comes back. A notice out
+of view is clipped at a notice boundary and `inert`, so Tab never reaches it. Below the player, the tabs show whole version rows
+(`TAB_ROW_PX`), or, when not even one row fits, the tab bar ends with one plain line: "Close a
+notice above or make the window taller to see Versions." while something above can be closed,
+else "Make the window taller to see Versions.". The tabs get a row only when the timeline can
+still keep its floor (`TIMELINE_FLOOR_PX` in `TimelinePane.tsx`: toolbar, ruler and video row).
+The timeline is clamped so the column always ends inside the panel; in the shortest panel it
+keeps only its toolbar and ruler, and its rows scroll. A saved timeline height still applies
+wherever it fits.

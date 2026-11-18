@@ -6,6 +6,7 @@
  * them equal, so the track exports the same captions as the transcript fallback.
  */
 import type {
+  EditCaptionCustom,
   EditCaptionTrack,
   EditDocument,
   EditOp,
@@ -38,7 +39,7 @@ interface CaptionGroup {
 }
 
 /** A stretch of the timeline that plays `media` from `sourceIn` without a cut. */
-interface CaptionRun {
+export interface CaptionRun {
   readonly start: number;
   readonly frames: number;
   readonly media: string;
@@ -67,8 +68,11 @@ const TRANSCRIPT_CAPTION_SOURCE = "transcript";
 const firstVideoTrack = (document: EditDocument) =>
   document.tracks.find((track) => track.kind === "video");
 
-/** The video track's items as runs, joining items that continue their source exactly (a split). */
-function captionRuns(document: EditDocument): CaptionRun[] {
+/**
+ * The video track's items as runs, joining items that continue their source exactly (a split), in
+ * timeline order. Sound placement (S7V-036) maps clip frames through these, as captions do.
+ */
+export function captionRuns(document: EditDocument): CaptionRun[] {
   const items = [...(firstVideoTrack(document)?.items ?? [])].sort((a, b) => a.start - b.start);
   const runs: CaptionRun[] = [];
   for (const item of items) {
@@ -89,7 +93,7 @@ function captionRuns(document: EditDocument): CaptionRun[] {
 }
 
 /** `floor(frame * to / from + 1/2)`, exactly: the engine's `_to_rate`. */
-function toRate(frame: number, from: EditRational, to: EditRational): number {
+export function toRate(frame: number, from: EditRational, to: EditRational): number {
   const a = BigInt(to.num) * BigInt(from.den);
   const b = BigInt(to.den) * BigInt(from.num);
   const twice = 2n * BigInt(frame) * a + b;
@@ -184,6 +188,41 @@ function isTranscriptCaptionTrack(track: EditTrack): track is EditCaptionTrack {
 
 export const transcriptCaptionTrackOf = (document: EditDocument): EditCaptionTrack | undefined =>
   document.tracks.find(isTranscriptCaptionTrack);
+
+/**
+ * The caption tracks whose captions show (S7V-037): the transcript track, and any caption track
+ * with items. With none, picking a look adds the captions in it.
+ */
+export function shownCaptionTracks(document: EditDocument): EditCaptionTrack[] {
+  const transcript = transcriptCaptionTrackOf(document);
+  return document.tracks.filter(
+    (track): track is EditCaptionTrack =>
+      track.kind === "caption" && (track === transcript || track.items.length > 0),
+  );
+}
+
+/**
+ * The edit's one caption look (S7V-037), as the export reads it (`export.caption_style`): the
+ * first shown caption track with items that names one, else any shown caption track's, else ours.
+ */
+export function captionLookOf(document: EditDocument): string {
+  const shown = document.tracks.filter(
+    (track): track is EditCaptionTrack => track.kind === "caption" && track.muted !== true,
+  );
+  const withItems = shown.filter((track) => track.items.length > 0);
+  const tracks = withItems.length > 0 ? withItems : shown;
+  return tracks.find((track) => track.style !== undefined)?.style ?? "s7-neutral";
+}
+
+/** The user's own colours, size and place on that look (S7V-099), by the same rule (`export.caption_custom`). */
+export function captionCustomOf(document: EditDocument): EditCaptionCustom | undefined {
+  const shown = document.tracks.filter(
+    (track): track is EditCaptionTrack => track.kind === "caption" && track.muted !== true,
+  );
+  const withItems = shown.filter((track) => track.items.length > 0);
+  const tracks = withItems.length > 0 ? withItems : shown;
+  return tracks.find((track) => track.custom !== undefined)?.custom;
+}
 
 /** The first free track id `C1`, `C2`…; ids share one space across the edit. */
 function freeTrackId(document: EditDocument): string {

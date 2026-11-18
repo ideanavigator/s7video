@@ -31,6 +31,23 @@ export const TranscriptWord = Schema.Struct({
 });
 export type TranscriptWord = typeof TranscriptWord.Type;
 
+/**
+ * Captions already in the clip's picture (S7V-099), read on the device while it is transcribed:
+ * `confidence` is the share of sampled frames that showed them, `region` their band from the top
+ * of the frame (0–1). A transcript from before the check has none, and the clip behaves as before.
+ */
+export const BurnedInCaptions = Schema.Struct({
+  found: Schema.Boolean,
+  confidence: Schema.Number.check(Schema.isBetween({ minimum: 0, maximum: 1 })),
+  region: Schema.optionalKey(
+    Schema.Struct({
+      y0: Schema.Number.check(Schema.isBetween({ minimum: 0, maximum: 1 })),
+      y1: Schema.Number.check(Schema.isBetween({ minimum: 0, maximum: 1 })),
+    }),
+  ),
+});
+export type BurnedInCaptions = typeof BurnedInCaptions.Type;
+
 /** `.s7cache/transcripts/<fingerprint sha256>.json` in the project. */
 export const Transcript = Schema.Struct({
   transcriptVersion: Schema.Literal(1),
@@ -42,6 +59,7 @@ export const Transcript = Schema.Struct({
   durationFrames: NonNegativeInt,
   words: Schema.Array(TranscriptWord),
   createdAt: Schema.String,
+  burnedInCaptions: Schema.optionalKey(BurnedInCaptions),
 });
 export type Transcript = typeof Transcript.Type;
 

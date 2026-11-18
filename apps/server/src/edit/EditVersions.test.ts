@@ -747,3 +747,141 @@ describe("edit versions", () => {
     ),
   );
 });
+
+/** S7V-070: versions named in chat ("v12", "12", "first cut") by `video_versions` and restore. */
+describe("versions named in chat", () => {
+  const record = (n: number, tag?: string): EditSnapshotStore.EditVersionRecord => ({
+    n,
+    files: { "edit.json": "ab".repeat(32), "project.json": "cd".repeat(32) },
+    revision: n,
+    at: n,
+    author: "you",
+    changes: [`change ${n}`],
+    ...(tag === undefined ? {} : { tag }),
+  });
+
+  it("reads a number first, then a name, ignoring case and spacing", () => {
+    const versions = [record(1, "First Cut"), record(2), record(5, "12"), record(12)];
+    const found = (ref: string) => EditHistoryService.findVersionRef(versions, ref);
+    assert.deepEqual(found("v12"), { _tag: "found", version: versions[3]! });
+    assert.deepEqual(found(" V 12 "), { _tag: "found", version: versions[3]! });
+    // A name that reads as a number loses to the number, and the reply names the other version.
+    assert.deepEqual(found("12"), { _tag: "found", version: versions[3]!, alsoNamed: 5 });
+    assert.deepEqual(found("first  cut"), { _tag: "found", version: versions[0]! });
+    assert.deepEqual(found("FIRST CUT"), { _tag: "found", version: versions[0]! });
+    assert.deepEqual(found("v99"), { _tag: "missing", n: 99 });
+    assert.deepEqual(found("nope"), { _tag: "missing" });
+    assert.deepEqual(found("  "), { _tag: "missing" });
+    // With no v12, the name "12" finds its version.
+    assert.deepEqual(EditHistoryService.findVersionRef(versions.slice(0, 3), "12"), {
+      _tag: "found",
+      version: versions[2]!,
+    });
+  });
+
+  it.effect("a restore by name from a second chat adds the next version and keeps the rest", () =>
+    withProject(({ projectId, edits, root }) =>
+      Effect.gen(function* () {
+        yield* change(edits, projectId, [...setup, keep([[0, 300]])], {
+          origin: "agent",
+          reply: chatA,
+        });
+        const v1Edit = readEdit(root);
+        yield* edits.tagVersion(projectId, 1, "First cut");
+        yield* change(edits, projectId, [keep([[0, 90]])], {
+          origin: "agent",
+          reply: replyOf("thread-a", "run-a2"),
+        });
+
+        const details = yield* edits.findVersion(projectId, "first cut");
+        assert.strictEqual(details.version.n, 1);
+        assert.isFalse(details.version.current);
+        assert.deepEqual(details.document.tracks, JSON.parse(v1Edit).tracks);
+
+        const before = yield* edits.versions(projectId);
+        const current = yield* edits.read(projectId);
+        const chatB = replyOf("thread-b", "run-b1");
+        const restored = yield* edits.restoreVersionRef(projectId, "First Cut", {
+          reply: chatB,
+          baseRevision: current.revision,
+        });
+        assert.isTrue(restored.changed);
+        assert.strictEqual(restored.version.n, 1);
+        assert.strictEqual(restored.snapshot.version, 3);
+        assert.strictEqual(readEdit(root), v1Edit);
+        const after = yield* edits.versions(projectId);
+        assert.deepInclude(after[0], {
+          n: 3,
+          author: "assistant",
+          threadId: chatB.threadId,
+          changes: ["Restored from v1"],
+          restoredFrom: 1,
+          current: true,
+        });
+        assert.deepEqual(
+          after.slice(1),
+          before.map((version) => ({ ...version, current: false })),
+        );
+      }),
+    ),
+  );
+
+  it.effect("restoring the version that is already the edit writes nothing", () =>
+    withProject(({ projectId, edits, root }) =>
+      Effect.gen(function* () {
+        yield* change(edits, projectId, [...setup, keep([[0, 300]])], {
+          origin: "agent",
+          reply: chatA,
+        });
+        const current = yield* edits.read(projectId);
+        const editBefore = readEdit(root);
+        const logBefore = historyLog(root);
+        for (const ref of ["v1", "1"]) {
+          const same = yield* edits.restoreVersionRef(projectId, ref, {
+            reply: replyOf("thread-b", "run-b1"),
+            baseRevision: current.revision,
+          });
+          assert.isFalse(same.changed);
+          assert.isTrue(same.version.current);
+          assert.strictEqual(same.snapshot.revision, current.revision);
+        }
+        assert.strictEqual(readEdit(root), editBefore);
+        assert.deepEqual(historyLog(root), logBefore);
+        assert.strictEqual((yield* edits.versions(projectId)).length, 1);
+      }),
+    ),
+  );
+
+  it.effect("an unknown number or name is a plain unknown-version refusal", () =>
+    withProject(({ projectId, edits, root }) =>
+      Effect.gen(function* () {
+        yield* change(edits, projectId, [...setup, keep([[0, 300]])], { origin: "import" });
+        const current = yield* edits.read(projectId);
+        const editBefore = readEdit(root);
+        for (const [ref, explanation] of [
+          ["v999", "There is no version v999 in this project."],
+          ["nope", 'No version in this project is named "nope".'],
+          ["  ", "Say which version: v12 or its name."],
+        ] as const) {
+          for (const attempt of [
+            Effect.flip(edits.findVersion(projectId, ref)),
+            Effect.flip(
+              edits.restoreVersionRef(projectId, ref, { baseRevision: current.revision }),
+            ),
+          ]) {
+            const error = yield* attempt;
+            assert.strictEqual(
+              error._tag === "EditUnavailableError" && error.reason,
+              "unknown-version",
+            );
+            assert.strictEqual(
+              error._tag === "EditUnavailableError" && error.explanation,
+              explanation,
+            );
+          }
+        }
+        assert.strictEqual(readEdit(root), editBefore);
+      }),
+    ),
+  );
+});

@@ -242,6 +242,92 @@ describe("VersionsTab", () => {
     });
   });
 
+  // S7V-101: the form takes the popup's layout, so Save and Cancel sit inside the dialog.
+  it.each([
+    [1440, 900, "light"],
+    [1440, 900, "dark"],
+    [1180, 760, "light"],
+    [1180, 760, "dark"],
+  ] as const)(
+    "keeps the Name dialog's Save and Cancel inside it at %ix%i (%s), and Enter saves",
+    async (w, h, theme) => {
+      await page.viewport(w, h);
+      window.document.documentElement.classList.toggle("dark", theme === "dark");
+      setReady(LIST);
+      commands.tag.mockReset();
+      commands.tag.mockResolvedValueOnce({ _tag: "Success", value: LIST[2] });
+      try {
+        await using screen = await renderTab();
+        await screen.getByRole("listitem").nth(2).getByRole("button", { name: "Name…" }).click();
+        const dialog = page.getByRole("dialog", { name: "Name v1" });
+        await expect.element(dialog).toBeVisible();
+        const inside = (name: string) => {
+          const popup = dialog.element().getBoundingClientRect();
+          const button = dialog.getByRole("button", { name }).element().getBoundingClientRect();
+          return (
+            button.top >= popup.top &&
+            button.bottom <= popup.bottom + 0.5 &&
+            button.left >= popup.left &&
+            button.right <= popup.right + 0.5
+          );
+        };
+        await expect.poll(() => inside("Save")).toBe(true);
+        expect(inside("Cancel")).toBe(true);
+        await userEvent.fill(page.getByLabelText("Version name"), "full edit");
+        await userEvent.keyboard("{Enter}");
+        await vi.waitFor(() =>
+          expect(commands.tag).toHaveBeenCalledWith({
+            environmentId,
+            input: { projectId, n: 1, tag: "full edit" },
+          }),
+        );
+      } finally {
+        window.document.documentElement.classList.remove("dark");
+      }
+    },
+  );
+
+  // S7V-101: Rename selects the old name, so typing replaces it; the named row stays in view.
+  it("replaces the old name on Rename, and keeps the named version in view", async () => {
+    const many = [...LIST, ...[0, -1, -2, -3, -4, -5].map((offset) => version(10 + offset))].map(
+      (entry, index) => ({ ...entry, n: 20 - index }),
+    );
+    const target = { ...many.at(-1)!, tag: "rough" };
+    const versions = [...many.slice(0, -1), target];
+    setReady(versions);
+    commands.tag.mockReset();
+    commands.tag.mockResolvedValueOnce({ _tag: "Success", value: { ...target, tag: "final" } });
+    const container = window.document.createElement("div");
+    container.style.height = "130px";
+    container.style.width = "420px";
+    await using screen = await render(
+      <VersionsTab
+        projectRef={{ environmentId, projectId }}
+        previewing={null}
+        onPreview={vi.fn()}
+        onShowCurrent={vi.fn()}
+      />,
+      { container },
+    );
+    const row = screen.getByRole("listitem").nth(versions.length - 1);
+    const rowElement = row.element();
+    // The open dialog hides the page from role queries, so take the list now.
+    const list = screen.getByRole("list", { name: "Versions" }).element() as HTMLElement;
+    await row.getByRole("button", { name: "Rename…" }).click();
+    const input = page.getByLabelText("Version name");
+    await expect.element(input).toHaveFocus();
+    await userEvent.keyboard("final");
+    await expect.element(input).toHaveValue("final");
+    list.scrollTop = 0;
+    await userEvent.keyboard("{Enter}");
+    await vi.waitFor(() => {
+      const shown = list.getBoundingClientRect();
+      const rect = rowElement.getBoundingClientRect();
+      expect(rect.top).toBeGreaterThanOrEqual(shown.top - 0.5);
+      expect(rect.bottom).toBeLessThanOrEqual(shown.bottom + 0.5);
+    });
+  });
+
   it("should clear a name when it is saved empty", async () => {
     setReady(LIST);
     commands.tag.mockResolvedValueOnce({ _tag: "Success", value: version(2) });

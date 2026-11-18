@@ -15,7 +15,14 @@ import {
   sameCaptions,
   transcriptCaptionTrackOf,
 } from "@t3tools/shared/captionWords";
-import type { EditCaptionTrack, EditDocument, EditMedia, EditOp } from "@t3tools/contracts";
+import type {
+  BurnedInCaptions,
+  EditCaptionTrack,
+  EditDocument,
+  EditMedia,
+  EditOp,
+  Transcript,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Path from "effect/Path";
 
@@ -23,10 +30,21 @@ import { mediaFingerprint } from "../transcript/mediaFingerprint.ts";
 import { readCachedTranscript, transcriptCacheDir } from "../transcript/transcriptCache.ts";
 
 export interface CaptionTranscripts {
-  readonly transcripts: ReadonlyMap<string, CaptionTranscript>;
+  readonly transcripts: ReadonlyMap<string, Transcript>;
   /** Media on the video track with sound but no cached transcript (or an unreadable one). */
   readonly missing: ReadonlyArray<string>;
+  /** Media whose picture already shows captions (S7V-099), with where; unchecked clips aren't listed. */
+  readonly burnedIn: ReadonlyMap<string, BurnedInCaptions["region"]>;
 }
+
+/** Media captioned in the transcript track: the user has said yes to captions over these. */
+const captionedMedia = (document: EditDocument): ReadonlySet<string> =>
+  new Set(
+    (transcriptCaptionTrackOf(document)?.items ?? []).flatMap((item) => {
+      const media = captionMediaOfItem(item);
+      return media === undefined ? [] : [media];
+    }),
+  );
 
 /** The cached transcripts of the media the edit's captions come from. */
 export const loadCaptionTranscripts = Effect.fn("captionTrack.loadCaptionTranscripts")(function* (
@@ -37,8 +55,9 @@ export const loadCaptionTranscripts = Effect.fn("captionTrack.loadCaptionTranscr
   const cacheDir = transcriptCacheDir(path, root);
   const locate = (media: EditMedia) =>
     media.path !== undefined ? path.resolve(root, media.path) : path.resolve(media.reference ?? "");
-  const transcripts = new Map<string, CaptionTranscript>();
+  const transcripts = new Map<string, Transcript>();
   const missing: string[] = [];
+  const burnedIn = new Map<string, BurnedInCaptions["region"]>();
   for (const id of captionMediaOf(document)) {
     const media = document.media.find((entry) => entry.id === id)!;
     const found = yield* mediaFingerprint(locate(media)).pipe(
@@ -46,10 +65,37 @@ export const loadCaptionTranscripts = Effect.fn("captionTrack.loadCaptionTranscr
       Effect.orElseSucceed(() => null),
     );
     if (found === null) missing.push(id);
-    else transcripts.set(id, found);
+    else {
+      transcripts.set(id, found);
+      if (found.burnedInCaptions?.found === true) burnedIn.set(id, found.burnedInCaptions.region);
+    }
   }
-  return { transcripts, missing } satisfies CaptionTranscripts;
+  return { transcripts, missing, burnedIn } satisfies CaptionTranscripts;
 });
+
+/** A clip as the user knows it: its label, or its file's name. */
+export const clipName = (document: EditDocument, id: string) => {
+  const media = document.media.find((entry) => entry.id === id);
+  return media?.label ?? (media?.path ?? media?.reference ?? id).split(/[\\/]/u).at(-1) ?? id;
+};
+
+/**
+ * Burned-in clips that adding captions would caption (speech in their placed part) and the
+ * transcript track doesn't yet: those need the user's yes (S7V-099).
+ */
+export const unconfirmed = (loaded: CaptionTranscripts, document: EditDocument) => {
+  const captioned = captionedMedia(document);
+  return new Map(
+    [...loaded.burnedIn].filter(([media]) => {
+      const transcript = loaded.transcripts.get(media);
+      return (
+        !captioned.has(media) &&
+        transcript !== undefined &&
+        captionItemsFor(document, new Map([[media, transcript]])).length > 0
+      );
+    }),
+  );
+};
 
 const videoItemsOf = (document: EditDocument) =>
   JSON.stringify(document.tracks.find((track) => track.kind === "video")?.items ?? []);
@@ -74,9 +120,9 @@ export const mergeCaptionTrack = (
 };
 
 /**
- * The `setCaptions` rebuilding `after`'s transcript caption track when the change touched the video
- * track; a hand-written track is never rebuilt. A clip whose transcript can't be read keeps its
- * items, carried through the cut (`carryCaptions`); the player names the clip.
+ * The `setCaptions` rebuilding `after`'s transcript track when the change touched the video track.
+ * A clip whose transcript can't be read keeps its items, carried through the cut. A clip showing
+ * captions in its picture stays out unless the track captioned it before (S7V-099).
  */
 export const rebuildCaptionOps = Effect.fn("captionTrack.rebuildCaptionOps")(function* (
   root: string,
@@ -85,8 +131,12 @@ export const rebuildCaptionOps = Effect.fn("captionTrack.rebuildCaptionOps")(fun
 ) {
   const track = transcriptCaptionTrackOf(after);
   if (track === undefined || videoItemsOf(before) === videoItemsOf(after)) return [];
-  const { transcripts, missing } = yield* loadCaptionTranscripts(root, after);
-  const captions = mergeCaptionTrack(before, after, track, transcripts, missing);
+  const { transcripts, missing, burnedIn } = yield* loadCaptionTranscripts(root, after);
+  const confirmed = captionedMedia(before);
+  const allowed = new Map(
+    [...transcripts].filter(([media]) => !burnedIn.has(media) || confirmed.has(media)),
+  );
+  const captions = mergeCaptionTrack(before, after, track, allowed, missing);
   if (sameCaptions(track, captions)) return [];
   return [{ _tag: "setCaptions", trackId: track.id, captions }] satisfies EditOp[];
 });

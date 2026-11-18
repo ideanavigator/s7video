@@ -17,9 +17,19 @@ import {
   type ProjectId,
   type ScopedProjectRef,
 } from "@t3tools/contracts";
-import { ClapperboardIcon, FilmIcon, PlusIcon, TriangleAlertIcon, UploadIcon } from "lucide-react";
+import {
+  ChevronDownIcon,
+  ChevronUpIcon,
+  ClapperboardIcon,
+  FilmIcon,
+  PlayIcon,
+  PlusIcon,
+  SendToBackIcon,
+  TriangleAlertIcon,
+  UploadIcon,
+} from "lucide-react";
 import * as Schema from "effect/Schema";
-import { useEffect, useId, useState, type DragEvent, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type DragEvent, type ReactNode } from "react";
 
 import { useAssetUrlState } from "../../assets/assetUrls";
 import {
@@ -32,6 +42,7 @@ import {
   useEditPlayerStore,
   useProjectExport,
   useProjectEdit,
+  type ProjectExport,
 } from "../../editor/editStore";
 import {
   editPlaybackPlan,
@@ -53,10 +64,14 @@ import { Button } from "../ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "../ui/empty";
 import { Spinner } from "../ui/spinner";
 import { toastManager } from "../ui/toast";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { BROWSER_ADD_MEDIA_HINT } from "./addMediaHint";
 import { AssetsTab, useAssetsActions } from "./AssetsTab";
 import { CaptionOverlay } from "./CaptionOverlay";
 import { EditPlayer } from "./EditPlayer";
+import { ExportForEditorsDialog } from "./ExportForEditorsDialog";
+import { useExportResult } from "./ExportResult";
+import { IconAction } from "./IconAction";
 import { HistoryCleanupBanner } from "./HistoryCleanupBanner";
 import { ImportDialog } from "./ImportDialog";
 import { MultiClipPlayer, type MultiClipSource } from "./MultiClipPlayer";
@@ -65,7 +80,8 @@ import { applyOutcomeOfError, stepOutcomeOfError } from "../../editor/timelineEd
 import { editFrameToPlayerFrame } from "./timeline/editFrames";
 import type { TimelineEditing } from "./timeline/Timeline";
 import type { EditApplyOutcome, TimelineNotice } from "./timeline/timelineEditor";
-import { TimelinePane } from "./timeline/TimelinePane";
+import { TIMELINE_FLOOR_PX, TIMELINE_SHORTEST_PX, TimelinePane } from "./timeline/TimelinePane";
+import { cn } from "../../lib/utils";
 import { type TranscriptEditing, TranscriptTab } from "./TranscriptTab";
 import { VersionsTab } from "./VersionsTab";
 
@@ -81,19 +97,81 @@ const TABS: ReadonlyArray<{ readonly id: EditorTab; readonly label: string }> = 
 
 export const DROP_OVERLAY_TEXT = "Drop to add to this project. Nothing is uploaded.";
 
-/** One version row with its gap (`VersionsTab`), for the room the tabs keep (S7V-076). */
-const VERSION_ROW_PX = 62;
-/** The player, letterboxed, never gets shorter than this. */
-const PLAYER_MIN_PX = 96;
-/** Padding, header, tab bar and gaps above the timeline. */
-const ABOVE_CHROME_PX = 124;
+/**
+ * The player gets space first (UX guide rule 3, S7V-101): its picture never gets shorter than this
+ * share of the Editor. Banners and the tabs shrink and the timeline scrolls before it does.
+ */
+export const PLAYER_SHARE = 0.45;
+/** The player's controls under the picture, with their gap. */
+const PLAYER_CONTROLS_PX = 30;
+/** The panel's padding on each axis. */
+const PANEL_PADDING_PX = 16;
+/** One version row with its gap (`VersionsTab`): the tabs show whole rows of this. */
+const TAB_ROW_PX = 62;
+const TAB_BAR_PX = 30;
+/** The gaps around the player, the tab bar, the divider and the timeline; the tab room adds one. */
+const COLUMN_GAPS_PX = 4 * 8;
+const GAP_PX = 8;
+
+interface PanelSize {
+  readonly width: number;
+  readonly height: number;
+}
+
+/** The player area's least and most height: its share of the panel, and its canvas at full width. */
+function playerRoomPx(
+  panel: PanelSize,
+  canvas: { readonly width: number; readonly height: number } | undefined,
+): { readonly min: number; readonly max: number | undefined } {
+  const min = Math.ceil(PLAYER_SHARE * panel.height) + PLAYER_CONTROLS_PX;
+  if (canvas === undefined) return { min, max: undefined };
+  const fullWidth = ((panel.width - PANEL_PADDING_PX) * canvas.height) / canvas.width;
+  return { min, max: Math.max(min, Math.ceil(fullWidth) + PLAYER_CONTROLS_PX) };
+}
 
 /**
- * The room the tabs keep before the player shrinks: two version rows in a short panel, up to four
- * in a 900 px window. Beyond that the player takes its full size and the tabs the rest.
+ * What the tab room starts from (S7V-101): one whole version row when the timeline can still keep
+ * its floor beside the player's share; otherwise none, and the tab bar says why.
  */
-const tabsRoomPx = (panelHeight: number): number =>
-  Math.min(4 * VERSION_ROW_PX, Math.max(2 * VERSION_ROW_PX, panelHeight - 592)) + 8;
+function tabsMinPx(panelHeight: number, topPx: number, playerMinPx: number): number {
+  const spare =
+    panelHeight -
+    PANEL_PADDING_PX -
+    topPx -
+    playerMinPx -
+    TAB_BAR_PX -
+    COLUMN_GAPS_PX -
+    GAP_PX -
+    TIMELINE_FLOOR_PX;
+  return spare >= TAB_ROW_PX ? TAB_ROW_PX : 0;
+}
+
+const NOTICE_GAP_PX = 8;
+/** The "Show N more notices" line under the notices that fit, while they are closed. */
+const NOTICE_CUE_PX = 28;
+
+/**
+ * How many notices show whole (S7V-101): from the top, as many as fit in `roomPx` with the cue
+ * line (`cuePx`) when some are left out, and never fewer than `atLeast` (a refused change; once opened,
+ * the next notice too).
+ */
+function fitNotices(
+  heights: ReadonlyArray<number>,
+  roomPx: number,
+  atLeast: number,
+  cuePx: number,
+): { readonly shown: number; readonly heightPx: number } {
+  let shown = 0;
+  let heightPx = 0;
+  for (const height of heights) {
+    const next = heightPx + (shown > 0 ? NOTICE_GAP_PX : 0) + height;
+    const cue = shown + 1 < heights.length ? cuePx : 0;
+    if (next + cue > roomPx && shown >= atLeast) break;
+    heightPx = next;
+    shown += 1;
+  }
+  return { shown, heightPx };
+}
 
 function PlayerMessage(props: {
   readonly icon: ReactNode;
@@ -104,7 +182,7 @@ function PlayerMessage(props: {
   readonly children?: ReactNode;
 }) {
   return (
-    <div className="flex aspect-video max-h-[50vh] min-h-0 items-center overflow-y-auto rounded-md bg-muted/40">
+    <div className="flex min-h-0 flex-1 items-center overflow-y-auto rounded-md bg-muted/40">
       <Empty>
         <EmptyHeader>
           <EmptyMedia variant="icon">{props.icon}</EmptyMedia>
@@ -170,7 +248,7 @@ function PlayingSource(props: {
       <div
         role="status"
         aria-label="Loading video"
-        className="flex aspect-video max-h-[50vh] min-h-0 items-center justify-center rounded-md bg-muted/40"
+        className="flex min-h-0 flex-1 items-center justify-center rounded-md bg-muted/40"
       >
         <Spinner />
       </div>
@@ -380,7 +458,7 @@ function PlayerArea(props: {
         <div
           role="status"
           aria-label="Loading the edit"
-          className="flex aspect-video max-h-[50vh] min-h-0 items-center justify-center rounded-md bg-muted/40"
+          className="flex min-h-0 flex-1 items-center justify-center rounded-md bg-muted/40"
         >
           <Spinner />
         </div>
@@ -395,7 +473,7 @@ function PlayerArea(props: {
       );
     case "empty":
       return (
-        <div className="flex min-h-0 flex-col rounded-md">
+        <div className="flex min-h-0 flex-1 flex-col rounded-md">
           <PlayerMessage
             icon={<FilmIcon />}
             title="No clips yet"
@@ -531,18 +609,29 @@ const isExportStartError = Schema.is(ExportStartError);
 const isNoTranscript = (error: unknown) =>
   isExportStartError(error) && error.reason === "no-transcript";
 
-function ExportButton(props: { readonly projectRef: ScopedProjectRef }) {
+interface StartedExport {
+  readonly jobId: EngineJobId;
+  readonly path: string;
+}
+
+function ExportButton(props: {
+  readonly projectRef: ScopedProjectRef;
+  readonly projectExport: ProjectExport;
+  readonly started: StartedExport | null;
+  readonly onStarted: (started: StartedExport) => void;
+}) {
   const { environmentId, projectId } = props.projectRef;
   const start = useAtomCommand(editEnvironment.exportStart, { reportFailure: false });
   const cancel = useAtomCommand(editEnvironment.cancelJob, { reportFailure: false });
-  const [started, setStarted] = useState<{ jobId: EngineJobId; path: string } | null>(null);
-  const { job, status } = useProjectExport(environmentId, projectId, started?.jobId ?? null);
+  const { started, onStarted: setStarted } = props;
+  const { job } = props.projectExport;
   // Started but not yet in the jobs stream counts as running.
   const running = job?.state === "running" || (started !== null && job === null);
   const progress = Math.round((job?.progress ?? 0) * 100);
   // Set from the click until the job stops running, so a repeat click can't resend the cancel.
   const [cancellingJobId, setCancellingJobId] = useState<EngineJobId | null>(null);
   const cancelling = cancellingJobId !== null && cancellingJobId === (job?.id ?? started?.jobId);
+  const [editorsOpen, setEditorsOpen] = useState(false);
 
   const exportEdit = async (captions?: false) => {
     const result = await start({
@@ -551,7 +640,7 @@ function ExportButton(props: { readonly projectRef: ScopedProjectRef }) {
     });
     if (result._tag === "Failure") {
       const error = squashAtomCommandFailure(result);
-      toastManager.add({
+      const toastId = toastManager.add({
         type: "error",
         title: "Couldn't start the export",
         description: error instanceof Error ? error.message : "Check the project, then try again.",
@@ -560,7 +649,11 @@ function ExportButton(props: { readonly projectRef: ScopedProjectRef }) {
           ? {
               actionProps: {
                 children: "Export without captions",
-                onClick: () => void exportEdit(false),
+                // The export starts, so "Couldn't start" goes (S7V-101).
+                onClick: () => {
+                  toastManager.close(toastId);
+                  void exportEdit(false);
+                },
               },
             }
           : {}),
@@ -581,57 +674,65 @@ function ExportButton(props: { readonly projectRef: ScopedProjectRef }) {
     }
   };
 
-  const outcome = (() => {
-    if (running || job === null) return null;
-    if (job.state === "succeeded") {
-      return <>Exported to {status?.path ?? started?.path ?? "the exports folder"}</>;
-    }
-    if (job.state === "cancelled") return <>Export cancelled</>;
-    return <>Export failed{status?.message ? `: ${status.message}` : ""}</>;
-  })();
-
   return (
-    <div className="flex min-w-0 items-center gap-2">
-      {running ? (
-        <div className="flex min-w-0 flex-1 items-center gap-2">
-          <div
-            role="progressbar"
-            aria-label="Export"
-            aria-valuemin={0}
-            aria-valuemax={100}
-            aria-valuenow={progress}
-            className="h-1.5 w-24 overflow-hidden rounded-full bg-muted"
-          >
-            <div className="h-full bg-primary" style={{ width: `${progress}%` }} />
+    <>
+      <ExportForEditorsDialog
+        projectRef={props.projectRef}
+        open={editorsOpen}
+        onClose={() => setEditorsOpen(false)}
+        onStarted={setStarted}
+      />
+      <div className="flex min-w-0 items-center gap-2">
+        {running ? (
+          <div className="flex min-w-0 flex-1 items-center gap-2">
+            <div
+              role="progressbar"
+              aria-label="Export"
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={progress}
+              className="h-1.5 w-24 overflow-hidden rounded-full bg-muted"
+            >
+              <div className="h-full bg-primary" style={{ width: `${progress}%` }} />
+            </div>
+            <span className="text-xs text-muted-foreground tabular-nums">{progress}%</span>
           </div>
-          <span className="text-xs text-muted-foreground tabular-nums">{progress}%</span>
-        </div>
-      ) : outcome !== null ? (
-        <span
-          role="status"
-          className="min-w-0 truncate text-xs text-muted-foreground data-[state=failed]:text-destructive-foreground"
-          data-state={job?.state}
-        >
-          {outcome}
-        </span>
-      ) : null}
-      {running ? (
-        <Button
-          size="compact"
-          variant="outline"
-          aria-label="Cancel export"
-          disabled={cancelling}
-          onClick={() => void cancelExport()}
-        >
-          Cancel
-        </Button>
-      ) : (
-        <Button size="compact" variant="outline" onClick={() => void exportEdit()}>
-          <UploadIcon aria-hidden />
-          Export
-        </Button>
-      )}
-    </div>
+        ) : null}
+        {running ? (
+          <Button
+            size="compact"
+            variant="outline"
+            aria-label="Cancel export"
+            disabled={cancelling}
+            onClick={() => void cancelExport()}
+          >
+            Cancel
+          </Button>
+        ) : (
+          <>
+            <Button size="compact" variant="outline" onClick={() => void exportEdit()}>
+              <UploadIcon aria-hidden />
+              Export
+            </Button>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    size="icon-sm"
+                    variant="outline"
+                    aria-label="Export for editors"
+                    onClick={() => setEditorsOpen(true)}
+                  >
+                    <SendToBackIcon aria-hidden />
+                  </Button>
+                }
+              />
+              <TooltipPopup side="bottom">Export for editors</TooltipPopup>
+            </Tooltip>
+          </>
+        )}
+      </div>
+    </>
   );
 }
 
@@ -641,6 +742,8 @@ export const CHANGED_ELSEWHERE_NOTICE = "The assistant changed the edit; try aga
 function showTimelineNotice(notice: TimelineNotice) {
   if (notice.kind === "changed-elsewhere") {
     toastManager.add({ type: "info", title: CHANGED_ELSEWHERE_NOTICE });
+  } else if (notice.kind === "refused") {
+    toastManager.add({ type: "info", title: notice.message, timeout: 4000 });
   } else {
     toastManager.add({ type: "error", title: notice.title, description: notice.message });
   }
@@ -737,12 +840,73 @@ export default function EditorPanel(props: {
   const setSource = useEditPlayerStore((state) => state.setSource);
   const actions = useAssetsActions(projectRef);
   const [tab, setTab] = useState<EditorTab>("versions");
-  const [panelHeight, setPanelHeight] = useState<number | null>(null);
+  const [panelSize, setPanelSize] = useState<PanelSize | null>(null);
   const observePanel = (element: HTMLDivElement | null) =>
     element === null
       ? undefined
-      : observeResize(element, () => setPanelHeight(element.clientHeight));
-  const tabsRoom = panelHeight === null ? undefined : tabsRoomPx(panelHeight);
+      : observeResize(element, () =>
+          setPanelSize((current) =>
+            current?.width === element.clientWidth && current.height === element.clientHeight
+              ? current
+              : { width: element.clientWidth, height: element.clientHeight },
+          ),
+        );
+  // The header, the export row and the notices (S7V-101), and whether anything closable is up.
+  const [top, setTop] = useState({ px: 0, closable: false, aboveNoticesPx: 0 });
+  const observeTop = (element: HTMLDivElement | null) =>
+    element === null
+      ? undefined
+      : observeResize(element, () => {
+          const closable = [...element.children]
+            .slice(1)
+            .some((child) => child.getBoundingClientRect().height > 0);
+          const group = element.querySelector<HTMLElement>("[data-testid=editor-notices-group]");
+          const aboveNoticesPx = group === null ? 0 : group.offsetTop - element.offsetTop;
+          setTop((current) =>
+            current.px === element.offsetHeight &&
+            current.closable === closable &&
+            current.aboveNoticesPx === aboveNoticesPx
+              ? current
+              : { px: element.offsetHeight, closable, aboveNoticesPx },
+          );
+        });
+  const topPx = top.px;
+  // The notices up, in order, each with its own height, measured unclipped.
+  const [notices, setNotices] = useState<{
+    readonly keys: ReadonlyArray<string>;
+    readonly heights: ReadonlyArray<number>;
+  }>({ keys: [], heights: [] });
+  const observeNotices = (element: HTMLDivElement | null) =>
+    element === null
+      ? undefined
+      : observeResize(element, () => {
+          const up = [...element.children].filter(
+            (child): child is HTMLElement => child instanceof HTMLElement && child.offsetHeight > 0,
+          );
+          const keys = up.map((child) => child.dataset.notice ?? "");
+          const heights = up.map((child) => child.offsetHeight);
+          setNotices((current) =>
+            current.keys.join() === keys.join() && current.heights.join() === heights.join()
+              ? current
+              : { keys, heights },
+          );
+        });
+  // Opened for one set of notices: a notice arriving later never opens straight away.
+  const [openedFor, setOpenedFor] = useState<string | null>(null);
+  // Whether keyboard focus is in the notices, and whether the user just opened or closed them.
+  const focusInNotices = useRef(false);
+  const toggledByUser = useRef(false);
+  // The room the tabs got; a panel shows whole rows of it, or the hint under one row.
+  const [tabRoomPx, setTabRoomPx] = useState<number | null>(null);
+  const observeTabRoom = (element: HTMLDivElement | null) =>
+    element === null ? undefined : observeResize(element, () => setTabRoomPx(element.clientHeight));
+  const [startedExport, setStartedExport] = useState<StartedExport | null>(null);
+  const projectExport = useProjectExport(
+    props.environmentId,
+    props.projectId,
+    startedExport?.jobId ?? null,
+  );
+  const exportResult = useExportResult({ projectRef, projectExport });
   const canAddFiles = window.desktopBridge !== undefined;
   const [dragging, setDragging] = useState(false);
   const acceptsDrop = (event: DragEvent<HTMLDivElement>) =>
@@ -767,6 +931,104 @@ export default function EditorPanel(props: {
     actions.addFiles([...event.dataTransfer.files]);
   };
   const view = playerViewOf(edit, library, source);
+  const playerRoom =
+    panelSize === null
+      ? null
+      : playerRoomPx(
+          panelSize,
+          view._tag === "play" || view._tag === "play-timeline" ? view.plan.canvas : undefined,
+        );
+  const tabsMin =
+    panelSize === null || playerRoom === null
+      ? TAB_ROW_PX
+      : tabsMinPx(panelSize.height, topPx, playerRoom.min);
+  const tabsCollapsed = tabsMin < TAB_ROW_PX;
+  // The top block never takes the timeline's toolbar and ruler: past this, its notices scroll.
+  // The notices take what the player's share and the timeline leave: closed, the timeline keeps
+  // its video row; opened, only its toolbar and ruler. Whole notices only, the urgent one first.
+  const noticeRoom = (keepPx: number) =>
+    panelSize === null || playerRoom === null
+      ? Number.POSITIVE_INFINITY
+      : panelSize.height -
+        PANEL_PADDING_PX -
+        playerRoom.min -
+        TAB_BAR_PX -
+        COLUMN_GAPS_PX -
+        top.aboveNoticesPx -
+        keepPx;
+  const urgentFirst = notices.keys[0] === "refused";
+  const closedFit = fitNotices(
+    notices.heights,
+    noticeRoom(TIMELINE_FLOOR_PX),
+    urgentFirst ? 1 : 0,
+    NOTICE_CUE_PX + NOTICE_GAP_PX,
+  );
+  const noticesFit = closedFit.shown === notices.heights.length;
+  const noticesOpen = openedFor === notices.keys.join();
+  // A changed set closes them for good: the same set coming back later doesn't reopen.
+  if (openedFor !== null && !noticesOpen) setOpenedFor(null);
+  // Opening always shows at least the next whole notice; the timeline may drop to its toolbar
+  // and ruler for it. When even that leaves no room beside the ones already shown, opening pages:
+  // the notices from the next one on take their place.
+  const openRoom = noticeRoom(TIMELINE_SHORTEST_PX);
+  // Opened, what is still left out shows as a count on "Show fewer notices", beside the notices.
+  const fromTop = fitNotices(notices.heights, openRoom, 0, 0);
+  const page =
+    noticesFit || !noticesOpen
+      ? { from: 0, ...closedFit }
+      : fromTop.shown > closedFit.shown
+        ? { from: 0, ...fromTop }
+        : {
+            from: closedFit.shown,
+            ...fitNotices(notices.heights.slice(closedFit.shown), openRoom, 1, 0),
+          };
+  const pageOffsetPx = notices.heights
+    .slice(0, page.from)
+    .reduce((total, height) => total + height + NOTICE_GAP_PX, 0);
+  const noticesLeft = notices.heights.length - page.shown;
+  /** A notice out of view is clipped at a notice boundary and kept out of the Tab order. */
+  const noticeOutOfView = (key: string) => {
+    const at = notices.keys.indexOf(key);
+    // A notice not measured yet (it just arrived) is in view until the next fit says otherwise.
+    if (at === -1) return false;
+    return !noticesFit && (at < page.from || at >= page.from + page.shown);
+  };
+  const opened = noticesOpen && !noticesFit;
+  /** Opening focuses the first notice it brought into view; closing, the "Show more" button. */
+  const toggleNotices = () => {
+    const next = !opened;
+    // The first notice opening brings into view is the one after those shown closed.
+    const target = next
+      ? `[data-notice="${notices.keys[closedFit.shown] ?? ""}"]`
+      : "[data-testid=editor-notices-cue] button";
+    toggledByUser.current = true;
+    setOpenedFor(next ? notices.keys.join() : null);
+    window.requestAnimationFrame(() =>
+      document.querySelector<HTMLElement>(target)?.focus({ preventScroll: true }),
+    );
+  };
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- moves DOM focus, outside React, to the first notice in view when a new notice closes the opened list while focus was in it
+  useEffect(() => {
+    const byUser = toggledByUser.current;
+    toggledByUser.current = false;
+    if (openedFor !== null || byUser || !focusInNotices.current) return;
+    const frame = window.requestAnimationFrame(() => {
+      const first = [...document.querySelectorAll<HTMLElement>("[data-notice]")].find(
+        (notice) => notice.offsetHeight > 0 && !notice.inert,
+      );
+      const target =
+        first ?? document.querySelector<HTMLElement>("[data-testid=editor-notices-cue] button");
+      target?.focus({ preventScroll: true });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [openedFor]);
+  const tabPanelStyle = {
+    height:
+      tabRoomPx === null || tabRoomPx < TAB_ROW_PX
+        ? undefined
+        : Math.floor(tabRoomPx / TAB_ROW_PX) * TAB_ROW_PX,
+  };
+  const tabLabel = TABS.find((entry) => entry.id === tab)?.label ?? "this";
 
   const showEdit = () => {
     rememberPlayerFrame(projectKey, 0);
@@ -818,8 +1080,10 @@ export default function EditorPanel(props: {
   return (
     <div
       ref={observePanel}
-      className="relative flex h-full min-h-0 flex-col gap-2 p-2"
+      className="relative flex h-full min-h-0 flex-col gap-2 overflow-hidden p-2"
       data-testid="editor-panel"
+      // The Editor owns its keys: S, Delete and Mod+Z never reach the chat composer (S7V-101).
+      data-editor-keys
       data-dragging={dragging}
       onDragOver={onDragOver}
       onDragLeave={onDragLeave}
@@ -836,47 +1100,166 @@ export default function EditorPanel(props: {
       <div role="status" aria-live="polite" className="sr-only">
         {dragging ? DROP_OVERLAY_TEXT : ""}
       </div>
-      <SpeechModelPrompt projectRef={projectRef} />
-      <div className="flex min-h-7 items-center justify-between gap-2">
-        <div className="flex min-w-0 items-center gap-2 text-sm">
-          {view._tag === "play" && view.mode === "clip" ? (
-            <>
-              <span className="min-w-0 truncate text-muted-foreground">
-                Clip: {view.asset.label}
-              </span>
-              {source.kind === "clip" ? (
+      <div ref={observeTop} className="flex shrink-0 flex-col gap-2" data-testid="editor-top">
+        <div className="flex min-h-7 shrink-0 items-center justify-between gap-2">
+          <div className="flex min-w-0 items-center gap-2 text-sm">
+            {view._tag === "play" && view.mode === "clip" ? (
+              <>
+                <span className="min-w-0 truncate text-muted-foreground">
+                  Clip: {view.asset.label}
+                </span>
+                {source.kind === "clip" ? (
+                  <Button size="compact" variant="ghost" onClick={showEdit}>
+                    Back to edit
+                  </Button>
+                ) : null}
+              </>
+            ) : null}
+            {previewingVersion !== null ? (
+              <>
+                <span role="status" className="min-w-0 truncate text-muted-foreground">
+                  Previewing v{previewingVersion}
+                </span>
                 <Button size="compact" variant="ghost" onClick={showEdit}>
-                  Back to edit
+                  Back to main
                 </Button>
-              ) : null}
-            </>
-          ) : null}
-          {previewingVersion !== null ? (
-            <>
-              <span role="status" className="min-w-0 truncate text-muted-foreground">
-                Previewing v{previewingVersion}
-              </span>
-              <Button size="compact" variant="ghost" onClick={showEdit}>
-                Back to main
-              </Button>
-            </>
+              </>
+            ) : null}
+          </div>
+          {edit._tag === "ready" &&
+          previewingVersion === null &&
+          (view._tag === "play-timeline" || (view._tag === "play" && view.mode === "edit")) ? (
+            <div className="flex min-w-0 items-center gap-2">
+              {exportResult.playHidden === null ? null : (
+                // The hidden export row's way back, so the latest export stays reachable.
+                <IconAction label="Play the latest export" onClick={exportResult.playHidden}>
+                  <PlayIcon aria-hidden />
+                </IconAction>
+              )}
+              <ExportButton
+                projectRef={projectRef}
+                projectExport={projectExport}
+                started={startedExport}
+                onStarted={setStartedExport}
+              />
+            </div>
           ) : null}
         </div>
-        {edit._tag === "ready" &&
-        previewingVersion === null &&
-        (view._tag === "play-timeline" || (view._tag === "play" && view.mode === "edit")) ? (
-          <ExportButton projectRef={projectRef} />
-        ) : null}
+        {exportResult.row}
+        {/*
+          The one to read now comes first. Only whole notices show; the rest wait behind
+          "Show N more notices"; once opened, a count on "Show fewer notices" says how many are
+          still left out.
+        */}
+        <div
+          className="flex flex-col [&:not(:has([data-notice]:not(:empty)))]:hidden"
+          data-testid="editor-notices-group"
+          onFocus={() => {
+            focusInNotices.current = true;
+          }}
+          onBlur={(event) => {
+            // A notice or button that goes away blurs with nowhere to go: focus is still "here".
+            const next = event.relatedTarget;
+            if (next instanceof Node && !event.currentTarget.contains(next)) {
+              focusInNotices.current = false;
+            }
+          }}
+        >
+          <div className="flex items-start gap-2">
+            <div
+              className="min-w-0 flex-1 overflow-hidden"
+              style={{ maxHeight: noticesFit ? undefined : page.heightPx }}
+              data-testid="editor-notices-scroller"
+            >
+              <div
+                ref={observeNotices}
+                className="flex flex-col gap-2"
+                style={{ marginTop: pageOffsetPx === 0 ? undefined : -pageOffsetPx }}
+                data-testid="editor-notices"
+              >
+                <div
+                  data-notice="refused"
+                  tabIndex={-1}
+                  className="outline-none empty:hidden"
+                  inert={noticeOutOfView("refused")}
+                >
+                  <RefusedChangeNotice snapshot={edit._tag === "ready" ? edit.snapshot : null} />
+                </div>
+                <div
+                  data-notice="old-versions"
+                  tabIndex={-1}
+                  className="outline-none empty:hidden"
+                  inert={noticeOutOfView("old-versions")}
+                >
+                  <HistoryCleanupBanner
+                    projectRef={projectRef}
+                    snapshot={edit._tag === "ready" ? edit.snapshot : null}
+                  />
+                </div>
+                <div
+                  data-notice="speech-model"
+                  tabIndex={-1}
+                  className="outline-none empty:hidden"
+                  inert={noticeOutOfView("speech-model")}
+                >
+                  <SpeechModelPrompt projectRef={projectRef} />
+                </div>
+              </div>
+            </div>
+            {/* Once opened, the way back stays beside the notices, even when they all fit. */}
+            {opened ? (
+              <div className="relative shrink-0">
+                <IconAction
+                  label={
+                    noticesLeft > 0
+                      ? `Show fewer notices · ${noticesLeft} more: close one to see ${noticesLeft === 1 ? "it" : "them"}`
+                      : "Show fewer notices"
+                  }
+                  onClick={toggleNotices}
+                >
+                  <ChevronUpIcon aria-hidden />
+                </IconAction>
+                {noticesLeft > 0 ? (
+                  <span
+                    aria-hidden
+                    className="pointer-events-none absolute -end-1 -bottom-1 rounded-full bg-muted px-1 text-3xs leading-4 text-muted-foreground tabular-nums"
+                    data-testid="editor-notices-left"
+                  >
+                    +{noticesLeft}
+                  </span>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
+          {!noticesFit && !opened ? (
+            <div
+              className={cn("flex h-7 items-center", page.shown > 0 && "mt-2")}
+              data-testid="editor-notices-cue"
+            >
+              <Button size="sm" variant="ghost" aria-expanded={false} onClick={toggleNotices}>
+                <ChevronDownIcon aria-hidden />
+                {`Show ${noticesLeft} more ${noticesLeft === 1 ? "notice" : "notices"}`}
+              </Button>
+            </div>
+          ) : null}
+        </div>
       </div>
-      <RefusedChangeNotice snapshot={edit._tag === "ready" ? edit.snapshot : null} />
-      {/* The player shrinks, letterboxed, so the tabs below keep their room. */}
-      <div className="flex min-h-24 shrink flex-col" data-testid="editor-player-area">
+      {exportResult.dialog}
+      {/*
+        The player takes the room first, in its canvas shape, and keeps its share of the panel. It
+        grows far ahead of the tabs, so they get only what is left once its canvas fills the width.
+      */}
+      <div
+        className="flex min-h-0 flex-col"
+        style={{
+          flex: "1000 0 0%",
+          minHeight: playerRoom?.min,
+          maxHeight: playerRoom?.max,
+        }}
+        data-testid="editor-player-area"
+      >
         <PlayerArea projectRef={projectRef} view={view} actions={actions} />
       </div>
-      <HistoryCleanupBanner
-        projectRef={projectRef}
-        snapshot={edit._tag === "ready" ? edit.snapshot : null}
-      />
       <div role="tablist" aria-label="Editor views" className="flex shrink-0 gap-1 border-b">
         {TABS.map((entry) => (
           <button
@@ -892,63 +1275,84 @@ export default function EditorPanel(props: {
             {entry.label}
           </button>
         ))}
+        {tabsCollapsed ? (
+          <p
+            className="ml-auto line-clamp-2 min-w-0 self-center ps-2 text-end text-xs leading-3.5 text-muted-foreground"
+            data-testid="editor-tabs-hint"
+          >
+            {top.closable
+              ? `Close a notice above or make the window taller to see ${tabLabel}.`
+              : `Make the window taller to see ${tabLabel}.`}
+          </p>
+        ) : null}
       </div>
-      {/* Every tab stays mounted, so each keeps its scroll position. */}
+      {/*
+        The tab room: whole rows of the active tab, or one plain line when not even one row fits.
+        Every tab stays mounted, so each keeps its scroll position.
+      */}
       <div
-        role="tabpanel"
-        id="editor-tabpanel-transcript"
-        aria-labelledby="editor-tab-transcript"
-        hidden={tab !== "transcript"}
-        className="min-h-0 flex-1"
-        style={{ minHeight: tabsRoom }}
+        ref={observeTabRoom}
+        hidden={tabsCollapsed}
+        className={tabsCollapsed ? "hidden" : "flex min-h-0 flex-col"}
+        style={{ flex: "1 1 0%", minHeight: tabsMin }}
+        data-testid="editor-tab-room"
       >
-        {view._tag === "play-timeline" ? (
-          <TimelineTranscriptTab
+        <div
+          role="tabpanel"
+          id="editor-tabpanel-transcript"
+          aria-labelledby="editor-tab-transcript"
+          hidden={tab !== "transcript"}
+          className="min-h-0"
+          style={tabPanelStyle}
+        >
+          {view._tag === "play-timeline" ? (
+            <TimelineTranscriptTab
+              projectRef={projectRef}
+              plan={view.plan}
+              editing={transcriptEditing}
+            />
+          ) : (
+            <TranscriptTab
+              projectRef={projectRef}
+              editing={transcriptEditing}
+              {...transcriptSourceOf(view, library, edit)}
+            />
+          )}
+        </div>
+        <div
+          role="tabpanel"
+          id="editor-tabpanel-media"
+          aria-labelledby="editor-tab-media"
+          hidden={tab !== "media"}
+          className="min-h-0"
+          style={tabPanelStyle}
+        >
+          <AssetsTab
             projectRef={projectRef}
-            plan={view.plan}
-            editing={transcriptEditing}
+            onOpenMedia={(mediaId) => {
+              rememberPlayerFrame(projectKey, 0);
+              setSource(projectKey, { kind: "clip", mediaId });
+            }}
           />
-        ) : (
-          <TranscriptTab
+        </div>
+        <div
+          role="tabpanel"
+          id="editor-tabpanel-versions"
+          aria-labelledby="editor-tab-versions"
+          hidden={tab !== "versions"}
+          className="min-h-0"
+          style={tabPanelStyle}
+        >
+          <VersionsTab
             projectRef={projectRef}
-            editing={transcriptEditing}
-            {...transcriptSourceOf(view, library, edit)}
+            previewing={previewingVersion}
+            onPreview={(n, document) => {
+              rememberPlayerFrame(projectKey, 0);
+              setSource(projectKey, { kind: "version", n, document });
+            }}
+            onShowCurrent={showEdit}
           />
-        )}
-      </div>
-      <div
-        role="tabpanel"
-        id="editor-tabpanel-media"
-        aria-labelledby="editor-tab-media"
-        hidden={tab !== "media"}
-        className="min-h-0 flex-1"
-        style={{ minHeight: tabsRoom }}
-      >
-        <AssetsTab
-          projectRef={projectRef}
-          onOpenMedia={(mediaId) => {
-            rememberPlayerFrame(projectKey, 0);
-            setSource(projectKey, { kind: "clip", mediaId });
-          }}
-        />
-      </div>
-      <div
-        role="tabpanel"
-        id="editor-tabpanel-versions"
-        aria-labelledby="editor-tab-versions"
-        hidden={tab !== "versions"}
-        className="min-h-0 flex-1"
-        style={{ minHeight: tabsRoom }}
-      >
-        <VersionsTab
-          projectRef={projectRef}
-          previewing={previewingVersion}
-          onPreview={(n, document) => {
-            rememberPlayerFrame(projectKey, 0);
-            setSource(projectKey, { kind: "version", n, document });
-          }}
-          onShowCurrent={showEdit}
-        />
+        </div>
       </div>
       {edit._tag === "unavailable" ? null : (
         <TimelinePane
@@ -962,7 +1366,14 @@ export default function EditorPanel(props: {
           mediaById={mediaById}
           editing={editing}
           minAbovePx={
-            tabsRoom === undefined ? undefined : ABOVE_CHROME_PX + PLAYER_MIN_PX + tabsRoom
+            playerRoom === null
+              ? undefined
+              : PANEL_PADDING_PX +
+                topPx +
+                playerRoom.min +
+                TAB_BAR_PX +
+                COLUMN_GAPS_PX +
+                (tabsCollapsed ? 0 : GAP_PX + tabsMin)
           }
         />
       )}

@@ -362,6 +362,54 @@ wheels = [
 ]
 
 [[package]]
+name = "opentimelineio"
+version = "0.18.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/de/41/73e65b707f3491792d4b34bea75edc2a1cc6ce10848ba199c3de8e3bee58/opentimelineio-0.18.1.tar.gz", hash = "sha256:a4e5086e2accd4ca9853ab48bf531e0c148eff47889363a6da3a03f662fbf5e8", size = 2921656, upload-time = "2025-11-09T16:38:53.364Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/42/f9/1171d246952382214ff2936dc24a1a2b5b439968a7aeda28d472339b50b4/opentimelineio-0.18.1-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:1798102411fdd7fdace2441925f910b6daa71ca67c29cd523702a5a19e4e1ded", size = 1236369, upload-time = "2025-11-09T16:38:38.444Z" },
+    { url = "https://files.pythonhosted.org/packages/67/b3/bfed144b9d65c710e0023b5ec664aa8cf27a43a6a8e544af18c5ccf3c6e1/opentimelineio-0.18.1-cp312-cp312-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:8ba406c33afc15de91273a06df8b45ecee2a15fa11005be9e2b307f8f53ead8f", size = 775702, upload-time = "2025-11-09T16:38:39.778Z" },
+    { url = "https://files.pythonhosted.org/packages/8f/a9/5fec93c437a92d4dd36470be54327ef5f1f23c2159f696de2797e2a3f727/opentimelineio-0.18.1-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:8f0924f818b496cf771612d489082bdb83f42b6bd97ed06589dd2e2c086742c9", size = 842762, upload-time = "2025-11-09T16:38:41.244Z" },
+    { url = "https://files.pythonhosted.org/packages/6c/24/d6a390f7f9c00b90b068c6f59456ad4d3fd600358728480983d17f6c6ca5/opentimelineio-0.18.1-cp312-cp312-win_amd64.whl", hash = "sha256:f59a24d0be0b1efd70657214c5ef193ee37f5b88948ad603c31218fd910bdd36", size = 608280, upload-time = "2025-11-09T16:38:42.718Z" },
+]
+
+[[package]]
+name = "otio-cmx3600-adapter"
+version = "1.0.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "opentimelineio" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/20/5a/a65b817af6d70a3e8696c81dc0e43242967b2b3ae6100bf0f35f6330e91a/otio_cmx3600_adapter-1.0.0.tar.gz", hash = "sha256:a10cca794617795bbc147d784ec33e6381a57eb6157e87d2b74b65b02516b621", size = 46108, upload-time = "2023-07-07T21:53:12.952Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/8f/b8/e48c78c703ad27d2c3748663717006a23509a15d62ba94689b88dd6bb336/otio_cmx3600_adapter-1.0.0-py3-none-any.whl", hash = "sha256:440ed9d862170d9d03d319a51bf77a19f917b162b73a578e3ebe9a79fa01625b", size = 24829, upload-time = "2023-07-07T21:53:11.399Z" },
+]
+
+[[package]]
+name = "otio-fcp-adapter"
+version = "1.0.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "opentimelineio" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/31/22/2788d6f095154cce77763e400bd28b4e2b2e6eec8a5d6def0d6e42718e72/otio_fcp_adapter-1.0.0.tar.gz", hash = "sha256:38544c1064cc85e169428c8c3436bd7c36b90bad99a253851db130d9d7298ce6", size = 80061, upload-time = "2023-07-07T19:31:32.952Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/45/fe/4a5b261c97352dbd649c8a5ef408877fa21192ca470b23f22d333fc0ec76/otio_fcp_adapter-1.0.0-py3-none-any.whl", hash = "sha256:6a425e3020be590e10c9076ac2aada22c1d5d7799abae9f3fbd51f08e07ffdeb", size = 28281, upload-time = "2023-07-07T19:31:31.429Z" },
+]
+
+[[package]]
+name = "otio-fcpx-xml-adapter"
+version = "1.0.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "opentimelineio" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/bc/df/666dd35fc30afcda85cbe1d4b25b5ac75b9e58ab25fb96c38ce82efd6dac/otio_fcpx_xml_adapter-1.0.0.tar.gz", hash = "sha256:78919c194f078f57ce9a6464c1c607a494499aaab3d8c35159ce5e71d5fcd235", size = 22036, upload-time = "2023-07-07T21:59:50.99Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/a8/1b/ebfc7b8280de2549e89431d78f0d59eeb8bc3e0333a73064492b13b3ac7a/otio_fcpx_xml_adapter-1.0.0-py3-none-any.whl", hash = "sha256:9891fcba190e1a2ebc339d2da42398ce98927dfb0055d57d8b37ea8769477f73", size = 18593, upload-time = "2023-07-07T21:59:49.652Z" },
+]
+
+[[package]]
 name = "packaging"
 version = "26.3"
 source = { registry = "https://pypi.org/simple" }
@@ -395,6 +443,68 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/49/2e/ced460408999b33da6b31b0021b0f37d329e202d4169aeb164493778f25b/pygments-2.21.0.tar.gz", hash = "sha256:610ca751c9bc2492b38eb9a38a7fbc93edbbb2d7182edaf34e66ae493dee5c8c", size = 5005329, upload-time = "2026-08-17T08:02:48.824Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/71/46/17f022dd3e953bf20a04a028a21ec746d942f8d2af30fa0f124fa0e6a684/pygments-2.21.0-py3-none-any.whl", hash = "sha256:2363c69b61c4a97c838da3b130dcd6468f4848992b21a82f2a63ec34377137d9", size = 1250147, upload-time = "2026-08-17T08:02:44.912Z" },
+]
+
+[[package]]
+name = "pyobjc-core"
+version = "13.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/83/58/7bab095330b8893e1ac58f3cf9710462c3242b600f8fa5db0d5dda795775/pyobjc_core-13.0.tar.gz", hash = "sha256:ffe154462d14aa4852f424e9116f17b5f8d44f78fc0f6c4727e721a5fa7177da", size = 1083172, upload-time = "2026-10-30T10:45:39.835Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/68/ac/783ecf1c5045792fb51ad18e0131ff64e33ed9dee9921766c14e03eb27db/pyobjc_core-13.0-cp312-cp312-macosx_10_13_universal2.whl", hash = "sha256:5818e3d8cc2677a1e767968ebfe3bc0cb7f80c1f7c19c653ee25ef1cc1b3e188", size = 6716501, upload-time = "2026-10-30T10:32:46.2Z" },
+]
+
+[[package]]
+name = "pyobjc-framework-cocoa"
+version = "13.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pyobjc-core" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/30/50/55a8779d35f1f86d795264cbd6fe62e35b2cf4fb8343fc888e99268c988a/pyobjc_framework_cocoa-13.0.tar.gz", hash = "sha256:bb7a23941fc8d7866578dbc84e56140efd343a1d28510f530dd1dbf80807daf4", size = 3135308, upload-time = "2026-10-30T10:46:03.982Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ea/44/98d626726809da517c757d77e2888d34eaf758ebad908effb8d0b60c8118/pyobjc_framework_cocoa-13.0-cp312-cp312-macosx_10_13_universal2.whl", hash = "sha256:e1618d315939c9fae57cb858d4db496ec61f82495ce6a877398131ee494fc19d", size = 391597, upload-time = "2026-10-30T10:35:16.217Z" },
+]
+
+[[package]]
+name = "pyobjc-framework-coreml"
+version = "13.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pyobjc-core" },
+    { name = "pyobjc-framework-cocoa" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/79/83/e2a2709d14a76bd61a2ded2484b99d75e9c2e2afc1fa684225ee9fadfe38/pyobjc_framework_coreml-13.0.tar.gz", hash = "sha256:c2a41fb9fb008646df7fbd71e6aeb2284a7c985cbddb30189a511560e06ebdcf", size = 48852, upload-time = "2026-10-30T10:46:17.223Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/cf/2d/a7ed30336ee70f8b3839cf440362cba3b00fb78173a8524155b30ac5daf0/pyobjc_framework_coreml-13.0-cp312-cp312-macosx_10_13_universal2.whl", hash = "sha256:9c4a59f161ef553d0979934cdc23ad90c106c391f2cb3a9d35420d605537cf29", size = 12039, upload-time = "2026-10-30T10:36:40.134Z" },
+]
+
+[[package]]
+name = "pyobjc-framework-quartz"
+version = "13.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pyobjc-core" },
+    { name = "pyobjc-framework-cocoa" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/7a/86/ffaa76ca28df5450cce14614c657b910bbd7bb737feaf47f74230c3b78d3/pyobjc_framework_quartz-13.0.tar.gz", hash = "sha256:b9a4942182efbbc7e18e6cb7f5a8faa166dc2fc5e33bece7c7b1355494274add", size = 3399243, upload-time = "2026-10-30T10:47:23.667Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/73/f9/be94503cc5475a076b61b65b64ccb030a2b72bf6fddbe68bae1f20d9e624/pyobjc_framework_quartz-13.0-cp312-cp312-macosx_10_13_universal2.whl", hash = "sha256:5e1d49f2699d128553a52fad473622ff4fd424d05e879d9585dad0a9f7c3dcfd", size = 215360, upload-time = "2026-10-30T10:42:34.247Z" },
+]
+
+[[package]]
+name = "pyobjc-framework-vision"
+version = "13.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pyobjc-core" },
+    { name = "pyobjc-framework-cocoa" },
+    { name = "pyobjc-framework-coreml" },
+    { name = "pyobjc-framework-quartz" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/13/9f/f1f90a39966bb2e0b25176fe20d44572ac86f2fff1b724eed6c87a144ed3/pyobjc_framework_vision-13.0.tar.gz", hash = "sha256:e9197f267528bf345ccae3f949d4acf6330b69658b9b02dd03088e6e1f4395bb", size = 70656, upload-time = "2026-10-30T10:47:53.999Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/6e/81/6453fb0037919900d400aa19106ddc9c8c1b2041966527fed6a10e7f3bf2/pyobjc_framework_vision-13.0-cp312-cp312-macosx_10_13_universal2.whl", hash = "sha256:bade47ff19574d3f798d7256ff81a1560da212f2c4d7fde90e1629148c3a9d89", size = 14749, upload-time = "2026-10-30T10:45:24.094Z" },
 ]
 
 [[package]]
@@ -536,6 +646,11 @@ dependencies = [
     { name = "mlx" },
     { name = "mlx-audio" },
     { name = "numpy" },
+    { name = "opentimelineio" },
+    { name = "otio-cmx3600-adapter" },
+    { name = "otio-fcp-adapter" },
+    { name = "otio-fcpx-xml-adapter" },
+    { name = "pyobjc-framework-vision", marker = "sys_platform == 'darwin'" },
     { name = "pysubs2" },
 ]
 
@@ -551,6 +666,11 @@ requires-dist = [
     { name = "mlx", specifier = "==0.32.4" },
     { name = "mlx-audio", specifier = "==0.6.4" },
     { name = "numpy", specifier = ">=2.2" },
+    { name = "opentimelineio", specifier = "==0.18.1" },
+    { name = "otio-cmx3600-adapter", specifier = "==1.0.0" },
+    { name = "otio-fcp-adapter", specifier = "==1.0.0" },
+    { name = "otio-fcpx-xml-adapter", specifier = "==1.0.0" },
+    { name = "pyobjc-framework-vision", marker = "sys_platform == 'darwin'", specifier = ">=11" },
     { name = "pysubs2", specifier = ">=1.8,<1.9" },
 ]
 

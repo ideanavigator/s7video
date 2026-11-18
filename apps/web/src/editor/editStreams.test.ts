@@ -1,9 +1,23 @@
 // SPDX-FileCopyrightText: 2026 s7video contributors
 // SPDX-License-Identifier: MIT
-import { EngineJobId, type EditSnapshot, type EngineJob } from "@t3tools/contracts";
+import {
+  EngineJobId,
+  type EditSnapshot,
+  type EngineJob,
+  type ExportStatus,
+  ProjectId,
+} from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
+import * as Option from "effect/Option";
+import { AsyncResult } from "effect/reactivity";
 import { describe, expect, it } from "vite-plus/test";
 
-import { acceptNewerSnapshot, applyJobsEvent, followExportJob } from "./editStreams";
+import {
+  acceptNewerSnapshot,
+  applyJobsEvent,
+  exportStatusAsksAgain,
+  followExportJob,
+} from "./editStreams";
 
 const snapshot = (revision: number): EditSnapshot => ({
   revision,
@@ -120,5 +134,38 @@ describe("followExportJob", () => {
     // A running followed export is never replaced.
     const both = jobsOf(job("first"), job("second"));
     expect(followExportJob(both, "project-1", "first", null).job?.id).toBe("first");
+  });
+});
+
+// S7V-101: a finished job whose status still says running is asked again, until it doesn't.
+describe("exportStatusAsksAgain", () => {
+  const status = (state: ExportStatus["state"]): ExportStatus => ({
+    jobId: EngineJobId.make("job-1"),
+    projectId: ProjectId.make("project-1"),
+    path: "exports/reel.mp4",
+    state,
+  });
+
+  it("asks again while the answer says running, and stops once it says succeeded", () => {
+    expect(exportStatusAsksAgain(AsyncResult.success(status("running")))).toBe(true);
+    expect(exportStatusAsksAgain(AsyncResult.success(status("running"), { waiting: true }))).toBe(
+      false,
+    );
+    expect(exportStatusAsksAgain(AsyncResult.success(status("succeeded")))).toBe(false);
+    expect(exportStatusAsksAgain(AsyncResult.success(status("failed")))).toBe(false);
+    expect(exportStatusAsksAgain(AsyncResult.success(null))).toBe(false);
+  });
+
+  it("stops on a failed request, even after a running answer", () => {
+    const failed = AsyncResult.failure<ExportStatus | null, Error>(
+      Cause.fail(new Error("offline")),
+    );
+    expect(exportStatusAsksAgain(failed)).toBe(false);
+    const afterRunning = AsyncResult.failure<ExportStatus | null, Error>(
+      Cause.fail(new Error("offline")),
+      { previousSuccess: Option.some(AsyncResult.success(status("running"))) },
+    );
+    expect(exportStatusAsksAgain(afterRunning)).toBe(false);
+    expect(exportStatusAsksAgain(AsyncResult.initial())).toBe(false);
   });
 });

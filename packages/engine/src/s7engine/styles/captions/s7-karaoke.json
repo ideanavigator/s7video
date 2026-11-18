@@ -1,0 +1,25 @@
+{
+  "id": "s7-karaoke",
+  "description": "s7video's highlighted-word caption style: the neutral look, with the word being said in a warm yellow until the next word starts. Sizes are fractions of the canvas's shorter side; safe-zone margins are fractions of the canvas height (top, bottom) and width (left, right).",
+  "font": { "file": "Inter-Bold.ttf", "family": "Inter", "bold": true },
+  "colour": { "text": "#FFFFFF", "shadow": "#000000" },
+  "highlight": { "colour": "#FFE14D" },
+  "chunk": { "minWords": 2, "maxWords": 4, "pauseSeconds": 0.3 },
+  "layouts": {
+    "portrait": {
+      "fontSize": 0.075,
+      "shadow": 0.0065,
+      "safe": { "top": 0.13, "bottom": 0.26, "left": 0.085, "right": 0.14 }
+    },
+    "square": {
+      "fontSize": 0.07,
+      "shadow": 0.006,
+      "safe": { "top": 0.08, "bottom": 0.12, "left": 0.07, "right": 0.07 }
+    },
+    "landscape": {
+      "fontSize": 0.065,
+      "shadow": 0.0055,
+      "safe": { "top": 0.08, "bottom": 0.1, "left": 0.1, "right": 0.1 }
+    }
+  }
+}

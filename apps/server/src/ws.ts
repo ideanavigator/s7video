@@ -1,3 +1,4 @@
+import { BRAND } from "@t3tools/shared/brand";
 import { OrchestrationDispatchCommandError } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
@@ -585,6 +586,7 @@ function projectFileFailureContext(
   readonly resolvedWorkspaceRoot?: string;
   readonly operation?: ProjectFileOperation;
   readonly operationPath?: string;
+  readonly message?: string;
 } {
   switch (error._tag) {
     case "WorkspacePathOutsideRootError":
@@ -607,6 +609,12 @@ function projectFileFailureContext(
       return { failure: "path_not_file", resolvedPath: error.resolvedPath };
     case "WorkspaceBinaryFileError":
       return { failure: "binary_file", resolvedPath: error.resolvedPath };
+    case "WorkspaceProtectedFileError":
+      return {
+        failure: "protected_file",
+        resolvedPath: error.resolvedPath,
+        message: error.message,
+      };
     default:
       return unexpectedCompatibilityError(error);
   }
@@ -1626,7 +1634,7 @@ export const layerWsRpc = (
               if (racedImport !== null) return { threadId, imported: false } as const;
               return yield* new AcpRegistryOperationError({
                 reason: "session_import_failed",
-                message: "Could not create a T3 thread for the ACP session.",
+                message: `Could not create a ${BRAND.app.productName} thread for the ACP session.`,
                 cause: launched.failure,
               });
             }
@@ -1667,7 +1675,7 @@ export const layerWsRpc = (
             if (importedThread !== null) {
               return yield* new AcpRegistryOperationError({
                 reason: "session_delete_failed",
-                message: "Delete the imported T3 thread before deleting its native ACP session.",
+                message: `Delete the imported ${BRAND.app.productName} thread before deleting its native ACP session.`,
               });
             }
             yield* manager.deleteSession({
@@ -2800,6 +2808,7 @@ export const layerWsRpc = (
         [WS_METHODS.engineJobsCancel]: (input) =>
           engine.cancelJob(input.jobId).pipe(Effect.map((applied) => ({ applied }))),
         [WS_METHODS.exportStart]: (input) => exports.start(input),
+        [WS_METHODS.exportInterchange]: (input) => exports.startInterchange(input),
         [WS_METHODS.exportStatus]: (input) => exports.status(input.jobId),
         [WS_METHODS.captionsStills]: (input) => captionStills.stills(input.projectId),
         [WS_METHODS.transcriptGet]: (input) =>

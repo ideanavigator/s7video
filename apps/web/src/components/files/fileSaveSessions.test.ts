@@ -1,4 +1,4 @@
-import { EnvironmentId } from "@t3tools/contracts";
+import { EnvironmentId, ProjectWriteFileError } from "@t3tools/contracts";
 import { Cause } from "effect";
 import { AsyncResult } from "effect/reactivity";
 import { describe, expect, it, vi } from "vite-plus/test";
@@ -7,6 +7,7 @@ import {
   createFileSaveSessions,
   type FileSaveSessionDeps,
   type FileSaveTarget,
+  refusedSaveMessage,
 } from "./fileSaveSessions";
 
 const target: FileSaveTarget = {
@@ -60,6 +61,18 @@ describe("file save sessions", () => {
     await vi.advanceTimersByTimeAsync(500);
     expect(h.writes()).toEqual([[target, "ab"]]);
     expect(h.onPendingChange).toHaveBeenLastCalledWith("file.txt", false);
+  });
+
+  it("writes a held file's edit at once on flush (Mod+S, S7V-101)", async () => {
+    using h = setup();
+    h.sessions.acquire(target, h.onPendingChange);
+    h.sessions.change(target, "saved now");
+    h.sessions.flush(target);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(h.writes()).toEqual([[target, "saved now"]]);
+    expect(h.onPendingChange).toHaveBeenLastCalledWith("file.txt", false);
+    await vi.advanceTimersByTimeAsync(500);
+    expect(h.persist).toHaveBeenCalledTimes(1);
   });
 
   it("flushes on the last release and drops edits from retired editors", async () => {
@@ -257,5 +270,19 @@ describe("file save sessions", () => {
     expect(h.state.onWritable).toEqual([]);
     await vi.runAllTimersAsync();
     expect(h.persist).not.toHaveBeenCalled();
+  });
+
+  // S7V-077: the server refuses the edit's own files, and the save says so in plain words.
+  it("gives the plain reason only for a protected file", () => {
+    const message =
+      "This file is managed by the Editor. Change your edit in the Editor or ask the assistant.";
+    const refusal = (failure: "protected_file" | "operation_failed") => {
+      // As the server sends it: the plain message travels with the failure.
+      const sent = { cwd: "/workspace", relativePath: "edit.json", failure, message };
+      return AsyncResult.failure(Cause.fail(new ProjectWriteFileError(sent)));
+    };
+    expect(refusedSaveMessage(refusal("protected_file"))).toBe(message);
+    expect(refusedSaveMessage(refusal("operation_failed"))).toBeNull();
+    expect(refusedSaveMessage(AsyncResult.success(undefined))).toBeNull();
   });
 });

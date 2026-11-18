@@ -207,19 +207,41 @@ the code it guarded.
   `configs/example-whitelabel.config.ts`.
 - `pnpm brand:check` fails on hard-coded `T3 Code`, `T3 Tools`, `t3.codes`, `pingdotgg/t3code`, a bare
   `t3code`, T3's accent colours, missing icons, empty URLs, unlicensed fonts and theme text below
-  WCAG AA. Comments are not checked. Allowed and pending paths, each with a reason or owner, are listed
+  WCAG AA, and (S7V-100) on "T3" as a product name in code, T3 mark components, T3's wordmark
+  artwork and T3's icon files by hash. Comments are not checked. Allowed and pending paths, each with a reason or owner, are listed
   in `scripts/brand-check.ts`.
 - Kept on purpose for upstream merges: package names `@t3tools/*`, the server package `t3`, env vars
   other than `S7VIDEO_HOME`/`S7VIDEO_CONFIG`, `t3code:`/`t3code.` storage keys and trace attributes,
   `t3code/*` lint rule ids, the `t3.json` project file, the `"t3code"` message attribution in the event
   log, and recognisers for upstream `t3code/` branch and MCP tool names.
-- Still T3's: the icon files in `assets/` (routed through `icons.directory`; replace with s7video art),
-  the CLI's release-archive and npm names (`t3-<version>-<platform>`, `t3@<version>` for npm), and
+- Still T3's: the CLI's release-archive and npm names (`t3-<version>-<platform>`, `t3@<version>` for npm), and
   the GNOME extension's caller names, which are static and must be edited for a white-label build.
 
 ### User-visible effects
 
 No sign-in screen. No account, Connect, guest link or "publish agent activity" options. Saved Connect-only machines disappear; direct and SSH machines stay. Websites in the in-app browser can no longer use passkeys.
+
+## s7video icons and wordmark (S7V-100)
+
+T3 Code's icons and wordmark are T3 Tools Inc.'s marks, so they are removed from the UI and the app's
+icon set; T3 Code stays credited in About, `NOTICE` and the licence files.
+
+| Upstream                                                                                                                                    | s7video                                                                                                                                                                                                                                   |
+| ------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `assets/{prod,nightly,dev}`: T3's Icon Composer projects, exports (`t3-black-*`, `black-*`, `blueprint-*`, `nightly-*`) and `prod/logo.svg` | Removed. s7video's placeholder projects (`mark.svg`, `frame.svg`, dev `stripes.svg`) and exports named `icon-*` in every channel folder. Ours, a trademark, not MIT (`REUSE.toml`, `NOTICE`, `LICENSES/LicenseRef-s7video-Trademark.txt`) |
+| `apps/web/public` favicons and touch icon                                                                                                   | Re-exported from the dev icon                                                                                                                                                                                                             |
+| `apps/web/src/components/T3Wordmark.tsx`, `T3AppIcon.tsx`                                                                                   | Removed. `AppWordmark` (the product name from the brand config) and `AppIcon` (the channel's touch icon)                                                                                                                                  |
+| `SidebarChrome.tsx`, `standalone-page.tsx`, `WelcomeWizard.tsx`                                                                             | `AppWordmark` instead of T3's mark and the word "Code"                                                                                                                                                                                    |
+| `V2LifecycleRow.tsx`, `TimelineToolActivityIcon.tsx`, `SourceControlAppAccessNotice.tsx`, `SourceControlAppSignInSettings.tsx`              | `AppIcon` instead of T3's mark or icon                                                                                                                                                                                                    |
+| `apps/desktop/resources/dmg/dmg-background-{latest,nightly}.svg`                                                                            | The product name instead of T3's wordmark                                                                                                                                                                                                 |
+| `scripts/lib/brand-assets.ts`, `apps/desktop/src/app/DesktopAssets.ts`, `apps/desktop/scripts/electron-launcher.mjs`, `t3.json`             | New icon file names; `DesktopAssets` reads `icons.directory` instead of `assets`                                                                                                                                                          |
+| `scripts/export-brand-icons.ts`, `assets/README.md`                                                                                         | Also writes the macOS PNGs: the 824 px rendition centred on a 1024 px canvas with `sips`, because `ictool` has no `macOS pre-Tahoe` preset. No native shadow                                                                              |
+| About 45 server, web, desktop and package files with "T3" in messages, tool titles, agent instructions and CLI text                         | The product name from the brand config; contracts (no config access) say "Connect" or "the app". `CodexAuthCallbackPage.ts` shows the product name                                                                                        |
+| `packages/shared/src/themePalettes.ts`                                                                                                      | The optional "T3 Chat" palette is labelled "Rose" (id unchanged, so a saved choice still loads)                                                                                                                                           |
+| `apps/desktop/src/app/DesktopCliCommand.ts`                                                                                                 | The Windows PATH helper's PowerShell type is `WinEnv.Native` instead of `T3.Env`                                                                                                                                                          |
+| `packages/client-runtime/src/errors/transport.ts`                                                                                           | The WebSocket error matcher accepts any server name                                                                                                                                                                                       |
+| `orchestrationInstructions.ts`, `ClaudeAdapterV2.ts` (agent instructions), `schedule_task` and its `webhookUrl` field                       | Lines that said "T3 tools" now say "app tools", "a tool" or "Tools", so the system texts stay no longer than upstream's (`agentContextBudget.json`); schedule_task says "remote access is off"                                            |
+| `apps/web/src/index.css` stage artwork defaults, `SidebarChrome.tsx`                                                                        | The dev and nightly sidebar artwork is drawn from the theme accent instead of upstream's blues, dark enough for the white wordmark (AA), which gets a soft halo                                                                           |
 
 ## Community files and agent rules (S7V-006, S7V-008)
 
@@ -238,6 +260,12 @@ No sign-in screen. No account, Connect, guest link or "publish agent activity" o
 New: `docs/engineering/` (standards), `docs/changelog/` (per-ticket entries), `docs/planning.md`,
 `scripts/planning.ts` (`pnpm tickets`, `ticket:*`, `doc:new`) and `scripts/check-doc-links.ts`
 (`pnpm docs:linkcheck`).
+
+`docs/README.md`, upstream's docs index, is edited in place. It has the s7video title and a
+contributor section that points to the agent rules, standards and planning. Its provider list
+matches the kept providers. The Connect, mobile and relay pages are gone. It links six s7video
+`docs/internals/` pages: media import, edit history, timeline, captions, sound and music
+(S7V-036), and punch-in zoom (S7V-037).
 
 ## Edit projects (S7V-024)
 
@@ -386,6 +414,10 @@ upstream files have small edits:
 - `evals/mcp-tool-use/run.ts`: `visibleT3Tools({ video: true })` offers only
   `VIDEO_PROJECT_TOOL_NAMES`, and the context report prints a second line for a video project's
   thread, so the eval measures what that thread is really offered.
+- `evals/mcp-tool-use/README.md`: the "Video cases (s7video)" section describes the video eval
+  cases: the `video-export-*` cases (S7V-061), `VID-01` to `VID-03` (S7V-072), `VID-04` to
+  `VID-06` for restoring and comparing versions from chat (S7V-070), and `VID-07` to `VID-09` for
+  captions shaped in the chat (S7V-099).
 
 The ACP first-prompt text (`t3AcpPromptWithInstructions`) still carries the orchestration text; ACP
 gets the filtered list from the server.
@@ -406,6 +438,7 @@ tools. These upstream files have small edits:
 - `provider/CodexProvider.ts` (`probeCodexSkillsForCwd`), `Drivers/CodexDriver.ts`, `Drivers/CodexManagedProvider.ts`: the same call before `skills/list` in edit projects.
 - `scripts/build-desktop-artifact.ts` stages the folder and ships it as the `skills` extra resource, outside `app.asar`; `apps/desktop/src/backend/DesktopBackendConfiguration.ts` sets `S7VIDEO_SKILLS_DIR` when packaged.
 - `provider/agentContextBudget.json` gains `builtInSkillListingBytes`, the per-session cost of listing the skills.
+- `provider/ClaudeCapabilitiesProbe.test.ts` checks the skills an edit project lists; S7V-036 adds `add-sound-and-music`, S7V-037 `caption-style` and `punch-in-zoom`.
 - `apps/web/src/components/chat/useComposerMenuItems.ts` and `ComposerCommandMenu.tsx`: a `/` menu skill row with a `displayName` (built-in skills read it from `agents/openai.yaml`) shows that name instead of `/skill:<name>`. Skills without one keep the upstream label; search is unchanged.
 
 ## Media import (S7V-025)
@@ -459,19 +492,26 @@ The Editor is the main view of a video project (S7V-076). These upstream files h
 - `ChatMarkdown.tsx` and `chat/ChatMarkdownMedia.tsx` send a link to a clip in Media to the
   Editor's player (`openMediaLinkInEditor`) before opening the file viewer.
 - `chat/ChatRightPanel.tsx` and `hooks/usePreviewPanelInlineSize.ts` add `defaultWidthFraction`.
+- `ChatMarkdown.browser.test.tsx` adds one case (S7V-099): the agent's caption looks reply, a
+  markdown image per look of its preview's path in the project, draws each through the host image
+  route. Its paths use the preview layout the agent really writes,
+  `captions/previews/<32 hex>/preview-<16 hex>.png` (S7V-109). `ChatMarkdown.tsx` itself is
+  unchanged.
 
 ## Edit, export and transcription wiring (S7V-024 to S7V-028, S7V-046)
 
 The services are new code (`edit/`, `export/`, `transcript/`, `engine/`). The upstream files only
 wire them in:
 
-- `server.ts` builds the edit, media, silence-cut, export, transcript and engine layers above the
-  core runtime, so WebSocket handlers, agent tools and the asset route share one instance of each.
-- `ws.ts` adds thin handlers for `edit.*`, `media.*`, `export.*`, `transcript.get` and
-  `transcribe.*`.
+- `server.ts` builds the edit, media, silence-cut, caption, sound (S7V-036), clip placement
+  (S7V-093), zoom (S7V-037), export, transcript and engine layers above the core runtime, so WebSocket handlers, agent tools and the asset route
+  share one instance of each.
+- `ws.ts` adds thin handlers for `edit.*`, `media.*`, `export.*` (including S7V-040's
+  `export.interchange`, "Export for editors"), `transcript.get` and `transcribe.*`.
 - `observability/RpcInstrumentation.ts` gives these methods the `engine`, `edit` and `media`
   metric groups; `auth/RpcAuthorization.ts` and `contracts/clientRpcPermissions.ts` give reads
-  read scope and changes operate scope.
+  read scope and changes operate scope. S7V-040 adds `export.interchange` to the `engine` group and
+  to operate scope, with one assertion in `auth/RpcAuthorization.test.ts`.
 - `packages/contracts/src/rpc.ts` (the sprint's RPC definitions and `WS_METHODS` entries) and
   `packages/contracts/src/index.ts` (re-exports of the new contract modules) are the biggest
   upstream-file changes, and the likeliest merge-conflict spots in an upstream merge.
@@ -487,7 +527,33 @@ small wiring as the other `edit.*` methods: `edit.versions`, `edit.versionGet`, 
 `RpcInstrumentation.ts` also puts `edit.historyClean` and `edit.historyDismiss` (S7V-050) in the
 `edit` group. The caption stills (S7V-075) get the same wiring: `captions.stills` in
 `contracts/rpc.ts`, a thin handler in `ws.ts`, read scope in `auth/RpcAuthorization.ts` and the
-`engine` group in `observability/RpcInstrumentation.ts`.
+`engine` group in `observability/RpcInstrumentation.ts`. The caption looks (S7V-037) added
+`captions.presets` and `captions.setStyle` the same way for the Editor's look strip; S7V-099
+removed the strip (captions are shaped in the chat) and took both methods back out of those five
+files. `ws.test.ts` still mocks the caption track service the server layer builds.
+
+## Edit control files are write-protected (S7V-077)
+
+Upstream's `projects.writeFile` writes any file in a known workspace. In a video project, it now
+refuses `edit.json` and `project.json` at the project's root and anything under `.s7history/`, so
+only the edit service changes them and S7V-054's outside-edit guard can trust the history. The check
+sits next to the `.git` refusal in `resolveWriteTarget` and works the same way: case-folded, and on
+both the real and the named path, so a link to one of these files is refused too. Upstream files
+with small, additive edits:
+
+- `apps/server/src/workspace/WorkspaceFileSystem.ts`: the check and `WorkspaceProtectedFileError`.
+- `packages/contracts/src/project.ts`: a `protected_file` failure.
+- `apps/server/src/ws.ts`: `projectFileFailureContext` maps the error to `protected_file` with the
+  plain message.
+- `apps/web/src/components/files/fileSaveSessions.ts`: a refused save shows that message in a toast.
+- `apps/server/src/workspace/WorkspaceFileSystem.test.ts`, `apps/server/src/ws.test.ts` and
+  `apps/web/src/components/files/fileSaveSessions.test.ts`: tests for the refusal, its
+  `protected_file` failure and its message.
+
+**Out of reach of this check:** the `vcs.*` RPCs (a git checkout or pull can rewrite `edit.json`)
+and `terminal.write` (a shell can write any file), as well as the agent's own file tools. They are
+not path-checked writes, and `.s7history/` is git-ignored, so they cannot be guarded by path. S7V-054
+already treats an `edit.json` change made through them as an outside edit.
 
 ## Media data assets (S7V-035)
 
@@ -502,6 +568,21 @@ additive edits:
   request as before.
 - `apps/web/src/assets/assetUrls.ts`: `useAssetUrlMinter` mints URLs on demand for code outside
   React (the timeline's media-tiles worker); `refresh` mints a new token for an expired URL.
+
+## Caption stills by key (S7V-079)
+
+The player's caption stills are served by the existing asset route, so two upstream files have
+small, additive edits:
+
+- `assets/AssetAccess.ts`: a `caption-stills` claim names a project and a look folder, so one
+  signed token covers that folder's stills; `issueCaptionStillsUrl` mints it for `captions.stills`.
+  Serving it calls `export/captionStillFile.ts` (new code), which re-resolves the project,
+  refuses anything but the engine's own file names, and opens the still with `openMediaFile`, as
+  `project-media-exact` does, so the response streams the checked descriptor.
+- `assets/AssetAccess.test.ts`: the shared test setup changes, so an upstream merge may conflict
+  there: new imports (`Project`, `issueCaptionStillsUrl`, `ProjectService`), a `projectRoots` map,
+  and a `ProjectService` mock in `layerTest`. A new `caption stills (S7V-079)` block tests serving a
+  still and refusing bad paths, links and tokens.
 
 ## Window focus (S7V-074)
 
@@ -522,6 +603,27 @@ working in; only user actions take focus. These upstream desktop files have smal
 - `app/DesktopStartupRecovery.ts`: the recovery window reveals through `reveal` instead of `show()`.
 - `scripts/dev-electron.mjs` sets `S7VIDEO_DESKTOP_DEV_RESTART=1` on a watcher relaunch;
   `app/DesktopConfig.ts` reads it and `app/DesktopEnvironment.ts` exposes `isDevelopmentRestart`.
+
+## The Editor owns its keys (S7V-101)
+
+While focus is in the Editor panel or the file view (both marked `data-editor-keys`, see
+`apps/web/src/lib/editorKeys.ts`), their shortcuts act there and never reach the chat. These
+upstream files have small edits:
+
+- `components/chat/composerFocusRedirect.ts`: type-to-focus (`shouldTypeToFocusComposer`) leaves
+  keys pressed in such a region alone, so S splits on the timeline instead of typing into the
+  composer. Paste-to-focus is unchanged: a paste there still goes to the composer.
+- `components/ChatView.logic.ts`: `shouldRefocusComposerOnWindowFocus` keeps focus in such a region
+  when the window comes back.
+- `components/chat/useComposerStash.ts`: Mod+S does not stash a prompt from such a region.
+- `components/AppSidebarLayout.tsx`: Mod+Z there undoes the edit, not a thread action.
+- `components/files/FilePreviewPanel.tsx`: the editable file surface is such a region, and Mod+S
+  saves the file at once through `flushFileSaveSession` (`components/files/fileSaveSessions.ts`).
+- Tests: `components/ChatView.logic.browser.test.ts`,
+  `components/chat/useChatShortcuts.browser.test.tsx` and `components/files/fileSaveSessions.test.ts`.
+- `docs/internals/web-ui.md`: the Editor's layout paragraph now says how the player gets space
+  first (`PLAYER_SHARE`), how the notices fit and open, and when the tabs and the timeline give
+  way.
 
 ## Dev profile per worktree (S7V-073)
 

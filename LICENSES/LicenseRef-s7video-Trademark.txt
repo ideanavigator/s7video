@@ -1,0 +1,8 @@
+s7video icons and logo
+
+Copyright (c) 2026 s7video contributors. All rights reserved.
+
+The s7video icons and logo (the artwork in the brand config's icon folder and the copies made from
+it) are not covered by the MIT License that covers s7video's source code. They are trademarks of the
+s7video project. You may use them only as TRADEMARK.md allows: in unmodified official builds and
+source, and to refer to the project. A modified build must replace them with its own icons.

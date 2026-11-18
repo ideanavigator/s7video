@@ -5,10 +5,13 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   captionItemsFor,
+  captionCustomOf,
+  captionLookOf,
   captionMediaOf,
   captionTrackOps,
   mapCaptionWords,
   sameCaptions,
+  shownCaptionTracks,
   transcriptCaptionTrackOf,
 } from "./captionWords.ts";
 
@@ -222,5 +225,58 @@ describe("captionItemsFor and the track ops", () => {
   it("captions only clips with sound on the first video track", () => {
     expect(captionMediaOf(edit([[0, 30, 0, "mute"]]))).toEqual([]);
     expect(captionMediaOf(document)).toEqual(["cam"]);
+  });
+});
+
+// S7V-037: the same rule as the export's `caption_style` (test_export.py has the same cases).
+describe("captionLookOf", () => {
+  const item = { id: "c1", start: 0, duration: 20, text: "hi there" };
+  it("is the shown track's look: items first, then an empty transcript track, else ours", () => {
+    expect(captionLookOf(edit([[0, 30, 0]]))).toBe("s7-neutral");
+    const empty = { kind: "caption" as const, id: "C1", style: "s7-box", items: [] };
+    expect(captionLookOf(edit([[0, 30, 0]], { extraTracks: [empty] }))).toBe("s7-box");
+    expect(captionLookOf(edit([[0, 30, 0]], { extraTracks: [{ ...empty, muted: true }] }))).toBe(
+      "s7-neutral",
+    );
+    const shown = { kind: "caption" as const, id: "C2", style: "s7-minimal", items: [item] };
+    expect(captionLookOf(edit([[0, 30, 0]], { extraTracks: [empty, shown] }))).toBe("s7-minimal");
+    const plain = { kind: "caption" as const, id: "C2", items: [item] };
+    expect(captionLookOf(edit([[0, 30, 0]], { extraTracks: [plain] }))).toBe("s7-neutral");
+  });
+});
+
+// S7V-099: the same rule as the export's `caption_custom`.
+describe("captionCustomOf", () => {
+  const item = { id: "c1", start: 0, duration: 20, text: "hi there" };
+  it("is the shown track's own colours, size and place, or none", () => {
+    expect(captionCustomOf(edit([[0, 30, 0]]))).toBeUndefined();
+    const custom = { textColor: "#FF8800", position: "top" as const };
+    const empty = { kind: "caption" as const, id: "C1", custom, items: [] };
+    expect(captionCustomOf(edit([[0, 30, 0]], { extraTracks: [empty] }))).toEqual(custom);
+    expect(
+      captionCustomOf(edit([[0, 30, 0]], { extraTracks: [{ ...empty, muted: true }] })),
+    ).toBeUndefined();
+    const shown = { kind: "caption" as const, id: "C2", items: [item] };
+    expect(captionCustomOf(edit([[0, 30, 0]], { extraTracks: [empty, shown] }))).toBeUndefined();
+  });
+});
+
+describe("shownCaptionTracks", () => {
+  it("is the transcript track, even empty, and any caption track with items; else none", () => {
+    expect(shownCaptionTracks(edit([[0, 30, 0]]))).toEqual([]);
+    const blank = { kind: "caption" as const, id: "C1", items: [] };
+    expect(shownCaptionTracks(edit([[0, 30, 0]], { extraTracks: [blank] }))).toEqual([]);
+    const transcript = { ...blank, metadata: { s7: { source: "transcript" } } };
+    expect(shownCaptionTracks(edit([[0, 30, 0]], { extraTracks: [transcript] }))).toEqual([
+      transcript,
+    ]);
+    const written = {
+      kind: "caption" as const,
+      id: "C2",
+      items: [{ id: "c1", start: 0, duration: 10, text: "hi" }],
+    };
+    expect(shownCaptionTracks(edit([[0, 30, 0]], { extraTracks: [blank, written] }))).toEqual([
+      written,
+    ]);
   });
 });

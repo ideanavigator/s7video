@@ -6,6 +6,8 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 
+import { REDO_CHANGE, restoredChange, UNDO_CHANGE } from "../edit/EditDocumentService.ts";
+import { MORE_CHANGES } from "../edit/EditHistoryService.ts";
 import { EDIT_FILE, PROJECT_FILE, projectFileContents } from "../edit/EditProjectLayout.ts";
 import { planClaudeSkillDispatch } from "../provider/Drivers/ClaudeSkillDispatch.ts";
 import { discoverClaudeSkills } from "../provider/Drivers/ClaudeSkills.ts";
@@ -91,6 +93,32 @@ it.layer(NodeServices.layer)("built-in skills", (it) => {
           displayName: "Add captions",
         },
         {
+          name: "video:add-sound-and-music",
+          path: path.join(builtInSkillsRoot(path, pluginDir), "add-sound-and-music", "SKILL.md"),
+          enabled: true,
+          scope: "system",
+          description: "Add sound and music - place the user's own. Use only if the user asks.",
+          displayName: "Add sound and music",
+        },
+        {
+          name: "video:caption-style",
+          path: path.join(builtInSkillsRoot(path, pluginDir), "caption-style", "SKILL.md"),
+          enabled: true,
+          scope: "system",
+          description:
+            "Caption style - set the look of the user's captions. Use only if the user asks.",
+          displayName: "Caption style",
+        },
+        {
+          name: "video:punch-in-zoom",
+          path: path.join(builtInSkillsRoot(path, pluginDir), "punch-in-zoom", "SKILL.md"),
+          enabled: true,
+          scope: "system",
+          description:
+            "Punch-in zoom - zoom in on a moment of the user's video. Use only if the user asks.",
+          displayName: "Punch-in zoom",
+        },
+        {
           name: "video:remove-silences",
           path: path.join(builtInSkillsRoot(path, pluginDir), "remove-silences", "SKILL.md"),
           enabled: true,
@@ -144,6 +172,42 @@ it.layer(NodeServices.layer)("built-in skills", (it) => {
       assert.include(flat, "was cut by an earlier edit");
       assert.include(flat, "offer to undo back to before that cut, then ask again");
       assert.include(flat, "never by frame numbers");
+      // S7V-097: loosening undoes only the cut (and its own re-duck) when nothing else came after
+      // it; otherwise it restores, re-cuts and puts back every other change in those versions.
+      assert.notInclude(flat, "call `video_undo` first");
+      assert.include(flat, "A version holds every change from one reply");
+      assert.include(flat, 'then `video_versions` with the newest version (`version: "vN"`)');
+      assert.include(
+        flat,
+        "If the cut is the last change, or only the `video_duck_music` you ran for it follows it, call `video_undo` once for each of those (once, or twice with the re-duck)",
+      );
+      assert.include(flat, "Do not ask.");
+      // The skill quotes the server's own version lines, so a wording change there fails here.
+      const restored = `${restoredChange(1).slice(0, -1)}N`;
+      for (const line of [UNDO_CHANGE, REDO_CHANGE, MORE_CHANGES, restored]) {
+        assert.include(flat, `"${line}"`);
+      }
+      assert.include(
+        flat,
+        `An "${UNDO_CHANGE}" cancels the change just before it and a "${REDO_CHANGE}" brings it back, so an undone change is not one to put back.`,
+      );
+      assert.include(flat, "you can't see every change since the cut.");
+      assert.include(
+        flat,
+        "If I cut more loosely, I'll put back just those two and the others will be lost (Versions keeps them all). Should I do that, or leave the cut as it is?",
+      );
+      assert.include(
+        flat,
+        "Every change in it other than the cut and its re-duck, and every change in later versions, must come back.",
+      );
+      assert.include(flat, "Name them in editing words and ask");
+      assert.include(flat, "then put back the reel shape and the zoom at 0:08. OK?");
+      assert.include(
+        flat,
+        "call `video_version_restore` with the version before the one with the cut, then `video_remove_silences` with the new setting, then redo each change you named, and say which ones you put back.",
+      );
+      // S7V-097: the cut's reply asks to re-duck ducked music, and the skill follows it.
+      assert.include(flat, "If its result says to run `video_duck_music` again, do it");
       // S7V-061: editing never exports; captions come with the export the user asks for.
       assert.include(flat, "Do not export.");
       assert.include(flat, "Call `video_export` only when this message asks for a video file");

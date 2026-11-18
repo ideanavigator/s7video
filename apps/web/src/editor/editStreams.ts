@@ -1,7 +1,8 @@
 // SPDX-FileCopyrightText: 2026 s7video contributors
 // SPDX-License-Identifier: MIT
 /** Folds for the Editor's streams (S7V-029): edit snapshots and engine jobs. */
-import type { EditSnapshot, EngineJob, EngineJobsEvent } from "@t3tools/contracts";
+import type { EditSnapshot, EngineJob, EngineJobsEvent, ExportStatus } from "@t3tools/contracts";
+import { AsyncResult } from "effect/reactivity";
 
 /**
  * Drops a snapshot older than one already shown, so a late reply never rolls the edit back. A
@@ -64,4 +65,20 @@ export function followExportJob(
   const next = runningExportOf(jobs, projectId, followedId);
   if (next !== null) return { job: next, adoptedJobId: next.id };
   return { job: followed, adoptedJobId };
+}
+
+/**
+ * Whether to ask `export.status` again for a job that has ended (S7V-101): only while its answer
+ * still says running. A final status, null (an export this server did not start), a failed
+ * request or a request in flight stops it.
+ */
+export function exportStatusAsksAgain(
+  result: AsyncResult.AsyncResult<ExportStatus | null, unknown>,
+): boolean {
+  return (
+    AsyncResult.isSuccess(result) &&
+    !result.waiting &&
+    result.value !== null &&
+    result.value.state === "running"
+  );
 }

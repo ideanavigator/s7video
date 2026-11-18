@@ -42,3 +42,14 @@ def test_rejects_non_finite_frames_without_crashing() -> None:
     raw["tracks"][0]["items"][0]["duration"] = float("inf")
     [issue] = validate_edit_document(raw)
     assert (issue.reason, issue.item_id) == ("frame", "v1")
+
+
+def test_a_zoom_ramp_over_sixty_frames_is_refused_by_name() -> None:
+    # S7V-037: the export draws a frame-sized branch per ramp frame, so a ramp is capped.
+    raw = json.loads((FIXTURES / "27-zoom-ramp-too-long.json").read_text(encoding="utf-8"))
+    [issue] = validate_edit_document(raw)
+    assert (issue.reason, issue.item_id) == ("frame", "b1")
+    assert issue.explanation == '"b1" has rampFrames 61. A zoom ramps over at most 60 frames.'
+    zoomed = next(item for track in raw["tracks"] for item in track["items"] if item["id"] == "b1")
+    zoomed["zoom"]["rampFrames"] = 60
+    assert validate_edit_document(raw) == []

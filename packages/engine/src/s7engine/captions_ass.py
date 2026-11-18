@@ -1,16 +1,25 @@
 # SPDX-FileCopyrightText: 2026 s7video contributors
 # SPDX-License-Identifier: MIT
-"""Caption items from ``edit.json`` → an ASS file for libass, in our ``s7-neutral`` style (S7V-028).
+"""Caption items from ``edit.json`` → an ASS file for libass, in one of our looks (S7V-028, S7V-037).
 
 Chunks hold 2–4 words, split at pauses and sentence ends; a phrase of one word stays alone. Each
 chunk shows from its first word's start frame up to its last word's end frame. ASS times are
 centiseconds, so each frame boundary is written just before the frame starts (``frame_to_ms``):
 libass then shows the chunk on its first frame and not on the frame before. The layout sits
 inside the platforms' safe zone for the canvas's aspect ratio.
+
+The looks are the JSON files in ``styles/captions/`` (the registry: a new look is a new file) and
+use only the bundled fonts. A look with a ``highlight`` shows each chunk once per word, with the
+word being said in that colour: one event per word state, so each starts on its word's own frame
+(``\\k`` karaoke times syllables in centiseconds from the event's start and leaves past words lit).
+
+A caption track's ``custom`` (S7V-099) changes a look's colours, size and place on top of its file
+(``styled``): the export, the player's stills and the editors' ASS all draw through ``build_cues``.
 """
 
 from __future__ import annotations
 
+import copy
 import json
 import math
 import re
@@ -26,6 +35,14 @@ ENGINE_ROOT = Path(__file__).resolve().parents[2]
 FONTS_DIR = ENGINE_ROOT / "assets" / "fonts"
 STYLES_DIR = Path(__file__).resolve().parent / "styles" / "captions"
 DEFAULT_STYLE = "s7-neutral"
+#: Our looks' ids; user styles under the project's ``styles/`` folder are not read yet.
+_PRESET_ID = re.compile(r"^s7-[a-z0-9-]+$")
+#: Where a caption track's ``custom.position`` puts the lines, inside the safe zone (S7V-099).
+_ALIGNMENT = {
+    "top": pysubs2.Alignment.TOP_CENTER,
+    "middle": pysubs2.Alignment.MIDDLE_CENTER,
+    "bottom": pysubs2.Alignment.BOTTOM_CENTER,
+}
 
 _SENTENCE_END = re.compile(r"[.!?…]$|[,;:]$")
 # Inter Bold advances, as a share of the font size, rounded up: used only to shrink a chunk whose
@@ -33,6 +50,11 @@ _SENTENCE_END = re.compile(r"[.!?…]$|[,;:]$")
 _WIDE = 0.74
 _NARROW = 0.64
 _MAX_LINES = 2
+#: Pixels of slack on each side of a line: anti-aliasing and side bearings put up to a pixel of ink
+#: past a line's advance, which libass fits to the margins (S7V-037 golden ``zoom-crop-presets``).
+_SLACK = 1
+#: The anti-aliased pixel just past an outline or a box's padding.
+_FRINGE = 1
 
 
 @dataclass(frozen=True)
@@ -47,6 +69,22 @@ class Chunk:
     text: str
     start: int
     end: int
+    #: The chunk's words on the timeline, for a look that lights the word being said.
+    words: tuple[Word, ...] = ()
+
+
+@dataclass(frozen=True)
+class Cue:
+    """One ASS event: a chunk, or with a highlight, one word state of it (``lit`` indexes ``words``)."""
+
+    words: tuple[str, ...]
+    start: int
+    end: int
+    lit: int | None = None
+
+    @property
+    def text(self) -> str:
+        return " ".join(self.words)
 
 
 @dataclass(frozen=True)
@@ -55,9 +93,13 @@ class Layout:
     height: int
     font_size: int
     shadow: float
+    #: The outline's width, or with a box, its padding around the text, in pixels.
+    edge: float
     margin_left: int
     margin_right: int
     margin_bottom: int
+    #: The top line's margin, for captions placed at the top (S7V-099).
+    margin_top: int
     #: The safe zone as (left, top, right, bottom) pixels of the canvas.
     safe: tuple[int, int, int, int]
 
@@ -65,17 +107,36 @@ class Layout:
     def safe_width(self) -> int:
         return self.safe[2] - self.safe[0]
 
+    @property
+    def edge_pixels(self) -> int:
+        """How far an outline or a box reaches past the text, its anti-aliased fringe included."""
+        return math.ceil(self.edge) + (_FRINGE if self.edge > 0 else 0)
+
+    @property
+    def text_width(self) -> int:
+        """The safe width less the outline or box and the slack on both sides: where glyphs fit."""
+        return self.safe_width - 2 * (self.edge_pixels + _SLACK)
+
 
 class CaptionStyleError(ValueError):
     pass
 
 
+def presets() -> list[str]:
+    """Our looks, by id: one JSON file each in ``styles/captions/``."""
+    return sorted(path.stem for path in STYLES_DIR.glob("*.json") if _PRESET_ID.match(path.stem))
+
+
 @cache
 def load_style(style_id: str = DEFAULT_STYLE) -> dict[str, Any]:
-    if style_id != DEFAULT_STYLE:
-        # User styles under the project's styles/ folder come with S7V-037.
-        raise CaptionStyleError(f'caption style "{style_id}" is not available yet')
-    return json.loads((STYLES_DIR / f"{style_id}.json").read_text(encoding="utf-8"))
+    if not _PRESET_ID.match(style_id) or not (STYLES_DIR / f"{style_id}.json").is_file():
+        raise CaptionStyleError(f'caption style "{style_id}" is not one of ours: {", ".join(presets())}')
+    style = json.loads((STYLES_DIR / f"{style_id}.json").read_text(encoding="utf-8"))
+    font = style["font"]["file"]
+    if not (FONTS_DIR / font).is_file():
+        # Never another font: libass would pick a system one, and the look would change.
+        raise CaptionStyleError(f'caption style "{style_id}" needs the bundled font {font}, which is missing')
+    return style
 
 
 def aspect_class(width: int, height: int) -> str:
@@ -97,17 +158,52 @@ def layout_for(width: int, height: int, style: dict[str, Any] | None = None) -> 
     top = math.ceil(safe["top"] * height)
     bottom = math.ceil(safe["bottom"] * height)
     shadow = round(spec["shadow"] * short, 1)
-    # The shadow falls down and to the right of the text, so those margins make room for it.
+    edge = round(spec.get("pad", spec.get("outline", 0)) * short, 1)
+    edge_pixels = math.ceil(edge) + (_FRINGE if edge > 0 else 0)
+    # The shadow falls down and to the right of the text, so those margins make room for it; an
+    # outline or a box reaches out on every side; and each line keeps a pixel of slack each side.
     return Layout(
         width=width,
         height=height,
         font_size=round(spec["fontSize"] * short),
         shadow=shadow,
-        margin_left=left,
-        margin_right=right + math.ceil(shadow),
-        margin_bottom=bottom + math.ceil(shadow),
+        edge=edge,
+        margin_left=left + edge_pixels + _SLACK,
+        margin_right=right + edge_pixels + math.ceil(shadow) + _SLACK,
+        margin_bottom=bottom + edge_pixels + math.ceil(shadow),
+        margin_top=top + edge_pixels,
         safe=(left, top, width - right, height - bottom),
     )
+
+
+def styled(style_id: str = DEFAULT_STYLE, custom: dict[str, Any] | None = None) -> dict[str, Any]:
+    """The look ``style_id`` with a caption track's ``custom`` on top (S7V-099), as a copy.
+
+    ``textColor`` is the text's colour, ``highlightColor`` the lit word's (looks with a highlight),
+    ``boxColor`` the box's (looks with a box, drawn solid); ``size`` scales the font, the
+    shadow and the outline or padding; ``position`` is read by ``build_cues``. The edit's schema
+    has checked the values.
+    """
+    style = load_style(style_id)
+    if not custom:
+        return style
+    style = copy.deepcopy(style)
+    if "textColor" in custom:
+        style["colour"]["text"] = custom["textColor"]
+    if "highlightColor" in custom and "highlight" in style:
+        style["highlight"]["colour"] = custom["highlightColor"]
+    if "boxColor" in custom and "box" in style:
+        # Solid: each line of a caption has its own box, and where two see-through boxes overlap
+        # a seam shows, plain to see in a bright colour (S7V-099 UX review).
+        style["box"]["colour"] = custom["boxColor"]
+        style["box"]["opacity"] = 1.0
+    size = float(custom.get("size", 1))
+    for spec in style["layouts"].values():
+        for key in ("fontSize", "shadow", "pad", "outline"):
+            if key in spec:
+                spec[key] = spec[key] * size
+    style["position"] = custom.get("position", "bottom")
+    return style
 
 
 def _words_of(item: dict[str, Any]) -> list[Word]:
@@ -163,15 +259,18 @@ def chunk_words(words: list[Word], rate: Fraction, style: dict[str, Any] | None 
     chunks: list[Chunk] = []
     for phrase in phrases:
         for group in _balanced(phrase, max_words):
-            chunks.append(Chunk(" ".join(word.text for word in group), group[0].start, group[-1].end))
+            chunks.append(Chunk(" ".join(word.text for word in group), group[0].start, group[-1].end, tuple(group)))
     return chunks
 
 
-def caption_chunks(caption_items: list[dict[str, Any]], rate: Fraction, end_frame: int) -> list[Chunk]:
+def caption_chunks(
+    caption_items: list[dict[str, Any]], rate: Fraction, end_frame: int, style_id: str = DEFAULT_STYLE
+) -> list[Chunk]:
     """All chunks of the given caption items, clipped to the timeline and never overlapping."""
+    style = load_style(style_id)
     chunks: list[Chunk] = []
     for item in sorted(caption_items, key=lambda entry: entry["start"]):
-        chunks.extend(chunk_words(_words_of(item), rate))
+        chunks.extend(chunk_words(_words_of(item), rate, style))
     return clip_chunks(chunks, end_frame)
 
 
@@ -184,8 +283,31 @@ def clip_chunks(chunks: list[Chunk], end_frame: int) -> list[Chunk]:
         if index + 1 < len(chunks):
             end = min(end, chunks[index + 1].start)
         if end > chunk.start:
-            clipped.append(Chunk(chunk.text, chunk.start, end))
+            words = tuple(Word(word.text, word.start, min(word.end, end)) for word in chunk.words if word.start < end)
+            clipped.append(Chunk(chunk.text, chunk.start, end, words))
     return clipped
+
+
+def cues(chunks: list[Chunk], style_id: str = DEFAULT_STYLE) -> list[Cue]:
+    """The ASS events for ``chunks``: one per chunk, or with a highlight, one per word being said.
+
+    A word stays lit through a pause inside its chunk, until the next word starts.
+    """
+    if "highlight" not in load_style(style_id):
+        return [Cue((chunk.text,), chunk.start, chunk.end) for chunk in chunks]
+    out: list[Cue] = []
+    for chunk in chunks:
+        words = chunk.words
+        if not words:
+            out.append(Cue((chunk.text,), chunk.start, chunk.end))
+            continue
+        texts = tuple(word.text for word in words)
+        for index in range(len(words)):
+            start = chunk.start if index == 0 else words[index].start
+            end = chunk.end if index + 1 == len(words) else words[index + 1].start
+            if end > start:
+                out.append(Cue(texts, start, end, index))
+    return out
 
 
 def frame_to_ms(frame: int, rate: Fraction) -> int:
@@ -213,19 +335,65 @@ def fitted_size(text: str, layout: Layout) -> int:
     longest = max((estimated_width(word, size) for word in text.split()), default=0.0)
     whole = estimated_width(text, size) / _MAX_LINES
     widest = max(longest, whole)
-    if widest <= layout.safe_width:
+    if widest <= layout.text_width:
         return size
-    return max(8, math.floor(size * layout.safe_width / widest))
+    return max(8, math.floor(size * layout.text_width / widest))
 
 
-def _colour(hex_colour: str) -> pysubs2.Color:
+def _colour(hex_colour: str, opacity: float = 1.0) -> pysubs2.Color:
     value = hex_colour.lstrip("#")
-    return pysubs2.Color(int(value[0:2], 16), int(value[2:4], 16), int(value[4:6], 16), 0)
+    alpha = round(255 * (1 - opacity))
+    return pysubs2.Color(int(value[0:2], 16), int(value[2:4], 16), int(value[4:6], 16), alpha)
 
 
-def build_ass(chunks: list[Chunk], rate: Fraction, width: int, height: int) -> pysubs2.SSAFile:
-    style = load_style()
+def _ass_colour(hex_colour: str) -> str:
+    """``#RRGGBB`` as an ASS override colour, ``&HBBGGRR&``."""
+    value = hex_colour.lstrip("#").upper()
+    return f"&H{value[4:6]}{value[2:4]}{value[0:2]}&"
+
+
+def _cue_text(cue: Cue, style: dict[str, Any]) -> str:
+    if cue.lit is None:
+        return _plain(cue.text)
+    lit, back = _ass_colour(style["highlight"]["colour"]), _ass_colour(style["colour"]["text"])
+    return " ".join(
+        f"{{\\1c{lit}}}{_plain(word)}{{\\1c{back}}}" if index == cue.lit else _plain(word)
+        for index, word in enumerate(cue.words)
+    )
+
+
+def build_ass(
+    chunks: list[Chunk],
+    rate: Fraction,
+    width: int,
+    height: int,
+    style_id: str = DEFAULT_STYLE,
+    custom: dict[str, Any] | None = None,
+) -> pysubs2.SSAFile:
+    return build_cues(cues(chunks, style_id), rate, width, height, style_id, custom)
+
+
+def build_cues(
+    events: list[Cue],
+    rate: Fraction,
+    width: int,
+    height: int,
+    style_id: str = DEFAULT_STYLE,
+    custom: dict[str, Any] | None = None,
+) -> pysubs2.SSAFile:
+    """The ASS file for ``events`` in look ``style_id`` with ``custom`` on top; the export and the
+    player's stills both use it."""
+    style = styled(style_id, custom)
     layout = layout_for(width, height, style)
+    position = style.get("position", "bottom")
+    box = style.get("box")
+    # With a box (border style 3), the outline colour fills the box and the outline is its padding.
+    if box:
+        edge_colour = _colour(box["colour"], box["opacity"])
+    elif "outline" in style:
+        edge_colour = _colour(style["outline"]["colour"])
+    else:
+        edge_colour = _colour(style["colour"]["shadow"])
     subs = pysubs2.SSAFile()
     subs.info["PlayResX"] = str(width)
     subs.info["PlayResY"] = str(height)
@@ -237,26 +405,25 @@ def build_ass(chunks: list[Chunk], rate: Fraction, width: int, height: int) -> p
             fontsize=layout.font_size,
             primarycolor=_colour(style["colour"]["text"]),
             secondarycolor=_colour(style["colour"]["text"]),
-            outlinecolor=_colour(style["colour"]["shadow"]),
+            outlinecolor=edge_colour,
             backcolor=_colour(style["colour"]["shadow"]),
             bold=bool(style["font"]["bold"]),
-            borderstyle=1,
-            outline=0,
+            borderstyle=3 if box else 1,
+            outline=layout.edge,
             shadow=layout.shadow,
-            alignment=pysubs2.Alignment.BOTTOM_CENTER,
+            alignment=_ALIGNMENT[position],
             marginl=layout.margin_left,
             marginr=layout.margin_right,
-            marginv=layout.margin_bottom,
+            # libass ignores the vertical margin of a line in the middle.
+            marginv=layout.margin_top if position == "top" else layout.margin_bottom,
         )
     }
-    for chunk in chunks:
-        text = _plain(chunk.text)
-        size = fitted_size(chunk.text, layout)
+    for cue in events:
+        text = _cue_text(cue, style)
+        size = fitted_size(cue.text, layout)
         if size != layout.font_size:
             text = f"{{\\fs{size}}}{text}"
-        subs.events.append(
-            pysubs2.SSAEvent(start=frame_to_ms(chunk.start, rate), end=frame_to_ms(chunk.end, rate), text=text)
-        )
+        subs.events.append(pysubs2.SSAEvent(start=frame_to_ms(cue.start, rate), end=frame_to_ms(cue.end, rate), text=text))
     return subs
 
 
@@ -268,5 +435,25 @@ def link_fonts(folder: Path) -> None:
             (folder / font.name).symlink_to(font)
 
 
-def write_ass(path: Path, chunks: list[Chunk], rate: Fraction, width: int, height: int) -> None:
-    build_ass(chunks, rate, width, height).save(str(path), format_="ass")
+def write_ass(
+    path: Path,
+    chunks: list[Chunk],
+    rate: Fraction,
+    width: int,
+    height: int,
+    style_id: str = DEFAULT_STYLE,
+    custom: dict[str, Any] | None = None,
+) -> None:
+    build_ass(chunks, rate, width, height, style_id, custom).save(str(path), format_="ass")
+
+
+def write_cues(
+    path: Path,
+    events: list[Cue],
+    rate: Fraction,
+    width: int,
+    height: int,
+    style_id: str = DEFAULT_STYLE,
+    custom: dict[str, Any] | None = None,
+) -> None:
+    build_cues(events, rate, width, height, style_id, custom).save(str(path), format_="ass")

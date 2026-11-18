@@ -84,7 +84,7 @@ import { readCodexSetupMode } from "../settings/CodexSetupSection.logic";
 import { buildProviderInstanceUpdatePatch } from "../settings/SettingsPanels.logic";
 import { TerminalViewport } from "../ThreadTerminalDrawer";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
-import { T3Wordmark } from "../T3Wordmark";
+import { AppWordmark } from "../AppWordmark";
 import { Alert, AlertDescription } from "../ui/alert";
 import { Button } from "../ui/button";
 import { CommandBlock } from "../CommandBlock";
@@ -234,18 +234,7 @@ export function WelcomeWizard({
       >
         <WizardHeader
           title={`Set up ${BRAND.app.productName}`}
-          identity={
-            <div
-              className="flex items-baseline gap-1.5"
-              role="img"
-              aria-label={`${BRAND.app.productName}`}
-            >
-              <T3Wordmark className="h-4 w-auto shrink-0" aria-hidden />
-              <span className="text-2xl font-medium tracking-tight text-muted-foreground">
-                Code
-              </span>
-            </div>
-          }
+          identity={<AppWordmark className="text-2xl" />}
         >
           <WizardSteps
             steps={ONBOARDING_STAGES}

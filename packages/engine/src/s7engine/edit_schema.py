@@ -23,6 +23,9 @@ from jsonschema.exceptions import ValidationError
 EDIT_DOCUMENT_VERSION = 1
 SCHEMA_PATH = Path(__file__).resolve().parents[2] / "schema" / "edit.schema.json"
 
+#: ``EditZoom``'s ``MAX_ZOOM_RAMP_FRAMES``: one still zoom per ramp frame in the export (S7V-037).
+MAX_ZOOM_RAMP_FRAMES = 60
+
 FRAME_KEYS = (
     "start",
     "duration",
@@ -88,6 +91,14 @@ def _frame_issues(raw: dict[str, Any]) -> list[EditIssue]:
                         owner,
                         "frame",
                         f"{_label(owner)} has {key} {shown}. Times are whole frame numbers, 0 or more.",
+                    )
+                )
+            elif key == "rampFrames" and frame > MAX_ZOOM_RAMP_FRAMES:
+                issues.append(
+                    EditIssue(
+                        owner,
+                        "frame",
+                        f"{_label(owner)} has rampFrames {int(frame)}. A zoom ramps over at most {MAX_ZOOM_RAMP_FRAMES} frames.",
                     )
                 )
 

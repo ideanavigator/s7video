@@ -78,12 +78,18 @@ export const EditMedia = Schema.Struct({
 });
 export type EditMedia = typeof EditMedia.Type;
 
+/**
+ * The longest zoom ramp: the export draws one still zoom per ramp frame, each a frame-sized
+ * branch of its graph (S7V-037 review: about 13 MB each), so a ramp stays within two seconds.
+ */
+const MAX_ZOOM_RAMP_FRAMES = 60;
+
 /** A punch-in over a whole video item; the anchor is normalised to the frame (S7V-037). */
 export const EditZoom = Schema.Struct({
   scale: Schema.Finite.check(Schema.isBetween({ minimum: 1, maximum: 2 })),
   anchorX: UnitInterval,
   anchorY: UnitInterval,
-  rampFrames: Frame,
+  rampFrames: Frame.check(Schema.isLessThanOrEqualTo(MAX_ZOOM_RAMP_FRAMES)),
 });
 export type EditZoom = typeof EditZoom.Type;
 
@@ -199,10 +205,32 @@ export const EditVideoTrack = Schema.Struct({
 });
 export type EditVideoTrack = typeof EditVideoTrack.Type;
 
+/** `#RRGGBB`, as a caption's colours are stored. */
+export const EditHexColor = Schema.String.check(Schema.isPattern(/^#[0-9A-F]{6}$/u));
+
+export const CAPTION_SIZE_RANGE = { minimum: 0.6, maximum: 1.6 } as const;
+export const CaptionPosition = Schema.Literals(["top", "middle", "bottom"]);
+export type CaptionPosition = typeof CaptionPosition.Type;
+
+/**
+ * The user's own colours, size and place on top of the track's look (S7V-099). `highlightColor`
+ * is the lit word's in a look that lights it, `boxColor` the box's in a look with one; `size`
+ * scales the text. The export and the player draw it with the same ASS builder.
+ */
+export const EditCaptionCustom = Schema.Struct({
+  textColor: Schema.optionalKey(EditHexColor),
+  highlightColor: Schema.optionalKey(EditHexColor),
+  boxColor: Schema.optionalKey(EditHexColor),
+  size: Schema.optionalKey(Schema.Finite.check(Schema.isBetween(CAPTION_SIZE_RANGE))),
+  position: Schema.optionalKey(CaptionPosition),
+});
+export type EditCaptionCustom = typeof EditCaptionCustom.Type;
+
 export const EditCaptionTrack = Schema.Struct({
   kind: Schema.Literal("caption"),
   ...trackFields,
   style: Schema.optionalKey(EditStyleRef),
+  custom: Schema.optionalKey(EditCaptionCustom),
   items: Schema.Array(EditCaptionItem),
 });
 export type EditCaptionTrack = typeof EditCaptionTrack.Type;
@@ -365,6 +393,14 @@ function frameIssues(raw: unknown): EditValidationIssue[] {
             owner,
             "frame",
             `${label(owner)} has ${key} ${frame}. Times are whole frame numbers, 0 or more.`,
+          ),
+        );
+      } else if (key === "rampFrames" && frame > MAX_ZOOM_RAMP_FRAMES) {
+        issues.push(
+          issue(
+            owner,
+            "frame",
+            `${label(owner)} has rampFrames ${frame}. A zoom ramps over at most ${MAX_ZOOM_RAMP_FRAMES} frames.`,
           ),
         );
       }

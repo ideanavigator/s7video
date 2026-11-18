@@ -126,7 +126,8 @@ export interface VersionMeta {
 
 const MAX_VERSION_CHANGES = 10;
 const MAX_CHANGE_CHARS = 200;
-const MORE_CHANGES = "…and more changes";
+/** Ends a version's change list that ran out of room; the remove-silences skill quotes it. */
+export const MORE_CHANGES = "…and more changes";
 
 const clipChange = (text: string) => {
   const line = text.trim().replace(/\s+/gu, " ") || "Changed the edit";
@@ -196,6 +197,30 @@ const withVersion = (
 
 /** Tags compare without case or surrounding space, so "Tight cut" and "tight cut" clash. */
 const tagKey = (tag: string) => tag.trim().toLowerCase();
+
+/**
+ * S7V-070: a version named in chat. `v12` or `12` is a number first, then a tag; `alsoNamed` is
+ * another version whose tag is that same text, which the number won over.
+ */
+export const findVersionRef = (versions: ReadonlyArray<EditVersionRecord>, ref: string) => {
+  const key = tagKey(ref.replace(/\s+/gu, " "));
+  const digits = /^v?\s?(\d+)$/u.exec(key)?.[1];
+  const byNumber =
+    digits === undefined ? undefined : versions.find((entry) => entry.n === Number(digits));
+  const byTag =
+    key === ""
+      ? undefined
+      : versions.find((entry) => entry.tag !== undefined && tagKey(entry.tag) === key);
+  const version = byNumber ?? byTag;
+  if (version === undefined) {
+    return { _tag: "missing", ...(digits === undefined ? {} : { n: Number(digits) }) } as const;
+  }
+  return {
+    _tag: "found",
+    version,
+    ...(byTag !== undefined && byTag !== version ? { alsoNamed: byTag.n } : {}),
+  } as const;
+};
 
 export type TagVersionOutcome =
   | { readonly _tag: "tagged"; readonly version: EditVersionRecord }

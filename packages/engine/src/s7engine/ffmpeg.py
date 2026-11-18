@@ -37,6 +37,13 @@ def run_tool(
     tool: str, args: list[str], job: JobContext, timeout: float = QUICK_TOOL_TIMEOUT, cwd: str | None = None
 ) -> bytes:
     """Runs a tool to completion and returns its stdout; a cancelled job stops it at once."""
+    return run_tool_output(tool, args, job, timeout, cwd)[0]
+
+
+def run_tool_output(
+    tool: str, args: list[str], job: JobContext, timeout: float = QUICK_TOOL_TIMEOUT, cwd: str | None = None
+) -> tuple[bytes, bytes]:
+    """``run_tool``, returning stderr too: FFmpeg's filters (``ebur128``) report there."""
     process = subprocess.Popen(
         [tool_path(tool), *args],
         stdin=subprocess.DEVNULL,
@@ -48,7 +55,7 @@ def run_tool(
     stop = process.kill
     job.on_cancel(stop)
     try:
-        stdout, _stderr = process.communicate(timeout=timeout)
+        stdout, stderr = process.communicate(timeout=timeout)
     except subprocess.TimeoutExpired:
         process.kill()
         process.communicate()
@@ -59,7 +66,7 @@ def run_tool(
         raise Cancelled()
     if process.returncode != 0:
         raise RpcError(MEDIA_ERROR, f"{tool} could not read the media")
-    return stdout
+    return stdout, stderr
 
 
 def ffprobe_json(args: list[str], job: JobContext) -> dict[str, Any]:

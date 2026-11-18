@@ -59,6 +59,9 @@ source alone does not explain. Most code changes do not need an internal documen
 - [Edit history](./internals/edit-history.md)
 - [Timeline](./internals/timeline.md)
 - [Captions in the edit](./internals/captions.md)
+- [Sound effects, music and loudness](./internals/audio-mix.md)
+- [Punch-in zoom](./internals/punch-in-zoom.md)
+- [Export for editors (OTIO, FCPXML, FCP7 XML, EDL)](./internals/pro-export.md)
 
 ### Runbooks
 

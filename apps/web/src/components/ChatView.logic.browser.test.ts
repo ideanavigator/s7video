@@ -26,3 +26,23 @@ it("keeps keyboard focus on a sidebar row on window return, but not a clicked ro
   expect(document.activeElement).toBe(tabbed);
   expect(shouldRefocusComposerOnWindowFocus(document.activeElement)).toBe(false);
 });
+
+it("leaves focus in the Editor on window return (S7V-101)", async () => {
+  const editor = document.createElement("div");
+  editor.setAttribute("data-editor-keys", "");
+  const timeline = document.createElement("div");
+  timeline.tabIndex = -1;
+  timeline.textContent = "Timeline";
+  editor.append(timeline);
+  const outside = document.createElement("button");
+  outside.textContent = "Outside";
+  document.body.append(editor, outside);
+  using _editor = { [Symbol.dispose]: () => (editor.remove(), outside.remove()) };
+
+  await userEvent.click(timeline);
+  expect(document.activeElement).toBe(timeline);
+  expect(shouldRefocusComposerOnWindowFocus(document.activeElement)).toBe(false);
+
+  await userEvent.click(outside);
+  expect(shouldRefocusComposerOnWindowFocus(document.activeElement)).toBe(true);
+});
