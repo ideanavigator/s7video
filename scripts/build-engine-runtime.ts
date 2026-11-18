@@ -31,6 +31,7 @@ const REPO_ROOT = NodePath.resolve(import.meta.dirname, "..");
 const ENGINE_PROJECT = "packages/engine";
 const PYTHON_EXECUTABLE = "bin/python3.12";
 const SITE_PACKAGES = "lib/python3.12/site-packages";
+const KEPT_BIN = new Set(["python3.12", "python3", "python"]);
 /** From site-packages to `<Resources>/engine/src`: the engine source sits beside the runtime. */
 const ENGINE_SRC_PTH = "../../../../engine/src";
 const ENGINE_FILES = ["src", "schema", "assets", "models.lock.json", "uv.lock", "pyproject.toml"];
@@ -124,11 +125,27 @@ function trim(pythonDir: string, lock: RuntimeLock): void {
   }
 }
 
-/** `.pyc` that Python uses without checking the source's timestamp: the bundle is read only. */
-function compileBytecode(python: string, folder: string): void {
+/**
+ * `.pyc` files that Python uses without checking the source's timestamp: the bundle is read only.
+ * `-s` strips the build folder from the paths they record (Python fixes them up at import anyway),
+ * so no build-machine path, with its user name, ships in the app.
+ */
+function compileBytecode(python: string, folder: string, buildRoot: string): void {
   const output = run(
     python,
-    ["-I", "-m", "compileall", "-q", "-f", "-j0", "--invalidation-mode", "unchecked-hash", folder],
+    [
+      "-I",
+      "-m",
+      "compileall",
+      "-q",
+      "-f",
+      "-j0",
+      "--invalidation-mode",
+      "unchecked-hash",
+      "-s",
+      buildRoot,
+      folder,
+    ],
     { allowFailure: true },
   );
   const failed = output.split("\n").filter((line) => line.startsWith("*** Error compiling")).length;
@@ -147,6 +164,14 @@ function walkFiles(root: string, relative = ""): string[] {
     else if (entry.isFile()) files.push(path);
   }
   return files;
+}
+
+/** Files under `root` whose bytes contain `text`: a build path would ship the builder's user name. */
+function filesContaining(root: string, text: string): string[] {
+  const needle = Buffer.from(text);
+  return walkFiles(root).filter((path) =>
+    NodeFS.readFileSync(NodePath.join(root, path)).includes(needle),
+  );
 }
 
 /** Every Mach-O under `root`, with its arm64 load commands. */
@@ -262,6 +287,11 @@ function buildPython(lock: RuntimeLock, archive: string, licenceArchive: string,
     NodePath.join(pythonDir, SITE_PACKAGES, "s7engine-src.pth"),
     `${ENGINE_SRC_PTH}\n`,
   );
+  // uv writes console-script launchers whose shebang names this build folder; the engine needs none.
+  const binDir = NodePath.join(pythonDir, "bin");
+  for (const name of NodeFS.readdirSync(binDir)) {
+    if (!KEPT_BIN.has(name)) NodeFS.rmSync(NodePath.join(binDir, name), { force: true });
+  }
 
   const facts = JSON.parse(
     run(python, [
@@ -281,7 +311,7 @@ function buildPython(lock: RuntimeLock, archive: string, licenceArchive: string,
   const licenceProblems = checkPythonJsonLicences(pythonJson, lock, shipped);
   if (licenceProblems.length > 0) throw new Error(licenceProblems.join("\n"));
 
-  compileBytecode(python, NodePath.join(pythonDir, "lib/python3.12"));
+  compileBytecode(python, NodePath.join(pythonDir, "lib/python3.12"), workDir);
   NodeFS.rmSync(full, { recursive: true, force: true });
   NodeFS.rmSync(requirements);
 }
@@ -301,7 +331,7 @@ function stageEngine(python: string, engineDir: string): void {
     NodeFS.mkdirSync(NodePath.dirname(target), { recursive: true });
     NodeFS.copyFileSync(NodePath.join(REPO_ROOT, file), target);
   }
-  compileBytecode(python, NodePath.join(engineDir, "src"));
+  compileBytecode(python, NodePath.join(engineDir, "src"), NodePath.dirname(engineDir));
 }
 
 /** The staged runtime imports what the engine needs, from a folder it was never built in. */
@@ -377,6 +407,12 @@ export function buildEngineRuntime(outDir: string): void {
   if (problems.length > 0) {
     throw new Error(
       `the engine runtime would not run on macOS ${lock.macosMinimum} without other software:\n${problems.join("\n")}`,
+    );
+  }
+  const leaks = filesContaining(outDir, NodeOS.homedir());
+  if (leaks.length > 0) {
+    throw new Error(
+      `these files name the build Mac's home folder: ${leaks.slice(0, 5).join(", ")}`,
     );
   }
   smokeTest(outDir);
