@@ -50,6 +50,7 @@ import {
   engineCommandArgs,
   engineEnvironment,
   huggingFaceCacheDirs,
+  isPackagedServer,
   resolveEngineProjectDir,
   resolveEngineTools,
 } from "./enginePaths.ts";
@@ -221,6 +222,7 @@ const make = Effect.fn("EngineService.make")(function* (options: EngineServiceOp
         huggingFaceCacheDirs: huggingFaceCacheDirs(env, homeDir, config.engineModelsDir),
       }),
       logFile: path.join(config.engineLogsDir, "engine.log"),
+      packaged: isPackagedServer(env),
       startTimeout: options.startTimeout ?? START_TIMEOUT,
       onProgress: (progress) => {
         const jobId = progress.jobId as EngineJobId;

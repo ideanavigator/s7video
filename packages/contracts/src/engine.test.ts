@@ -66,6 +66,29 @@ describe("engine contracts", () => {
     );
   });
 
+  it("packaged missing-tool hint says to reinstall, never brew install (S7V-016)", () => {
+    const missing = new EngineError({
+      reason: "missing_tool",
+      method: "start",
+      tool: "ffprobe",
+      packaged: true,
+    });
+    expect(missing.message).toBe(
+      "The ffprobe that comes with the app is missing. Reinstall the app to fix it.",
+    );
+    const featureless = new EngineError({
+      reason: "missing_tool",
+      method: "export.render",
+      tool: "ffmpeg",
+      feature: "zscale",
+      packaged: true,
+    });
+    expect(featureless.message).toBe(
+      "The ffmpeg that comes with the app was built without zscale (zimg) to convert HDR video to standard range. Reinstall the app to fix it.",
+    );
+    expect(featureless.message).not.toContain("brew");
+  });
+
   it("gives each failure reason one fixed, actionable message", () => {
     const message = (reason: EngineError["reason"], extra: Partial<EngineError> = {}) =>
       new EngineError({ reason, method: "media.frame", ...extra }).message;

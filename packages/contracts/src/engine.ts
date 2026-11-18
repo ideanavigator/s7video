@@ -361,6 +361,8 @@ export class EngineError extends Schema.TaggedError<EngineError>()("EngineError"
   tool: Schema.optional(EngineTool),
   /** For `missing_tool`: the tool is there but was built without this. */
   feature: Schema.optional(EngineToolFeature),
+  /** For `missing_tool`: the tool ships inside the app, so the fix is to reinstall it (S7V-016). */
+  packaged: Schema.optional(Schema.Boolean),
   /** The engine's own fixed rejection text, for `rpc_error`. */
   rpcMessage: Schema.optional(Schema.String),
   rpcCode: Schema.optional(Schema.Int),
@@ -382,6 +384,13 @@ export class EngineError extends Schema.TaggedError<EngineError>()("EngineError"
         return MODELS_MISSING_MESSAGE;
       case "missing_tool": {
         const tool = this.tool ?? "ffmpeg";
+        if (this.packaged === true) {
+          const problem =
+            this.feature === undefined
+              ? "is missing"
+              : `was built without ${FEATURE_PURPOSE[this.feature]}`;
+          return `The ${tool} that comes with the app ${problem}. Reinstall the app to fix it.`;
+        }
         if (this.feature !== undefined) {
           return `The video engine needs an ${tool} with ${FEATURE_PURPOSE[this.feature]}, and the ${tool} on this Mac was built without it. For development, ${INSTALL_HINT[tool]}.`;
         }

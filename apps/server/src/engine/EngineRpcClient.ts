@@ -35,7 +35,7 @@ interface Pending {
   readonly reply: Deferred.Deferred<unknown, EngineError>;
 }
 
-const errorFromRpc = (method: string, body: EngineRpcErrorBody): EngineError => {
+const errorFromRpc = (method: string, body: EngineRpcErrorBody, packaged: boolean): EngineError => {
   if (body.code === ENGINE_RPC_ERROR_CODES.cancelled) {
     return new EngineError({ reason: "cancelled", method });
   }
@@ -50,6 +50,7 @@ const errorFromRpc = (method: string, body: EngineRpcErrorBody): EngineError => 
       method,
       ...(tool !== undefined && isEngineTool(tool) ? { tool } : {}),
       ...(feature !== undefined && isEngineToolFeature(feature) ? { feature } : {}),
+      ...(packaged && (tool === "ffmpeg" || tool === "ffprobe") ? { packaged: true } : {}),
     });
   }
   return new EngineError({
@@ -65,7 +66,10 @@ export const make = Effect.fn("EngineRpcClient.make")(function* <E>(input: {
   readonly lines: Stream.Stream<string, E>;
   readonly send: (line: string) => Effect.Effect<void>;
   readonly onProgress: (progress: EngineProgressParams) => Effect.Effect<void>;
+  /** A packaged app's FFmpeg ships with it: a missing one or feature means reinstalling (S7V-016). */
+  readonly packaged?: boolean;
 }) {
+  const packaged = input.packaged === true;
   const pending = new Map<number, Pending>();
   const ready = yield* Deferred.make<EngineReady, EngineError>();
   const closed = yield* Deferred.make<void>();
@@ -99,7 +103,7 @@ export const make = Effect.fn("EngineRpcClient.make")(function* <E>(input: {
     }
     pending.delete(id);
     yield* "error" in message
-      ? Deferred.fail(waiter.reply, errorFromRpc(waiter.method, message.error))
+      ? Deferred.fail(waiter.reply, errorFromRpc(waiter.method, message.error, packaged))
       : Deferred.succeed(waiter.reply, message.result);
   });
 

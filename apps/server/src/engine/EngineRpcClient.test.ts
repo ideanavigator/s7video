@@ -13,31 +13,49 @@ import * as EngineRpcClient from "./EngineRpcClient.ts";
 
 const Pong = Schema.Struct({ pong: Schema.Literal(true) });
 
-const setup = Effect.gen(function* () {
-  const lines = yield* Queue.unbounded<string, Cause.Done>();
-  const sent = yield* Queue.unbounded<string>();
-  const progress: EngineProgressParams[] = [];
-  const client = yield* EngineRpcClient.make({
-    lines: Stream.fromQueue(lines),
-    send: (line) => Queue.offer(sent, line).pipe(Effect.asVoid),
-    onProgress: (event) => Effect.sync(() => progress.push(event)),
-  });
-  const reply = (body: Record<string, unknown>) =>
-    Queue.take(sent).pipe(
-      Effect.flatMap((line) => {
-        const request = JSON.parse(line) as { id: number };
-        return Queue.offer(lines, JSON.stringify({ jsonrpc: "2.0", id: request.id, ...body }));
-      }),
+const setupWith = (options: { readonly packaged?: boolean }) =>
+  Effect.gen(function* () {
+    const lines = yield* Queue.unbounded<string, Cause.Done>();
+    const sent = yield* Queue.unbounded<string>();
+    const progress: EngineProgressParams[] = [];
+    const client = yield* EngineRpcClient.make({
+      lines: Stream.fromQueue(lines),
+      send: (line) => Queue.offer(sent, line).pipe(Effect.asVoid),
+      onProgress: (event) => Effect.sync(() => progress.push(event)),
+      ...options,
+    });
+    const reply = (body: Record<string, unknown>) =>
+      Queue.take(sent).pipe(
+        Effect.flatMap((line) => {
+          const request = JSON.parse(line) as { id: number };
+          return Queue.offer(lines, JSON.stringify({ jsonrpc: "2.0", id: request.id, ...body }));
+        }),
+      );
+    yield* Queue.offer(
+      lines,
+      '{"jsonrpc":"2.0","method":"ready","params":{"version":"0","protocol":1}}',
     );
-  yield* Queue.offer(
-    lines,
-    '{"jsonrpc":"2.0","method":"ready","params":{"version":"0","protocol":1}}',
-  );
-  yield* client.ready;
-  return { client, lines, sent, progress, reply };
-});
+    yield* client.ready;
+    return { client, lines, sent, progress, reply };
+  });
+const setup = setupWith({});
 
 describe("EngineRpcClient", () => {
+  it.effect("a packaged app's FFmpeg feature error says to reinstall (S7V-016)", () =>
+    Effect.gen(function* () {
+      const { client, reply } = yield* setupWith({ packaged: true });
+      const noZscale = yield* client
+        .call("export.render", {}, Pong, undefined)
+        .pipe(Effect.flip, Effect.forkChild);
+      yield* reply({
+        error: { code: 1004, message: "x", data: { tool: "ffmpeg", feature: "zscale" } },
+      });
+      const error = yield* Fiber.join(noZscale);
+      expect(error).toMatchObject({ reason: "missing_tool", feature: "zscale", packaged: true });
+      expect(error.message).toContain("Reinstall the app");
+    }),
+  );
+
   it.effect("EngineRpcClient decodes responses and errors", () =>
     Effect.gen(function* () {
       const { client, reply, lines, progress } = yield* setup;

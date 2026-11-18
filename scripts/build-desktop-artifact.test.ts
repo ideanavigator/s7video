@@ -1399,6 +1399,12 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       const mac = config.mac as Record<string, unknown>;
       assert.equal(mac.entitlements, "/stage/entitlements.mac.plist");
       assert.notProperty(mac, "provisioningProfile");
+      // The LGPL FFmpeg helper ships beside app.asar, not inside it (S7V-016).
+      assert.deepInclude(config.extraResources as ReadonlyArray<unknown>, {
+        from: "apps/desktop/prod-resources/ffmpeg",
+        to: "ffmpeg",
+      });
+      assert.include(config.files as ReadonlyArray<string>, "!apps/desktop/prod-resources/ffmpeg");
 
       assert.include(MAC_ENTITLEMENTS, "<key>com.apple.security.cs.allow-jit</key>");
       assert.match(

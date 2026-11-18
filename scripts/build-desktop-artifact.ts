@@ -933,6 +933,11 @@ export const DESKTOP_FILE_EXCLUSIONS = [
   // Shipped once, as the `skills` extra resource (S7V-048).
   "!apps/server/skills",
   "!apps/server/skills/**/*",
+  // Shipped once, as the `ffmpeg` extra resource (S7V-016); never inside app.asar.
+  "!apps/desktop/resources/ffmpeg",
+  "!apps/desktop/resources/ffmpeg/**/*",
+  "!apps/desktop/prod-resources/ffmpeg",
+  "!apps/desktop/prod-resources/ffmpeg/**/*",
 ] as const;
 // Windows terminal helpers cannot run on macOS and slow signing and notarization.
 export const MAC_FILE_EXCLUSIONS = [
@@ -1027,6 +1032,13 @@ export const DESKTOP_EXTRA_RESOURCES = [
   {
     from: "apps/server/skills",
     to: "skills",
+  },
+] as const;
+// The LGPL FFmpeg helper (S7V-016): separate programs and dylibs, never inside app.asar.
+export const MAC_EXTRA_RESOURCES = [
+  {
+    from: "apps/desktop/prod-resources/ffmpeg",
+    to: "ffmpeg",
   },
 ] as const;
 export const LINUX_CAPTURE_EXTRA_RESOURCES = [
@@ -2032,6 +2044,42 @@ export const stageResourceMonitor = Effect.fn("stageResourceMonitor")(function* 
   }
 });
 
+export class FfmpegHelperMissingError extends Schema.TaggedError<FfmpegHelperMissingError>()(
+  "FfmpegHelperMissingError",
+  { helperDir: Schema.String },
+) {
+  override get message(): string {
+    return `packages/engine/ffmpeg/build.sh finished without bin/ffmpeg and bin/ffprobe in ${this.helperDir}.`;
+  }
+}
+
+/** Builds (or reuses the cached) LGPL FFmpeg helper and stages it for `MAC_EXTRA_RESOURCES`. */
+export const stageFfmpegHelper = Effect.fn("stageFfmpegHelper")(function* (input: {
+  readonly repoRoot: string;
+  readonly stageResourcesDir: string;
+  readonly verbose: boolean;
+}) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const helperDir = path.join(input.stageResourcesDir, "ffmpeg");
+  yield* runCommand(
+    ChildProcess.make(
+      "bash",
+      [path.join(input.repoRoot, "packages/engine/ffmpeg/build.sh"), "--out", helperDir],
+      { cwd: input.repoRoot },
+    ),
+    {
+      label: "build the LGPL FFmpeg helper (packages/engine/ffmpeg/build.sh)",
+      verbose: input.verbose,
+    },
+  );
+  for (const tool of ["ffmpeg", "ffprobe"]) {
+    if (!(yield* fs.exists(path.join(helperDir, "bin", tool)))) {
+      return yield* new FfmpegHelperMissingError({ helperDir });
+    }
+  }
+});
+
 export const stageBrowserSecret = Effect.fn("stageBrowserSecret")(function* (input: {
   readonly repoRoot: string;
   readonly stageResourcesDir: string;
@@ -2444,6 +2492,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       : {}),
     extraResources: [
       ...DESKTOP_EXTRA_RESOURCES,
+      ...(platform === "mac" ? MAC_EXTRA_RESOURCES : []),
       ...(platform === "linux" ? LINUX_CAPTURE_EXTRA_RESOURCES : []),
       ...(platform === "linux" ? LINUX_BROWSER_SECRET_EXTRA_RESOURCES : []),
       ...(platform === "win" ? WINDOWS_SERVER_EXTRA_RESOURCES : []),
@@ -3408,6 +3457,9 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
     arch: options.arch,
     verbose: options.verbose,
   });
+  if (options.platform === "mac") {
+    yield* stageFfmpegHelper({ repoRoot, stageResourcesDir, verbose: options.verbose });
+  }
   if (options.platform === "linux") {
     for (const backend of ["kde", "hyprland"] as const)
       yield* stageLinuxCaptureHelper({
