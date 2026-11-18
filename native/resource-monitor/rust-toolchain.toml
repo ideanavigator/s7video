@@ -1,0 +1,5 @@
+# sysinfo 0.39 needs rustc 1.95 (its rust-version). rustup reads this file because
+# scripts/build-desktop-artifact.ts runs this crate's cargo build from this folder.
+[toolchain]
+channel = "1.95.0"
+profile = "minimal"

@@ -1967,8 +1967,9 @@ export const stageResourceMonitor = Effect.fn("stageResourceMonitor")(function* 
         rustTarget,
       ]);
       yield* runCommand(
+        // rustup reads rust-toolchain.toml from the working folder, not from --manifest-path.
         ChildProcess.make(spawnCommand.command, spawnCommand.args, {
-          cwd: input.repoRoot,
+          cwd: path.dirname(manifestPath),
           shell: spawnCommand.shell,
         }),
         {

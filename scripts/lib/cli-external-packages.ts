@@ -12,6 +12,8 @@ const CLI_RUNTIME_EXTERNAL_PREFIXES = [
   "node-addon-api",
   "bufferutil",
   "utf-8-validate",
+  // apps/server/src/outboundHttp.ts loads undici with createRequire, so it must be staged on disk.
+  "undici",
 ] as const;
 
 export function isRuntimeExternalCliDependency(id: string): boolean {

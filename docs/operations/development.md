@@ -273,11 +273,13 @@ The C toolchain, pkg-config, and libsecret headers are also needed for Linux des
 
 ### macOS DMG prerequisites
 
-Install the Xcode Command Line Tools with `xcode-select --install` and install Rust.
-For a cross-architecture or universal build, add the requested Rust targets:
+Install the Xcode Command Line Tools with `xcode-select --install` and install Rust with rustup.
+The resource monitor pins Rust 1.95.0 in `native/resource-monitor/rust-toolchain.toml`; rustup
+installs that toolchain on the first build. For a cross-architecture or universal build, add the
+requested Rust targets to it:
 
 ```sh
-rustup target add aarch64-apple-darwin x86_64-apple-darwin
+rustup target add --toolchain 1.95.0 aarch64-apple-darwin x86_64-apple-darwin
 ```
 
 ### Windows installer prerequisites

@@ -214,6 +214,8 @@ from; the per-ticket entries and how this file is compiled are in
   with its own captions to a captioned edit, the assistant says it left that clip alone. The
   "files for editors are ready" row is still there after a reload, with Show in Finder in the
   desktop app, and elsewhere names the folder the files are in and copies its location. (S7V-109)
+- Building the Mac installer works again: a package the server needs was left out when unused
+  providers were removed. (S7V-111)
 
 ### Security
 

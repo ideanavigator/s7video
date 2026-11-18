@@ -1,3 +1,4 @@
+import * as NodeFS from "node:fs";
 import * as NodeURL from "node:url";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -45,6 +46,31 @@ describe("shouldBundleCliDependency", () => {
 
   it("treats prefix-matched siblings as external", () => {
     assert.strictEqual(shouldBundleCliDependency("node-gyp-build-optional-packages"), false);
+  });
+});
+
+// outboundHttp.ts loads undici with createRequire, so the packaged server needs it staged on disk.
+describe("undici is a runtime external", () => {
+  it("is external and selected into the staged server dependencies", () => {
+    assert.strictEqual(isRuntimeExternalCliDependency("undici"), true);
+    assert.strictEqual(shouldBundleCliDependency("undici"), false);
+    assert.deepStrictEqual(
+      selectCliRuntimeExternalDependencies({ effect: "4.0.0", undici: "8.11.2" }),
+      { undici: "8.11.2" },
+    );
+  });
+
+  it("stays in the staged dependencies of the real server manifest", () => {
+    const serverManifest = decodeManifest(
+      NodeFS.readFileSync(
+        NodeURL.fileURLToPath(new URL("../../apps/server/package.json", import.meta.url)),
+        "utf8",
+      ),
+    );
+    assert.property(
+      selectCliRuntimeExternalDependencies(serverManifest.dependencies ?? {}),
+      "undici",
+    );
   });
 });
 

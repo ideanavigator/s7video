@@ -637,6 +637,17 @@ main checkout keeps the shared `s7video-dev` profile, and packaged builds ignore
 - `app/DesktopUserData.ts`: `resolveUserDataPath` uses that folder for an unpackaged dev app, and
   the branded profile folder otherwise.
 
+## Packaged builds after the strip (S7V-111)
+
+S7V-002 removed upstream's Cursor runtime-dependency list from
+`scripts/lib/cli-external-packages.ts`. That list was the only rule that staged `undici` into the
+packaged server, which `apps/server/src/outboundHttp.ts` loads with `createRequire`, so the DMG
+build failed its self-containment check. `undici` is now in `CLI_RUNTIME_EXTERNAL_PREFIXES`.
+
+- `native/resource-monitor/rust-toolchain.toml` (new) pins Rust 1.95.0, which `sysinfo` 0.39 needs.
+- `scripts/build-desktop-artifact.ts`: `stageResourceMonitor` runs `cargo build` from the crate
+  folder instead of the repo root, so rustup applies that pin.
+
 ## Licensing (S7V-004)
 
 `LICENSE` is T3 Code's MIT licence with a second line, `Copyright (c) 2026 s7video contributors`.
