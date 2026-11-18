@@ -31,6 +31,13 @@
       ]
     },
     {
+      "name": "Python and the video engine's Python packages",
+      "bundles": ["desktop"],
+      "license": "Python-2.0 AND CNRI-Python AND bzip2-1.0.6 AND MIT AND BSD-2-Clause AND BSD-3-Clause AND Apache-2.0 AND 0BSD AND blessing",
+      "sourceUrl": "https://github.com/astral-sh/python-build-standalone",
+      "noticeFile": "packages/engine/runtime/NOTICE.txt"
+    },
+    {
       "name": "OpenCut classic timeline utilities",
       "bundles": ["web"],
       "license": "MIT",

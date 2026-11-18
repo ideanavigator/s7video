@@ -331,8 +331,29 @@ stdio (ADR-004). It is new code, so upstream merges do not touch it; the upstrea
 small additions to `config.ts` (`engineLogsDir`, `engineModelsDir`), `server.ts` (the layer),
 `ws.ts`, the RPC contracts and their scope and metric maps (`engine.jobs.subscribe`,
 `engine.jobs.cancel`). Development uses the developer's `uv` and FFmpeg (Homebrew's FFmpeg is GPL
-and is never bundled); shipping a Python runtime and an LGPL FFmpeg is release work (S7V-016).
-`pnpm licenses:check` also scans `packages/engine/uv.lock`.
+and is never bundled). The Mac app ships its own Python and engine (S7V-112, below) and an LGPL
+FFmpeg (S7V-016). `pnpm licenses:check` also scans `packages/engine/uv.lock`.
+
+## Bundled engine runtime (S7V-112)
+
+The Mac app carries `Contents/Resources/python` (python-build-standalone CPython 3.12 with the
+engine's locked runtime wheels) and `Contents/Resources/engine` (the engine source, schema, fonts
+and locks). `scripts/build-engine-runtime.ts` builds both from `packages/engine/runtime/runtime.lock.json`
+and `packages/engine/uv.lock`; a `.pth` file in the runtime's `site-packages` puts `engine/src` on
+the path. A packaged server runs `python3.12 -I -B -m s7engine` with no uv and searches no install
+folder for Python, uv or FFmpeg (`apps/server/src/engine/enginePaths.ts`); dev keeps `uv run`.
+
+- Wheels are picked for the lock's `macosMinimum` (14.0), not the build Mac's macOS: uv on macOS 26
+  otherwise takes MLX's `macosx_26_0` wheel, which needs macOS 26.2. The build fails if any Mach-O in
+  the runtime, or later in the whole `.app`, needs a newer macOS, or links anything outside the app,
+  `/usr/lib` and `/System`. `mac.minimumSystemVersion` comes from the same lock, so an older Mac gets
+  macOS's own "needs a newer version of macOS" message.
+- `.pyc` files are compiled at build time as `unchecked-hash`, so the read-only bundle never
+  recompiles and `-B` stops any write into it.
+- Upstream files with small edits: `scripts/build-desktop-artifact.ts` (the `engine-runtime`
+  staging, `MAC_EXTRA_RESOURCES`, `mac.minimumSystemVersion`, the packaged-app check) and
+  `apps/desktop/src/backend/DesktopBackendConfiguration.ts` (`S7VIDEO_PACKAGED`, `S7VIDEO_PYTHON`
+  and `S7VIDEO_ENGINE_DIR` when packaged).
 
 ## Video agent tools (S7V-023)
 

@@ -107,6 +107,7 @@ licences, and the pull request must list it with its licence:
 | ------------------------------------------------------------------------------ | --------------------------------------------------------------- |
 | MIT, MIT-0, BSD-2-Clause, BSD-3-Clause, ISC, Apache-2.0, Zlib, 0BSD, Unlicense | Keep their notices in `third-party-licenses/`                   |
 | BlueOak-1.0.0, Python-2.0, PSF-2.0, CNRI-Python, Unicode-3.0                   | Same as above                                                   |
+| bzip2-1.0.6, blessing (SQLite)                                                 | Only inside the bundled Python runtime                          |
 | MPL-2.0                                                                        | Unmodified, or our changes to those files published             |
 | LGPL-2.1, LGPL-3.0                                                             | Dynamically linked only (for example an LGPL build of FFmpeg)   |
 | OFL-1.1                                                                        | Fonts, each with its licence file                               |

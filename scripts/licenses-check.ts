@@ -18,6 +18,11 @@ import {
   type LicenceOverride,
 } from "./lib/licenses-check.ts";
 import { packagesFromPythonReport, type PythonLicenceReport } from "./lib/python-licences.ts";
+import {
+  packagesFromRuntimeLock,
+  parseRuntimeLock,
+  RUNTIME_LOCK_PATH,
+} from "./lib/engine-runtime.ts";
 
 const ROOT = NodePath.resolve(NodePath.dirname(NodeURL.fileURLToPath(import.meta.url)), "..");
 
@@ -173,11 +178,31 @@ for (const problem of pythonResult.problems) {
     `error: ${problem.name}@${problem.version} [${problem.scope}] ${problem.license}: ${problem.message}\n       at ${problem.path}`,
   );
 }
-const pythonFailed = pythonResult.problems.length > 0 || pythonScan.errors.length > 0;
+
+// The Python runtime the packaged app ships (S7V-112): CPython and what it links in statically.
+const runtimeResult = checkLicences({
+  packages: packagesFromRuntimeLock(parseRuntimeLock(readJson(RUNTIME_LOCK_PATH))),
+  allowlist,
+  exceptions: [],
+  overrides: [],
+});
+console.log(
+  `licenses:check: ${String(runtimeResult.checked)} components of the bundled Python from ${RUNTIME_LOCK_PATH}.`,
+);
+for (const problem of runtimeResult.problems) {
+  console.error(
+    `error: ${problem.name} ${problem.license}: ${problem.message}\n       at ${problem.path}`,
+  );
+}
+
+const pythonFailed =
+  pythonResult.problems.length > 0 ||
+  pythonScan.errors.length > 0 ||
+  runtimeResult.problems.length > 0;
 
 if (result.problems.length > 0 || result.configErrors.length > 0 || pythonFailed) {
   console.error(
-    `licenses:check failed: ${String(result.problems.length + pythonResult.problems.length)} package(s) outside the allowlist, ${String(result.configErrors.length)} exception error(s). Replace the package, or record an ADR and add it to licenses.exceptions.json.`,
+    `licenses:check failed: ${String(result.problems.length + pythonResult.problems.length + runtimeResult.problems.length)} package(s) outside the allowlist, ${String(result.configErrors.length)} exception error(s). Replace the package, or record an ADR and add it to licenses.exceptions.json.`,
   );
   process.exit(1);
 }
