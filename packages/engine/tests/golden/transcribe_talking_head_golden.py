@@ -118,11 +118,13 @@ def test_transcribe_talking_head(media: Any, models_dir: Path, offline: None, tm
         assert isinstance(word["startFrame"], int) and isinstance(word["endFrame"], int)
         assert word["endFrame"] > word["startFrame"] and word["speaker"] == "S1"
         assert word["confidence"] is None or 0 <= word["confidence"] <= 1
-    # No float seconds anywhere: the only non-integer numbers are word confidences.
-    assert set(transcript) == {
+    # No float seconds anywhere: the only non-integer numbers are word confidences. Apple Vision's
+    # burned-in caption check (S7V-099) adds `burnedInCaptions` when it could run.
+    assert set(transcript) - {"burnedInCaptions"} == {
         "transcriptVersion", "mediaFingerprint", "model", "revision", "fps", "durationFrames", "words", "createdAt"
     }
-    floats = [value for value in _numbers(transcript) if isinstance(value, float)]
+    timing = {key: value for key, value in transcript.items() if key != "burnedInCaptions"}
+    floats = [value for value in _numbers(timing) if isinstance(value, float)]
     assert len(floats) <= len(transcript["words"])
 
     marks = json.loads(WORDS.read_text(encoding="utf-8"))

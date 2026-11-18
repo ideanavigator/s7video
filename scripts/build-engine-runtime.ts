@@ -300,11 +300,11 @@ function smokeTest(outDir: string): void {
       "-I",
       "-B",
       "-c",
-      "import mlx.core as mx, mlx_audio, numpy, scipy, opentimelineio, Vision, Quartz, s7engine, s7engine.models as m, s7engine.edit_schema as e; print(mx.default_device(), m.LOCK_PATH.is_file(), e.SCHEMA_PATH.is_file(), s7engine.__file__)",
+      "import mlx.core as mx, mlx_audio, numpy, scipy, opentimelineio, Vision, Quartz, s7engine, s7engine.models as m, s7engine.edit_schema as e; print(mx.default_device(), m.LOCK_PATH.is_file(), e.SCHEMA_PATH.is_file(), s7engine.__file__, sep='|')",
     ],
     { cwd: "/", env: { PATH: "/usr/bin:/bin:/usr/sbin:/sbin", HOME: NodeOS.tmpdir() } },
   );
-  const [device, lockFound, schemaFound, source] = output.trim().split(" ");
+  const [device, lockFound, schemaFound, source] = output.trim().split("|");
   const expectedSource = NodePath.join(outDir, "engine/src/s7engine/__init__.py");
   if (
     !device?.includes("gpu") ||
@@ -339,6 +339,12 @@ export function buildEngineRuntime(outDir: string): void {
     NodeFS.rmSync(cached, { recursive: true, force: true });
     NodeFS.renameSync(work, cached);
     NodeFS.writeFileSync(NodePath.join(cached, ".complete"), `${key}\n`);
+    // One cached runtime is about 600 MB; older ones are never reused.
+    for (const entry of NodeFS.readdirSync(cacheRoot)) {
+      if (/^(runtime|work)-[0-9a-f]{16}$/u.test(entry) && entry !== `runtime-${key}`) {
+        NodeFS.rmSync(NodePath.join(cacheRoot, entry), { recursive: true, force: true });
+      }
+    }
   }
 
   NodeFS.mkdirSync(outDir, { recursive: true });
