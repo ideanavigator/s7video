@@ -34,6 +34,7 @@ import {
   UnsupportedDesktopBuildArchitectureError,
   packWindowsServerAsar,
   preflightWindowsDesktopBuild,
+  RESOURCE_MONITOR_RUST_TOOLCHAIN,
   resolveMergedStageDependencies,
   resolveBuildOptions,
   stageWslRuntimeArchive,
@@ -708,10 +709,17 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-windows-preflight-" });
         const pythonPath = path.join(tempDir, "python.exe");
         yield* fs.writeFileString(pythonPath, "python");
+        const rustcWorkingDirectories: Array<string | undefined> = [];
         const spawner = Layer.succeed(
           ChildProcessSpawner.ChildProcessSpawner,
           ChildProcessSpawner.make((command) => {
-            const childProcess = command as unknown as { readonly command: string };
+            const childProcess = command as unknown as {
+              readonly command: string;
+              readonly options: { readonly cwd?: string };
+            };
+            if (childProcess.command === "rustc") {
+              rustcWorkingDirectories.push(childProcess.options.cwd);
+            }
             const fails =
               childProcess.command === "rustc" ||
               childProcess.command === "powershell.exe" ||
@@ -738,8 +746,27 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         assert.deepStrictEqual(error.missing, ["rust", "python", "msvc"]);
         assert.equal(error.rustTarget, "x86_64-pc-windows-msvc");
         assert.include(error.message, "Visual Studio Build Tools components");
+        // The target check and its hint use the resource monitor's pinned toolchain.
+        assert.deepStrictEqual(rustcWorkingDirectories, [
+          path.resolve(import.meta.dirname, "../native/resource-monitor"),
+        ]);
+        assert.include(
+          error.message,
+          `rustup target add --toolchain ${RESOURCE_MONITOR_RUST_TOOLCHAIN} x86_64-pc-windows-msvc`,
+        );
       }),
     ),
+  );
+
+  it.effect("pins the resource monitor to the toolchain the preflight names", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const toolchainFile = yield* fs.readFileString(
+        path.resolve(import.meta.dirname, "../native/resource-monitor/rust-toolchain.toml"),
+      );
+      assert.include(toolchainFile, `channel = "${RESOURCE_MONITOR_RUST_TOOLCHAIN}"`);
+    }),
   );
 
   it.effect("does not require MSVC when reusing a prebuilt Windows resource monitor", () =>
