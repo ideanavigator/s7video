@@ -1,0 +1,21 @@
+{
+  "summary": {
+    "video_codec": "h264",
+    "width": 1080,
+    "height": 1920,
+    "fps": "30/1",
+    "video_frames": 300,
+    "audio_codec": "aac",
+    "audio_rate": 48000,
+    "audio_channels": 2,
+    "color_range": null
+  },
+  "integrated_lufs": -21.8,
+  "phash": {
+    "30": "a6691bb2cc86c6ec",
+    "150": "a6691bb2cc96c4ce",
+    "270": "a66d31924c93c6ee"
+  },
+  "latin_font": "Inter-Bold",
+  "japanese_fallback": ["HiraginoSans-W7"]
+}

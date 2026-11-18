@@ -38,6 +38,7 @@ path = [
   "packages/engine/.python-version",
   "packages/engine/uv.lock",
   "packages/engine/models.lock.json",
+  "packages/engine/ffmpeg/versions.lock",
   "apps/server/skills/**",
 ]
 precedence = "closest"
