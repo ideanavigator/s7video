@@ -48,6 +48,32 @@ describe("shouldBundleCliDependency", () => {
   });
 });
 
+// outboundHttp.ts loads undici with createRequire, so the packaged server needs it staged on disk.
+describe("undici is a runtime external", () => {
+  it("is external and selected into the staged server dependencies", () => {
+    assert.strictEqual(isRuntimeExternalCliDependency("undici"), true);
+    assert.strictEqual(shouldBundleCliDependency("undici"), false);
+    assert.deepStrictEqual(
+      selectCliRuntimeExternalDependencies({ effect: "4.0.0", undici: "8.11.2" }),
+      { undici: "8.11.2" },
+    );
+  });
+});
+
+it.layer(NodeServices.layer)("undici in the real server manifest", (it) => {
+  it.effect("stays in the staged server dependencies", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const server = decodeManifest(
+        yield* fileSystem.readFileString(
+          NodeURL.fileURLToPath(new URL("../../apps/server/package.json", import.meta.url)),
+        ),
+      );
+      assert.property(selectCliRuntimeExternalDependencies(server.dependencies ?? {}), "undici");
+    }),
+  );
+});
+
 it.layer(NodeServices.layer)("external package dependency closure", (it) => {
   // Read the pnpm store directly: isolation hides transitive names and exports maps can block package.json.
   const readInstalledPackages = Effect.gen(function* () {

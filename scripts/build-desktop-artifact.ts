@@ -92,6 +92,9 @@ type StageWorkspaceConfig = typeof StageWorkspaceConfig.Type;
 const RepoRoot = Effect.service(Path.Path).pipe(
   Effect.flatMap((path) => path.fromFileUrl(new URL("..", import.meta.url))),
 );
+const RESOURCE_MONITOR_CRATE_DIR = "native/resource-monitor";
+/** The channel in native/resource-monitor/rust-toolchain.toml. */
+export const RESOURCE_MONITOR_RUST_TOOLCHAIN = "1.95.0";
 const encodeJsonString = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 const decodeReleasePackageManifest = Schema.decodeEffect(
   Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown)),
@@ -326,7 +329,10 @@ export class LinuxDesktopBuildPrerequisitesMissingError extends Schema.TaggedErr
         ? ["On Ubuntu/Debian, install them with:", `  sudo apt-get install ${packages.join(" ")}`]
         : []),
       ...(this.missing.includes("rust-target")
-        ? ["Add the requested Rust target with:", `  rustup target add ${this.rustTarget}`]
+        ? [
+            "Add the requested Rust target with:",
+            `  rustup target add --toolchain ${RESOURCE_MONITOR_RUST_TOOLCHAIN} ${this.rustTarget}`,
+          ]
         : []),
       "",
       "For other distributions, see docs/operations/development.md#linux-appimage-prerequisites.",
@@ -364,7 +370,7 @@ export class MacDesktopBuildPrerequisitesMissingError extends Schema.TaggedError
       "Install Apple's build tools with:",
       "  xcode-select --install",
       "Install Rust from https://rustup.rs, then add the requested target(s):",
-      `  rustup target add ${this.rustTargets.join(" ")}`,
+      `  rustup target add --toolchain ${RESOURCE_MONITOR_RUST_TOOLCHAIN} ${this.rustTargets.join(" ")}`,
       "",
       "Then rerun the desktop artifact command.",
     ].join("\n");
@@ -399,7 +405,7 @@ export class WindowsDesktopBuildPrerequisitesMissingError extends Schema.TaggedE
       details,
       "",
       "Install Rust from https://rustup.rs and add the requested target:",
-      `  rustup target add ${this.rustTarget}`,
+      `  rustup target add --toolchain ${RESOURCE_MONITOR_RUST_TOOLCHAIN} ${this.rustTarget}`,
       "Install Python 3 and the Visual Studio Build Tools components listed in",
       "docs/operations/development.md#windows-installer-prerequisites.",
       "",
@@ -1499,8 +1505,12 @@ const desktopBuildProbeSucceeds = Effect.fn("desktopBuildProbeSucceeds")(functio
 
 const rustTargetIsInstalled = Effect.fn("rustTargetIsInstalled")(function* (target: string) {
   const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  // Probe from the crate so rustup checks the toolchain its rust-toolchain.toml pins.
   const result = yield* spawnAndCollectOutput(
-    ChildProcess.make("rustc", ["--print", "target-libdir", "--target", target]),
+    ChildProcess.make("rustc", ["--print", "target-libdir", "--target", target], {
+      cwd: path.join(yield* RepoRoot, RESOURCE_MONITOR_CRATE_DIR),
+    }),
   ).pipe(Effect.orElseSucceed(() => null));
   if (result === null || result.exitCode !== 0) return false;
 
@@ -1947,7 +1957,7 @@ export const stageResourceMonitor = Effect.fn("stageResourceMonitor")(function* 
 }) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const manifestPath = path.join(input.repoRoot, "native/resource-monitor/Cargo.toml");
+  const manifestPath = path.join(input.repoRoot, RESOURCE_MONITOR_CRATE_DIR, "Cargo.toml");
   const executableName = resourceMonitorExecutableName(input.platform);
   const rustTargets = resolveResourceMonitorRustTargets(input.platform, input.arch);
   const reuseResourceMonitor = yield* Config.Boolean("T3CODE_DESKTOP_REUSE_RESOURCE_MONITOR").pipe(
@@ -1967,8 +1977,9 @@ export const stageResourceMonitor = Effect.fn("stageResourceMonitor")(function* 
         rustTarget,
       ]);
       yield* runCommand(
+        // rustup reads rust-toolchain.toml from the working folder, not from --manifest-path.
         ChildProcess.make(spawnCommand.command, spawnCommand.args, {
-          cwd: input.repoRoot,
+          cwd: path.dirname(manifestPath),
           shell: spawnCommand.shell,
         }),
         {
