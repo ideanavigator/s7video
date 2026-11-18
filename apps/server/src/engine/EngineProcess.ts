@@ -101,7 +101,9 @@ export const start = Effect.fn("EngineProcess.start")(function* (input: EnginePr
   const startedAt = yield* DateTime.now;
   yield* log
     .writeAll(
-      textEncoder.encode(`--- engine pid ${pid} started ${DateTime.formatIso(startedAt)}\n`),
+      textEncoder.encode(
+        `--- engine pid ${pid} started ${DateTime.formatIso(startedAt)}: ${input.command}, ffmpeg ${input.env.S7_FFMPEG ?? "not set"}\n`,
+      ),
     )
     .pipe(Effect.ignore);
   let stderrTail = "";

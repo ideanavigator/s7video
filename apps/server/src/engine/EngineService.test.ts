@@ -112,7 +112,7 @@ const fakeTools = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: "engine-fake-tools-" });
-  for (const name of ["uv", "ffmpeg", "ffprobe"]) {
+  for (const name of ["uv", "python3.12", "ffmpeg", "ffprobe"]) {
     yield* fileSystem.writeFileString(path.join(root, name), "#!/bin/sh\n");
     yield* fileSystem.chmod(path.join(root, name), 0o755);
   }
@@ -138,10 +138,11 @@ const withFakeEngine = <A, E>(
     E,
     EngineService.EngineService | ServerConfig.ServerConfig | FileSystem.FileSystem | Path.Path
   >,
+  patchEnv: (env: Effect.Success<typeof fakeTools>) => Record<string, string> = (env) => env,
 ) =>
   Effect.gen(function* () {
     const fake = yield* makeFakeSpawner;
-    const env = yield* fakeTools;
+    const env = patchEnv(yield* fakeTools);
     const layer = EngineService.layerWith({
       ...options,
       signalGroup: (pid, signal) => fake.signals.push([pid, signal]),
@@ -344,8 +345,37 @@ describe("EngineService with a fake engine", () => {
           expect.poll(() => NodeFS.readFileSync(logFile, "utf8")).toContain("engine log line"),
         );
         const text = yield* fileSystem.readFileString(logFile);
-        expect(text).toMatch(/^--- engine pid 4242 started /);
+        expect(text).toMatch(/^--- engine pid 4242 started \S+: \/\S+\/uv, ffmpeg \/\S+\/ffmpeg\n/);
         expect(text.includes("/.t3")).toBe(false);
+      }),
+    ),
+  );
+
+  it.effect("a packaged server starts the bundled Python directly, never uv (S7V-112)", () =>
+    withFakeEngine(
+      {},
+      (fake) =>
+        Effect.gen(function* () {
+          const engine = yield* EngineService.EngineService;
+          const config = yield* ServerConfig.ServerConfig;
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          yield* engine.ping;
+          const spawn = fake.spawns[0];
+          assert(spawn !== undefined);
+          expect(spawn.command).toMatch(/\/python3\.12$/);
+          expect(spawn.args).toEqual(["-I", "-B", "-m", "s7engine"]);
+          expect(spawn.env.PATH).toBe(ENGINE_SYSTEM_PATH);
+          const log = yield* fileSystem.readFileString(
+            path.join(config.engineLogsDir, "engine.log"),
+          );
+          // The exit test reads which Python ran from the engine log.
+          expect(log).toContain(`: ${spawn.command}, ffmpeg `);
+        }),
+      (env) => ({
+        ...env,
+        S7VIDEO_PACKAGED: "1",
+        S7VIDEO_PYTHON: env.S7VIDEO_UV.replace(/uv$/, "python3.12"),
       }),
     ),
   );
