@@ -31,6 +31,8 @@ import {
   createBuildConfig,
   renderLinuxMetainfo,
   MAC_ENTITLEMENTS,
+  assertMacEngineRuntimeArch,
+  EngineRuntimeArchError,
   UnsupportedDesktopBuildArchitectureError,
   packWindowsServerAsar,
   preflightWindowsDesktopBuild,
@@ -514,6 +516,19 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         ),
       ),
     ),
+  );
+
+  it.effect("refuses an Intel or universal Mac build before building anything (S7V-112)", () =>
+    Effect.gen(function* () {
+      for (const arch of ["x64", "universal"] as const) {
+        const error = yield* assertMacEngineRuntimeArch("mac", arch).pipe(Effect.flip);
+        assert.instanceOf(error, EngineRuntimeArchError);
+        assert.include(error.message, "Apple Silicon only");
+      }
+      yield* assertMacEngineRuntimeArch("mac", "arm64");
+      yield* assertMacEngineRuntimeArch("linux", "x64");
+      yield* assertMacEngineRuntimeArch("win", "x64");
+    }),
   );
 
   it.effect("ships the engine runtime on Mac only, for macOS 14 or later (S7V-112)", () =>

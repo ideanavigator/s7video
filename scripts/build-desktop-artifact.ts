@@ -2054,14 +2054,22 @@ export class EngineRuntimeArchError extends Schema.TaggedError<EngineRuntimeArch
   }
 }
 
+/** A Mac build bundles the Apple Silicon engine runtime; refuse other arches before building. */
+export const assertMacEngineRuntimeArch = Effect.fn("assertMacEngineRuntimeArch")(function* (
+  platform: typeof BuildPlatform.Type,
+  arch: typeof BuildArch.Type,
+) {
+  if (platform === "mac" && arch !== "arm64") {
+    return yield* new EngineRuntimeArchError({ arch });
+  }
+});
+
 /** Builds (or reuses the cached) engine runtime and stages it for `MAC_EXTRA_RESOURCES`. */
 export const stageEngineRuntime = Effect.fn("stageEngineRuntime")(function* (input: {
   readonly repoRoot: string;
   readonly outDir: string;
-  readonly arch: typeof BuildArch.Type;
   readonly verbose: boolean;
 }) {
-  if (input.arch !== "arm64") return yield* new EngineRuntimeArchError({ arch: input.arch });
   const path = yield* Path.Path;
   yield* runCommand(
     ChildProcess.make(
@@ -3279,6 +3287,7 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
   const path = yield* Path.Path;
   const fs = yield* FileSystem.FileSystem;
   const hostPlatform = yield* HostProcess.Platform;
+  yield* assertMacEngineRuntimeArch(options.platform, options.arch);
   if (hostPlatform === "linux" && options.platform === "linux") {
     yield* preflightLinuxDesktopBuild(options.arch);
   }
@@ -3484,7 +3493,6 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
     yield* stageEngineRuntime({
       repoRoot,
       outDir: path.join(stageAppDir, ENGINE_RUNTIME_STAGE_DIR),
-      arch: options.arch,
       verbose: options.verbose,
     });
   }
