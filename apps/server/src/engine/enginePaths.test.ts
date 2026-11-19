@@ -173,7 +173,8 @@ describe("enginePaths", () => {
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: "engine-paths-" });
-      yield* makeTools(root, ["uv", "python3.12", "ffmpeg", "ffprobe"]);
+      // An install folder with an unversioned `python` (as `uv python install --default` makes).
+      yield* makeTools(root, ["uv", "python", "python3.12", "ffmpeg", "ffprobe"]);
       yield* fileSystem.remove(path.join(root, "python3.12"));
       const error = yield* resolveEngineTools({
         env: { S7VIDEO_PACKAGED: "1", S7VIDEO_PYTHON: path.join(root, "python3.12") },
@@ -185,7 +186,8 @@ describe("enginePaths", () => {
         "The video engine that comes with the app is missing. Reinstall the app to fix it.",
       );
 
-      // Outside the app, a wrong S7VIDEO_PYTHON is an error too, not a silent fall back to uv.
+      // Outside the app, a wrong S7VIDEO_PYTHON is an error too: no fall back to uv, or to a
+      // `python` in an install folder, which has none of the engine's packages.
       const dev = yield* resolveEngineTools({
         env: { S7VIDEO_PYTHON: path.join(root, "python3.12") },
         homeDir: path.join(root, "home"),

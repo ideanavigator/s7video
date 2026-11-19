@@ -90,7 +90,8 @@ export const resolveEngineTools = Effect.fn("enginePaths.resolveEngineTools")(fu
       sources.configured?.[tool],
       sources.env[TOOL_ENV_VARS[tool]],
       ...extra,
-      ...knownDirs.map((directory) => path.join(directory, tool)),
+      // The engine's Python is only ever named: an install folder's `python` lacks its packages.
+      ...(tool === "python" ? [] : knownDirs.map((directory) => path.join(directory, tool))),
     ]);
     if (found === undefined) {
       return yield* new EngineError({
