@@ -4,25 +4,25 @@
       "captionBox": [180, 806, 899, 949],
       "events": 20,
       "safeZone": [76, 87, 1004, 950],
-      "sha256": "f37bf507ccdadff825cbce6d2e6b04189f30e9f9893c09857a706eca7befbe92"
+      "sha256": "fc948dfb192b0acfbae5e1f641731f8de718ddff9b2eaa38ef3ca68fd7007d7e"
     },
     "s7-karaoke": {
       "captionBox": [184, 834, 893, 949],
       "events": 80,
       "safeZone": [76, 87, 1004, 950],
-      "sha256": "9ff2f2a09a6a1e4a67d207bf6b832c42e9e11fe8c5d5194d14c5eba162da62e4"
+      "sha256": "b63d968b99858163df3e07884524ebc6bf7a6c5f1fa372cf96122f14dd5a9a65"
     },
     "s7-minimal": {
       "captionBox": [186, 841, 891, 947],
       "events": 20,
       "safeZone": [76, 87, 1004, 950],
-      "sha256": "b7be5a88bb1830d0c91ce6d30a5668451f24851a501a5ab4d3b279cb148f8ebf"
+      "sha256": "37a1a9b06bf838cc8ed1330f9055bf83b197139ab2de24393973034a7bfbbb6b"
     },
     "s7-neutral": {
       "captionBox": [184, 834, 893, 949],
       "events": 20,
       "safeZone": [76, 87, 1004, 950],
-      "sha256": "e7ebbd94c8830f756f6dcbf808e6ee7f92b43c67d37e7760cf768492cc3c82cb"
+      "sha256": "7d594c7e7d924148f220a9822c1711197ed56b66fc602d484df1a91258d497be"
     }
   },
   "looks-1080x1920": {
@@ -30,25 +30,25 @@
       "captionBox": [184, 1285, 835, 1418],
       "events": 20,
       "safeZone": [92, 250, 928, 1420],
-      "sha256": "2f3a9dda469d5e767909c01dfcb7c959767d205695d29f685c02152997f24812"
+      "sha256": "fd153a3de1a1ffc9e8d735723f143dc3b16bfa380b3b673e746890599ebea2ea"
     },
     "s7-karaoke": {
       "captionBox": [190, 1315, 827, 1419],
       "events": 80,
       "safeZone": [92, 250, 928, 1420],
-      "sha256": "aef21cc2f89d8558f4841cab159401041f0f6c6d492fd5ee816c51d96c9eea58"
+      "sha256": "7f44a04d280f36047c3fdd7559085fd4c9a0aa72ea6ee472f3deeb8fb94db6ac"
     },
     "s7-minimal": {
       "captionBox": [192, 1318, 826, 1417],
       "events": 20,
       "safeZone": [92, 250, 928, 1420],
-      "sha256": "314ca20990b87fa582f7161666a3e2a984bede459c0935ee680d20c6d84f972e"
+      "sha256": "a42547f62d9d8b720d1b1a52efebb5f2a3fe910a8fa441f93267041ce9bf6626"
     },
     "s7-neutral": {
       "captionBox": [190, 1315, 827, 1419],
       "events": 20,
       "safeZone": [92, 250, 928, 1420],
-      "sha256": "2ef4291f6588bd05fcfb568692be9069ea3be6683b00850b2d542aa86d3df64f"
+      "sha256": "2f6543682ebc41a5a649caec846c3c5976db9224a2c219f1ae332cdb67b872d3"
     }
   },
   "looks-1920x1080": {
@@ -56,25 +56,25 @@
       "captionBox": [229, 814, 1690, 971],
       "events": 20,
       "safeZone": [192, 87, 1728, 972],
-      "sha256": "f8775da720358a7a39d99f5b0527c597ae9474d6b45fbd462144e800c52499e5"
+      "sha256": "478b46f85bf32d1201137f9461425e10e6f181a7921c8c4b70fed375b7938965"
     },
     "s7-karaoke": {
       "captionBox": [217, 837, 1701, 970],
       "events": 80,
       "safeZone": [192, 87, 1728, 972],
-      "sha256": "12386741da608050a724a9aa8f14047bd35422245ef8968a63c49b2cf77bc04e"
+      "sha256": "a7553e9cdda8e285e4befffbdff7efa30cfffe4663995e3aad332c89195505cb"
     },
     "s7-minimal": {
       "captionBox": [261, 923, 1656, 969],
       "events": 20,
       "safeZone": [192, 87, 1728, 972],
-      "sha256": "de4fa2da135fd1c79fc38c28fbdd7442a83ee14dae0096383725b70eef92d2f9"
+      "sha256": "16367402443c1fef1b8bf1a39e480233049bed51b459bf30b644cd5a18c626e3"
     },
     "s7-neutral": {
       "captionBox": [217, 837, 1701, 970],
       "events": 20,
       "safeZone": [192, 87, 1728, 972],
-      "sha256": "1d75a1ad72b43d86d69191af91d9b779c55987aa25d211e4904b8b9fb28e0de0"
+      "sha256": "15bb79b3ad5c33b1e53c78abaa44200b157b1ecbde2320c128b7e9a937ba99fc"
     }
   },
   "transcriptWordStarts": [3, 11, 19, 27, 47, 55, 63, 71, 91, 99, 107, 115, 135, 143, 151, 159],

@@ -103,7 +103,9 @@ def test_talking_head_peaks_match_numpy_at_every_level(media, tmp_path: Path) ->
         return
     stored = _reference()["talking-head-01"]
     assert record["durationSamples"] == stored["durationSamples"]
-    assert record["offsetSamples"] == stored["offsetSamples"]
+    # FFmpeg 9 (the shipped helper, S7V-016) starts the Opus audio at 0, FFmpeg 7.1 at its -7 ms
+    # pre-skip (-336 samples); testing.md allows one frame (2,002 samples at 23.976 fps).
+    assert abs(record["offsetSamples"] - stored["offsetSamples"]) <= 2002
     for size, level in record["levels"].items():
         expected_level = stored["levels"][size]
         assert level["count"] == expected_level["count"], f"level {size}: count"
@@ -182,7 +184,7 @@ def test_thirty_minutes_ready_within_a_minute(tmp_path: Path) -> None:
             "-f", "lavfi", "-i", "aevalsrc='0.3*sin(2*PI*440*t)*lt(mod(t,20),12)':s=48000:d=1800",
             "-f", "lavfi", "-i", "anoisesrc=d=1800:c=pink:r=48000:a=0.5",
             "-filter_complex", "[2:a]volume='if(lt(mod(t,20),16),0,1)':eval=frame[n];[1:a][n]amix=inputs=2:normalize=0[a]",
-            "-map", "0:v", "-map", "[a]", "-c:v", "libx264", "-preset", "ultrafast", "-crf", "26", "-g", "30",
+            "-map", "0:v", "-map", "[a]", "-c:v", "h264_videotoolbox", "-b:v", "6M", "-g", "30",
             "-bf", "0", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "128k", str(source),
         ],
         check=True,

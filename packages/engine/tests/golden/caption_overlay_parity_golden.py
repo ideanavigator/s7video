@@ -107,14 +107,14 @@ def _text_error(exported: Path, shown: Path, plain: Path, band: tuple[int, int, 
     return sum(abs(e[i] - s[i]) for i in text) / len(text)
 
 
-def _band_masks(video: Path, band: tuple[int, int, int, int]) -> list[bytes]:
+def _band_masks(video: Path, band: tuple[int, int, int, int], plane: str = "b") -> list[bytes]:
     left, top, right, bottom = band
     size = ((right - left) // 4, (bottom - top) // 4)
     # Blue: white text is bright there and the highlighted (yellow) word dark, so a word state
     # changes the mask as a new chunk does.
     chain = (
         f"crop={right - left}:{bottom - top}:{left}:{top},scale={size[0]}:{size[1]}:flags=area,"
-        "format=gbrp,extractplanes=b"
+        + ("format=gray" if plane == "grey" else "format=gbrp,extractplanes=b")
     )
     raw = subprocess.run(
         [harness._tool("ffmpeg"), "-v", "error", "-i", str(video), "-vf", chain, "-f", "rawvideo", "-"],
@@ -239,13 +239,18 @@ def _parity(
     assert max(errors) <= MAX_TEXT_ERROR, errors
 
     # The export shows each chunk from its start to its end (±1): when the overlay switches.
+    # Blue sees a word's highlight change; grey sees a highlighted chunk whose yellow is as dark as
+    # the video in blue (S7V-016: one such chunk showed in blue by 3 pixels with one FFmpeg, 0 with another).
     masks = [
-        frozenset(i for i, (a, b) in enumerate(zip(x, y)) if abs(a - b) > TEXT_DIFF)
-        for x, y in zip(_band_masks(videos["captioned"], safe), _band_masks(videos["plain"], safe))
+        [
+            frozenset(i for i, (a, b) in enumerate(zip(x, y)) if abs(a - b) > TEXT_DIFF)
+            for x, y in zip(_band_masks(videos["captioned"], safe, plane), _band_masks(videos["plain"], safe, plane))
+        ]
+        for plane in ("b", "grey")
     ]
     for chunk in chunks:
         for edge in (chunk["start"], chunk["end"]):
             if 0 < edge < TOTAL:
                 window = range(max(1, edge - 1), min(TOTAL, edge + 2))
-                assert any(masks[frame] != masks[frame - 1] for frame in window), (chunk, edge)
+                assert any(plane[frame] != plane[frame - 1] for plane in masks for frame in window), (chunk, edge)
     videos["captioned"].unlink()
