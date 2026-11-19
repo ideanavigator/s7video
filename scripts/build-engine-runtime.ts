@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 s7video contributors
 // SPDX-License-Identifier: MIT
-// @effect-diagnostics nodeBuiltinImport:off globalConsole:off
+// @effect-diagnostics nodeBuiltinImport:off globalConsole:off globalDate:off
 // Builds the video engine's runtime for the packaged app (S7V-112), and checks a packaged app:
 //   node scripts/build-engine-runtime.ts --out DIR [--verbose]
 //   node scripts/build-engine-runtime.ts --check-app path/to/App.app
@@ -358,13 +358,62 @@ function smokeTest(outDir: string): void {
   }
 }
 
-export function buildEngineRuntime(outDir: string): void {
-  const lock = parseRuntimeLock(
-    JSON.parse(NodeFS.readFileSync(NodePath.join(REPO_ROOT, RUNTIME_LOCK_PATH), "utf8")),
-  );
-  const cacheRoot =
-    process.env.S7VIDEO_ENGINE_RUNTIME_BUILD_DIR ??
-    NodePath.join(NodeOS.homedir(), "Library/Caches/s7video-engine-runtime");
+const isAlive = (pid: number) => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "EPERM";
+  }
+};
+
+/**
+ * Runs `body` holding `<cacheRoot>/.lock`, a `mkdir` lock like the heavy-run slots: the cache is
+ * shared by every worktree on the Mac, and a build or prune must not delete another's folders. A
+ * lock whose owner process is gone is taken over.
+ */
+export function withCacheLock<A>(
+  cacheRoot: string,
+  body: () => A,
+  options: { readonly timeoutMs?: number; readonly pollMs?: number } = {},
+): A {
+  const lockDir = NodePath.join(cacheRoot, ".lock");
+  const owner = NodePath.join(lockDir, "owner");
+  const deadline = Date.now() + (options.timeoutMs ?? 60 * 60 * 1000);
+  const wait = new Int32Array(new SharedArrayBuffer(4));
+  NodeFS.mkdirSync(cacheRoot, { recursive: true });
+  for (;;) {
+    try {
+      NodeFS.mkdirSync(lockDir);
+      NodeFS.writeFileSync(owner, `${String(process.pid)}\n`);
+      break;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+    }
+    const holder = Number.parseInt(
+      NodeFS.existsSync(owner) ? NodeFS.readFileSync(owner, "utf8") : "",
+      10,
+    );
+    if (Number.isInteger(holder) && !isAlive(holder)) {
+      NodeFS.rmSync(lockDir, { recursive: true, force: true });
+      continue;
+    }
+    if (Date.now() > deadline) {
+      throw new Error(
+        `${lockDir} is held by PID ${String(holder)}; another build is using the cache`,
+      );
+    }
+    Atomics.wait(wait, 0, 0, options.pollMs ?? 2000);
+  }
+  try {
+    return body();
+  } finally {
+    NodeFS.rmSync(lockDir, { recursive: true, force: true });
+  }
+}
+
+/** Downloads, builds (or reuses) and prunes the cached runtime, then clones it to `pythonOut`. */
+function stageCachedPython(lock: RuntimeLock, cacheRoot: string, pythonOut: string): void {
   const downloads = NodePath.join(cacheRoot, "downloads");
   const archive = download(lock.python.archive, downloads);
   const licenceArchive = download(lock.python.licenceArchive, downloads);
@@ -389,11 +438,21 @@ export function buildEngineRuntime(outDir: string): void {
     }
   }
 
-  NodeFS.mkdirSync(outDir, { recursive: true });
-  const pythonOut = NodePath.join(outDir, "python");
+  NodeFS.mkdirSync(NodePath.dirname(pythonOut), { recursive: true });
   NodeFS.rmSync(pythonOut, { recursive: true, force: true });
   // APFS clone: 550 MB staged in a second, sharing blocks with the cache.
   run("/bin/cp", ["-cR", NodePath.join(cached, "python"), pythonOut]);
+}
+
+export function buildEngineRuntime(outDir: string): void {
+  const lock = parseRuntimeLock(
+    JSON.parse(NodeFS.readFileSync(NodePath.join(REPO_ROOT, RUNTIME_LOCK_PATH), "utf8")),
+  );
+  const cacheRoot =
+    process.env.S7VIDEO_ENGINE_RUNTIME_BUILD_DIR ??
+    NodePath.join(NodeOS.homedir(), "Library/Caches/s7video-engine-runtime");
+  const pythonOut = NodePath.join(outDir, "python");
+  withCacheLock(cacheRoot, () => stageCachedPython(lock, cacheRoot, pythonOut));
   stageEngine(NodePath.join(pythonOut, PYTHON_EXECUTABLE), NodePath.join(outDir, "engine"));
 
   const machO = scanMachOFiles(outDir);
