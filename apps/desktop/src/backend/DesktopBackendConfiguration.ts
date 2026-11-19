@@ -231,6 +231,16 @@ const resolvePrimaryStartConfig = Effect.fn("desktop.backendConfiguration.resolv
         S7VIDEO_SKILLS_DIR: environment.isPackaged
           ? environment.path.join(environment.resourcesPath, "skills")
           : undefined,
+        // The video engine and its Python runtime ship as extra resources (S7V-112); a packaged
+        // server runs that Python directly and never looks for uv, Python or FFmpeg elsewhere.
+        // S7V-016 adds S7VIDEO_FFMPEG and S7VIDEO_FFPROBE for Resources/ffmpeg here.
+        S7VIDEO_PACKAGED: environment.isPackaged ? "1" : undefined,
+        S7VIDEO_PYTHON: environment.isPackaged
+          ? environment.path.join(environment.resourcesPath, "python", "bin", "python3.12")
+          : undefined,
+        S7VIDEO_ENGINE_DIR: environment.isPackaged
+          ? environment.path.join(environment.resourcesPath, "engine")
+          : undefined,
       },
       extendEnv: true,
       bootstrap,

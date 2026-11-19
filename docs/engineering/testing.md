@@ -70,6 +70,12 @@ comparison) and its `media("<clip-id>")` fixture, which skips with "run pnpm med
 is not in the cache. `pnpm test:golden` fetches or reuses the clips first (`--no-fetch` skips that),
 and a full run (no case named) also runs the harness's own tests (`tests/golden/test_*.py`).
 
+`pnpm test:golden -- --python=<absolute path> <case>` runs the Python cases on another interpreter,
+such as a packaged app's own (`<app>/Contents/Resources/python/bin/python3.12`, S7V-112). A throwaway
+venv on top of it adds only pytest, so the engine, its wheels and its `.pth` come from that runtime,
+and nothing is written beside its `.pyc` files. Make `Resources/python` and `Resources/engine` read
+only first to prove the app writes nothing into itself.
+
 ### Web golden tests
 
 `apps/web/src/**/*.golden.test.ts` run in Chromium (the web config's `golden` project) with the real
@@ -77,6 +83,25 @@ player on clips from the test-media cache, served through the `testMediaPath` br
 play media in real time, so they have longer timeouts. `pnpm test:golden` fetches the clips first, as
 for the engine cases, and a clip it can't fetch fails the run. Run directly without the clip, a case
 skips and names `pnpm media:fetch` as the reason.
+
+## Packaged app checks
+
+The Mac DMG ships the engine and its Python (S7V-112). Until the Electron harness (S7V-019) exists,
+two scripts check a built app; copy it out of the DMG first, as a user would get it.
+
+- `node scripts/build-engine-runtime.ts --check-app <app>`: every Mach-O needs the minimum macOS in
+  `packages/engine/runtime/runtime.lock.json` or older and links only inside the app, `/usr/lib` and
+  `/System`; no file, `app.asar` included, names the build Mac's home folder; `LSMinimumSystemVersion`
+  matches; the `.pyc` files survived; and the app's Python imports the engine. The DMG build runs
+  it on every Apple Silicon app; run it again after signing.
+- `pnpm smoke:packaged-engine -- --app <app>` copies the app to a scratch folder with read-only
+  `Resources/python` and `Resources/engine`, starts it with a temp `HOME`, `S7VIDEO_HOME` and a
+  system-only `PATH`, and asks its server for `transcribe.models.status` over the WebSocket RPC. It
+  passes when the engine log names the bundled Python, no file inside the app changed and no
+  `~/.cache/huggingface` appeared; it stops the app by its own PID. Without `--ffmpeg-dir DIR` it
+  expects the "reinstall" error until the app ships FFmpeg (S7V-016); `--ffmpeg-dir` passes a stand-in
+  ffmpeg and ffprobe. `--models-from DIR` clones an `HF_HOME` holding the speech model into the temp
+  data folder, and the default profile must then be ready. `--keep` keeps the scratch folder.
 
 ## Providers and cost
 

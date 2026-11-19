@@ -1,0 +1,146 @@
+{
+  "$comment": "The Python runtime the packaged app ships in Contents/Resources/python (S7V-112). scripts/build-engine-runtime.ts downloads the pinned python-build-standalone archives, checks their sha256, installs the engine's runtime wheels from uv.lock for macosMinimum, and fails if a bundled Mach-O needs a newer macOS or links outside the app, /usr/lib and /System. 'components' is what CPython links into itself, from the release's PYTHON.json; pnpm licenses:check judges every shipped component, and the build fails if PYTHON.json names a licence no component accounts for. A new release needs new sha256 values and a fresh look at PYTHON.json.",
+  "lockVersion": 1,
+  "macosMinimum": "14.0",
+  "python": {
+    "version": "3.12.14",
+    "distribution": "python-build-standalone",
+    "release": "20260924",
+    "triple": "aarch64-apple-darwin",
+    "archive": {
+      "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20260924/cpython-3.12.14%2B20260924-aarch64-apple-darwin-install_only_stripped.tar.gz",
+      "sha256": "c2edb321cd32ec2b170df208db0446dccc4398db602ca27cf2079098fb1f7d9d",
+      "size": 25017789
+    },
+    "licenceArchive": {
+      "$comment": "The full build of the same release, read only for python/PYTHON.json and python/licenses/ (the licence texts of what CPython links in).",
+      "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20260924/cpython-3.12.14%2B20260924-aarch64-apple-darwin-pgo%2Blto-full.tar.zst",
+      "sha256": "0bcd6620de677cb12e19a987ab78603267d4c1173ed72ba082a91fe85ac36959",
+      "size": 54969539
+    }
+  },
+  "trim": [
+    "bin/2to3",
+    "bin/2to3-3.12",
+    "bin/idle3",
+    "bin/idle3.12",
+    "bin/pip",
+    "bin/pip3",
+    "bin/pip3.12",
+    "bin/python3-config",
+    "bin/python3.12-config",
+    "include",
+    "share",
+    "lib/pkgconfig",
+    "lib/itcl4.3.8",
+    "lib/libtcl9.0.dylib",
+    "lib/libtcl9tk9.0.dylib",
+    "lib/tcl9",
+    "lib/tcl9.0",
+    "lib/thread3.0.6",
+    "lib/tk9.0",
+    "lib/python3.12/ensurepip",
+    "lib/python3.12/idlelib",
+    "lib/python3.12/lib-dynload/_tkinter.cpython-312-darwin.so",
+    "lib/python3.12/site-packages/pip",
+    "lib/python3.12/test",
+    "lib/python3.12/tkinter",
+    "lib/python3.12/turtledemo"
+  ],
+  "trimGlobs": ["lib/python3.12/site-packages/pip-*.dist-info"],
+  "components": [
+    {
+      "name": "CPython",
+      "version": "3.12.14",
+      "license": "Python-2.0 AND CNRI-Python",
+      "shipped": true,
+      "licenceFiles": ["LICENSE.cpython.txt"],
+      "pythonJsonLicences": ["Python-2.0", "CNRI-Python"],
+      "extensions": []
+    },
+    {
+      "name": "bzip2",
+      "license": "bzip2-1.0.6",
+      "shipped": true,
+      "licenceFiles": ["LICENSE.bzip2.txt"],
+      "pythonJsonLicences": ["bzip2-1.0.6"],
+      "extensions": ["_bz2"]
+    },
+    {
+      "name": "libffi",
+      "license": "MIT",
+      "shipped": true,
+      "licenceFiles": ["LICENSE.libffi.txt"],
+      "pythonJsonLicences": ["MIT"],
+      "extensions": ["_ctypes"]
+    },
+    {
+      "name": "mpdecimal",
+      "license": "BSD-2-Clause",
+      "shipped": true,
+      "licenceFiles": ["LICENSE.mpdecimal.txt"],
+      "pythonJsonLicences": ["BSD-2-Clause"],
+      "extensions": ["_decimal"]
+    },
+    {
+      "name": "OpenSSL 3",
+      "license": "Apache-2.0",
+      "shipped": true,
+      "licenceFiles": ["LICENSE.openssl-3.txt"],
+      "$comment": "PYTHON.json also names the OpenSSL 1.1 licence; the build checks that the linked OpenSSL is 3.x, which is Apache-2.0 only.",
+      "pythonJsonLicences": ["Apache-2.0", "OpenSSL"],
+      "extensions": ["_hashlib", "_ssl"]
+    },
+    {
+      "name": "xz (liblzma)",
+      "license": "0BSD",
+      "shipped": true,
+      "licenceFiles": ["LICENSE.liblzma.txt"],
+      "pythonJsonLicences": ["0BSD"],
+      "extensions": ["_lzma"]
+    },
+    {
+      "name": "SQLite",
+      "license": "blessing",
+      "shipped": true,
+      "licenceFiles": ["LICENSE.sqlite.txt"],
+      "$comment": "Public domain with a blessing (ADR-003 amendment 3). PYTHON.json names no licence id for it; its Zlib entry is the system zlib below.",
+      "pythonJsonLicences": [],
+      "extensions": ["_sqlite3"]
+    },
+    {
+      "name": "Expat",
+      "license": "MIT",
+      "shipped": true,
+      "licenceFiles": ["LICENSE.expat.txt"],
+      "pythonJsonLicences": ["MIT"],
+      "extensions": ["pyexpat"]
+    },
+    {
+      "name": "libuuid",
+      "license": "BSD-3-Clause",
+      "shipped": true,
+      "licenceFiles": ["LICENSE.libuuid.txt"],
+      "pythonJsonLicences": ["BSD-3-Clause"],
+      "extensions": ["_uuid"]
+    },
+    {
+      "name": "macOS system libraries (zlib, ncurses, libedit)",
+      "license": "Zlib AND X11 AND BSD-3-Clause",
+      "shipped": false,
+      "$comment": "CPython links macOS's own /usr/lib/libz, libncurses, libpanel and libedit; they are part of macOS and are not shipped in the app.",
+      "licenceFiles": [],
+      "pythonJsonLicences": ["Zlib", "X11", "BSD-3-Clause"],
+      "extensions": ["_curses", "_curses_panel", "_sqlite3", "binascii", "readline", "zlib"]
+    },
+    {
+      "name": "Tcl/Tk",
+      "license": "TCL",
+      "shipped": false,
+      "$comment": "Removed by the trim with tkinter and _tkinter.",
+      "licenceFiles": [],
+      "pythonJsonLicences": ["TCL", "Zlib"],
+      "extensions": ["_tkinter"]
+    }
+  ]
+}

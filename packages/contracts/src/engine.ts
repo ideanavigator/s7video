@@ -15,7 +15,7 @@ const NullableString = Schema.NullOr(Schema.String);
 export const EnginePingResult = Schema.Struct({
   pong: Schema.Literal(true),
   protocol: PositiveInt,
-  /** The Python process, a child of the spawned `uv`; the server reaps both through the group. */
+  /** The Python process: the spawned one, or a child of `uv` in development; the group reaps both. */
   pid: PositiveInt,
 });
 export type EnginePingResult = typeof EnginePingResult.Type;
@@ -327,11 +327,13 @@ export const EngineErrorReason = Schema.Literals([
 ]);
 export type EngineErrorReason = typeof EngineErrorReason.Type;
 
-export const EngineTool = Schema.Literals(["uv", "ffmpeg", "ffprobe"]);
+export const EngineTool = Schema.Literals(["uv", "python", "ffmpeg", "ffprobe"]);
 export type EngineTool = typeof EngineTool.Type;
 
 const INSTALL_HINT: Record<EngineTool, string> = {
   uv: "install it with `brew install uv`, or set S7VIDEO_UV to its full path",
+  python:
+    "point S7VIDEO_PYTHON at a Python 3.12 with the engine's packages (packages/engine/runtime), or unset it to use uv",
   ffmpeg: "install it with `brew install ffmpeg`, or set S7VIDEO_FFMPEG to its full path",
   ffprobe:
     "install FFmpeg with `brew install ffmpeg` (it includes ffprobe), or set S7VIDEO_FFPROBE to its full path",
@@ -361,6 +363,8 @@ export class EngineError extends Schema.TaggedError<EngineError>()("EngineError"
   tool: Schema.optional(EngineTool),
   /** For `missing_tool`: the tool is there but was built without this. */
   feature: Schema.optional(EngineToolFeature),
+  /** For `missing_tool`: the tool ships inside the app, so the fix is to reinstall it (S7V-016). */
+  packaged: Schema.optional(Schema.Boolean),
   /** The engine's own fixed rejection text, for `rpc_error`. */
   rpcMessage: Schema.optional(Schema.String),
   rpcCode: Schema.optional(Schema.Int),
@@ -382,6 +386,14 @@ export class EngineError extends Schema.TaggedError<EngineError>()("EngineError"
         return MODELS_MISSING_MESSAGE;
       case "missing_tool": {
         const tool = this.tool ?? "ffmpeg";
+        if (this.packaged === true) {
+          const problem =
+            this.feature === undefined
+              ? "is missing"
+              : `was built without ${FEATURE_PURPOSE[this.feature]}`;
+          const name = tool === "python" ? "video engine" : tool;
+          return `The ${name} that comes with the app ${problem}. Reinstall the app to fix it.`;
+        }
         if (this.feature !== undefined) {
           return `The video engine needs an ${tool} with ${FEATURE_PURPOSE[this.feature]}, and the ${tool} on this Mac was built without it. For development, ${INSTALL_HINT[tool]}.`;
         }

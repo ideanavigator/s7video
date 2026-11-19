@@ -5,8 +5,13 @@
 // TypeScript cases are `<case>.golden.test.ts` (run with `vp test run`); Python engine cases are
 // `packages/engine/tests/golden/<case_name>_golden.py` (run with uv and pytest). Before Python or
 // web cases run, the test clips are fetched or reused (`pnpm media:fetch`); `--no-fetch` skips that.
+// `--python=<path>` runs the Python cases on another interpreter, such as the app's bundled
+// runtime (S7V-112): a throwaway venv on top of it adds only pytest, so the engine, its wheels and
+// its `.pth` come from that runtime.
 // A full run (no case named) also runs the harness's own tests (`tests/golden/test_*.py`).
 import * as NodeChildProcess from "node:child_process";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import { fetchTestMedia } from "./fetch-test-media.ts";
@@ -65,8 +70,26 @@ export function combineExitCodes(codes: ReadonlyArray<number | null>): number {
   return codes.some((code) => code !== 0) ? 1 : 0;
 }
 
-function run(command: string, args: ReadonlyArray<string>, root: string): number | null {
-  const result = NodeChildProcess.spawnSync(command, args, { cwd: root, stdio: "inherit" });
+/** `--python=/abs/python3.12` → that path; relative paths are refused, since cwd is the repo. */
+export function pythonOption(args: ReadonlyArray<string>): string | undefined {
+  const value = args.find((arg) => arg.startsWith("--python="))?.slice("--python=".length);
+  if (value !== undefined && !NodePath.isAbsolute(value)) {
+    throw new Error(`--python needs an absolute path, not ${value}`);
+  }
+  return value;
+}
+
+function run(
+  command: string,
+  args: ReadonlyArray<string>,
+  root: string,
+  env?: NodeJS.ProcessEnv,
+): number | null {
+  const result = NodeChildProcess.spawnSync(command, args, {
+    cwd: root,
+    stdio: "inherit",
+    ...(env ? { env } : {}),
+  });
   if (result.error) console.error(`test:golden: could not run ${command}: ${result.error.message}`);
   return result.error ? 1 : result.status;
 }
@@ -97,7 +120,10 @@ async function main(argv: ReadonlyArray<string>): Promise<number> {
   // A clip that can't be fetched fails the run here, rather than its cases skipping later.
   if (fetch && usesTestMedia(plan)) codes.push((await fetchTestMedia()) > 0 ? 1 : 0);
   if (plan.typescript.length > 0) codes.push(run("vp", ["test", "run", ...plan.typescript], root));
-  if (plan.python.length > 0) {
+  const python = pythonOption(args);
+  if (plan.python.length > 0 && python !== undefined) {
+    codes.push(runOnInterpreter(python, plan.python, root));
+  } else if (plan.python.length > 0) {
     codes.push(
       run(
         "uv",
@@ -107,6 +133,43 @@ async function main(argv: ReadonlyArray<string>): Promise<number> {
     );
   }
   return combineExitCodes(codes);
+}
+
+function runOnInterpreter(python: string, files: ReadonlyArray<string>, root: string): number {
+  const venv = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "s7video-golden-venv-"));
+  try {
+    const requirements = NodePath.join(venv, "dev-requirements.txt");
+    const steps: Array<[string, ReadonlyArray<string>]> = [
+      [python, ["-m", "venv", "--without-pip", "--system-site-packages", venv]],
+      [
+        "uv",
+        ["export", "--frozen", "--only-dev", "--no-emit-project", "--no-header", "--quiet"].concat([
+          "--project",
+          ENGINE_PROJECT,
+          "--output-file",
+          requirements,
+        ]),
+      ],
+      [
+        "uv",
+        ["pip", "install", "--no-config", "--quiet", "--require-hashes", "--no-deps"].concat([
+          "--python",
+          NodePath.join(venv, "bin/python"),
+          "--requirements",
+          requirements,
+        ]),
+      ],
+    ];
+    for (const [command, stepArgs] of steps) {
+      if (run(command, stepArgs, root) !== 0) return 1;
+    }
+    // The runtime's `.pyc` files are already built; nothing may be written beside them.
+    const env = { ...process.env, PYTHONDONTWRITEBYTECODE: "1" };
+    const pytest = ["-m", "pytest", "-ra", "-p", "no:cacheprovider", ...files];
+    return run(NodePath.join(venv, "bin/python"), pytest, root, env) === 0 ? 0 : 1;
+  } finally {
+    NodeFS.rmSync(venv, { recursive: true, force: true });
+  }
 }
 
 if (import.meta.main) {

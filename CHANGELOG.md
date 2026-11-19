@@ -102,6 +102,8 @@ from; the per-ticket entries and how this file is compiled are in
 - Sign in with your ChatGPT account inside s7video, and the assistant edits with Codex. The app
   downloads Codex 0.170.0 into its own data folder and keeps Codex's files there too, never in
   `~/.codex`. (S7V-113)
+- The Mac app carries its own video engine, so transcription, silence cuts and captions work with
+  nothing else installed. It needs macOS 14 or later. (S7V-112)
 
 ### Changed
 

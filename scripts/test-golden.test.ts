@@ -7,6 +7,7 @@ import {
   combineExitCodes,
   planGoldens,
   pythonGoldenFile,
+  pythonOption,
   usesTestMedia,
 } from "./test-golden.ts";
 
@@ -17,6 +18,14 @@ const TRACKED = [
 ];
 
 describe("test-golden", () => {
+  it("--python names an absolute interpreter for the Python cases (S7V-112)", () => {
+    expect(pythonOption(["export-captions-talking-head"])).toBeUndefined();
+    expect(pythonOption(["--python=/tmp/app/Resources/python/bin/python3.12", "x"])).toBe(
+      "/tmp/app/Resources/python/bin/python3.12",
+    );
+    expect(() => pythonOption(["--python=python3"])).toThrow("absolute path");
+  });
+
   it("test-golden maps kebab case to python file", () => {
     expect(pythonGoldenFile("engine-ping-media")).toBe("engine_ping_media_golden.py");
     expect(caseNameOf("packages/engine/tests/golden/engine_ping_media_golden.py")).toBe(

@@ -133,6 +133,10 @@ describe("DesktopBackendConfiguration", () => {
         assert.equal(first.env.T3CODE_DESKTOP_SHELL_DISCOVERY_PENDING, "1");
         // Packaged built-in skills sit outside app.asar, where agent CLIs can read them (S7V-048).
         assert.equal(first.env.S7VIDEO_SKILLS_DIR, "/missing/resources/skills");
+        // The packaged server runs the bundled engine on its own Python, never uv (S7V-112).
+        assert.equal(first.env.S7VIDEO_PACKAGED, "1");
+        assert.equal(first.env.S7VIDEO_PYTHON, "/missing/resources/python/bin/python3.12");
+        assert.equal(first.env.S7VIDEO_ENGINE_DIR, "/missing/resources/engine");
         assert.isUndefined(first.env.T3CODE_PORT);
         assert.isUndefined(first.env.T3CODE_MODE);
         assert.isUndefined(first.env.T3CODE_DESKTOP_LAN_HOST);
@@ -239,6 +243,30 @@ describe("DesktopBackendConfiguration", () => {
                 resourcesPath,
               }),
             ),
+          ),
+        ),
+      );
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("dev builds leave the engine to uv and the source tree (S7V-112)", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-desktop-backend-config-test-",
+      });
+      yield* Effect.gen(function* () {
+        const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
+        const config = yield* configuration.resolvePrimary;
+        assert.isUndefined(config.env.S7VIDEO_PACKAGED);
+        assert.isUndefined(config.env.S7VIDEO_PYTHON);
+        assert.isUndefined(config.env.S7VIDEO_ENGINE_DIR);
+      }).pipe(
+        Effect.provide(
+          layerBackendConfiguration().pipe(
+            Layer.provideMerge(layerServerExposure),
+            Layer.provideMerge(DesktopAppSettings.layerTest()),
+            Layer.provideMerge(layerEnvironment(baseDir, { isPackaged: false })),
           ),
         ),
       );

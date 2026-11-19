@@ -1,0 +1,24 @@
+The video engine runs on its own copy of Python, inside the app.
+
+Python 3.12 (CPython, built by the python-build-standalone project,
+https://github.com/astral-sh/python-build-standalone) is under the Python Software
+Foundation License (Python-2.0, with the CNRI-Python terms). It includes these libraries,
+linked into it:
+
+- bzip2 (bzip2-1.0.6)
+- libffi (MIT)
+- mpdecimal (BSD-2-Clause)
+- OpenSSL 3 (Apache-2.0)
+- xz / liblzma (0BSD)
+- SQLite (public domain, with a blessing in place of a licence)
+- Expat (MIT)
+- libuuid (BSD-3-Clause)
+
+Their full licence texts ship inside the app, in Contents/Resources/python/licenses/, and
+Python's own licence in Contents/Resources/python/lib/python3.12/LICENSE.txt.
+
+The engine's Python packages (MLX, mlx-audio, NumPy, SciPy, Transformers, OpenTimelineIO,
+PyObjC and the others locked in packages/engine/uv.lock) are under MIT, BSD, Apache-2.0,
+PSF, MPL-2.0 (unmodified) and similar permissive licences. Each package's licence ships
+with it inside the app, in
+Contents/Resources/python/lib/python3.12/site-packages/<package>.dist-info/.

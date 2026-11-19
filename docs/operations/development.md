@@ -273,10 +273,16 @@ The C toolchain, pkg-config, and libsecret headers are also needed for Linux des
 
 ### macOS DMG prerequisites
 
-Install the Xcode Command Line Tools with `xcode-select --install` and install Rust with rustup.
-The resource monitor pins Rust 1.95.0 in `native/resource-monitor/rust-toolchain.toml`; rustup
-installs that toolchain on the first build. For a cross-architecture or universal build, add the
-requested Rust targets to it:
+Install the Xcode Command Line Tools with `xcode-select --install`, install Rust with rustup, and
+install `uv` (`brew install uv`). The resource monitor pins Rust 1.95.0 in
+`native/resource-monitor/rust-toolchain.toml`; rustup installs that toolchain on the first build.
+The Apple Silicon DMG bundles the video engine and its Python runtime
+(`pnpm build:engine-runtime -- --out DIR` runs that step alone): the first build downloads the pinned
+python-build-standalone archives (about 80 MB) and the engine's wheels (about 200 MB) and caches the
+runtime in `~/Library/Caches/s7video-engine-runtime` (`S7VIDEO_ENGINE_RUNTIME_BUILD_DIR` moves it).
+The installed app needs none of these tools. The runtime is Apple Silicon only, so an x64 or
+universal Mac build stops with a message saying so. For a cross-architecture build, add the
+requested Rust targets to the pinned toolchain:
 
 ```sh
 rustup target add --toolchain 1.95.0 aarch64-apple-darwin x86_64-apple-darwin

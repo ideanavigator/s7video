@@ -47,7 +47,7 @@ import * as ServerConfig from "../config.ts";
 import * as EngineJobs from "./EngineJobs.ts";
 import * as EngineProcess from "./EngineProcess.ts";
 import {
-  engineCommandArgs,
+  engineCommand,
   engineEnvironment,
   huggingFaceCacheDirs,
   resolveEngineProjectDir,
@@ -207,8 +207,7 @@ const make = Effect.fn("EngineService.make")(function* (options: EngineServiceOp
     const scope = yield* Scope.fork(serviceScope);
     const startedAt = yield* Clock.currentTimeMillis;
     const running = yield* EngineProcess.start({
-      uv: tools.uv,
-      args: engineCommandArgs(projectDir),
+      ...engineCommand(tools, projectDir),
       cwd: projectDir,
       env: engineEnvironment({
         tools,

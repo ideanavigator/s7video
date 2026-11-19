@@ -9,6 +9,7 @@ import * as Path from "effect/Path";
 
 import {
   ENGINE_SYSTEM_PATH,
+  engineCommand,
   engineCommandArgs,
   engineEnvironment,
   huggingFaceCacheDirs,
@@ -96,6 +97,104 @@ describe("enginePaths", () => {
       }).pipe(Effect.flip);
       expect(noUv.message).toContain("needs uv");
       expect(noUv.message).toContain("brew install uv");
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("engineCommand uses the bundled Python and never resolves uv (S7V-112)", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: "engine-paths-" });
+      const bundle = path.join(root, "Resources");
+      yield* makeTools(path.join(bundle, "python/bin"), ["python3.12"]);
+      yield* makeTools(path.join(bundle, "ffmpeg/bin"), ["ffmpeg", "ffprobe"]);
+      const python = path.join(bundle, "python/bin/python3.12");
+
+      // No uv anywhere: a set S7VIDEO_PYTHON does not need one.
+      const tools = yield* resolveEngineTools({
+        env: { S7VIDEO_PYTHON: python, S7VIDEO_FFMPEG: path.join(bundle, "ffmpeg/bin/ffmpeg") },
+        homeDir: path.join(root, "home"),
+        knownDirs: [],
+      });
+      expect(tools).toEqual({
+        python,
+        ffmpeg: path.join(bundle, "ffmpeg/bin/ffmpeg"),
+        ffprobe: path.join(bundle, "ffmpeg/bin/ffprobe"),
+      });
+      expect(engineCommand(tools, path.join(bundle, "engine"))).toEqual({
+        command: python,
+        args: ["-I", "-B", "-m", "s7engine"],
+      });
+      // Dev keeps `uv run` unchanged.
+      expect(
+        engineCommand({ uv: "/opt/uv", ffmpeg: "/f", ffprobe: "/p" }, "/repo/packages/engine"),
+      ).toEqual({ command: "/opt/uv", args: engineCommandArgs("/repo/packages/engine") });
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("packaged builds never look in Homebrew or other install folders", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: "engine-paths-" });
+      const homebrew = path.join(root, "opt/homebrew/bin");
+      yield* makeTools(homebrew, ["uv", "python", "ffmpeg", "ffprobe"]);
+      const bundle = path.join(root, "Resources");
+      yield* makeTools(path.join(bundle, "python/bin"), ["python3.12"]);
+      yield* makeTools(path.join(bundle, "ffmpeg/bin"), ["ffmpeg", "ffprobe"]);
+      const base = {
+        S7VIDEO_PACKAGED: "1",
+        S7VIDEO_PYTHON: path.join(bundle, "python/bin/python3.12"),
+      };
+
+      const tools = yield* resolveEngineTools({
+        env: { ...base, S7VIDEO_FFMPEG: path.join(bundle, "ffmpeg/bin/ffmpeg") },
+        homeDir: path.join(root, "home"),
+        knownDirs: [homebrew],
+      });
+      expect(Object.values(tools).every((tool) => tool.startsWith(`${bundle}/`))).toBe(true);
+      expect(tools.uv).toBeUndefined();
+
+      // Homebrew's FFmpeg is there, but a packaged app does not take it.
+      const noFfmpeg = yield* resolveEngineTools({
+        env: base,
+        homeDir: path.join(root, "home"),
+        knownDirs: [homebrew],
+      }).pipe(Effect.flip);
+      expect(noFfmpeg).toMatchObject({ reason: "missing_tool", tool: "ffmpeg", packaged: true });
+      expect(noFfmpeg.message).toBe(
+        "The ffmpeg that comes with the app is missing. Reinstall the app to fix it.",
+      );
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("a missing bundled Python gives the reinstall message", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: "engine-paths-" });
+      // An install folder with an unversioned `python` (as `uv python install --default` makes).
+      yield* makeTools(root, ["uv", "python", "python3.12", "ffmpeg", "ffprobe"]);
+      yield* fileSystem.remove(path.join(root, "python3.12"));
+      const error = yield* resolveEngineTools({
+        env: { S7VIDEO_PACKAGED: "1", S7VIDEO_PYTHON: path.join(root, "python3.12") },
+        homeDir: path.join(root, "home"),
+        knownDirs: [root],
+      }).pipe(Effect.flip);
+      expect(error).toMatchObject({ reason: "missing_tool", tool: "python", packaged: true });
+      expect(error.message).toBe(
+        "The video engine that comes with the app is missing. Reinstall the app to fix it.",
+      );
+
+      // Outside the app, a wrong S7VIDEO_PYTHON is an error too: no fall back to uv, or to a
+      // `python` in an install folder, which has none of the engine's packages.
+      const dev = yield* resolveEngineTools({
+        env: { S7VIDEO_PYTHON: path.join(root, "python3.12") },
+        homeDir: path.join(root, "home"),
+        knownDirs: [root],
+      }).pipe(Effect.flip);
+      expect(dev).toMatchObject({ reason: "missing_tool", tool: "python" });
+      expect(dev.message).toContain("S7VIDEO_PYTHON");
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 

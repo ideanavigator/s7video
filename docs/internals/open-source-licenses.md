@@ -110,6 +110,16 @@ field (`scripts/lib/python-licences.ts`). A locked package that a platform marke
 listed as not installed and skipped, since it never ships. It needs `uv` and a synced engine
 environment (`uv sync --frozen --project packages/engine`).
 
+The Mac app also ships the Python those packages run on (S7V-112): python-build-standalone CPython,
+which links OpenSSL, SQLite, bzip2, libffi, xz, mpdecimal, Expat and libuuid into itself. Those
+come from `components` in `packages/engine/runtime/runtime.lock.json`, and the same rules judge each
+one that ships (`scripts/lib/engine-runtime.ts`). The lock is kept honest at build time:
+`scripts/build-engine-runtime.ts` reads the release's `PYTHON.json` and fails if it names a licence,
+for CPython or for an extension the runtime keeps, that no component accounts for. bzip2-1.0.6 and
+SQLite's "blessing" are allowed by ADR-003 amendment 3. The licence texts ship in the app's
+`Resources/python/licenses/`, and each package's in its `.dist-info` folder; the app's notices
+point there (`packages/engine/runtime/NOTICE.txt`).
+
 The check covers the locked install, not the desktop app's staged `node_modules`:
 `scripts/build-desktop-artifact.ts` stages production dependencies with `vp install --prod`, which
 resolves versions afresh, so scanning the staged install (or the final `app.asar`) is a follow-up

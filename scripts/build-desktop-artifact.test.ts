@@ -31,6 +31,9 @@ import {
   createBuildConfig,
   renderLinuxMetainfo,
   MAC_ENTITLEMENTS,
+  assertMacEngineRuntimeArch,
+  EngineRuntimeArchError,
+  resourceMonitorRustFlags,
   UnsupportedDesktopBuildArchitectureError,
   packWindowsServerAsar,
   preflightWindowsDesktopBuild,
@@ -514,6 +517,75 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         ),
       ),
     ),
+  );
+
+  it("maps the build Mac's home out of the resource monitor's embedded paths (S7V-112)", () => {
+    assert.equal(
+      resourceMonitorRustFlags({}, "/Users/some one"),
+      "--remap-path-prefix=/Users/some one=~",
+    );
+    assert.equal(
+      resourceMonitorRustFlags({ RUSTFLAGS: "-C  target-cpu=native" }, "/Users/a"),
+      ["-C", "target-cpu=native", "--remap-path-prefix=/Users/a=~"].join("\u001f"),
+    );
+    // Cargo prefers the encoded form, so it is extended as is.
+    assert.equal(
+      resourceMonitorRustFlags(
+        { CARGO_ENCODED_RUSTFLAGS: ["-C", "debuginfo=0"].join("\u001f"), RUSTFLAGS: "-x" },
+        "/Users/a",
+      ),
+      ["-C", "debuginfo=0", "--remap-path-prefix=/Users/a=~"].join("\u001f"),
+    );
+  });
+
+  it.effect("refuses an Intel or universal Mac build before building anything (S7V-112)", () =>
+    Effect.gen(function* () {
+      for (const arch of ["x64", "universal"] as const) {
+        const error = yield* assertMacEngineRuntimeArch("mac", arch).pipe(Effect.flip);
+        assert.instanceOf(error, EngineRuntimeArchError);
+        assert.include(error.message, "Apple Silicon only");
+      }
+      yield* assertMacEngineRuntimeArch("mac", "arm64");
+      yield* assertMacEngineRuntimeArch("linux", "x64");
+      yield* assertMacEngineRuntimeArch("win", "x64");
+    }),
+  );
+
+  it.effect("ships the engine runtime on Mac only, for macOS 14 or later (S7V-112)", () =>
+    Effect.gen(function* () {
+      const mac = yield* createBuildConfig(
+        "mac",
+        "dmg",
+        "0.0.33",
+        false,
+        false,
+        undefined,
+        undefined,
+      );
+      assert.deepInclude(mac.extraResources as ReadonlyArray<unknown>, {
+        from: "engine-runtime/python",
+        to: "python",
+      });
+      assert.deepInclude(mac.extraResources as ReadonlyArray<unknown>, {
+        from: "engine-runtime/engine",
+        to: "engine",
+      });
+      assert.equal((mac.mac as { minimumSystemVersion: string }).minimumSystemVersion, "14.0");
+      assert.include(mac.files as ReadonlyArray<string>, "!engine-runtime/**/*");
+      const linux = yield* createBuildConfig(
+        "linux",
+        "AppImage",
+        "0.0.33",
+        false,
+        false,
+        undefined,
+        undefined,
+      );
+      assert.notDeepInclude(linux.extraResources as ReadonlyArray<unknown>, {
+        from: "engine-runtime/python",
+        to: "python",
+      });
+    }),
   );
 
   it("renders Linux metadata from the brand config", () => {
