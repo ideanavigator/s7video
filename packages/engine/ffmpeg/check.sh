@@ -64,9 +64,13 @@ filters="$(run "$ffmpeg" -hide_banner -filters)"
 for filter in subtitles ass zscale tonemap; do
   grep -qE "^ [A-Z.|]+ $filter " <<<"$filters" || die "ffmpeg has no $filter filter"
 done
-run "$ffmpeg" -hide_banner -encoders | grep -qE "^ V\S* h264_videotoolbox " || die "ffmpeg has no h264_videotoolbox"
-run "$ffmpeg" -hide_banner -devices 2>/dev/null | grep -q " lavfi " || die "ffmpeg has no lavfi input"
-run "$ffmpeg" -hide_banner -decoders | grep -qE "^ V\S* libdav1d " || die "ffmpeg has no libdav1d AV1 decoder"
+# Lists are read whole first: with pipefail, `grep -q` closing the pipe early fails the pipeline.
+encoders="$(run "$ffmpeg" -hide_banner -encoders)"
+decoders="$(run "$ffmpeg" -hide_banner -decoders)"
+devices="$(run "$ffmpeg" -hide_banner -devices 2>/dev/null)"
+grep -qE "^ V\S* h264_videotoolbox " <<<"$encoders" || die "ffmpeg has no h264_videotoolbox"
+grep -qE "^ V\S* libdav1d " <<<"$decoders" || die "ffmpeg has no libdav1d AV1 decoder"
+grep -q " lavfi " <<<"$devices" || die "ffmpeg has no lavfi input"
 run "$DIR/bin/ffprobe" -hide_banner -version >/dev/null || die "ffprobe does not run"
 echo "check.sh: LGPL 2.1 or later; libass, zimg, libdav1d, h264_videotoolbox and lavfi present"
 

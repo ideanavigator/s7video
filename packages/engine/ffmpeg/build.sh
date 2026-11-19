@@ -73,7 +73,7 @@ lock() { /usr/bin/plutil -extract "$1" raw -o - "$LOCK"; }
 
 MACOS_MIN="$(lock target.macosMinimum)"
 CACHE="$S7VIDEO_FFMPEG_BUILD_DIR"
-KEY="$(cat "$LOCK" "$HERE/build.sh" "$HERE/check.sh" "$HERE/pgp_verify.py" "$HERE/overlays/zimg/meson.build" |
+KEY="$(cat "$LOCK" "$HERE/build.sh" "$HERE/pgp_verify.py" "$HERE/overlays/zimg/meson.build" |
   /usr/bin/shasum -a 256 | cut -c1-16)"
 SOURCES="$CACHE/sources"
 WORK="$CACHE/work-$KEY"
@@ -354,7 +354,7 @@ assemble() {
   strip -x "$dest"/lib/*.dylib
   while read -r file; do codesign --force --sign - "$file"; done < <(macho_files "$dest")
   write_licences "$dest"
-  cp "$HERE/build.sh" "$HERE/check.sh" "$HERE/versions.lock" "$HERE/pgp_verify.py" "$dest/recipe/"
+  cp "$HERE/build.sh" "$HERE/versions.lock" "$HERE/pgp_verify.py" "$dest/recipe/"
   cp "$HERE/overlays/zimg/meson.build" "$dest/recipe/overlays/zimg/"
   write_sources "$dest"
   # AC-2, AC-3, AC-4 and Check 2: links, rpaths, minimum macOS, signatures, licence, features.
