@@ -310,16 +310,24 @@ starting either opens the "install command line developer tools" dialog. s7video
   (`apps/server/src/vcs/AgentDeveloperDir.ts`) sets the server's `DEVELOPER_DIR` to the empty
   folder `<data folder>/empty-developer-dir`, so every stub a child starts fails at once with
   "xcrun: error" and no dialog. It is set in the server's own environment because the providers,
-  the terminal and the ACP runtime each build theirs from it; it runs before the provider layers,
-  and when the tools appear the user's own value comes back for agents started after that. With
-  the tools installed nothing changes, so the assistant's shell keeps git. Codex 0.170 looks for
-  git only in fixed folders (Homebrew, the developer folders) and starts none without them.
+  the terminal and the ACP runtime each build theirs from it; it runs before the provider layers.
+  Provider instances keep a copy of that environment until their settings change (always with an
+  instance's own variables or a managed policy), so the Claude session and Codex app-server
+  spawns and `makeClaudeEnvironment` (Claude's probes, text generation and terminal) take
+  `DEVELOPER_DIR` from `AgentDeveloperDir.forSpawn` when they start a process. When the tools
+  appear, the next agent started gets the user's own value; one already running keeps its
+  environment until its session restarts. A value set in an instance's own environment settings
+  is left alone. With the tools installed nothing changes, so the assistant's shell keeps git.
+  Codex 0.170 looks for git only in fixed folders (Homebrew, the developer folders) and starts
+  none without them.
 - **Upstream files touched:** `shell.ts`, `processRunner.ts`, `GitVcsDriver.ts`,
   `GitVcsDriverCore.ts`, `VcsDriverRegistry.ts`, `VcsStatusBroadcaster.ts`,
   `serverRuntimeStartup.ts`, `SourceControlDiscovery.ts`, `WorkspaceEntries.ts`,
-  `ProjectCloneTracker.ts`, `ws.ts`, `server.ts` (also S7V-114), `contracts/src/server.ts`, the error mapping in
+  `ProjectCloneTracker.ts`, `ws.ts`, `server.ts`, `contracts/src/server.ts`, the error mapping in
   `AcpSessionRuntime.ts`, `externalLauncher.ts`, `CodexAdapterV2.ts`, `CodexProvider.ts` and the two
   text-generation files, and in the web `ChatView.tsx`, `DiffPanel.tsx` and `GitActionsControl.tsx`.
+  S7V-114 adds one line each to `server.ts`, `ClaudeAdapterV2.ts`, `CodexAdapterV2.ts` and
+  `ClaudeHome.ts`.
 
 ## HEIC decoding (S7V-014)
 

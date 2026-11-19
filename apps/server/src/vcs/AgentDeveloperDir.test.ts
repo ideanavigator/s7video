@@ -12,12 +12,14 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import type * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
 import { ServerConfig } from "../config.ts";
+import { makeClaudeEnvironment } from "../provider/Drivers/ClaudeHome.ts";
 import * as AgentDeveloperDir from "./AgentDeveloperDir.ts";
 import * as SystemGit from "./SystemGit.ts";
 
@@ -41,15 +43,13 @@ const systemGitWith = (
 const withAgentDeveloperDir = <A>(
   env: NodeJS.ProcessEnv,
   systemGit: ReturnType<typeof systemGitWith>,
-  check: (emptyDir: string) => Effect.Effect<A>,
+  check: (emptyDir: string) => Effect.Effect<A, never, Path.Path>,
 ) =>
   Effect.gen(function* () {
     const config = yield* ServerConfig;
     const emptyDir = NodePath.join(config.baseDir, "empty-developer-dir");
-    yield* Layer.build(AgentDeveloperDir.layer);
-    return yield* check(emptyDir);
+    return yield* check(emptyDir).pipe(Effect.provide(AgentDeveloperDir.layer));
   }).pipe(
-    Effect.scoped,
     Effect.provideService(SystemGit.SystemGit, systemGit),
     Effect.provideService(HostProcess.Environment, env),
     Effect.provide(
@@ -97,33 +97,83 @@ describe("AgentDeveloperDir", () => {
     );
   });
 
-  it.effect("follows the tools being installed and removed, recreating a deleted folder", () => {
-    const userValue = "/Applications/Gone.app/Contents/Developer";
-    const env: NodeJS.ProcessEnv = { DEVELOPER_DIR: userValue };
-    const seen: Array<string | undefined> = [];
+  it.effect(
+    "follows the tools being installed and removed in the server's environment, recreating a deleted folder",
+    () => {
+      const userValue = "/Applications/Gone.app/Contents/Developer";
+      const env: NodeJS.ProcessEnv = { DEVELOPER_DIR: userValue };
+      const seen: Array<string | undefined> = [];
+      return Effect.gen(function* () {
+        const drained = yield* Deferred.make<void>();
+        let emptyDirSeen = "";
+        // Each step records what an agent started now would get, then moves to the next answer.
+        const changes = Stream.make(present).pipe(
+          Stream.concat(
+            Stream.fromEffect(
+              Effect.sync(() => {
+                seen.push(env.DEVELOPER_DIR);
+                NodeFS.rmSync(emptyDirSeen, { recursive: true, force: true });
+                return missing;
+              }),
+            ),
+          ),
+          Stream.concat(Stream.fromEffect(Deferred.succeed(drained, undefined)).pipe(Stream.drain)),
+        );
+        yield* withAgentDeveloperDir(env, systemGitWith(missing, changes), (emptyDir) =>
+          Effect.gen(function* () {
+            emptyDirSeen = emptyDir;
+            yield* Deferred.await(drained);
+            assert.deepEqual(seen, [userValue]);
+            assert.strictEqual(env.DEVELOPER_DIR, emptyDir);
+            assert.deepEqual(NodeFS.readdirSync(emptyDir), []);
+          }),
+        );
+      });
+    },
+  );
+
+  it.effect("gives copies taken without the tools the user's value once they are installed", () => {
+    const xcodeBeta = "/Applications/Xcode-beta.app/Contents/Developer";
+    const env: NodeJS.ProcessEnv = { DEVELOPER_DIR: xcodeBeta };
     return Effect.gen(function* () {
       const drained = yield* Deferred.make<void>();
-      let emptyDirSeen = "";
-      // Each step records what an agent started now would get, then moves to the next answer.
       const changes = Stream.make(present).pipe(
-        Stream.concat(
-          Stream.fromEffect(
-            Effect.sync(() => {
-              seen.push(env.DEVELOPER_DIR);
-              NodeFS.rmSync(emptyDirSeen, { recursive: true, force: true });
-              return missing;
-            }),
-          ),
-        ),
         Stream.concat(Stream.fromEffect(Deferred.succeed(drained, undefined)).pipe(Stream.drain)),
       );
       yield* withAgentDeveloperDir(env, systemGitWith(missing, changes), (emptyDir) =>
         Effect.gen(function* () {
-          emptyDirSeen = emptyDir;
           yield* Deferred.await(drained);
-          assert.deepEqual(seen, [userValue]);
-          assert.strictEqual(env.DEVELOPER_DIR, emptyDir);
-          assert.deepEqual(NodeFS.readdirSync(emptyDir), []);
+          const { forSpawn } = yield* AgentDeveloperDir.AgentDeveloperDir;
+          // A provider instance's copy, taken while the tools were missing.
+          const stale = { PATH: "/usr/bin:/bin", DEVELOPER_DIR: emptyDir };
+          assert.deepEqual(forSpawn(stale), { PATH: "/usr/bin:/bin", DEVELOPER_DIR: xcodeBeta });
+          // Claude's probes, text generation and terminal build their environment through this.
+          const claude = yield* makeClaudeEnvironment({ homePath: "" }, stale);
+          assert.strictEqual(claude.DEVELOPER_DIR, xcodeBeta);
+          const instanceOwn = { DEVELOPER_DIR: "/Applications/Other.app/Contents/Developer" };
+          assert.strictEqual(forSpawn(instanceOwn), instanceOwn);
+        }),
+      );
+    });
+  });
+
+  it.effect("gives copies taken with the tools the empty folder once they are gone", () => {
+    const env: NodeJS.ProcessEnv = {};
+    return Effect.gen(function* () {
+      const drained = yield* Deferred.make<void>();
+      const changes = Stream.make(missing).pipe(
+        Stream.concat(Stream.fromEffect(Deferred.succeed(drained, undefined)).pipe(Stream.drain)),
+      );
+      yield* withAgentDeveloperDir(env, systemGitWith(present, changes), (emptyDir) =>
+        Effect.gen(function* () {
+          yield* Deferred.await(drained);
+          const { forSpawn } = yield* AgentDeveloperDir.AgentDeveloperDir;
+          assert.deepEqual(forSpawn({ PATH: "/usr/bin:/bin" }), {
+            PATH: "/usr/bin:/bin",
+            DEVELOPER_DIR: emptyDir,
+          });
+          const instanceOwn = { DEVELOPER_DIR: "/Applications/Other.app/Contents/Developer" };
+          assert.strictEqual(forSpawn(instanceOwn), instanceOwn);
         }),
       );
     });
