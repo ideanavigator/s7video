@@ -39,6 +39,8 @@ path = [
   "packages/engine/uv.lock",
   "packages/engine/models.lock.json",
   "packages/engine/ffmpeg/versions.lock",
+  "packages/engine/ffmpeg/build-tools.in",
+  "packages/engine/ffmpeg/build-tools.txt",
   "apps/server/skills/**",
 ]
 precedence = "closest"
@@ -158,6 +160,13 @@ path = "third-party-licenses/spdx/**"
 precedence = "override"
 SPDX-FileCopyrightText = "Linux Foundation and its Contributors (SPDX License List)"
 SPDX-License-Identifier = "LicenseRef-SPDX-License-List-Data"
+
+# The FFmpeg project's public release signing key, unmodified (S7V-016).
+[[annotations]]
+path = "packages/engine/ffmpeg/keys/ffmpeg-devel.asc"
+precedence = "override"
+SPDX-FileCopyrightText = "FFmpeg (https://ffmpeg.org)"
+SPDX-License-Identifier = "LicenseRef-FFmpeg-Release-Key"
 
 # The GCC runtime licence shipped beside libatomic in the Linux CLI archive (scripts/build-cli-archive.ts).
 [[annotations]]

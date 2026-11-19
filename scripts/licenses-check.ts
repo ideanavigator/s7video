@@ -18,6 +18,7 @@ import {
   type LicenceOverride,
 } from "./lib/licenses-check.ts";
 import {
+  buildToolPinProblems,
   buildconfProblems,
   checkHelperSources,
   type HelperAllowlist,
@@ -186,7 +187,13 @@ const helperResult = checkHelperSources(
   readJson(`${HELPER_RECIPE}/versions.lock`),
   allowlist as HelperAllowlist,
 );
-const helperProblems = [...helperResult.problems];
+const helperProblems = [
+  ...helperResult.problems,
+  ...buildToolPinProblems(
+    readJson(`${HELPER_RECIPE}/versions.lock`),
+    NodeFS.readFileSync(NodePath.join(ROOT, HELPER_RECIPE, "build-tools.txt"), "utf8"),
+  ),
+];
 console.log(
   `licenses:check: ${String(helperResult.checked)} FFmpeg helper sources and build tools from ${HELPER_RECIPE}/versions.lock.`,
 );

@@ -2078,6 +2078,19 @@ export const stageFfmpegHelper = Effect.fn("stageFfmpegHelper")(function* (input
       return yield* new FfmpegHelperMissingError({ helperDir });
     }
   }
+  // A cached helper was checked when it was built; the copy that ships is checked again, with
+  // today's checker (links, signatures, no build-Mac paths, licences, sources; no test render).
+  yield* runCommand(
+    ChildProcess.make(
+      "bash",
+      [path.join(input.repoRoot, "packages/engine/ffmpeg/check.sh"), helperDir],
+      { cwd: input.repoRoot },
+    ),
+    {
+      label: "check the staged FFmpeg helper (packages/engine/ffmpeg/check.sh)",
+      verbose: input.verbose,
+    },
+  );
 });
 
 export const stageBrowserSecret = Effect.fn("stageBrowserSecret")(function* (input: {

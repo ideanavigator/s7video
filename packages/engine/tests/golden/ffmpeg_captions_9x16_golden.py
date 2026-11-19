@@ -8,7 +8,7 @@ the engine does it (``subtitles=…:fontsdir=fonts`` over ``captions_ass.link_fo
 ``h264_videotoolbox`` and AAC. It is checked on:
 
 - **the helper**: the FFmpeg under test is LGPL (no ``--enable-gpl``/``nonfree``/``version3``);
-- **pictures**: SSIM ≥ 0.97 at 1, 5 and 9 s against the same frames made losslessly, and pHash ≤ 6
+- **pictures**: SSIM ≥ 0.98 at 1, 5 and 9 s against the same frames made losslessly, and pHash ≤ 6
   against the reference;
 - **captions**: both caption bands differ from the uncaptioned pattern, the rest of the frame
   does not;
@@ -43,7 +43,7 @@ BUILD_SCRIPT = harness.REPO_ROOT / "packages" / "engine" / "ffmpeg" / "build.sh"
 UPDATE = os.environ.get("S7VIDEO_GOLDEN_UPDATE") == "1"
 WIDTH, HEIGHT, FPS, SECONDS = 1080, 1920, 30, 10
 SAMPLES = (30, 150, 270)  # 1, 5 and 9 s
-SSIM_MIN = 0.97
+SSIM_MIN = 0.98
 PHASH_MAX = 6
 LUFS_TOLERANCE = 0.5
 THUMB = (108, 192)

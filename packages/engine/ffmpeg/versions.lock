@@ -1,5 +1,5 @@
 {
-  "$comment": "Pinned sources of the LGPL FFmpeg helper (S7V-016). build.sh reads it with plutil, and pnpm licenses:check checks each licence (scripts/lib/ffmpeg-helper-licences.ts). A new version needs a new sha256; FFmpeg also needs its release key's signature. 'linkage' is how the library ships: 'dynamic' means its own dylib beside ffmpeg and ffprobe, the only way LGPL is allowed.",
+  "$comment": "Pinned sources of the LGPL FFmpeg helper (S7V-016). build.sh reads it with plutil, and pnpm licenses:check checks each licence (scripts/lib/ffmpeg-helper-licences.ts). A new version needs a new sha256; FFmpeg also needs a signature by its release key's primary key (keys/, pinned by sha256). buildTools must match the hash-pinned build-tools.txt. 'linkage' is how the library ships: 'dynamic' means its own dylib beside ffmpeg and ffprobe, the only way LGPL is allowed.",
   "target": {
     "arch": "arm64",
     "macosMinimum": "14.0"
@@ -15,7 +15,9 @@
       "licenseFiles": ["COPYING.LGPLv2.1", "LICENSE.md"],
       "signature": {
         "url": "https://ffmpeg.org/releases/ffmpeg-9.0.2.tar.xz.asc",
-        "keyUrl": "https://ffmpeg.org/ffmpeg-devel.asc",
+        "key": "keys/ffmpeg-devel.asc",
+        "keySource": "https://ffmpeg.org/ffmpeg-devel.asc",
+        "keySha256": "397b3becedcd5a98769967ff1ff8501ddc89f8368b8f766e4701377d7dbaabe5",
         "fingerprint": "FCF986EA15E6E293A5644F10B4322F04D67658D8"
       }
     },
@@ -35,7 +37,14 @@
       "sha256": "93cd47eb719c325107f2d3cf087d06299e944c3b48a40b55537302304dea1dd5",
       "license": "FTL OR GPL-2.0-or-later",
       "linkage": "dynamic",
-      "licenseFiles": ["LICENSE.TXT", "docs/FTL.TXT"]
+      "licenseFiles": [
+        "LICENSE.TXT",
+        "docs/FTL.TXT",
+        "src/bdf/README",
+        "src/pcf/README",
+        "src/base/fthash.c",
+        "include/freetype/internal/fthash.h"
+      ]
     },
     {
       "name": "fribidi",
@@ -53,7 +62,7 @@
       "sha256": "0fc7c565443a5f4be7da65ac5ee5bd737d9b158dc908708b7689a0a5796b0c8d",
       "license": "MIT-Modern-Variant",
       "linkage": "dynamic",
-      "licenseFiles": ["COPYING"]
+      "licenseFiles": ["COPYING", "src/ms-use/COPYING"]
     },
     {
       "name": "libass",
@@ -79,6 +88,10 @@
     { "name": "meson", "version": "1.12.1", "license": "Apache-2.0" },
     { "name": "ninja", "version": "1.13.2", "license": "Apache-2.0" },
     { "name": "pkgconf", "version": "3.0.7.post0", "license": "MIT AND ISC" },
-    { "name": "pgpy", "version": "0.6.0", "license": "BSD-3-Clause" }
+    { "name": "pgpy", "version": "0.6.0", "license": "BSD-3-Clause" },
+    { "name": "cryptography", "version": "50.0.2", "license": "Apache-2.0 OR BSD-3-Clause" },
+    { "name": "cffi", "version": "2.1.1", "license": "MIT-0" },
+    { "name": "pycparser", "version": "3.12", "license": "BSD-3-Clause" },
+    { "name": "pyasn1", "version": "0.6.5", "license": "BSD-2-Clause" }
   ]
 }

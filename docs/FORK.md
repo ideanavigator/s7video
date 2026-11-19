@@ -335,22 +335,33 @@ and is never bundled). `pnpm licenses:check` also scans `packages/engine/uv.lock
 
 ### LGPL FFmpeg helper (S7V-016)
 
-Packaged Mac builds ship their own FFmpeg in `Contents/Resources/ffmpeg/` (`bin/ffmpeg`,
-`bin/ffprobe`, `lib/*.dylib`, `LICENSES/`, `SOURCES.md` and the `recipe/` that built it).
-`packages/engine/ffmpeg/build.sh` builds it from the pinned sources in `versions.lock` (FFmpeg
-LGPL-2.1-or-later with VideoToolbox, AudioToolbox, libass with CoreText fonts and no fontconfig,
-FreeType, FriBidi, HarfBuzz, zimg, and dav1d, since FFmpeg's own AV1 decoder needs hardware M1 and
-M2 Macs lack), with only Xcode tools and uv; `check.sh` checks a built or
-packaged helper (links, rpaths, minimum macOS, signatures, licence and features). The LGPL is met by
-running FFmpeg as separate programs with dynamically linked libraries and publishing the exact
-sources and recipe with each DMG; there is no setting to choose another FFmpeg (PO, 2026-11-18).
-The upstream files changed: `scripts/build-desktop-artifact.ts` (`stageFfmpegHelper`, the `ffmpeg`
-extra resource, kept out of `app.asar`) and `apps/desktop/src/backend/DesktopBackendConfiguration.ts`
-(`S7VIDEO_PACKAGED`, `S7VIDEO_FFMPEG`, `S7VIDEO_FFPROBE`). With `S7VIDEO_PACKAGED=1` the server's
-`resolveEngineTools` takes FFmpeg and ffprobe only from those variables, never from Homebrew or
-other install folders, and a missing one tells the user to reinstall the app.
-`pnpm licenses:check` checks `versions.lock` (LGPL only for dynamically linked helper libraries,
-WTFPL only for zimg) and, when this recipe's helper is built, its `ffmpeg -buildconf`.
+Packaged Mac builds ship their own FFmpeg in `Contents/Resources/ffmpeg/`: `bin/ffmpeg`,
+`bin/ffprobe`, `lib/*.dylib`, `LICENSES/`, `SOURCES.md`, and `sources/` with the exact source
+tarballs, FFmpeg's signature, `SHA256SUMS` and the recipe, which runs from a copy of that folder.
+The LGPL is met by running FFmpeg as separate programs with dynamically linked libraries and
+shipping those exact sources inside the app (about 39 MB); there is no setting to choose another
+FFmpeg (PO, 2026-11-18).
+
+- `packages/engine/ffmpeg/build.sh` builds it from the pinned sources in `versions.lock`: FFmpeg
+  (LGPL-2.1-or-later, VideoToolbox, AudioToolbox), libass with CoreText fonts and no fontconfig,
+  FreeType, FriBidi, HarfBuzz, zimg, and dav1d (FFmpeg's own AV1 decoder needs hardware M1 and M2
+  Macs lack). It needs only Xcode tools and uv; meson, ninja, pkgconf and PGPy come from
+  `build-tools.txt`, pinned by sha256. FFmpeg's tarball must be signed by the primary key of the
+  release key kept in `keys/` (pinned by sha256). It installs under the fixed prefix
+  `/s7video-ffmpeg` through `DESTDIR`, so no folder of the build Mac is built in, and builds one
+  at a time per cache (a `mkdir` lock).
+- `check.sh` checks a built or packaged helper: links, rpaths, minimum macOS, signatures, no
+  build-Mac paths in any file, licence texts, sources and features. The DMG build runs it on the
+  staged copy.
+- The upstream files changed: `scripts/build-desktop-artifact.ts` (`stageFfmpegHelper`, the
+  `ffmpeg` extra resource, kept out of `app.asar`) and
+  `apps/desktop/src/backend/DesktopBackendConfiguration.ts` (`S7VIDEO_PACKAGED`, `S7VIDEO_FFMPEG`,
+  `S7VIDEO_FFPROBE`). With `S7VIDEO_PACKAGED=1` the server's `resolveEngineTools` takes FFmpeg and
+  ffprobe only from those variables, never from Homebrew or other install folders, and a missing
+  one tells the user to reinstall the app.
+- `pnpm licenses:check` checks `versions.lock` (LGPL only for dynamically linked helper libraries,
+  WTFPL only for zimg, build tools matching `build-tools.txt`) and, when this recipe's helper is
+  built, its `ffmpeg -buildconf`.
 
 ## Video agent tools (S7V-023)
 

@@ -1,0 +1,7 @@
+FFmpeg release signing key
+
+packages/engine/ffmpeg/keys/ffmpeg-devel.asc is the FFmpeg project's public OpenPGP release
+signing key (fingerprint FCF986EA15E6E293A5644F10B4322F04D67658D8), published at
+https://ffmpeg.org/ffmpeg-devel.asc for anyone to verify FFmpeg releases. It is kept here
+unmodified, pinned by sha256 in packages/engine/ffmpeg/versions.lock, so builds check FFmpeg's
+tarball signature against a known key instead of one downloaded beside the tarball.

@@ -12,7 +12,11 @@
 # - ffmpeg -L is LGPL 2.1 or later, and -buildconf has no --enable-gpl, -nonfree or -version3;
 # - the features the engine needs: subtitles/ass (libass), zscale and tonemap (zimg), the
 #   libdav1d AV1 decoder (no hardware needed), h264_videotoolbox, and the lavfi input;
-# - LICENSES/ and SOURCES.md are there;
+# - no file names a folder of the build Mac (home, temp, /Users, /private/var): the user name
+#   must not ship, and FFmpeg must look for nothing outside the app;
+# - every licence text versions.lock lists is in LICENSES/, and SOURCES.md is there;
+# - sources/ holds every source tarball (matching SHA256SUMS and versions.lock), FFmpeg's
+#   signature, and the complete recipe, so the LGPL sources go out with the app;
 # - with --render: a 2 s 1080x1920 captioned clip encodes with a system-only environment.
 set -euo pipefail
 
@@ -74,20 +78,49 @@ grep -q " lavfi " <<<"$devices" || die "ffmpeg has no lavfi input"
 run "$DIR/bin/ffprobe" -hide_banner -version >/dev/null || die "ffprobe does not run"
 echo "check.sh: LGPL 2.1 or later; libass, zimg, libdav1d, h264_videotoolbox and lavfi present"
 
+# The build Mac's folders, spelt so this file does not match itself.
+leaks=("/Us""ers/" "/priv""ate/var/" "/var/fol""ders/")
+[ -n "${HOME:-}" ] && [ "$HOME" != / ] && leaks+=("$HOME")
+patterns=()
+for leak in "${leaks[@]}"; do patterns+=(-e "$leak"); done
+# Tarballs are upstream's compressed bytes; everything else that ships is checked.
+found="$(find "$DIR" -type f ! -path "$DIR/sources/*.tar.*" -print0 | xargs -0 /usr/bin/grep -a -l -F "${patterns[@]}" || true)"
+[ -z "$found" ] || die "these files name a folder of the build Mac: $(echo "$found" | tr '\n' ' ')"
+echo "check.sh: no file names a folder of the build Mac"
+
 [ -f "$DIR/SOURCES.md" ] || die "no SOURCES.md"
+lock() { /usr/bin/plutil -extract "$1" raw -o - "$HERE/versions.lock"; }
 index=0
-while name="$(/usr/bin/plutil -extract "sources.$index.name" raw -o - "$HERE/versions.lock" 2>/dev/null)"; do
-  [ -n "$(ls -A "$DIR/LICENSES/$name" 2>/dev/null)" ] || die "no licence text for $name in LICENSES/"
+while name="$(lock "sources.$index.name" 2>/dev/null)"; do
+  files=0
+  while file="$(lock "sources.$index.licenseFiles.$files" 2>/dev/null)"; do
+    [ -s "$DIR/LICENSES/$name/$file" ] || die "LICENSES/$name/$file is missing"
+    files=$((files + 1))
+  done
+  [ "$files" -gt 0 ] || die "versions.lock lists no licence text for $name"
+  tarball="$(lock "sources.$index.file" 2>/dev/null || basename "$(lock "sources.$index.url")")"
+  [ -f "$DIR/sources/$tarball" ] || die "sources/$tarball is missing"
+  grep -q "^$(lock "sources.$index.sha256")  $tarball\$" "$DIR/sources/SHA256SUMS" 2>/dev/null ||
+    die "sources/SHA256SUMS does not pin $tarball to versions.lock's sha256"
   index=$((index + 1))
 done
 [ "$index" -gt 0 ] || die "versions.lock lists no sources"
-echo "check.sh: LICENSES/ and SOURCES.md present"
+(cd "$DIR/sources" && /usr/bin/shasum -a 256 -c -s SHA256SUMS) || die "a tarball in sources/ does not match SHA256SUMS"
+ls "$DIR/sources/"*.asc >/dev/null 2>&1 || die "sources/ has no FFmpeg signature"
+for file in build.sh check.sh versions.lock build-tools.txt pgp_verify.py keys/ffmpeg-devel.asc \
+  overlays/zimg/meson.build fonts/Inter-Bold.ttf fonts/OFL.txt; do
+  [ -f "$DIR/sources/recipe/$file" ] || die "sources/recipe/$file is missing"
+done
+echo "check.sh: LICENSES/, SOURCES.md and sources/ (tarballs, signature, recipe) present"
+
 
 if [ "$RENDER" = --render ]; then
   work="$(mktemp -d "${TMPDIR:-/tmp}/s7v-ffmpeg-check.XXXXXX")"
   trap 'rm -rf "$work"' EXIT
   mkdir "$work/fonts"
-  ln -s "$HERE/../assets/fonts/Inter-Bold.ttf" "$work/fonts/Inter-Bold.ttf"
+  font="$HERE/fonts/Inter-Bold.ttf"
+  [ -f "$font" ] || font="$HERE/../assets/fonts/Inter-Bold.ttf"
+  ln -s "$font" "$work/fonts/Inter-Bold.ttf"
   printf '[Script Info]\nScriptType: v4.00+\nPlayResX: 1080\nPlayResY: 1920\n\n[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, Bold, Alignment, MarginV\nStyle: Default,Inter,96,&H00FFFFFF,-1,2,300\n\n[Events]\nFormat: Layer, Start, End, Style, Text\nDialogue: 0,0:00:00.00,0:00:02.00,Default,check こんにちは\n' >"$work/check.ass"
   (cd "$work" && run "$ffmpeg" -v error -nostdin -f lavfi -i testsrc2=size=1080x1920:rate=30:duration=2 \
     -f lavfi -i sine=frequency=440:sample_rate=48000:duration=2 \

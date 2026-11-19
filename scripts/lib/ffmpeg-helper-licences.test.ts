@@ -8,6 +8,7 @@ import * as NodeURL from "node:url";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  buildToolPinProblems,
   buildconfProblems,
   checkHelperSources,
   type HelperAllowlist,
@@ -66,8 +67,23 @@ describe("FFmpeg helper licences", () => {
     expect(unhashed.problems).toEqual(["zimg@3.0.6: needs a pinned lower-case sha256"]);
     const unsigned = checkHelperSources(withSource("ffmpeg", { signature: undefined }), ALLOWLIST);
     expect(unsigned.problems).toEqual([
-      "ffmpeg@9.0.2: needs its release signature, key and key fingerprint",
+      "ffmpeg@9.0.2: needs its release signature, the key kept in the recipe with its sha256, and the key's fingerprint",
     ]);
+  });
+
+  it("build tools match the hash-pinned build-tools.txt", () => {
+    const requirements = NodeFS.readFileSync(
+      NodePath.join(ROOT, "packages/engine/ffmpeg/build-tools.txt"),
+      "utf8",
+    );
+    expect(buildToolPinProblems(LOCK, requirements)).toEqual([]);
+    const unhashed = requirements.replace(/(ninja==1\.13\.2)[^\n]*\n(\s+--hash=[^\n]*\n)+/, "$1\n");
+    expect(buildToolPinProblems(LOCK, unhashed)).toEqual([
+      "ninja@1.13.2 (build tool): build-tools.txt has no sha256",
+    ]);
+    expect(
+      buildToolPinProblems(LOCK, requirements.replace("meson==1.12.1", "meson==1.12.2")),
+    ).toEqual(["meson@1.12.1 (build tool): build-tools.txt pins 1.12.2"]);
   });
 
   it("finds GPL, nonfree and version-3 flags in -buildconf", () => {

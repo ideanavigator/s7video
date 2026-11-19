@@ -104,8 +104,8 @@ def test_talking_head_peaks_match_numpy_at_every_level(media, tmp_path: Path) ->
     stored = _reference()["talking-head-01"]
     assert record["durationSamples"] == stored["durationSamples"]
     # FFmpeg 9 (the shipped helper, S7V-016) starts the Opus audio at 0, FFmpeg 7.1 at its -7 ms
-    # pre-skip (-336 samples); testing.md allows one frame (2,002 samples at 23.976 fps).
-    assert abs(record["offsetSamples"] - stored["offsetSamples"]) <= 2002
+    # pre-skip (-336 samples); within media-standards.md's 20 ms (960 samples at 48 kHz).
+    assert abs(record["offsetSamples"] - stored["offsetSamples"]) <= 960
     for size, level in record["levels"].items():
         expected_level = stored["levels"][size]
         assert level["count"] == expected_level["count"], f"level {size}: count"

@@ -40,7 +40,7 @@
           "licenseId": "LGPL-2.1-or-later",
           "copyrights": ["Copyright the FFmpeg developers", "Copyright the FriBidi authors"],
           "preamble": [
-            "The Mac app runs FFmpeg and ffprobe as separate programs with their own dynamically linked libraries, in Contents/Resources/ffmpeg. This software uses code of FFmpeg licensed under the LGPLv2.1 or later, and FriBidi under the same licence. Each library's full licence, the exact source tarballs with their SHA-256 hashes and the build recipe are in Contents/Resources/ffmpeg (LICENSES, SOURCES.md and recipe), and are published with each release."
+            "The Mac app runs FFmpeg and ffprobe as separate programs with their own dynamically linked libraries, in Contents/Resources/ffmpeg. This software uses code of FFmpeg licensed under the LGPLv2.1 or later, and FriBidi under the same licence. The exact source tarballs of FFmpeg and every library, their SHA-256 hashes (SHA256SUMS), FFmpeg's signature, and the build recipe with our one addition (a build file for zimg) are in Contents/Resources/ffmpeg/sources; each library's full licence is in Contents/Resources/ffmpeg/LICENSES, and how to rebuild or replace them is in Contents/Resources/ffmpeg/SOURCES.md."
           ]
         },
         {

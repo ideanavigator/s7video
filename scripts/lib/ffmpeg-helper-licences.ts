@@ -91,9 +91,13 @@ export function checkHelperSources(lock: unknown, allowlist: HelperAllowlist): H
         typeof signature?.fingerprint !== "string" ||
         !FINGERPRINT.test(signature.fingerprint) ||
         text(signature.url) === undefined ||
-        text(signature.keyUrl) === undefined
+        text(signature.key) === undefined ||
+        typeof signature.keySha256 !== "string" ||
+        !SHA256.test(signature.keySha256)
       ) {
-        problems.push(`${label}: needs its release signature, key and key fingerprint`);
+        problems.push(
+          `${label}: needs its release signature, the key kept in the recipe with its sha256, and the key's fingerprint`,
+        );
       }
     }
     if (license === undefined) {
@@ -129,6 +133,44 @@ export function checkHelperSources(lock: unknown, allowlist: HelperAllowlist): H
     if (!verdict.ok) problems.push(`${label} ${license}: ${verdict.reason ?? "not allowed"}`);
   }
   return { checked, elections, problems };
+}
+
+/**
+ * versions.lock's build tools against build-tools.txt (uv's hash-pinned requirements, the file
+ * the build installs from): every tool needs the same pinned version and at least one sha256.
+ */
+export function buildToolPinProblems(lock: unknown, requirements: string): ReadonlyArray<string> {
+  const pins = new Map<string, { version: string; hashed: boolean }>();
+  for (const block of requirements.split(/\n(?=[a-z0-9])/i)) {
+    const match = /^([A-Za-z0-9._-]+)==(\S+)/.exec(block.trim());
+    if (match?.[1] && match[2]) {
+      pins.set(match[1].toLowerCase(), {
+        version: match[2],
+        hashed: block.includes("--hash=sha256:"),
+      });
+    }
+  }
+  const tools = isRecord(lock) && Array.isArray(lock.buildTools) ? lock.buildTools : [];
+  const problems: string[] = [];
+  for (const tool of tools) {
+    const name = isRecord(tool) ? text(tool.name)?.toLowerCase() : undefined;
+    const version = isRecord(tool) ? text(tool.version) : undefined;
+    if (name === undefined || version === undefined) continue;
+    const pin = pins.get(name);
+    if (!pin) problems.push(`${name}@${version} (build tool) is not in build-tools.txt`);
+    else if (pin.version !== version)
+      problems.push(`${name}@${version} (build tool): build-tools.txt pins ${pin.version}`);
+    else if (!pin.hashed)
+      problems.push(`${name}@${version} (build tool): build-tools.txt has no sha256`);
+  }
+  for (const name of pins.keys()) {
+    if (!tools.some((tool) => isRecord(tool) && text(tool.name)?.toLowerCase() === name)) {
+      problems.push(
+        `${name} is installed from build-tools.txt but versions.lock does not list its licence`,
+      );
+    }
+  }
+  return problems;
 }
 
 const FORBIDDEN_FLAGS = ["--enable-gpl", "--enable-nonfree", "--enable-version3"] as const;
