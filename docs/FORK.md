@@ -312,12 +312,17 @@ starting either opens the "install command line developer tools" dialog. s7video
   "xcrun: error" and no dialog. It is set in the server's own environment because the providers,
   the terminal and the ACP runtime each build theirs from it; it runs before the provider layers.
   Provider instances keep a copy of that environment until their settings change (always with an
-  instance's own variables or a managed policy), so the Claude session and Codex app-server
-  spawns and `makeClaudeEnvironment` (Claude's probes, text generation and terminal) take
-  `DEVELOPER_DIR` from `AgentDeveloperDir.forSpawn` when they start a process. When the tools
-  appear, the next agent started gets the user's own value; one already running keeps its
-  environment until its session restarts. A value set in an instance's own environment settings
-  is left alone. With the tools installed nothing changes, so the assistant's shell keeps git.
+  instance's own variables or a managed policy), so these spawns take `DEVELOPER_DIR` from
+  `AgentDeveloperDir.forSpawn` each time they start a process: the Claude session
+  (`ClaudeAdapterV2.ts`), `makeClaudeEnvironment` (Claude's status and capability probes, and the
+  terminal's Claude environment), Claude and Codex text generation, the Codex app-server
+  (`CodexAdapterV2.ts`) and Antigravity sessions (`AntigravityDriver.ts`). When the tools appear,
+  the next process started gets the user's own value; one already running keeps its environment
+  until its session restarts. A value set in an instance's own environment settings is left
+  alone. ACP registry agents with their own variables or under a managed policy, and the other
+  providers' short status probes, keep their copy until s7video restarts: the ACP registry
+  adapter lives in a package that cannot reach the server's service. With the tools installed
+  nothing changes, so the assistant's shell keeps git.
   Codex 0.170 looks for git only in fixed folders (Homebrew, the developer folders) and starts
   none without them.
 - **Upstream files touched:** `shell.ts`, `processRunner.ts`, `GitVcsDriver.ts`,
@@ -326,8 +331,8 @@ starting either opens the "install command line developer tools" dialog. s7video
   `ProjectCloneTracker.ts`, `ws.ts`, `server.ts`, `contracts/src/server.ts`, the error mapping in
   `AcpSessionRuntime.ts`, `externalLauncher.ts`, `CodexAdapterV2.ts`, `CodexProvider.ts` and the two
   text-generation files, and in the web `ChatView.tsx`, `DiffPanel.tsx` and `GitActionsControl.tsx`.
-  S7V-114 adds one line each to `server.ts`, `ClaudeAdapterV2.ts`, `CodexAdapterV2.ts` and
-  `ClaudeHome.ts`.
+  S7V-114 adds a line or two to `server.ts`, `ClaudeAdapterV2.ts`, `CodexAdapterV2.ts`,
+  `ClaudeHome.ts`, `ClaudeTextGeneration.ts`, `CodexTextGeneration.ts` and `AntigravityDriver.ts`.
 
 ## HEIC decoding (S7V-014)
 

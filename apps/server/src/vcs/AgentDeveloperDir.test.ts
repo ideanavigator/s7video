@@ -147,7 +147,7 @@ describe("AgentDeveloperDir", () => {
           // A provider instance's copy, taken while the tools were missing.
           const stale = { PATH: "/usr/bin:/bin", DEVELOPER_DIR: emptyDir };
           assert.deepEqual(forSpawn(stale), { PATH: "/usr/bin:/bin", DEVELOPER_DIR: xcodeBeta });
-          // Claude's probes, text generation and terminal build their environment through this.
+          // Claude's probes and the terminal's Claude environment are built through this.
           const claude = yield* makeClaudeEnvironment({ homePath: "" }, stale);
           assert.strictEqual(claude.DEVELOPER_DIR, xcodeBeta);
           const instanceOwn = { DEVELOPER_DIR: "/Applications/Other.app/Contents/Developer" };

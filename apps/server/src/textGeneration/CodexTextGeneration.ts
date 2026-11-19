@@ -27,6 +27,7 @@ import {
 import { codexModelFamily, getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import { getCodexServiceTierOptionValue } from "../codexModelOptions.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { AgentDeveloperDir } from "../vcs/AgentDeveloperDir.ts";
 
 const CODEX_TIMEOUT_MS = 180_000;
 const CODEX_MCP_LIST_TIMEOUT_MS = 10_000;
@@ -63,6 +64,7 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
   const commandSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const serverConfig = yield* Effect.service(ServerConfig.ServerConfig);
   const resolvedEnvironment = environment ?? process.env;
+  const agentDeveloperDir = yield* AgentDeveloperDir;
 
   const readStreamAsString = <E>(
     operation: string,
@@ -258,7 +260,7 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
         DEFAULT_TEXT_GENERATION_REASONING_EFFORT;
       const serviceTier = resolved ? undefined : getCodexServiceTierOptionValue(modelSelection);
       const binary = effectiveConfig.binaryPath || "codex";
-      const env = {
+      const env = agentDeveloperDir.forSpawn({
         ...effectiveEnvironment,
         ...(effectiveConfig.homePath
           ? {
@@ -268,7 +270,7 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
               ),
             }
           : {}),
-      };
+      });
       const execLaunchArgs = codexExecLaunchArgs(launchArgs);
       const mcpServersOff = yield* listEnabledMcpServers({
         binary,

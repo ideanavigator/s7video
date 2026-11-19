@@ -3,15 +3,19 @@ import { it } from "@effect/vitest";
 import { ClaudeSettings, ProviderInstanceId } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { createModelSelection } from "@t3tools/shared/model";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import { expect } from "vite-plus/test";
 
 import * as ServerConfig from "../config.ts";
 import { processProbeSource } from "../testUtils/processProbe.ts";
+import * as AgentDeveloperDir from "../vcs/AgentDeveloperDir.ts";
+import * as SystemGit from "../vcs/SystemGit.ts";
 import {
   SYNTHETIC_CLAUDE_CAPABLE_MODEL,
   SYNTHETIC_CLAUDE_COLLIDING_ALIAS,
@@ -334,6 +338,69 @@ it.layer(layerClaudeTextGenerationTest)("ClaudeTextGeneration", (it) => {
           }),
       );
     }),
+  );
+
+  // S7V-114: the driver builds text generation once, from a copy taken while the tools were missing.
+  it.effect(
+    "a claude -p started after the tools are installed gets the user's DEVELOPER_DIR",
+    () => {
+      const xcodeBeta = "/Applications/Xcode-beta.app/Contents/Developer";
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-claude-text-" });
+        const binDir = yield* makeFakeClaudeBinary(tempDir);
+        const delimiter = (yield* HostProcess.isWindows) ? ";" : ":";
+        const env: NodeJS.ProcessEnv = {
+          ...process.env,
+          PATH: `${binDir}${delimiter}${process.env.PATH ?? ""}`,
+          T3_FAKE_CLAUDE_OUTPUT: JSON.stringify({
+            structured_output: { title: "Tools installed" },
+          }),
+          T3_FAKE_CLAUDE_DEVELOPER_DIR_MUST_BE: xcodeBeta,
+          DEVELOPER_DIR: xcodeBeta,
+        };
+        const install = yield* Deferred.make<void>();
+        const installed = yield* Deferred.make<void>();
+        const toolsInstalled = Stream.fromEffect(
+          Deferred.await(install).pipe(
+            Effect.as({ available: true, path: path.join(xcodeBeta, "usr", "bin", "git") }),
+          ),
+        ).pipe(
+          Stream.concat(
+            Stream.fromEffect(Deferred.succeed(installed, undefined)).pipe(Stream.drain),
+          ),
+        );
+        const systemGit = SystemGit.SystemGit.of({
+          status: Effect.succeed({ available: false, path: null }),
+          refresh: Effect.succeed({ available: false, path: null }),
+          subscribeChanges: Effect.succeed(toolsInstalled),
+        });
+
+        yield* Effect.gen(function* () {
+          const textGeneration = yield* makeClaudeTextGeneration(
+            decodeClaudeSettings({}),
+            { ...env },
+            Effect.succeed(SYNTHETIC_CLAUDE_MODEL_CATALOG),
+          );
+          yield* Deferred.succeed(install, undefined);
+          yield* Deferred.await(installed);
+          const generated = yield* textGeneration.generateThreadTitle({
+            cwd: process.cwd(),
+            message: "thread title",
+            modelSelection: {
+              instanceId: ProviderInstanceId.make("claudeAgent"),
+              model: SYNTHETIC_CLAUDE_STANDARD_MODEL,
+            },
+          });
+          expect(generated.title).toBe(sanitizeThreadTitle("Tools installed"));
+        }).pipe(
+          Effect.provide(AgentDeveloperDir.layer),
+          Effect.provideService(SystemGit.SystemGit, systemGit),
+          Effect.provideService(HostProcess.Environment, env),
+        );
+      }).pipe(Effect.scoped);
+    },
   );
 
   it.effect("retries without --no-session-persistence when the Claude CLI rejects it", () =>
