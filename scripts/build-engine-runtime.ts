@@ -481,10 +481,8 @@ export function buildEngineRuntime(outDir: string): void {
 }
 
 /**
- * Checks a packaged app (S7V-112 AC-2, and the sprint's "no Homebrew or Xcode at run time"): every
- * Mach-O needs the lock's minimum macOS or older and links only inside the app, /usr/lib and
- * /System; the runtime's own links resolve inside Resources; Info.plist asks for the same minimum;
- * the `.pyc` files survived packaging; and the runtime imports the engine from inside the app.
+ * A packaged app's Mach-O minimum macOS and links, its Info.plist minimum, no build-Mac home folder
+ * anywhere (app.asar included), surviving `.pyc` files, and an engine import from inside the app.
  */
 export function checkPackagedApp(appPath: string): void {
   const lock = parseRuntimeLock(
@@ -519,6 +517,11 @@ export function checkPackagedApp(appPath: string): void {
     problems.push(
       "Resources/engine/src/s7engine has no __pycache__: packaging dropped the compiled .pyc files",
     );
+  }
+  // The whole app, app.asar included: a build path would ship the build Mac's user name.
+  const leaks = filesContaining(appPath, NodeOS.homedir());
+  if (leaks.length > 0) {
+    problems.push(`these files name the build Mac's home folder: ${leaks.slice(0, 5).join(", ")}`);
   }
   const files = scanMachOFiles(appPath);
   const runtimePrefix = "Contents/Resources/";

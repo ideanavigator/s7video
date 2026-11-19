@@ -1961,6 +1961,22 @@ export const stageLinuxCaptureHelper = Effect.fn("stageLinuxCaptureHelper")(func
   }
 });
 
+/**
+ * Rust embeds source paths (panic locations, the cargo registry under ~/.cargo) in the binary, so
+ * an unmapped build ships the build Mac's home folder and user name (S7V-112). Keeps any flags
+ * already set; `CARGO_ENCODED_RUSTFLAGS` takes a home folder with spaces.
+ */
+export function resourceMonitorRustFlags(
+  env: Readonly<Record<string, string | undefined>>,
+  homeDir: string,
+): string {
+  const existing =
+    env.CARGO_ENCODED_RUSTFLAGS !== undefined
+      ? env.CARGO_ENCODED_RUSTFLAGS.split("\u001f")
+      : (env.RUSTFLAGS?.split(/\s+/u) ?? []);
+  return [...existing.filter(Boolean), `--remap-path-prefix=${homeDir}=~`].join("\u001f");
+}
+
 export const stageResourceMonitor = Effect.fn("stageResourceMonitor")(function* (input: {
   readonly repoRoot: string;
   readonly stageResourcesDir: string;
@@ -1977,6 +1993,10 @@ export const stageResourceMonitor = Effect.fn("stageResourceMonitor")(function* 
     Config.withDefault(false),
   );
   const builtBinaries: string[] = [];
+  const rustFlags = resourceMonitorRustFlags(
+    yield* HostProcess.Environment,
+    yield* HostProcess.HomeDirectory,
+  );
 
   for (const rustTarget of rustTargets) {
     if (!reuseResourceMonitor) {
@@ -1994,6 +2014,8 @@ export const stageResourceMonitor = Effect.fn("stageResourceMonitor")(function* 
         ChildProcess.make(spawnCommand.command, spawnCommand.args, {
           cwd: path.dirname(manifestPath),
           shell: spawnCommand.shell,
+          env: { CARGO_ENCODED_RUSTFLAGS: rustFlags },
+          extendEnv: true,
         }),
         {
           label: `cargo build resource monitor (${rustTarget})`,

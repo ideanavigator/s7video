@@ -33,6 +33,7 @@ import {
   MAC_ENTITLEMENTS,
   assertMacEngineRuntimeArch,
   EngineRuntimeArchError,
+  resourceMonitorRustFlags,
   UnsupportedDesktopBuildArchitectureError,
   packWindowsServerAsar,
   preflightWindowsDesktopBuild,
@@ -517,6 +518,25 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       ),
     ),
   );
+
+  it("maps the build Mac's home out of the resource monitor's embedded paths (S7V-112)", () => {
+    assert.equal(
+      resourceMonitorRustFlags({}, "/Users/some one"),
+      "--remap-path-prefix=/Users/some one=~",
+    );
+    assert.equal(
+      resourceMonitorRustFlags({ RUSTFLAGS: "-C  target-cpu=native" }, "/Users/a"),
+      ["-C", "target-cpu=native", "--remap-path-prefix=/Users/a=~"].join("\u001f"),
+    );
+    // Cargo prefers the encoded form, so it is extended as is.
+    assert.equal(
+      resourceMonitorRustFlags(
+        { CARGO_ENCODED_RUSTFLAGS: ["-C", "debuginfo=0"].join("\u001f"), RUSTFLAGS: "-x" },
+        "/Users/a",
+      ),
+      ["-C", "debuginfo=0", "--remap-path-prefix=/Users/a=~"].join("\u001f"),
+    );
+  });
 
   it.effect("refuses an Intel or universal Mac build before building anything (S7V-112)", () =>
     Effect.gen(function* () {
