@@ -14,6 +14,7 @@ import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
+import { withCacheLock } from "./lib/cache-lock.ts";
 import {
   checkMachOFiles,
   checkPythonJsonLicences,
@@ -355,60 +356,6 @@ function smokeTest(outDir: string): void {
     NodeFS.realpathSync(source ?? "/") !== NodeFS.realpathSync(expectedSource)
   ) {
     throw new Error(`the staged runtime failed its import check: ${output.trim()}`);
-  }
-}
-
-const isAlive = (pid: number) => {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return (error as NodeJS.ErrnoException).code === "EPERM";
-  }
-};
-
-/**
- * Runs `body` holding `<cacheRoot>/.lock`, a `mkdir` lock like the heavy-run slots: the cache is
- * shared by every worktree on the Mac, and a build or prune must not delete another's folders. A
- * lock whose owner process is gone is taken over.
- */
-export function withCacheLock<A>(
-  cacheRoot: string,
-  body: () => A,
-  options: { readonly timeoutMs?: number; readonly pollMs?: number } = {},
-): A {
-  const lockDir = NodePath.join(cacheRoot, ".lock");
-  const owner = NodePath.join(lockDir, "owner");
-  const deadline = Date.now() + (options.timeoutMs ?? 60 * 60 * 1000);
-  const wait = new Int32Array(new SharedArrayBuffer(4));
-  NodeFS.mkdirSync(cacheRoot, { recursive: true });
-  for (;;) {
-    try {
-      NodeFS.mkdirSync(lockDir);
-      NodeFS.writeFileSync(owner, `${String(process.pid)}\n`);
-      break;
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-    }
-    const holder = Number.parseInt(
-      NodeFS.existsSync(owner) ? NodeFS.readFileSync(owner, "utf8") : "",
-      10,
-    );
-    if (Number.isInteger(holder) && !isAlive(holder)) {
-      NodeFS.rmSync(lockDir, { recursive: true, force: true });
-      continue;
-    }
-    if (Date.now() > deadline) {
-      throw new Error(
-        `${lockDir} is held by PID ${String(holder)}; another build is using the cache`,
-      );
-    }
-    Atomics.wait(wait, 0, 0, options.pollMs ?? 2000);
-  }
-  try {
-    return body();
-  } finally {
-    NodeFS.rmSync(lockDir, { recursive: true, force: true });
   }
 }
 
