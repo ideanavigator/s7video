@@ -304,12 +304,20 @@ starting either opens the "install command line developer tools" dialog. s7video
   server sends a new config snapshot, so the git UI appears without a restart.
 - **iOS Simulators.** `/usr/bin/xcrun` is a stub as well, so the iOS platform counts as available
   only when the probe finds a real developer folder (`LocalDeviceHost.platformReason`).
-- **Not covered.** The agent CLIs run git themselves: Claude Code runs `git ls-files` in the project
-  folder when it starts. On a clean Mac that is Apple's stub. A follow-up ticket handles it.
+- **The agents' own git (S7V-114).** The agent CLIs run git themselves: Claude Code runs
+  `git ls-files` in the project folder when it starts, and an agent's shell can run `git` or
+  `python3`, which are stubs too. While `SystemGit` finds no git, `AgentDeveloperDir`
+  (`apps/server/src/vcs/AgentDeveloperDir.ts`) sets the server's `DEVELOPER_DIR` to the empty
+  folder `<data folder>/empty-developer-dir`, so every stub a child starts fails at once with
+  "xcrun: error" and no dialog. It is set in the server's own environment because the providers,
+  the terminal and the ACP runtime each build theirs from it; it runs before the provider layers,
+  and when the tools appear the user's own value comes back for agents started after that. With
+  the tools installed nothing changes, so the assistant's shell keeps git. Codex 0.170 looks for
+  git only in fixed folders (Homebrew, the developer folders) and starts none without them.
 - **Upstream files touched:** `shell.ts`, `processRunner.ts`, `GitVcsDriver.ts`,
   `GitVcsDriverCore.ts`, `VcsDriverRegistry.ts`, `VcsStatusBroadcaster.ts`,
   `serverRuntimeStartup.ts`, `SourceControlDiscovery.ts`, `WorkspaceEntries.ts`,
-  `ProjectCloneTracker.ts`, `ws.ts`, `server.ts`, `contracts/src/server.ts`, the error mapping in
+  `ProjectCloneTracker.ts`, `ws.ts`, `server.ts` (also S7V-114), `contracts/src/server.ts`, the error mapping in
   `AcpSessionRuntime.ts`, `externalLauncher.ts`, `CodexAdapterV2.ts`, `CodexProvider.ts` and the two
   text-generation files, and in the web `ChatView.tsx`, `DiffPanel.tsx` and `GitActionsControl.tsx`.
 
