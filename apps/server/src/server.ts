@@ -57,6 +57,7 @@ import * as EditHistoryService from "./edit/EditHistoryService.ts";
 import * as EditProjectLayout from "./edit/EditProjectLayout.ts";
 import * as EditSnapshotStore from "./edit/EditSnapshotStore.ts";
 import * as LegacyEditHistory from "./edit/LegacyEditHistory.ts";
+import * as AgentDeveloperDir from "./vcs/AgentDeveloperDir.ts";
 import * as SystemGit from "./vcs/SystemGit.ts";
 import * as SourceControlBuiltInDrivers from "./sourceControl/builtInDrivers.ts";
 import * as SourceControlSignIn from "./sourceControl/SourceControlSignIn.ts";
@@ -783,6 +784,8 @@ const layerMakeServer = Layer.unwrap(
       Layer.provideMerge(FetchHttpClient.layer),
       Layer.provide(VcsProcess.layer),
       Layer.provideMerge(AgentScopeLive.layer),
+      // Before any agent starts: without git, their own git calls fail quietly (S7V-114).
+      Layer.provideMerge(AgentDeveloperDir.layer),
       // One cached git answer for every service, probed after fixPath (S7V-052).
       Layer.provideMerge(SystemGit.layer),
       Layer.provideMerge(layerPlatformServices),

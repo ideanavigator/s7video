@@ -157,6 +157,7 @@ import {
 } from "../../claudeModelOptions.ts";
 import * as ServerConfig from "../../config.ts";
 import * as PortScanner from "../../preview/PortScanner.ts";
+import { AgentDeveloperDir } from "../../vcs/AgentDeveloperDir.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import { spawnAndCollect } from "@t3tools/provider-core/server/snapshotProbe";
@@ -957,6 +958,7 @@ export const layerQueryRunner: Layer.Layer<
     const platform = yield* HostProcess.Platform;
     const runFork = Effect.runForkWith(yield* Effect.context<never>());
     const hostEnvironment = yield* HostProcess.Environment;
+    const agentDeveloperDir = yield* AgentDeveloperDir;
     const portDiscovery = yield* PortScanner.PortDiscovery;
 
     return ClaudeAgentSdkQueryRunner.of({
@@ -986,7 +988,7 @@ export const layerQueryRunner: Layer.Layer<
           const queryOptions = {
             ...sdkOptions,
             env: {
-              ...(sdkOptions.env ?? hostEnvironment),
+              ...agentDeveloperDir.forSpawn(sdkOptions.env ?? hostEnvironment),
               [PortScanner.AGENT_THREAD_ENV]: input.threadId,
             },
           };

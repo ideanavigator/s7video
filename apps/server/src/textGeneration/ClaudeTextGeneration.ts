@@ -34,6 +34,7 @@ import {
   hasClaudeManagedMcpConfig,
   makeClaudeEnvironment,
 } from "../provider/Drivers/ClaudeHome.ts";
+import { AgentDeveloperDir } from "../vcs/AgentDeveloperDir.ts";
 
 const CLAUDE_TIMEOUT_MS = 180_000;
 /** `--tools` takes bare names; patterns go in the allow list. */
@@ -90,6 +91,7 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
   const commandSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const fileSystem = yield* FileSystem.FileSystem;
   const claudeEnvironment = yield* makeClaudeEnvironment(claudeSettings, environment);
+  const agentDeveloperDir = yield* AgentDeveloperDir;
   const scopedModelCatalog = modelCatalog.pipe(
     Effect.map((catalog) => scopeClaudeModelCatalog(catalog, claudeSettings.customModels)),
   );
@@ -189,6 +191,7 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
     const runClaudeCommand = Effect.fn("runClaudeJson.runClaudeCommand")(function* (
       noSessionPersistence: boolean,
     ) {
+      const spawnEnvironment = agentDeveloperDir.forSpawn(claudeEnvironment);
       const workingDirectory =
         operation === "generateThreadTitle"
           ? yield* fileSystem
@@ -230,14 +233,14 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
           "--permission-mode",
           "dontAsk",
         ],
-        { env: claudeEnvironment },
+        { env: spawnEnvironment },
       ).pipe(
         Effect.mapError((cause) =>
           normalizeCliError("claude", operation, cause, "Failed to spawn Claude CLI process"),
         ),
       );
       const command = ChildProcess.make(spawnCommand.command, spawnCommand.args, {
-        env: claudeEnvironment,
+        env: spawnEnvironment,
         cwd: workingDirectory,
         shell: spawnCommand.shell,
         stdin: {

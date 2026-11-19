@@ -16,6 +16,7 @@ import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import { vi } from "vite-plus/test";
 
@@ -24,7 +25,10 @@ import { AgentScope } from "@t3tools/shared/AgentScope";
 import { ProviderEventLoggers } from "@t3tools/provider-core/server/ProviderEventLoggers";
 import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import { signalProcessGroup } from "@t3tools/provider-core/server/processGroup";
+import { ServerConfig } from "../../config.ts";
 import * as PortScanner from "../../preview/PortScanner.ts";
+import * as AgentDeveloperDir from "../../vcs/AgentDeveloperDir.ts";
+import * as SystemGit from "../../vcs/SystemGit.ts";
 import {
   ClaudeAgentSdkQueryRunner,
   type ClaudeAgentSdkQueryOpenInput,
@@ -539,5 +543,83 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("Claude CLI pro
       yield* Effect.promise(() => agentReleased);
       assert.equal(runningAgents, 0);
     }).pipe(Effect.provide(runner));
+  });
+  // S7V-114: the adapter's environment is a copy taken while the tools were missing.
+  it.effect("a CLI started after the tools are installed gets the user's DEVELOPER_DIR", () => {
+    const xcodeBeta = "/Applications/Xcode-beta.app/Contents/Developer";
+    const env: NodeJS.ProcessEnv = { PATH: process.env.PATH, DEVELOPER_DIR: xcodeBeta };
+    const runner = layerQueryRunner.pipe(
+      Layer.provide(PortScanner.layerTest),
+      Layer.provide(
+        Layer.succeed(ProviderEventLoggers, { native: undefined, canonical: undefined }),
+      ),
+      Layer.provide(NodeServices.layer),
+    );
+    return Effect.gen(function* () {
+      const installed = yield* Deferred.make<void>();
+      const toolsInstalled = Stream.make({
+        available: true,
+        path: `${xcodeBeta}/usr/bin/git`,
+      }).pipe(
+        Stream.concat(Stream.fromEffect(Deferred.succeed(installed, undefined)).pipe(Stream.drain)),
+      );
+      const systemGit = SystemGit.SystemGit.of({
+        status: Effect.succeed({ available: false, path: null }),
+        refresh: Effect.succeed({ available: false, path: null }),
+        subscribeChanges: Effect.succeed(toolsInstalled),
+      });
+      const cli = fakeClaudeCli(
+        [
+          'dir=$(dirname "$0")',
+          'printf \'%s\' "$DEVELOPER_DIR" > "$dir/developer-dir"',
+          "cat > /dev/null",
+        ].join("\n"),
+      );
+      const dir = NodePath.dirname(cli);
+      NodeChildProcess.execFileSync("mkfifo", [NodePath.join(dir, "developer-dir")]);
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => NodeFS.rmSync(dir, { recursive: true, force: true })),
+      );
+      const developerDirRead = new Promise<string>((resolve) => {
+        let value = "";
+        NodeFS.createReadStream(NodePath.join(dir, "developer-dir"), "utf8")
+          .on("data", (chunk) => (value += chunk))
+          .once("end", () => resolve(value));
+      });
+
+      yield* Effect.gen(function* () {
+        yield* Deferred.await(installed);
+        const config = yield* ServerConfig;
+        const staleCopy = {
+          ...env,
+          DEVELOPER_DIR: NodePath.join(config.baseDir, "empty-developer-dir"),
+        };
+        const queryRunner = yield* ClaudeAgentSdkQueryRunner;
+        const session = yield* queryRunner.open({
+          threadId: ThreadId.make("thread-fake-cli"),
+          providerSessionId: ProviderSessionId.make("session-fake-cli"),
+          options: {
+            sessionId: "native-session-fake-cli",
+            model: "claude-sonnet-4-6",
+            tools: [],
+            permissionMode: "default",
+            pathToClaudeCodeExecutable: cli,
+            env: staleCopy,
+          },
+        });
+        assert.equal(yield* Effect.promise(() => developerDirRead), xcodeBeta);
+        yield* session.close;
+      }).pipe(
+        Effect.provide(runner.pipe(Layer.provideMerge(AgentDeveloperDir.layer))),
+        Effect.provideService(SystemGit.SystemGit, systemGit),
+      );
+    }).pipe(
+      Effect.provideService(HostProcess.Environment, env),
+      Effect.provide(
+        ServerConfig.layerTest(process.cwd(), { prefix: "s7v114-claude-" }).pipe(
+          Layer.provideMerge(NodeServices.layer),
+        ),
+      ),
+    );
   });
 });

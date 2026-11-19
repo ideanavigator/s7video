@@ -52,6 +52,7 @@ import {
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import { makeAntigravityAdapterV2 } from "../../orchestration-v2/Adapters/AntigravityAdapterV2.ts";
+import { AgentDeveloperDir } from "../../vcs/AgentDeveloperDir.ts";
 import { makeAcpNativeLoggerFactory } from "@t3tools/provider-acp/server/nativeLogging";
 import { ProviderDriverError } from "../Errors.ts";
 import { makeAntigravityProvider } from "../AntigravityProvider.ts";
@@ -124,6 +125,7 @@ export const AntigravityDriver: ProviderDriver<
     };
     const authConfigIssue = antigravityAuthConfigIssue(auth);
     const processEnvironment = yield* mergeProviderInstanceEnvironment(environment);
+    const agentDeveloperDir = yield* AgentDeveloperDir;
     const userHome = resolveAntigravityUserHome(
       yield* HostProcess.Platform,
       processEnvironment,
@@ -199,7 +201,7 @@ export const AntigravityDriver: ProviderDriver<
       );
       const profile = yield* prepareAntigravityProfile({
         profileDirectory,
-        baseEnv: processEnvironment,
+        baseEnv: agentDeveloperDir.forSpawn(processEnvironment),
         auth,
         userHome,
         tempDirectory: directories.runtimeTemp,
@@ -251,7 +253,7 @@ export const AntigravityDriver: ProviderDriver<
           installation: executable,
           profile,
           cwd: input.cwd,
-          baseEnv: processEnvironment,
+          baseEnv: agentDeveloperDir.forSpawn(processEnvironment),
           auth,
           runtimeTempDirectory,
         }),

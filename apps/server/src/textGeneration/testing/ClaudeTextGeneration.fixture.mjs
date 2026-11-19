@@ -70,6 +70,11 @@ if (configDirMustBe && process.env.CLAUDE_CONFIG_DIR !== configDirMustBe) {
   fail("CLAUDE_CONFIG_DIR was " + (process.env.CLAUDE_CONFIG_DIR ?? ""), 5);
 }
 
+const developerDirMustBe = process.env.T3_FAKE_CLAUDE_DEVELOPER_DIR_MUST_BE;
+if (developerDirMustBe && process.env.DEVELOPER_DIR !== developerDirMustBe) {
+  fail("DEVELOPER_DIR was " + (process.env.DEVELOPER_DIR ?? ""), 13);
+}
+
 const stderrText = process.env.T3_FAKE_CLAUDE_STDERR;
 if (stderrText) {
   process.stderr.write(stderrText + "\n");

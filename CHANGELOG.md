@@ -219,6 +219,8 @@ from; the per-ticket entries and how this file is compiled are in
   desktop app, and elsewhere names the folder the files are in and copies its location. (S7V-109)
 - Building the Mac installer works again: a package the server needs was left out when unused
   providers were removed. (S7V-111)
+- On a Mac without Apple's coding tools, chatting no longer opens a window asking to install
+  them. (S7V-114)
 
 ### Security
 
