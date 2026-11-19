@@ -231,6 +231,15 @@ const resolvePrimaryStartConfig = Effect.fn("desktop.backendConfiguration.resolv
         S7VIDEO_SKILLS_DIR: environment.isPackaged
           ? environment.path.join(environment.resourcesPath, "skills")
           : undefined,
+        // The LGPL FFmpeg helper ships as an extra resource (S7V-016); packaged servers never
+        // look for FFmpeg in Homebrew or other install folders.
+        S7VIDEO_PACKAGED: environment.isPackaged ? "1" : undefined,
+        S7VIDEO_FFMPEG: environment.isPackaged
+          ? environment.path.join(environment.resourcesPath, "ffmpeg", "bin", "ffmpeg")
+          : undefined,
+        S7VIDEO_FFPROBE: environment.isPackaged
+          ? environment.path.join(environment.resourcesPath, "ffmpeg", "bin", "ffprobe")
+          : undefined,
       },
       extendEnv: true,
       bootstrap,

@@ -143,7 +143,12 @@ def test_export_captions_talking_head(media, tmp_path: Path) -> None:
     assert seconds < TIME_LIMIT_S, f"export took {seconds:.1f} s"
 
     # Format, frame count, colour tags, A/V sync (AC-2, AC-6, AC-7).
-    assert summary == reference["summary"]
+    # Exact, except the audio duration: FFmpeg versions' AAC encoders differ by a millisecond of
+    # padding (the shipped helper against a developer's Homebrew build, S7V-016), and testing.md
+    # allows a duration within one frame.
+    exact = lambda found: {key: value for key, value in found.items() if key != "audio_duration_s"}
+    assert exact(summary) == exact(reference["summary"])
+    assert abs(summary["audio_duration_s"] - reference["summary"]["audio_duration_s"]) <= float(1 / RATE)
     assert (summary["video_codec"], summary["pix_fmt"], summary["fps"]) == ("h264", "yuv420p", "24000/1001")
     assert (summary["audio_codec"], summary["audio_rate"], summary["audio_channels"]) == ("aac", 48000, 2)
     assert (summary["color_primaries"], summary["color_transfer"], summary["color_space"], summary["color_range"]) == (

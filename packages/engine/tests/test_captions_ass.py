@@ -76,6 +76,16 @@ def test_karaoke_word_states_on_word_frames() -> None:
     assert [event.end for event in subs.events] == [captions_ass.frame_to_ms(f, rate) for f in (44, 50, 75)]
 
 
+def test_colours_are_plain_rgb_on_any_video(tmp_path: Path) -> None:
+    # S7V-016: without "YCbCr Matrix: None", FFmpeg 9 and libass 0.17.5 shift caption colours on
+    # YUV video as VSFilter did, so the export no longer matched the player's still.
+    words = _words(("one", 0, 5), ("two", 6, 11))
+    [chunk] = captions_ass.chunk_words(words, Fraction(30), captions_ass.load_style("s7-neutral"))
+    path = tmp_path / "captions.ass"
+    captions_ass.write_cues(path, captions_ass.cues([chunk], "s7-neutral"), Fraction(30), 1080, 1920, "s7-neutral")
+    assert "YCbCr Matrix: None" in path.read_text(encoding="utf-8").splitlines()
+
+
 def test_looks_without_a_highlight_keep_one_event_per_chunk() -> None:
     words = _words(("one", 0, 5), ("two", 6, 11), ("three", 12, 17))
     for preset in ["s7-neutral", "s7-box", "s7-minimal"]:

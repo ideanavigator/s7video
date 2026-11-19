@@ -99,6 +99,58 @@ describe("enginePaths", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
+  it.effect("packaged build never falls back to Homebrew for FFmpeg (S7V-016)", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: "engine-paths-" });
+      const [bundle, brew, home] = ["Resources/ffmpeg/bin", "homebrew/bin", "home"].map((name) =>
+        path.join(root, name),
+      );
+      yield* makeTools(bundle!, ["ffmpeg", "ffprobe"]);
+      yield* makeTools(brew!, ["uv", "ffmpeg", "ffprobe"]);
+
+      const tools = yield* resolveEngineTools({
+        env: {
+          S7VIDEO_PACKAGED: "1",
+          S7VIDEO_FFMPEG: path.join(bundle!, "ffmpeg"),
+          S7VIDEO_FFPROBE: path.join(bundle!, "ffprobe"),
+        },
+        homeDir: home!,
+        knownDirs: [brew!],
+      });
+      expect(tools.ffmpeg).toBe(path.join(bundle!, "ffmpeg"));
+      expect(tools.ffprobe).toBe(path.join(bundle!, "ffprobe"));
+
+      // The helper is gone: no Homebrew FFmpeg in its place, and the hint says to reinstall.
+      yield* fileSystem.remove(path.join(bundle!, "ffmpeg"));
+      const missing = yield* resolveEngineTools({
+        env: { S7VIDEO_PACKAGED: "1", S7VIDEO_FFMPEG: path.join(bundle!, "ffmpeg") },
+        homeDir: home!,
+        knownDirs: [brew!],
+      }).pipe(Effect.flip);
+      expect(missing).toMatchObject({ reason: "missing_tool", tool: "ffmpeg", packaged: true });
+      expect(missing.message).toBe(
+        "The ffmpeg that comes with the app is missing. Reinstall the app to fix it.",
+      );
+      expect(missing.message).not.toContain("brew");
+
+      // ffprobe beside the chosen ffmpeg still wins; a lone Homebrew ffprobe is never taken.
+      yield* makeTools(bundle!, ["ffmpeg"]);
+      yield* fileSystem.remove(path.join(bundle!, "ffprobe"));
+      const noProbe = yield* resolveEngineTools({
+        env: { S7VIDEO_PACKAGED: "1", S7VIDEO_FFMPEG: path.join(bundle!, "ffmpeg") },
+        homeDir: home!,
+        knownDirs: [brew!],
+      }).pipe(Effect.flip);
+      expect(noProbe).toMatchObject({ reason: "missing_tool", tool: "ffprobe", packaged: true });
+
+      // Dev keeps today's order.
+      const dev = yield* resolveEngineTools({ env: {}, homeDir: home!, knownDirs: [brew!] });
+      expect(dev.ffmpeg).toBe(path.join(brew!, "ffmpeg"));
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it("names the Hugging Face caches to look in, never ~/.t3 or our own models folder", () => {
     const home = "/Users/someone";
     const models = "/Users/someone/.s7video/engine/models";

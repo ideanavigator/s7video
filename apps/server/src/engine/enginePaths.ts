@@ -18,6 +18,16 @@ const TOOL_ENV_VARS: Record<EngineTool, string> = {
 
 const ENGINE_DIR_ENV_VAR = "S7VIDEO_ENGINE_DIR";
 
+/**
+ * The desktop sets `S7VIDEO_PACKAGED=1` when it runs from an installed app (S7V-016). Then FFmpeg
+ * and ffprobe come only from the app's own helper, never from Homebrew or other install folders.
+ */
+export const isPackagedServer = (env: Readonly<Record<string, string | undefined>>) =>
+  env.S7VIDEO_PACKAGED === "1";
+
+/** Tools the packaged app ships itself; install folders are not searched for them. */
+const BUNDLED_TOOLS: ReadonlySet<EngineTool> = new Set(["ffmpeg", "ffprobe"]);
+
 /** The engine's PATH: system folders only, never the parent's PATH. */
 export const ENGINE_SYSTEM_PATH = "/usr/bin:/bin:/usr/sbin:/sbin";
 
@@ -32,7 +42,7 @@ export interface EngineToolSources {
   readonly configured?: Partial<Record<EngineTool, string>>;
   readonly env: Readonly<Record<string, string | undefined>>;
   readonly homeDir: string;
-  /** Defaults to Homebrew's, /usr/local/bin and ~/.local/bin. */
+  /** Defaults to Homebrew's, /usr/local/bin and ~/.local/bin; a packaged server skips them for FFmpeg. */
   readonly knownDirs?: ReadonlyArray<string>;
 }
 
@@ -64,18 +74,25 @@ export const resolveEngineTools = Effect.fn("enginePaths.resolveEngineTools")(fu
     "/usr/local/bin",
     path.join(sources.homeDir, ".local/bin"),
   ];
+  const packaged = isPackagedServer(sources.env);
   const resolve = Effect.fnUntraced(function* (
     tool: EngineTool,
     extra: ReadonlyArray<string> = [],
   ) {
+    const bundled = packaged && BUNDLED_TOOLS.has(tool);
     const found = yield* firstExecutable([
       sources.configured?.[tool],
       sources.env[TOOL_ENV_VARS[tool]],
       ...extra,
-      ...knownDirs.map((directory) => path.join(directory, tool)),
+      ...(bundled ? [] : knownDirs.map((directory) => path.join(directory, tool))),
     ]);
     if (found === undefined) {
-      return yield* new EngineError({ reason: "missing_tool", method: "start", tool });
+      return yield* new EngineError({
+        reason: "missing_tool",
+        method: "start",
+        tool,
+        ...(bundled ? { packaged: true } : {}),
+      });
     }
     return found;
   });

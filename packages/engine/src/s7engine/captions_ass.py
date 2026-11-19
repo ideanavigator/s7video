@@ -399,6 +399,10 @@ def build_cues(
     subs.info["PlayResY"] = str(height)
     subs.info["WrapStyle"] = "0"
     subs.info["ScaledBorderAndShadow"] = "yes"
+    # The colours are plain RGB. Without this, newer FFmpeg and libass (the shipped helper, S7V-016)
+    # shift them as VSFilter did for TV.601 video, so text on the video's YUV frames came out about
+    # 15 grey levels off the player's still.
+    subs.info["YCbCr Matrix"] = "None"
     subs.styles = {
         "Default": pysubs2.SSAStyle(
             fontname=style["font"]["family"],

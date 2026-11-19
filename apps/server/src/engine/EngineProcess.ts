@@ -34,6 +34,8 @@ export interface EngineProcessInput {
   readonly logFile: string;
   readonly startTimeout: Duration.Input;
   readonly onProgress: (progress: EngineProgressParams) => Effect.Effect<void>;
+  /** Packaged app (`isPackagedServer`): FFmpeg errors say to reinstall it. */
+  readonly packaged?: boolean;
   /** Group signalling; tests pass a recorder. */
   readonly signalGroup?: SignalGroup;
 }
@@ -118,6 +120,7 @@ export const start = Effect.fn("EngineProcess.start")(function* (input: EnginePr
     lines: child.stdout.pipe(Stream.decodeText(), Stream.splitLines),
     send: (line) => Queue.offer(outgoing, textEncoder.encode(line)).pipe(Effect.asVoid),
     onProgress: input.onProgress,
+    ...(input.packaged ? { packaged: true } : {}),
   });
 
   yield* client.ready.pipe(

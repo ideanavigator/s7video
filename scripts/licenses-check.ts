@@ -17,6 +17,12 @@ import {
   type LicenceException,
   type LicenceOverride,
 } from "./lib/licenses-check.ts";
+import {
+  buildToolPinProblems,
+  buildconfProblems,
+  checkHelperSources,
+  type HelperAllowlist,
+} from "./lib/ffmpeg-helper-licences.ts";
 import { packagesFromPythonReport, type PythonLicenceReport } from "./lib/python-licences.ts";
 
 const ROOT = NodePath.resolve(NodePath.dirname(NodeURL.fileURLToPath(import.meta.url)), "..");
@@ -175,9 +181,60 @@ for (const problem of pythonResult.problems) {
 }
 const pythonFailed = pythonResult.problems.length > 0 || pythonScan.errors.length > 0;
 
-if (result.problems.length > 0 || result.configErrors.length > 0 || pythonFailed) {
+// The LGPL FFmpeg helper's pinned sources, and a built helper's configuration (S7V-016).
+const HELPER_RECIPE = "packages/engine/ffmpeg";
+const helperResult = checkHelperSources(
+  readJson(`${HELPER_RECIPE}/versions.lock`),
+  allowlist as HelperAllowlist,
+);
+const helperProblems = [
+  ...helperResult.problems,
+  ...buildToolPinProblems(
+    readJson(`${HELPER_RECIPE}/versions.lock`),
+    NodeFS.readFileSync(NodePath.join(ROOT, HELPER_RECIPE, "build-tools.txt"), "utf8"),
+  ),
+];
+console.log(
+  `licenses:check: ${String(helperResult.checked)} FFmpeg helper sources and build tools from ${HELPER_RECIPE}/versions.lock.`,
+);
+for (const election of helperResult.elections) {
+  console.log(
+    `  elected ${election.elected} for ${election.name}@${election.version} (${election.declared})`,
+  );
+}
+const helperDir = (() => {
+  try {
+    return NodeChildProcess.execFileSync("bash", [`${HELPER_RECIPE}/build.sh`, "--print-dir"], {
+      cwd: ROOT,
+      encoding: "utf8",
+    }).trim();
+  } catch {
+    return undefined;
+  }
+})();
+const helperFfmpeg = helperDir ? NodePath.join(helperDir, "bin", "ffmpeg") : undefined;
+if (helperFfmpeg && NodeFS.existsSync(helperFfmpeg)) {
+  helperProblems.push(
+    ...buildconfProblems(
+      NodeChildProcess.execFileSync(helperFfmpeg, ["-hide_banner", "-buildconf"], {
+        encoding: "utf8",
+      }),
+    ),
+  );
+  console.log(`  checked -buildconf of the built helper at ${helperFfmpeg}`);
+} else {
+  console.log("  no built FFmpeg helper for this recipe; -buildconf not checked");
+}
+for (const problem of helperProblems) console.error(`error: FFmpeg helper: ${problem}`);
+
+if (
+  result.problems.length > 0 ||
+  result.configErrors.length > 0 ||
+  pythonFailed ||
+  helperProblems.length > 0
+) {
   console.error(
-    `licenses:check failed: ${String(result.problems.length + pythonResult.problems.length)} package(s) outside the allowlist, ${String(result.configErrors.length)} exception error(s). Replace the package, or record an ADR and add it to licenses.exceptions.json.`,
+    `licenses:check failed: ${String(result.problems.length + pythonResult.problems.length + helperProblems.length)} package(s) outside the allowlist, ${String(result.configErrors.length)} exception error(s). Replace the package, or record an ADR and add it to licenses.exceptions.json.`,
   );
   process.exit(1);
 }

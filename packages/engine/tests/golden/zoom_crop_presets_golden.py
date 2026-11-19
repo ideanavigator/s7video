@@ -153,14 +153,25 @@ def _reference() -> dict[str, Any]:
     return json.loads(REFERENCE.read_text(encoding="utf-8")) if REFERENCE.exists() else {}
 
 
-def _record(key: str, observed: Any) -> None:
-    """Checks ``observed`` against the stored reference, or stores it with ``S7VIDEO_GOLDEN_UPDATE=1``."""
+def _record(key: str, observed: Any, box_px: int = 0) -> None:
+    """Checks ``observed`` against the stored reference, or stores it with ``S7VIDEO_GOLDEN_UPDATE=1``.
+
+    ``box_px``: each look's ``captionBox`` may differ by that many pixels; libass versions (the
+    shipped helper's, a developer's Homebrew one) draw a glyph's edge a pixel apart (S7V-016)."""
     stored = _reference()
     if UPDATE:
         stored[key] = observed
         REFERENCE.write_text(json.dumps(stored, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     assert key in stored, f"no stored reference for {key}; record one with S7VIDEO_GOLDEN_UPDATE=1"
-    assert observed == stored[key], key
+    expected = stored[key]
+    if box_px:
+        for look, found in observed.items():
+            want = expected.get(look, {}).get("captionBox", [])
+            got = found["captionBox"]
+            assert len(want) == len(got) and all(abs(a - b) <= box_px for a, b in zip(got, want)), (key, look, got, want)
+        observed = {look: {k: v for k, v in found.items() if k != "captionBox"} for look, found in observed.items()}
+        expected = {look: {k: v for k, v in found.items() if k != "captionBox"} for look, found in expected.items()}
+    assert observed == expected, key
 
 
 # --- Zoom ----------------------------------------------------------------------------------------
@@ -331,7 +342,7 @@ def test_every_look_stays_in_the_safe_zone_and_on_its_frames(synth_clip, tmp_pat
         captioned.unlink()
     # Each look is its own file: no two looks may share a hash on a canvas.
     assert len({look["sha256"] for look in observed.values()}) == len(PRESETS), observed
-    _record(f"looks-{width}x{height}", observed)
+    _record(f"looks-{width}x{height}", observed, box_px=1)
 
 
 def test_transcript_captions_switch_on_the_word_frames(synth_clip, tmp_path: Path) -> None:
@@ -365,7 +376,7 @@ def test_transcript_captions_switch_on_the_word_frames(synth_clip, tmp_path: Pat
 def test_preview_matches_the_exported_frame(tmp_path: Path, style: str) -> None:
     flat = tmp_path / "flat.mp4"
     _ffmpeg("-f", "lavfi", "-i", f"color=c={captions.PREVIEW_BACKGROUND}:s={W}x{H}:r=30:d=2", "-f", "lavfi", "-i",
-            "anullsrc=r=48000:cl=stereo", "-t", "2", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", str(flat))
+            "anullsrc=r=48000:cl=stereo", "-t", "2", "-c:v", "h264_videotoolbox", "-b:v", "8M", "-pix_fmt", "yuv420p", "-c:a", "aac", str(flat))
     # The sample caption, its words timed so frame 30 shows the preview's lit word.
     words = [{"text": word, "start": 10 * index, "duration": 10} for index, word in enumerate(captions.PREVIEW_WORDS)]
     item = {"id": "c1", "start": 0, "duration": 30 + 10, "text": " ".join(captions.PREVIEW_WORDS), "words": words}

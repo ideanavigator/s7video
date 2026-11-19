@@ -102,6 +102,8 @@ from; the per-ticket entries and how this file is compiled are in
 - Sign in with your ChatGPT account inside s7video, and the assistant edits with Codex. The app
   downloads Codex 0.170.0 into its own data folder and keeps Codex's files there too, never in
   `~/.codex`. (S7V-113)
+- Shared builds of s7video bring their own video engine for exports and burned-in captions, built
+  from published sources, so nothing else needs installing. (S7V-016)
 
 ### Changed
 

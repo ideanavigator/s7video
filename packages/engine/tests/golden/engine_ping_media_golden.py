@@ -16,4 +16,9 @@ REFERENCE = Path(__file__).parent / "references" / "engine-ping-media.json"
 
 def test_talking_head_probe_matches_reference(media):
     clip = media("talking-head-01")
-    assert harness.probe_summary(clip) == json.loads(REFERENCE.read_text(encoding="utf-8"))
+    found = harness.probe_summary(clip)
+    stored = json.loads(REFERENCE.read_text(encoding="utf-8"))
+    # FFmpeg 9 (the shipped helper, S7V-016) reports the Opus stream as starting at 0, FFmpeg 7.1 at
+    # -7 ms (its pre-skip); both decode the same samples. Within media-standards.md's 20 ms.
+    assert abs(found.pop("audio_start_s") - stored.pop("audio_start_s")) <= 0.020
+    assert found == stored

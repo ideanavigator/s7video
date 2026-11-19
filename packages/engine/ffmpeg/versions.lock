@@ -1,0 +1,97 @@
+{
+  "$comment": "Pinned sources of the LGPL FFmpeg helper (S7V-016). build.sh reads it with plutil, and pnpm licenses:check checks each licence (scripts/lib/ffmpeg-helper-licences.ts). A new version needs a new sha256; FFmpeg also needs a signature by its release key's primary key (keys/, pinned by sha256). buildTools must match the hash-pinned build-tools.txt. 'linkage' is how the library ships: 'dynamic' means its own dylib beside ffmpeg and ffprobe, the only way LGPL is allowed.",
+  "target": {
+    "arch": "arm64",
+    "macosMinimum": "14.0"
+  },
+  "sources": [
+    {
+      "name": "ffmpeg",
+      "version": "9.0.2",
+      "url": "https://ffmpeg.org/releases/ffmpeg-9.0.2.tar.xz",
+      "sha256": "8c3850283eb25fa026482078a04051e0be17347b09ef81a0849bec15a96e002e",
+      "license": "LGPL-2.1-or-later",
+      "linkage": "dynamic",
+      "licenseFiles": ["COPYING.LGPLv2.1", "LICENSE.md"],
+      "signature": {
+        "url": "https://ffmpeg.org/releases/ffmpeg-9.0.2.tar.xz.asc",
+        "key": "keys/ffmpeg-devel.asc",
+        "keySource": "https://ffmpeg.org/ffmpeg-devel.asc",
+        "keySha256": "397b3becedcd5a98769967ff1ff8501ddc89f8368b8f766e4701377d7dbaabe5",
+        "fingerprint": "FCF986EA15E6E293A5644F10B4322F04D67658D8"
+      }
+    },
+    {
+      "name": "dav1d",
+      "version": "1.5.5",
+      "url": "https://downloads.videolan.org/pub/videolan/dav1d/1.5.5/dav1d-1.5.5.tar.xz",
+      "sha256": "ca96b1d0ba3f01f55de7231d775892b64994ba061aaeeaaa4f662a390b3abf9e",
+      "license": "BSD-2-Clause",
+      "linkage": "dynamic",
+      "licenseFiles": ["COPYING"]
+    },
+    {
+      "name": "freetype",
+      "version": "2.15.0",
+      "url": "https://download.savannah.gnu.org/releases/freetype/freetype-2.15.0.tar.xz",
+      "sha256": "93cd47eb719c325107f2d3cf087d06299e944c3b48a40b55537302304dea1dd5",
+      "license": "FTL OR GPL-2.0-or-later",
+      "linkage": "dynamic",
+      "licenseFiles": [
+        "LICENSE.TXT",
+        "docs/FTL.TXT",
+        "src/bdf/README",
+        "src/pcf/README",
+        "src/base/fthash.c",
+        "include/freetype/internal/fthash.h"
+      ]
+    },
+    {
+      "name": "fribidi",
+      "version": "1.0.18",
+      "url": "https://github.com/fribidi/fribidi/releases/download/v1.0.18/fribidi-1.0.18.tar.xz",
+      "sha256": "1de5e8073d035388b71d0b2d452b1da1f8caeea8a7702997b401fe1b6250727f",
+      "license": "LGPL-2.1-or-later",
+      "linkage": "dynamic",
+      "licenseFiles": ["COPYING"]
+    },
+    {
+      "name": "harfbuzz",
+      "version": "15.1.0",
+      "url": "https://github.com/harfbuzz/harfbuzz/releases/download/15.1.0/harfbuzz-15.1.0.tar.xz",
+      "sha256": "0fc7c565443a5f4be7da65ac5ee5bd737d9b158dc908708b7689a0a5796b0c8d",
+      "license": "MIT-Modern-Variant",
+      "linkage": "dynamic",
+      "licenseFiles": ["COPYING", "src/ms-use/COPYING"]
+    },
+    {
+      "name": "libass",
+      "version": "0.17.5",
+      "url": "https://github.com/libass/libass/releases/download/0.17.5/libass-0.17.5.tar.xz",
+      "sha256": "2dca25c0e0c837ddf00b52011b3f82cac1e4ddd3ad018227806b0c2288864acc",
+      "license": "ISC",
+      "linkage": "dynamic",
+      "licenseFiles": ["COPYING"]
+    },
+    {
+      "name": "zimg",
+      "version": "3.0.6",
+      "url": "https://github.com/sekrit-twc/zimg/archive/refs/tags/release-3.0.6.tar.gz",
+      "file": "zimg-3.0.6.tar.gz",
+      "sha256": "be89390f13a5c9b2388ce0f44a5e89364a20c1c57ce46d382b1fcc3967057577",
+      "license": "WTFPL",
+      "linkage": "dynamic",
+      "licenseFiles": ["COPYING"]
+    }
+  ],
+  "buildTools": [
+    { "name": "meson", "version": "1.12.1", "license": "Apache-2.0" },
+    { "name": "ninja", "version": "1.13.2", "license": "Apache-2.0" },
+    { "name": "pkgconf", "version": "3.0.7.post0", "license": "MIT AND ISC" },
+    { "name": "pgpy", "version": "0.6.0", "license": "BSD-3-Clause" },
+    { "name": "cryptography", "version": "50.0.2", "license": "Apache-2.0 OR BSD-3-Clause" },
+    { "name": "cffi", "version": "2.1.1", "license": "MIT-0" },
+    { "name": "pycparser", "version": "3.12", "license": "BSD-3-Clause" },
+    { "name": "pyasn1", "version": "0.6.5", "license": "BSD-2-Clause" }
+  ]
+}

@@ -133,6 +133,10 @@ describe("DesktopBackendConfiguration", () => {
         assert.equal(first.env.T3CODE_DESKTOP_SHELL_DISCOVERY_PENDING, "1");
         // Packaged built-in skills sit outside app.asar, where agent CLIs can read them (S7V-048).
         assert.equal(first.env.S7VIDEO_SKILLS_DIR, "/missing/resources/skills");
+        // The bundled LGPL FFmpeg helper, and no Homebrew lookups (S7V-016).
+        assert.equal(first.env.S7VIDEO_PACKAGED, "1");
+        assert.equal(first.env.S7VIDEO_FFMPEG, "/missing/resources/ffmpeg/bin/ffmpeg");
+        assert.equal(first.env.S7VIDEO_FFPROBE, "/missing/resources/ffmpeg/bin/ffprobe");
         assert.isUndefined(first.env.T3CODE_PORT);
         assert.isUndefined(first.env.T3CODE_MODE);
         assert.isUndefined(first.env.T3CODE_DESKTOP_LAN_HOST);
